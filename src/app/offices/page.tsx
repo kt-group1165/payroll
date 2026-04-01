@@ -231,11 +231,11 @@ export default function OfficesPage() {
               <div>
                 <Label>出張手当単価（円/km）</Label>
                 <Input
-                  type="number" min={0}
+                  type="number" min={0} step={0.01}
                   value={form.travel_unit_price || ""}
                   placeholder="0"
                   onChange={(e) =>
-                    setForm({ ...form, travel_unit_price: parseInt(e.target.value, 10) || 0 })
+                    setForm({ ...form, travel_unit_price: parseFloat(e.target.value) || 0 })
                   }
                 />
               </div>

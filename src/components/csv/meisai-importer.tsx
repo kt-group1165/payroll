@@ -31,7 +31,8 @@ export function MeisaiImporter() {
   const fetchExistingMonths = useCallback(async () => {
     const { data } = await supabase
       .from("service_records")
-      .select("processing_month");
+      .select("processing_month")
+      .limit(100000);
     if (!data) return;
     const countMap = new Map<string, number>();
     for (const r of data as { processing_month: string }[]) {

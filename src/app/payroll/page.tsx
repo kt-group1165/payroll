@@ -463,7 +463,12 @@ export default function PayrollPage() {
         const hrdCount     = ofRecs.filter((r) => r.record_type === "training" && r.item_name === "HRD研修").length;
 
         const workHoursMin    = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
-        const overtimeMinutes = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.overtime_daily ?? ""), 0);
+        // overtime_daily があれば使用（Format B）、なければ work_hours - 8h で計算（Format A）
+        const overtimeMinutes = attDays.reduce((s, r) => {
+          const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
+          if (od > 0) return s + od;
+          return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
+        }, 0);
         const recordCount     = empRecs.length;
         const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
         const visitMinutes    = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
