@@ -917,9 +917,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">出張距離</th>
-                        <th className="text-right px-3 py-3 font-medium">出張手当</th>
                         <th className="text-right px-3 py-3 font-medium">通勤距離</th>
-                        <th className="text-right px-3 py-3 font-medium">通勤手当</th>
                         <th className="text-right px-3 py-3 font-medium">本人給</th>
                         <th className="text-right px-3 py-3 font-medium">職能給</th>
                         <th className="text-right px-3 py-3 font-medium">役職手当</th>
@@ -932,8 +930,9 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-amber-700">残業代</th>
                         <th className="text-right px-3 py-3 font-medium text-amber-700">残業代（超過）</th>
                         <th className="text-right px-3 py-3 font-medium">特別報奨金</th>
-                        <th className="text-right px-3 py-3 font-medium">固定支給計</th>
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
+                        <th className="text-right px-3 py-3 font-medium">出張手当</th>
+                        <th className="text-right px-3 py-3 font-medium">通勤手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
                       </tr>
@@ -972,9 +971,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${effectiveTravelKm(p)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{travelFeeAmount(p) > 0 ? yen(travelFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.commuteKmTotal > 0 ? `${sm.commuteKmTotal}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{commuteFeeAmount(p) > 0 ? yen(commuteFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.base_personal_salary > 0 ? yen(s.base_personal_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.skill_salary > 0 ? yen(s.skill_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.position_allowance > 0 ? yen(s.position_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -1005,9 +1002,6 @@ export default function PayrollPage() {
                               </td>
                               <td className="px-3 py-2 text-right">{s && s.special_bonus > 0 ? yen(s.special_bonus) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">
-                                {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
-                              </td>
-                              <td className="px-3 py-2 text-right">
                                 {p.role_type !== "社員"
                                   ? <span className="text-xs text-muted-foreground">—</span>
                                   : !s || s.care_overtime_threshold_hours <= 0
@@ -1016,6 +1010,8 @@ export default function PayrollPage() {
                                       ? <span className="font-medium text-orange-700">{yen(cop)}</span>
                                       : <span className="text-xs text-muted-foreground">0円</span>}
                               </td>
+                              <td className="px-3 py-2 text-right">{travelFeeAmount(p) > 0 ? yen(travelFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{commuteFeeAmount(p) > 0 ? yen(commuteFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
                               <td className="px-3 py-2 text-center text-muted-foreground text-xs">
                                 {isExpanded ? "▲" : "▼"}
@@ -1023,7 +1019,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={31} className="px-8 py-4">
+                                <td colSpan={29} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -1148,9 +1144,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{formatMinutes(monthlyResults.reduce((s, p) => s + p.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.hrdCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0) > 0 ? `${monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0)}km` : "—"}</td>
-                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + travelFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0) > 0 ? `${monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0)}km` : "—"}</td>
-                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + commuteFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.base_personal_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.skill_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.position_allowance ?? 0), 0))}</td>
@@ -1163,8 +1157,9 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + computeOvertimePay(p, otSettings), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + overtimeExcessPay(p, otSettings), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.special_bonus ?? 0), 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings ? fixedTotal(p.settings) : 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + careOvertimePay(p), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + travelFeeAmount(p), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + commuteFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
