@@ -113,6 +113,8 @@ type AttendanceSummary = {
   accompaniedCount: number;
   visitMinutes: number;
   hrdCount: number;
+  commuteKmTotal: number;
+  businessKmTotal: number;
 };
 
 // 時給者
@@ -316,6 +318,10 @@ function travelFeeAmount(p: MonthlyPayroll): number {
   return Math.round(effectiveTravelKm(p) * p.office_travel_unit_price);
 }
 
+function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
+  return Math.max(0, computeOvertimePay(p, otSettings) - (p.settings?.fixed_overtime_pay ?? 0));
+}
+
 function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
   if (!p.settings) return 0;
   return (
@@ -325,7 +331,7 @@ function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSe
     p.business_trip_fee +
     careOvertimePay(p) +
     yochoAllowance(p) +
-    computeOvertimePay(p, otSettings)
+    overtimeExcessPay(p, otSettings)
   );
 }
 
@@ -402,7 +408,7 @@ export default function PayrollPage() {
         supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
-          .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily")
+          .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
           .eq("year", year).eq("month", month),
         supabase.from("office_form_records")
           .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
@@ -469,11 +475,13 @@ export default function PayrollPage() {
           if (od > 0) return s + od;
           return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
         }, 0);
-        const recordCount     = empRecs.length;
+        const recordCount      = empRecs.length;
         const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
-        const visitMinutes    = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+        const visitMinutes     = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+        const commuteKmTotal   = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
+        const businessKmTotal  = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
 
-        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount };
+        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount, commuteKmTotal, businessKmTotal };
       }
 
       // 時給者
@@ -541,14 +549,13 @@ export default function PayrollPage() {
             0, 0, 0
           );
           const settingsWithTenure = sal ? { ...sal, tenure_allowance: computedTenure } : null;
+          const summary = computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []);
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(e.employee_number) ?? [];
           const ofTravelKm = empOfRecs
             .filter((r) => r.record_type === "km" && r.item_name === "出張km")
             .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
-          const attTravelKm = (attByEmp.get(e.employee_number) ?? [])
-            .reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
-          const travelKmAuto = ofTravelKm > 0 ? ofTravelKm : attTravelKm;
+          const travelKmAuto = ofTravelKm > 0 ? ofTravelKm : summary.businessKmTotal;
           const office = officeByIdMap.get(e.office_id);
 
           return {
@@ -564,7 +571,7 @@ export default function PayrollPage() {
             office_travel_unit_price: office?.travel_unit_price ?? 0,
             business_trip_fee: 0,
             yocho_hours: 0,
-            summary: computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []),
+            summary,
           };
         })
       );
@@ -615,10 +622,10 @@ export default function PayrollPage() {
     const rows: string[][] = [[
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
-      "実績","同行","訪問時間","HRD",
+      "実績","同行","訪問時間","HRD","出張距離(km)","通勤距離(km)",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
-      "固定残業代","残業代","特別報奨金","報奨金","移動費","出張費",
+      "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
       "夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
@@ -629,6 +636,7 @@ export default function PayrollPage() {
         String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.halfLeave), String(sm.specialLeave),
         formatWorkHours(sm.workHoursMin),
         String(sm.recordCount), String(sm.accompaniedCount), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
+        String(effectiveTravelKm(p)), String(sm.commuteKmTotal),
         String(s?.base_personal_salary ?? 0),
         String(s?.skill_salary ?? 0),
         String(s?.position_allowance ?? 0),
@@ -639,6 +647,7 @@ export default function PayrollPage() {
         String(s?.treatment_subsidy ?? 0),
         String(s?.fixed_overtime_pay ?? 0),
         String(computeOvertimePay(p, otSettings)),
+        String(overtimeExcessPay(p, otSettings)),
         String(s?.special_bonus ?? 0),
         String(p.bonus_paid ? (s?.bonus_amount ?? 0) : 0),
         String(travelFeeAmount(p)),
@@ -899,6 +908,8 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
+                        <th className="text-right px-3 py-3 font-medium">出張距離</th>
+                        <th className="text-right px-3 py-3 font-medium">通勤距離</th>
                         <th className="text-right px-3 py-3 font-medium">本人給</th>
                         <th className="text-right px-3 py-3 font-medium">職能給</th>
                         <th className="text-right px-3 py-3 font-medium">役職手当</th>
@@ -909,6 +920,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">処遇補助金</th>
                         <th className="text-right px-3 py-3 font-medium">固定残業代</th>
                         <th className="text-right px-3 py-3 font-medium text-amber-700">残業代</th>
+                        <th className="text-right px-3 py-3 font-medium text-amber-700">残業代（超過）</th>
                         <th className="text-right px-3 py-3 font-medium">特別報奨金</th>
                         <th className="text-right px-3 py-3 font-medium">固定支給計</th>
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
@@ -949,6 +961,8 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
+                              <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${effectiveTravelKm(p)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{sm.commuteKmTotal > 0 ? `${sm.commuteKmTotal}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.base_personal_salary > 0 ? yen(s.base_personal_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.skill_salary > 0 ? yen(s.skill_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.position_allowance > 0 ? yen(s.position_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -967,6 +981,13 @@ export default function PayrollPage() {
                                   const otPay = computeOvertimePay(p, otSettings);
                                   if (otPay > 0) return <span className="font-medium text-amber-700">{yen(otPay)}</span>;
                                   if (p.summary.overtimeMinutes > 0) return <span className="text-xs text-muted-foreground">単価未設定</span>;
+                                  return <span className="text-xs text-muted-foreground">—</span>;
+                                })()}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {(() => {
+                                  const excess = overtimeExcessPay(p, otSettings);
+                                  if (excess > 0) return <span className="font-medium text-amber-700">{yen(excess)}</span>;
                                   return <span className="text-xs text-muted-foreground">—</span>;
                                 })()}
                               </td>
@@ -990,7 +1011,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={26} className="px-8 py-4">
+                                <td colSpan={29} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -1114,6 +1135,8 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.accompaniedCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(monthlyResults.reduce((s, p) => s + p.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.hrdCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0) > 0 ? `${monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0)}km` : "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0) > 0 ? `${monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0)}km` : "—"}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.base_personal_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.skill_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.position_allowance ?? 0), 0))}</td>
@@ -1124,6 +1147,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.treatment_subsidy ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.fixed_overtime_pay ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + computeOvertimePay(p, otSettings), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + overtimeExcessPay(p, otSettings), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.special_bonus ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings ? fixedTotal(p.settings) : 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + careOvertimePay(p), 0))}</td>
