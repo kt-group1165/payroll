@@ -205,22 +205,30 @@ type MonthlyPayroll = {
 function parseDurationMinutes(str: string): number {
   if (!str) return 0;
   str = str.trim();
+  let result: number;
   if (str.includes(":")) {
     const [h, m] = str.split(":").map(Number);
-    return (h || 0) * 60 + (m || 0);
+    result = (h || 0) * 60 + (m || 0);
+  } else {
+    result = parseInt(str, 10) || 0;
   }
-  return parseInt(str, 10) || 0;
+  // 開始時刻＝終了時刻のとき24時間になる場合は0として扱う
+  return result >= 1440 ? 0 : result;
 }
 
 function parseWorkHoursMinutes(s: string): number {
   if (!s || !s.trim()) return 0;
   s = s.trim();
+  let result: number;
   if (s.includes(":")) {
     const [h, m] = s.split(":").map(Number);
-    return (h || 0) * 60 + (m || 0);
+    result = (h || 0) * 60 + (m || 0);
+  } else {
+    const n = parseFloat(s);
+    result = isNaN(n) ? 0 : Math.round(n * 60);
   }
-  const n = parseFloat(s);
-  return isNaN(n) ? 0 : Math.round(n * 60);
+  // 開始時刻＝終了時刻のとき24時間になる場合は0として扱う
+  return result >= 1440 ? 0 : result;
 }
 
 function formatMinutes(min: number): string {
