@@ -39,9 +39,15 @@ interface ServiceCategory {
 
 interface ServiceTypeMapping {
   id: string;
+  service_code: string;
   service_name: string;
   category_id: string;
   service_categories?: { name: string };
+}
+
+interface UnmappedService {
+  service_code: string;
+  service_name: string;
 }
 
 interface CategoryHourlyRate {
@@ -176,40 +182,57 @@ function CategoriesTab() {
 function MappingsTab() {
   const [mappings, setMappings] = useState<ServiceTypeMapping[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [unmappedNames, setUnmappedNames] = useState<string[]>([]);
+  const [unmapped, setUnmapped] = useState<UnmappedService[]>([]);
   const [isOpen, setIsOpen] = useState(false);
-  const [form, setForm] = useState({ service_name: "", category_id: "" });
+  const [form, setForm] = useState({
+    service_code: "",
+    service_name: "",
+    category_id: "",
+  });
+  const importInputRef = useCallback((node: HTMLInputElement | null) => {
+    if (node) node.value = "";
+  }, []);
 
   const fetchData = useCallback(async () => {
     const [mapRes, catRes, svcRes] = await Promise.all([
       supabase
         .from("service_type_mappings")
         .select("*, service_categories(name)")
-        .order("service_name"),
+        .order("service_code"),
       supabase.from("service_categories").select("*").order("sort_order"),
+      // CSVから取り込んだサービスコードとサービス型の一覧を取得
       supabase
         .from("service_records")
-        .select("service_category")
+        .select("service_code, service_category")
         .limit(10000),
     ]);
     if (mapRes.data) setMappings(mapRes.data);
     if (catRes.data) setCategories(catRes.data);
 
-    // CSV内のサービス型でまだマッピングされていないものを検出
+    // 未マッピングのサービスコードを検出
     if (svcRes.data && mapRes.data) {
-      const mappedNames = new Set(
-        mapRes.data.map((m: ServiceTypeMapping) => m.service_name)
+      const mappedCodes = new Set(
+        mapRes.data.map((m: ServiceTypeMapping) => m.service_code)
       );
-      const allNames = [
-        ...new Set(
-          svcRes.data.map(
-            (r: { service_category: string }) => r.service_category
-          )
-        ),
-      ].filter((n): n is string => typeof n === "string" && n.trim() !== "");
-      setUnmappedNames(
-        allNames.filter((n) => !mappedNames.has(n)).sort()
-      );
+      // サービスコード→サービス名のマップを構築（重複排除）
+      const codeNameMap = new Map<string, string>();
+      for (const r of svcRes.data) {
+        const code = (r as { service_code: string; service_category: string })
+          .service_code;
+        const name = (r as { service_code: string; service_category: string })
+          .service_category;
+        if (code && code.trim() && !codeNameMap.has(code)) {
+          codeNameMap.set(code, name || "");
+        }
+      }
+      const unmappedList: UnmappedService[] = [];
+      for (const [code, name] of codeNameMap) {
+        if (!mappedCodes.has(code)) {
+          unmappedList.push({ service_code: code, service_name: name });
+        }
+      }
+      unmappedList.sort((a, b) => a.service_code.localeCompare(b.service_code));
+      setUnmapped(unmappedList);
     }
   }, []);
 
@@ -218,19 +241,21 @@ function MappingsTab() {
   }, [fetchData]);
 
   const handleAdd = async () => {
-    if (!form.service_name || !form.category_id) {
-      toast.error("サービス名と類型を選択してください");
+    if (!form.service_code || !form.category_id) {
+      toast.error("サービスコードと類型を入力してください");
       return;
     }
-    const { error } = await supabase
-      .from("service_type_mappings")
-      .insert(form);
+    const { error } = await supabase.from("service_type_mappings").insert({
+      service_code: form.service_code,
+      service_name: form.service_name,
+      category_id: form.category_id,
+    });
     if (error) {
       toast.error(`エラー: ${error.message}`);
       return;
     }
     toast.success("マッピングを追加しました");
-    setForm({ service_name: "", category_id: "" });
+    setForm({ service_code: "", service_name: "", category_id: "" });
     setIsOpen(false);
     fetchData();
   };
@@ -249,32 +274,141 @@ function MappingsTab() {
     fetchData();
   };
 
-  const handleQuickMap = async (serviceName: string, categoryId: string) => {
-    const { error } = await supabase
-      .from("service_type_mappings")
-      .insert({ service_name: serviceName, category_id: categoryId });
+  const handleQuickMap = async (svc: UnmappedService, categoryId: string) => {
+    const { error } = await supabase.from("service_type_mappings").insert({
+      service_code: svc.service_code,
+      service_name: svc.service_name,
+      category_id: categoryId,
+    });
     if (error) {
       toast.error(`エラー: ${error.message}`);
       return;
     }
-    toast.success(`「${serviceName}」をマッピングしました`);
+    toast.success(`${svc.service_code} をマッピングしました`);
     fetchData();
+  };
+
+  // CSVエクスポート
+  const handleExport = () => {
+    const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
+    const header = "サービスコード,サービス名,類型\n";
+    const rows = mappings
+      .map(
+        (m) =>
+          `${m.service_code},${m.service_name},${categoryMap.get(m.category_id) || ""}`
+      )
+      .join("\n");
+    const bom = "\uFEFF";
+    const blob = new Blob([bom + header + rows], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "service_mappings.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // CSVインポート（上書き）
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l);
+
+    // ヘッダ行をスキップ
+    const dataLines = lines.slice(1);
+    if (dataLines.length === 0) {
+      toast.error("データ行がありません");
+      return;
+    }
+
+    // 類型名→IDのマップ
+    const categoryNameMap = new Map(categories.map((c) => [c.name, c.id]));
+
+    const newMappings: {
+      service_code: string;
+      service_name: string;
+      category_id: string;
+    }[] = [];
+    const errors: string[] = [];
+
+    for (let i = 0; i < dataLines.length; i++) {
+      const cols = dataLines[i].split(",");
+      if (cols.length < 3) {
+        errors.push(`行${i + 2}: カラム数が不足`);
+        continue;
+      }
+      const code = cols[0].trim();
+      const name = cols[1].trim();
+      const catName = cols[2].trim();
+      const catId = categoryNameMap.get(catName);
+      if (!catId) {
+        errors.push(`行${i + 2}: 類型「${catName}」が見つかりません`);
+        continue;
+      }
+      newMappings.push({
+        service_code: code,
+        service_name: name,
+        category_id: catId,
+      });
+    }
+
+    if (errors.length > 0) {
+      toast.error(errors.join("\n"));
+      return;
+    }
+
+    if (
+      !confirm(
+        `既存のマッピングを全て削除して、${newMappings.length}件で上書きしますか？`
+      )
+    )
+      return;
+
+    // 全削除して再挿入
+    await supabase
+      .from("service_type_mappings")
+      .delete()
+      .neq("id", "00000000-0000-0000-0000-000000000000");
+
+    const { error } = await supabase
+      .from("service_type_mappings")
+      .insert(newMappings);
+    if (error) {
+      toast.error(`インポートエラー: ${error.message}`);
+      return;
+    }
+    toast.success(`${newMappings.length}件のマッピングをインポートしました`);
+    fetchData();
+    // inputをリセット
+    e.target.value = "";
   };
 
   return (
     <div className="space-y-4">
       {/* 未マッピング警告 */}
-      {unmappedNames.length > 0 && (
+      {unmapped.length > 0 && (
         <div className="border border-orange-200 bg-orange-50 rounded-md p-4 space-y-3">
           <p className="text-sm font-medium">
-            未マッピングのサービス型が {unmappedNames.length} 件あります
+            未マッピングのサービスコードが {unmapped.length} 件あります
           </p>
-          {unmappedNames.map((name) => (
-            <div key={name} className="flex items-center gap-2">
-              <Badge variant="secondary">{name}</Badge>
+          {unmapped.map((svc) => (
+            <div key={svc.service_code} className="flex items-center gap-2">
+              <Badge variant="secondary" className="font-mono">
+                {svc.service_code}
+              </Badge>
+              <span className="text-sm text-muted-foreground min-w-[100px]">
+                {svc.service_name}
+              </span>
               <Select
                 onValueChange={(v) => {
-                  if (v && typeof v === "string") handleQuickMap(name, v);
+                  if (v && typeof v === "string") handleQuickMap(svc, v);
                 }}
               >
                 <SelectTrigger className="w-[200px]">
@@ -295,57 +429,91 @@ function MappingsTab() {
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          CSVの「サービス型」と類型の紐付けを管理します
+          サービスコードと類型の紐付けを管理します
         </p>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger render={<Button />}>マッピング追加</DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>サービスマッピングを追加</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>サービス型名（CSVの値）</Label>
-                <Input
-                  value={form.service_name}
-                  onChange={(e) =>
-                    setForm({ ...form, service_name: e.target.value })
-                  }
-                  placeholder="例: 身体介護"
-                />
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExport}>
+            CSVエクスポート
+          </Button>
+          <label>
+            <Button
+              variant="outline"
+              onClick={() =>
+                document.getElementById("mapping-import")?.click()
+              }
+            >
+              CSVインポート（上書き）
+            </Button>
+            <input
+              id="mapping-import"
+              ref={importInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleImport}
+              className="hidden"
+            />
+          </label>
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger render={<Button />}>手動追加</DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>サービスマッピングを追加</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label>サービスコード</Label>
+                  <Input
+                    value={form.service_code}
+                    onChange={(e) =>
+                      setForm({ ...form, service_code: e.target.value })
+                    }
+                    placeholder="例: 111211"
+                  />
+                </div>
+                <div>
+                  <Label>サービス名</Label>
+                  <Input
+                    value={form.service_name}
+                    onChange={(e) =>
+                      setForm({ ...form, service_name: e.target.value })
+                    }
+                    placeholder="例: 身体介護"
+                  />
+                </div>
+                <div>
+                  <Label>類型</Label>
+                  <Select
+                    value={form.category_id}
+                    onValueChange={(v) =>
+                      setForm({ ...form, category_id: v ?? "" })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="類型を選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={handleAdd} className="w-full">
+                  追加
+                </Button>
               </div>
-              <div>
-                <Label>類型</Label>
-                <Select
-                  value={form.category_id}
-                  onValueChange={(v) =>
-                    setForm({ ...form, category_id: v ?? "" })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="類型を選択" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button onClick={handleAdd} className="w-full">
-                追加
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>CSVサービス型名</TableHead>
+            <TableHead>サービスコード</TableHead>
+            <TableHead>サービス名</TableHead>
             <TableHead>類型</TableHead>
             <TableHead className="w-[80px]">操作</TableHead>
           </TableRow>
@@ -354,7 +522,7 @@ function MappingsTab() {
           {mappings.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={3}
+                colSpan={4}
                 className="text-center text-muted-foreground"
               >
                 マッピングがありません
@@ -363,6 +531,7 @@ function MappingsTab() {
           ) : (
             mappings.map((m) => (
               <TableRow key={m.id}>
+                <TableCell className="font-mono">{m.service_code}</TableCell>
                 <TableCell>{m.service_name}</TableCell>
                 <TableCell>
                   <Badge variant="secondary">
