@@ -378,7 +378,7 @@ export default function PayrollPage() {
   const [otSettings, setOtSettings] = useState<Map<string, OvertimeSetting>>(new Map());
 
   useEffect(() => {
-    supabase.from("service_records").select("processing_month").then(({ data }) => {
+    supabase.from("service_records").select("processing_month").limit(100000).then(({ data }) => {
       if (!data) return;
       const unique = [...new Set(data.map((r: { processing_month: string }) => r.processing_month))].sort().reverse();
       setMonths(unique);
@@ -406,7 +406,8 @@ export default function PayrollPage() {
       const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes, otRes] = await Promise.all([
         supabase.from("service_records")
           .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
-          .eq("processing_month", selectedMonth),
+          .eq("processing_month", selectedMonth)
+          .limit(100000),
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price"),
