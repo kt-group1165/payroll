@@ -366,7 +366,7 @@ function countNoteKeyword(attDays: AttendanceRecord[], keyword: string): number 
 export default function PayrollPage() {
   const [months, setMonths] = useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("");
-  const [tab, setTab] = useState<"hourly" | "monthly">("hourly");
+  const [tab, setTab] = useState<"hourly" | "monthly">("monthly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
