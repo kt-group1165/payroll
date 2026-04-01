@@ -113,6 +113,7 @@ type Employee = {
   effective_service_months: number;
   office_id: string;
   social_insurance: boolean;
+  paid_leave_unit_price: number;
 };
 
 type SalarySettings = {
@@ -163,6 +164,7 @@ type HourlyPayroll = {
   effective_service_months: number;
   care_plan_count: number;  // 居宅介護支援：担当要介護プラン相当件数（手動入力）
   treatment_subsidy: number;
+  paid_leave_allowance: number;
   cancel_count: number;
   cancel_allowance: number;
   records: HourlyDetailRow[];
@@ -473,7 +475,7 @@ export default function PayrollPage() {
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance").neq("employment_status", "退職者"),
+        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
@@ -580,6 +582,7 @@ export default function PayrollPage() {
         empId: e.id,
         officeId: e.office_id,
         socialInsurance: e.social_insurance ?? false,
+        paidLeaveUnitPrice: e.paid_leave_unit_price ?? 0,
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
@@ -601,6 +604,7 @@ export default function PayrollPage() {
           return catId ? categoryMap.get(catId) === "キャンセル" : false;
         }).length;
         const cancelAllowance = Math.round(cancelCount * (empOffice?.cancel_unit_price ?? 0));
+        const paidLeaveAllowance = Math.round(empSummary.paidLeave * (info?.paidLeaveUnitPrice ?? 0));
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
           employee_name: firstRec?.employee_name ?? empNum,
@@ -610,6 +614,7 @@ export default function PayrollPage() {
           effective_service_months: info?.serviceMonths ?? 0,
           care_plan_count: 0,
           treatment_subsidy: treatmentSubsidy,
+          paid_leave_allowance: paidLeaveAllowance,
           cancel_count: cancelCount,
           cancel_allowance: cancelAllowance,
           records: [],
@@ -778,7 +783,7 @@ export default function PayrollPage() {
       e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
       e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
     );
-    return s + e.totalPay + tenure + e.treatment_subsidy + e.cancel_allowance;
+    return s + e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance;
   }, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
   const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p, otSettings), 0);
@@ -871,6 +876,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">実績給与</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
                         <th className="text-right px-3 py-3 font-medium">処遇補助金</th>
+                        <th className="text-right px-3 py-3 font-medium">有給手当</th>
                         <th className="text-right px-3 py-3 font-medium">キャンセル手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="text-center px-3 py-3 font-medium">注記</th>
@@ -884,7 +890,7 @@ export default function PayrollPage() {
                           emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
                           sm.workHoursMin, sm.recordCount, emp.care_plan_count
                         );
-                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.cancel_allowance;
+                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance;
                         return (
                           <>
                             <tr
@@ -917,6 +923,7 @@ export default function PayrollPage() {
                                   : <span className="text-muted-foreground text-xs">—</span>}
                               </td>
                               <td className="px-3 py-2 text-right">{emp.treatment_subsidy > 0 ? yen(emp.treatment_subsidy) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{emp.paid_leave_allowance > 0 ? yen(emp.paid_leave_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
@@ -930,7 +937,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={20} className="px-8 py-3">
+                                <td colSpan={21} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -1005,6 +1012,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
                         <td className="px-3 py-2 text-right">{hourlyTenureTotal > 0 ? yen(hourlyTenureTotal) : "—"}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.treatment_subsidy, 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.paid_leave_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
                         <td></td>
