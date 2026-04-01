@@ -98,7 +98,7 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number };
+type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -112,6 +112,7 @@ type Employee = {
   job_type: string;
   effective_service_months: number;
   office_id: string;
+  social_insurance: boolean;
 };
 
 type SalarySettings = {
@@ -460,9 +461,9 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price"),
+        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id").neq("employment_status", "退職者"),
+        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
@@ -567,6 +568,8 @@ export default function PayrollPage() {
         jobType: e.job_type ?? "",
         serviceMonths: adjustedMonths(e.effective_service_months ?? 0),
         empId: e.id,
+        officeId: e.office_id,
+        socialInsurance: e.social_insurance ?? false,
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
@@ -576,6 +579,13 @@ export default function PayrollPage() {
         const empRecs = recsByEmp.get(empNum) ?? [];
         const firstRec = empRecs[0];
         const sal = info ? salMap.get(info.empId) : null;
+        const empSummary = computeSummary(empNum, empRecs);
+        const empOffice = officeByIdMap.get(info?.officeId ?? "");
+        const isVisitCare = info?.jobType === "訪問介護";
+        const hasSocialInsurance = info?.socialInsurance ?? false;
+        const treatmentSubsidy = (isVisitCare && hasSocialInsurance && empSummary.visitMinutes > 0)
+          ? (empOffice?.treatment_subsidy_amount ?? 0)
+          : (sal?.treatment_subsidy ?? 0);
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
           employee_name: firstRec?.employee_name ?? empNum,
@@ -584,12 +594,12 @@ export default function PayrollPage() {
           job_type: info?.jobType ?? "",
           effective_service_months: info?.serviceMonths ?? 0,
           care_plan_count: 0,
-          treatment_subsidy: sal?.treatment_subsidy ?? 0,
+          treatment_subsidy: treatmentSubsidy,
           records: [],
           totalMinutes: 0,
           totalPay: 0,
           unmappedCount: 0,
-          summary: computeSummary(empNum, empRecs),
+          summary: empSummary,
         });
       }
 

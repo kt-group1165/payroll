@@ -30,8 +30,9 @@ export interface Office {
   address: string;
   office_type: OfficeType;
   work_week_start: number;  // 0=日, 1=月, ..., 6=土
-  travel_unit_price: number;  // 出張手当単価（円/km）
-  commute_unit_price: number; // 通勤手当単価（円/km）
+  travel_unit_price: number;       // 出張手当単価（円/km）
+  commute_unit_price: number;      // 通勤手当単価（円/km）
+  treatment_subsidy_amount: number; // 処遇改善補助金手当（社保加入者・月額）
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +60,7 @@ export interface Employee {
   hourly_rate_visit: number | null;
   transport_type: string;
   has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
+  social_insurance: boolean;        // 社会保険加入
   created_at: string;
   updated_at: string;
 }

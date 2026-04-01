@@ -52,6 +52,7 @@ export default function OfficesPage() {
     work_week_start: 0,
     travel_unit_price: 0,
     commute_unit_price: 0,
+    treatment_subsidy_amount: 0,
   });
 
   const fetchOffices = useCallback(async () => {
@@ -95,6 +96,7 @@ export default function OfficesPage() {
           work_week_start: form.work_week_start,
           travel_unit_price: form.travel_unit_price,
           commute_unit_price: form.commute_unit_price,
+          treatment_subsidy_amount: form.treatment_subsidy_amount,
         })
         .eq("id", editingId);
       if (error) {
@@ -125,6 +127,7 @@ export default function OfficesPage() {
       work_week_start: office.work_week_start ?? 0,
       travel_unit_price: office.travel_unit_price ?? 0,
       commute_unit_price: office.commute_unit_price ?? 0,
+      treatment_subsidy_amount: office.treatment_subsidy_amount ?? 0,
     });
     setEditingId(office.id);
     setIsOpen(true);
@@ -254,6 +257,17 @@ export default function OfficesPage() {
                   }
                 />
               </div>
+              <div>
+                <Label>処遇改善補助金手当（円/月・社保加入者）</Label>
+                <Input
+                  type="number" min={0}
+                  value={form.treatment_subsidy_amount || ""}
+                  placeholder="0"
+                  onChange={(e) =>
+                    setForm({ ...form, treatment_subsidy_amount: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
               <Button onClick={handleSubmit} className="w-full">
                 {editingId ? "更新" : "登録"}
               </Button>
@@ -271,6 +285,7 @@ export default function OfficesPage() {
             <TableHead>週起算</TableHead>
             <TableHead className="text-right">出張単価</TableHead>
             <TableHead className="text-right">通勤単価</TableHead>
+            <TableHead className="text-right">処遇補助金</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -297,6 +312,9 @@ export default function OfficesPage() {
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.commute_unit_price ? `${office.commute_unit_price}円/km` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.treatment_subsidy_amount ? `${office.treatment_subsidy_amount}円` : "—"}
                 </TableCell>
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>
