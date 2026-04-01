@@ -835,9 +835,9 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝同行時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝手当</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">算定時間</th>
+                        <th className="text-right px-3 py-3 font-medium">土日祝手当</th>
                         <th className="text-right px-3 py-3 font-medium">実績給与</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
@@ -878,9 +878,9 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{formatMinutes(sm.visitMinutes)}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? formatMinutes(sm.weekendHolidayMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayAccompaniedMinutes > 0 ? formatMinutes(sm.weekendHolidayAccompaniedMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(Math.round(sm.weekendHolidayMinutes / 60 * 100)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
+                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(Math.round(sm.weekendHolidayMinutes / 60 * 100)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{yen(emp.totalPay)}</td>
                               <td className="px-3 py-2 text-right">
                                 {tenure > 0
@@ -971,9 +971,9 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayAccompaniedMinutes, 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + Math.round(e.summary.weekendHolidayMinutes / 60 * 100), 0))}</td>
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.hrdCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyGrandMinutes)}</td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + Math.round(e.summary.weekendHolidayMinutes / 60 * 100), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
                         <td className="px-3 py-2 text-right">{hourlyTenureTotal > 0 ? yen(hourlyTenureTotal) : "—"}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
