@@ -37,6 +37,7 @@ export interface Employee {
   id: string;
   employee_number: string;
   name: string;
+  address: string;
   office_id: string;
   job_type: JobType;   // 職種（訪問介護、訪問入浴 等）
   role_type: RoleType; // 役職（管理者、提責、社員、パート、事務員）
