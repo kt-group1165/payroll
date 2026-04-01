@@ -21,7 +21,7 @@ export type RoleType =
 /** 給与形態 */
 export type SalaryType = "月給" | "時給";
 
-export type ImportType = "meisai" | "attendance";
+export type ImportType = "meisai" | "attendance" | "office_form";
 
 export interface Office {
   id: string;
@@ -148,6 +148,25 @@ export interface AttendanceRecord {
   created_at: string;
 }
 
+export interface OfficeFormRecord {
+  id: string;
+  import_batch_id: string;
+  office_number: string;
+  employee_number: string;
+  processing_month: string;
+  record_type: "leave" | "training" | "km" | "childcare";
+  item_name: string;
+  item_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  break_time: string | null;
+  numeric_value: number | null;
+  year_month: string | null;
+  child_name: string | null;
+  amount: number | null;
+  created_at: string;
+}
+
 export interface ImportBatch {
   id: string;
   import_type: ImportType;
@@ -187,6 +206,11 @@ export interface Database {
         Row: AttendanceRecord;
         Insert: Omit<AttendanceRecord, "id" | "created_at">;
         Update: Partial<Omit<AttendanceRecord, "id" | "created_at">>;
+      };
+      office_form_records: {
+        Row: OfficeFormRecord;
+        Insert: Omit<OfficeFormRecord, "id" | "created_at">;
+        Update: Partial<Omit<OfficeFormRecord, "id" | "created_at">>;
       };
       import_batches: {
         Row: ImportBatch;

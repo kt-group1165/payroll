@@ -85,6 +85,22 @@ export interface ParsedAttendance {
   };
 }
 
+export interface OfficeFormRecord {
+  office_number: string;
+  employee_number: string;
+  processing_month: string;  // YYYYMM
+  record_type: "leave" | "training" | "km" | "childcare";
+  item_name: string;
+  item_date?: string;         // M/D 形式 (leave / training)
+  start_time?: string;        // training
+  end_time?: string;          // training
+  break_time?: string;        // training
+  numeric_value?: number;     // km
+  year_month?: string;        // childcare
+  child_name?: string;        // childcare
+  amount?: number;            // childcare
+}
+
 export interface CsvParseResult<T> {
   success: boolean;
   data: T[];

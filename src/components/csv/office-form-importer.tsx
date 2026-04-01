@@ -1,0 +1,287 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { FileDropzone } from "./file-dropzone";
+import { parseOfficeFormFile } from "@/lib/csv/office-form-parser";
+import type { OfficeFormRecord, CsvParseResult } from "@/types/csv";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
+
+const RECORD_TYPE_LABELS: Record<string, string> = {
+  leave:     "休暇",
+  training:  "研修",
+  km:        "km",
+  childcare: "育児手当",
+};
+
+export function OfficeFormImporter() {
+  const [files, setFiles] = useState<File[]>([]);
+  const [results, setResults] = useState<CsvParseResult<OfficeFormRecord>[]>([]);
+  const [allData, setAllData] = useState<OfficeFormRecord[]>([]);
+  const [isParsing, setIsParsing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [imported, setImported] = useState(false);
+  const [existingMonths, setExistingMonths] = useState<{ month: string; count: number }[]>([]);
+
+  const fetchExistingMonths = useCallback(async () => {
+    const { data } = await supabase.from("office_form_records").select("processing_month");
+    if (!data) return;
+    const countMap = new Map<string, number>();
+    for (const r of data as { processing_month: string }[]) {
+      countMap.set(r.processing_month, (countMap.get(r.processing_month) ?? 0) + 1);
+    }
+    const sorted = [...countMap.entries()]
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+    setExistingMonths(sorted);
+  }, []);
+
+  useEffect(() => { fetchExistingMonths(); }, [fetchExistingMonths]);
+
+  const handleClearMonth = async (month: string, count: number) => {
+    const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+    if (!confirm(`${label}の事業所書式データ（${count}件）を削除しますか？`)) return;
+    const { error } = await supabase
+      .from("office_form_records")
+      .delete()
+      .eq("processing_month", month);
+    if (error) { toast.error(`削除エラー: ${error.message}`); return; }
+    toast.success(`${label}のデータを削除しました`);
+    fetchExistingMonths();
+  };
+
+  const handleFilesSelected = async (newFiles: File[]) => {
+    setIsParsing(true);
+    setImported(false);
+    const all: OfficeFormRecord[] = [];
+    const res: CsvParseResult<OfficeFormRecord>[] = [];
+    for (const f of newFiles) {
+      const r = await parseOfficeFormFile(f);
+      res.push(r);
+      all.push(...r.data);
+    }
+    setFiles((prev) => [...prev, ...newFiles]);
+    setResults((prev) => [...prev, ...res]);
+    setAllData((prev) => [...prev, ...all]);
+    setIsParsing(false);
+  };
+
+  const handleClear = () => {
+    setFiles([]);
+    setResults([]);
+    setAllData([]);
+    setImported(false);
+  };
+
+  const handleImport = async () => {
+    if (allData.length === 0) return;
+    setIsImporting(true);
+
+    try {
+      const processingMonth = allData[0]?.processing_month ?? "";
+      const officeNumber    = allData[0]?.office_number ?? "";
+
+      const { data: batch, error: batchError } = await supabase
+        .from("import_batches")
+        .insert({
+          import_type: "office_form" as const,
+          file_names: files.map((f) => f.name),
+          record_count: allData.length,
+          processing_month: processingMonth,
+          office_number: officeNumber,
+          status: "pending" as const,
+        })
+        .select()
+        .single();
+
+      if (batchError || !batch) {
+        toast.error(`バッチ作成エラー: ${batchError?.message}`);
+        return;
+      }
+
+      const chunkSize = 500;
+      for (let i = 0; i < allData.length; i += chunkSize) {
+        const chunk = allData.slice(i, i + chunkSize);
+        const records = chunk.map((r) => ({
+          import_batch_id: batch.id,
+          office_number: r.office_number,
+          employee_number: r.employee_number,
+          processing_month: r.processing_month,
+          record_type: r.record_type,
+          item_name: r.item_name,
+          item_date: r.item_date ?? null,
+          start_time: r.start_time ?? null,
+          end_time: r.end_time ?? null,
+          break_time: r.break_time ?? null,
+          numeric_value: r.numeric_value ?? null,
+          year_month: r.year_month ?? null,
+          child_name: r.child_name ?? null,
+          amount: r.amount ?? null,
+        }));
+
+        const { error: insertError } = await supabase
+          .from("office_form_records")
+          .insert(records);
+
+        if (insertError) {
+          await supabase
+            .from("import_batches")
+            .update({ status: "error" as const, error_message: insertError.message })
+            .eq("id", batch.id);
+          toast.error(`登録エラー: ${insertError.message}`);
+          return;
+        }
+      }
+
+      await supabase
+        .from("import_batches")
+        .update({ status: "completed" as const })
+        .eq("id", batch.id);
+
+      setImported(true);
+      toast.success(`${allData.length}件の事業所書式データを登録しました`);
+      fetchExistingMonths();
+    } catch (e) {
+      toast.error(`エラー: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const totalErrors = results.reduce((sum, r) => sum + r.errors.length, 0);
+  const processingMonth = allData[0]?.processing_month;
+  const monthLabel = processingMonth
+    ? `${processingMonth.slice(0, 4)}年${parseInt(processingMonth.slice(4, 6), 10)}月`
+    : "";
+
+  const preview = allData.slice(0, 100);
+
+  return (
+    <div className="space-y-4">
+      {/* 取り込み済みデータ */}
+      {existingMonths.length > 0 && (
+        <div className="border rounded-md p-4 space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
+          <div className="flex flex-wrap gap-2">
+            {existingMonths.map(({ month, count }) => {
+              const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+              return (
+                <div key={month} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
+                  <span>{label}（{count.toLocaleString()}件）</span>
+                  <button
+                    onClick={() => handleClearMonth(month, count)}
+                    className="text-destructive hover:text-destructive/80 ml-1 text-xs font-medium"
+                  >
+                    削除
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <FileDropzone
+        onFilesSelected={handleFilesSelected}
+        label="事業所書式CSVファイルをドロップ"
+        description="事業所書式CSVファイルを選択またはドラッグ&ドロップ（複数可）"
+      />
+
+      {files.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            {results.map((r, i) => (
+              <Badge key={i} variant={r.errors.length > 0 ? "destructive" : "secondary"}>
+                {r.fileName} ({r.data.length}件)
+              </Badge>
+            ))}
+            <Button variant="ghost" size="sm" onClick={handleClear}>クリア</Button>
+          </div>
+
+          {totalErrors > 0 && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                {results.filter((r) => r.errors.length > 0).map((r) =>
+                  r.errors.map((e, i) => (
+                    <div key={`${r.fileName}-${i}`}>{r.fileName}: {e}</div>
+                  ))
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {allData.length > 0 && (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {isParsing ? "解析中..." : `${allData.length}件（${monthLabel}）`}
+                </p>
+                <Button onClick={handleImport} disabled={isImporting || imported}>
+                  {isImporting ? "登録中..." : imported ? "登録済み" : "データベースに登録"}
+                </Button>
+              </div>
+
+              <ScrollArea className="h-[400px] border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>社員番号</TableHead>
+                      <TableHead>種別</TableHead>
+                      <TableHead>項目名</TableHead>
+                      <TableHead>日付</TableHead>
+                      <TableHead>開始</TableHead>
+                      <TableHead>終了</TableHead>
+                      <TableHead className="text-right">数値</TableHead>
+                      <TableHead>年月</TableHead>
+                      <TableHead>金額</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {preview.map((r, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-xs font-mono">{r.employee_number}</TableCell>
+                        <TableCell className="text-xs">
+                          <span className="px-1.5 py-0.5 rounded-full bg-muted text-xs">
+                            {RECORD_TYPE_LABELS[r.record_type]}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-xs">{r.item_name}</TableCell>
+                        <TableCell className="text-xs">{r.item_date ?? "—"}</TableCell>
+                        <TableCell className="text-xs">{r.start_time ?? "—"}</TableCell>
+                        <TableCell className="text-xs">{r.end_time ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-right">
+                          {r.numeric_value != null ? r.numeric_value.toLocaleString() : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs">{r.year_month ?? "—"}</TableCell>
+                        <TableCell className="text-xs">
+                          {r.amount != null ? r.amount.toLocaleString() + "円" : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {allData.length > 100 && (
+                  <p className="p-2 text-center text-sm text-muted-foreground">
+                    ...他 {allData.length - 100}件（プレビューは先頭100件）
+                  </p>
+                )}
+              </ScrollArea>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

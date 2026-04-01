@@ -37,6 +37,16 @@ type AttendanceRecord = {
   work_hours: string;
 };
 
+type OfficeFormRecord = {
+  employee_number: string;
+  record_type: string;
+  item_name: string;
+  item_date: string | null;
+  numeric_value: number | null;
+  start_time: string | null;
+  end_time: string | null;
+};
+
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
 type Office              = { id: string; office_number: string; name: string };
@@ -78,6 +88,7 @@ type AttendanceSummary = {
   workDays: number;
   helperDays: number;
   paidLeave: number;
+  halfLeave: number;
   specialLeave: number;
   workHoursMin: number;
   recordCount: number;
@@ -322,7 +333,7 @@ export default function PayrollPage() {
       const monthOffset = (year * 12 + month) - (TENURE_BASE_YEAR * 12 + TENURE_BASE_MONTH);
       const adjustedMonths = (m: number) => Math.max(0, m + monthOffset);
 
-      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes] = await Promise.all([
+      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes] = await Promise.all([
         supabase.from("service_records")
           .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
           .eq("processing_month", selectedMonth),
@@ -335,6 +346,9 @@ export default function PayrollPage() {
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours")
           .eq("year", year).eq("month", month),
+        supabase.from("office_form_records")
+          .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
+          .eq("processing_month", selectedMonth),
       ]);
 
       const records    = (recRes.data ?? []) as ServiceRecord[];
@@ -345,8 +359,9 @@ export default function PayrollPage() {
       const employees  = (empRes.data ?? []) as Employee[];
       const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));
       const attRecords = (attRes.data ?? []) as AttendanceRecord[];
+      const ofRecords  = (ofRes.data ?? []) as OfficeFormRecord[];
 
-      // 出勤簿・実績を職員番号でグループ化
+      // 出勤簿・実績・事業所書式を職員番号でグループ化
       const attByEmp = new Map<string, AttendanceRecord[]>();
       for (const ar of attRecords) {
         if (!attByEmp.has(ar.employee_number)) attByEmp.set(ar.employee_number, []);
@@ -357,10 +372,16 @@ export default function PayrollPage() {
         if (!recsByEmp.has(r.employee_number)) recsByEmp.set(r.employee_number, []);
         recsByEmp.get(r.employee_number)!.push(r);
       }
+      const ofByEmp = new Map<string, OfficeFormRecord[]>();
+      for (const r of ofRecords) {
+        if (!ofByEmp.has(r.employee_number)) ofByEmp.set(r.employee_number, []);
+        ofByEmp.get(r.employee_number)!.push(r);
+      }
 
       // 勤怠サマリー計算
       function computeSummary(empNum: string, empRecs: ServiceRecord[]): AttendanceSummary {
         const attDays = attByEmp.get(empNum) ?? [];
+        const ofRecs  = ofByEmp.get(empNum) ?? [];
 
         // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
         const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -373,15 +394,18 @@ export default function PayrollPage() {
         );
         const workDays = new Set([...helperDayNums, ...attWorkDayNums]).size;
 
-        const paidLeave    = countNoteKeyword(attDays, "有");
-        const specialLeave = countNoteKeyword(attDays, "特休");
-        const hrdCount     = countNoteKeyword(attDays, "HRD");
+        // 有給・半有給・特休・HRDは事業所書式から取得
+        const paidLeave    = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "有給").length;
+        const halfLeave    = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "半有給").length;
+        const specialLeave = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "特休").length;
+        const hrdCount     = ofRecs.filter((r) => r.record_type === "training" && r.item_name === "HRD研修").length;
+
         const workHoursMin = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
         const recordCount  = empRecs.length;
         const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
         const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-        return { workDays, helperDays, paidLeave, specialLeave, workHoursMin, recordCount, accompaniedCount, visitMinutes, hrdCount };
+        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, recordCount, accompaniedCount, visitMinutes, hrdCount };
       }
 
       // 時給者
@@ -484,7 +508,7 @@ export default function PayrollPage() {
     const label = formatProcessingMonth(selectedMonth).replace(/\s/g, "");
     const rows: string[][] = [[
       "職員番号","職員名","役職",
-      "出勤日数","ヘルパー日数","有給","特休欠勤","出勤時間",
+      "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
       "合計算定時間(分)","合計算定時間","実績給与(円)","勤続手当(円)","合計(円)",
     ]];
@@ -496,7 +520,7 @@ export default function PayrollPage() {
       );
       rows.push([
         e.employee_number, e.employee_name, e.role_type,
-        String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.specialLeave),
+        String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.halfLeave), String(s.specialLeave),
         formatWorkHours(s.workHoursMin),
         String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), String(s.hrdCount),
         String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay), String(tenure), String(e.totalPay + tenure),
@@ -509,7 +533,7 @@ export default function PayrollPage() {
     const label = formatProcessingMonth(selectedMonth).replace(/\s/g, "");
     const rows: string[][] = [[
       "職員番号","職員名","役職",
-      "出勤日数","ヘルパー日数","有給","特休欠勤","出勤時間",
+      "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
@@ -522,7 +546,7 @@ export default function PayrollPage() {
       const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
       rows.push([
         p.employee_number, p.employee_name, p.role_type,
-        String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.specialLeave),
+        String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.halfLeave), String(sm.specialLeave),
         formatWorkHours(sm.workHoursMin),
         String(sm.recordCount), String(sm.accompaniedCount), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
         String(s?.base_personal_salary ?? 0),
@@ -629,12 +653,12 @@ export default function PayrollPage() {
                   <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted w-24">職員番号</th>
-                        <th className="text-left px-3 py-3 font-medium sticky left-24 z-20 bg-muted">職員名</th>
+                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted">職員番号 / 職員名</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">半有給</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
@@ -664,12 +688,17 @@ export default function PayrollPage() {
                               className="border-b hover:bg-muted/30 cursor-pointer"
                               onClick={() => setExpandedEmp(expandedEmp === emp.employee_number ? null : emp.employee_number)}
                             >
-                              <td className="px-3 py-2 font-mono text-xs sticky left-0 z-10 bg-background w-24">{emp.employee_number}</td>
-                              <td className="px-3 py-2 font-medium sticky left-24 z-10 bg-background">{emp.employee_name}</td>
+                              <td className="px-3 py-2 sticky left-0 z-10 bg-background">
+                                <div className="flex flex-col">
+                                  <span className="font-mono text-xs text-muted-foreground">{emp.employee_number}</span>
+                                  <span className="font-medium">{emp.employee_name}</span>
+                                </div>
+                              </td>
                               <td className="px-3 py-2"><RoleBadge role={emp.role_type} /></td>
                               <td className="px-3 py-2 text-right">{sm.workDays}</td>
                               <td className="px-3 py-2 text-right">{sm.helperDays}</td>
                               <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.halfLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
                               <td className="px-3 py-2 text-right">{sm.recordCount}</td>
@@ -777,12 +806,12 @@ export default function PayrollPage() {
                   <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted w-24">職員番号</th>
-                        <th className="text-left px-3 py-3 font-medium sticky left-24 z-20 bg-muted">職員名</th>
+                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted">職員番号 / 職員名</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">半有給</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
@@ -822,12 +851,17 @@ export default function PayrollPage() {
                               className="border-b hover:bg-muted/30 cursor-pointer"
                               onClick={() => setExpandedMonthly(isExpanded ? null : p.employee_id)}
                             >
-                              <td className="px-3 py-2 font-mono text-xs sticky left-0 z-10 bg-background w-24">{p.employee_number}</td>
-                              <td className="px-3 py-2 font-medium sticky left-24 z-10 bg-background">{p.employee_name}</td>
+                              <td className="px-3 py-2 sticky left-0 z-10 bg-background">
+                                <div className="flex flex-col">
+                                  <span className="font-mono text-xs text-muted-foreground">{p.employee_number}</span>
+                                  <span className="font-medium">{p.employee_name}</span>
+                                </div>
+                              </td>
                               <td className="px-3 py-2"><RoleBadge role={p.role_type} /></td>
                               <td className="px-3 py-2 text-right">{sm.workDays}</td>
                               <td className="px-3 py-2 text-right">{sm.helperDays || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.halfLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
                               <td className="px-3 py-2 text-right">{sm.recordCount || "—"}</td>

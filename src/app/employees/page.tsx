@@ -406,11 +406,28 @@ export default function EmployeesPage() {
     else toast.warning(`${success}件成功、${fail}件失敗`);
   }
 
-  // ─── フィルタ適用 ─────────────────────────────────────────────
+  // ─── フィルタ・ソート ──────────────────────────────────────────
 
-  const filteredEmployees = filterStatus === "全員"
+  type SortKey = "employee_number" | "name" | "employment_status" | "role_type" | "salary_type" | "hire_date" | "effective_service_months" | "address";
+  const [sortKey, setSortKey] = useState<SortKey>("employee_number");
+  const [sortAsc, setSortAsc] = useState(true);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc((v) => !v);
+    else { setSortKey(key); setSortAsc(true); }
+  };
+
+  const filteredEmployees = (filterStatus === "全員"
     ? employees
-    : employees.filter((e) => (e.employment_status ?? "在職者") === filterStatus);
+    : employees.filter((e) => (e.employment_status ?? "在職者") === filterStatus)
+  ).slice().sort((a, b) => {
+    const av = (a[sortKey] ?? "") as string | number;
+    const bv = (b[sortKey] ?? "") as string | number;
+    const cmp = typeof av === "number" && typeof bv === "number"
+      ? av - bv
+      : String(av).localeCompare(String(bv), "ja");
+    return sortAsc ? cmp : -cmp;
+  });
 
   // ─── 表示制御 ─────────────────────────────────────────────────
 
@@ -684,14 +701,29 @@ export default function EmployeesPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>社員番号</TableHead>
-            <TableHead>名前</TableHead>
-            <TableHead>在職区分</TableHead>
-            <TableHead>役職</TableHead>
-            <TableHead>給与形態</TableHead>
-            <TableHead>入社日</TableHead>
-            <TableHead>実勤続</TableHead>
-            <TableHead>住所</TableHead>
+            {(
+              [
+                { key: "employee_number", label: "社員番号" },
+                { key: "name",            label: "名前" },
+                { key: "employment_status", label: "在職区分" },
+                { key: "role_type",       label: "役職" },
+                { key: "salary_type",     label: "給与形態" },
+                { key: "hire_date",       label: "入社日" },
+                { key: "effective_service_months", label: "実勤続" },
+                { key: "address",         label: "住所" },
+              ] as { key: SortKey; label: string }[]
+            ).map(({ key, label }) => (
+              <TableHead
+                key={key}
+                className="cursor-pointer select-none hover:bg-muted/50"
+                onClick={() => handleSort(key)}
+              >
+                <span className="flex items-center gap-1">
+                  {label}
+                  {sortKey === key ? (sortAsc ? " ▲" : " ▼") : <span className="text-muted-foreground/30"> ↕</span>}
+                </span>
+              </TableHead>
+            ))}
             <TableHead className="w-[100px]">操作</TableHead>
           </TableRow>
         </TableHeader>
