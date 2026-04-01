@@ -39,10 +39,16 @@ type ServiceCategory = {
   name: string;
 };
 
+type Employee = {
+  employee_number: string;
+  role_type: string;
+};
+
 // 職員ごとの給与計算結果
 type EmployeePayroll = {
   employee_number: string;
   employee_name: string;
+  role_type: string; // 職員マスタから取得。未登録の場合は ""
   records: DetailRow[];
   totalMinutes: number;
   totalPay: number;
@@ -90,6 +96,41 @@ function formatYen(n: number): string {
   return n.toLocaleString("ja-JP") + "円";
 }
 
+/** "202503" → "2025年3月" */
+function formatProcessingMonth(m: string): string {
+  if (!m || m.length < 6) return m;
+  const year = m.slice(0, 4);
+  const month = parseInt(m.slice(4, 6), 10);
+  return `${year}年${month}月`;
+}
+
+/** "20250315" → "3/15" */
+function formatDate(d: string): string {
+  if (!d || d.length < 8) return d;
+  const month = parseInt(d.slice(4, 6), 10);
+  const day = parseInt(d.slice(6, 8), 10);
+  return `${month}/${day}`;
+}
+
+/** UTF-8 BOM付きCSVをダウンロード */
+function downloadCsv(filename: string, rows: string[][]): void {
+  const header = rows[0];
+  const body = rows.slice(1);
+  const escape = (v: string) =>
+    v.includes(",") || v.includes('"') || v.includes("\n")
+      ? `"${v.replace(/"/g, '""')}"`
+      : v;
+  const csv = [header, ...body].map((r) => r.map(escape).join(",")).join("\r\n");
+  const bom = "\uFEFF";
+  const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── メインコンポーネント ─────────────────────────────────────
 
 export default function PayrollPage() {
@@ -107,7 +148,13 @@ export default function PayrollPage() {
       .select("processing_month")
       .then(({ data }) => {
         if (!data) return;
-        const unique = [...new Set(data.map((r: { processing_month: string }) => r.processing_month))].sort().reverse();
+        const unique = [
+          ...new Set(
+            data.map((r: { processing_month: string }) => r.processing_month)
+          ),
+        ]
+          .sort()
+          .reverse();
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
@@ -125,7 +172,9 @@ export default function PayrollPage() {
       // 1. サービス実績を取得
       const { data: records, error: e1 } = await supabase
         .from("service_records")
-        .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number")
+        .select(
+          "id,employee_number,employee_name,service_date,calc_duration,service_code,office_number"
+        )
         .eq("processing_month", selectedMonth);
       if (e1) throw e1;
       if (!records || records.length === 0) {
@@ -139,7 +188,9 @@ export default function PayrollPage() {
         .select("service_code,category_id");
       if (e2) throw e2;
       const mappingMap = new Map<string, string>(); // service_code → category_id
-      (mappings as ServiceTypeMapping[] ?? []).forEach((m) => mappingMap.set(m.service_code, m.category_id));
+      (mappings as ServiceTypeMapping[] ?? []).forEach((m) =>
+        mappingMap.set(m.service_code, m.category_id)
+      );
 
       // 3. サービス類型名取得
       const { data: categories, error: e3 } = await supabase
@@ -147,7 +198,9 @@ export default function PayrollPage() {
         .select("id,name");
       if (e3) throw e3;
       const categoryMap = new Map<string, string>(); // id → name
-      (categories as ServiceCategory[] ?? []).forEach((c) => categoryMap.set(c.id, c.name));
+      (categories as ServiceCategory[] ?? []).forEach((c) =>
+        categoryMap.set(c.id, c.name)
+      );
 
       // 4. 事業所一覧取得
       const { data: offices, error: e4 } = await supabase
@@ -155,7 +208,9 @@ export default function PayrollPage() {
         .select("id,office_number,name");
       if (e4) throw e4;
       const officeMap = new Map<string, string>(); // office_number → office_id
-      (offices as Office[] ?? []).forEach((o) => officeMap.set(o.office_number, o.id));
+      (offices as Office[] ?? []).forEach((o) =>
+        officeMap.set(o.office_number, o.id)
+      );
 
       // 5. 時給設定全件取得
       const { data: rates, error: e5 } = await supabase
@@ -167,7 +222,16 @@ export default function PayrollPage() {
         rateMap.set(`${r.office_id}:${r.category_id}`, r.hourly_rate);
       });
 
-      // 6. 職員ごとに集計
+      // 6. 職員マスタ取得（職種情報）
+      const { data: employees } = await supabase
+        .from("employees")
+        .select("employee_number,role_type");
+      const roleMap = new Map<string, string>(); // employee_number → role_type
+      (employees as Employee[] ?? []).forEach((e) =>
+        roleMap.set(e.employee_number, e.role_type)
+      );
+
+      // 7. 職員ごとに集計
       const empMap = new Map<string, EmployeePayroll>();
       for (const rec of records as ServiceRecord[]) {
         const key = rec.employee_number;
@@ -175,6 +239,7 @@ export default function PayrollPage() {
           empMap.set(key, {
             employee_number: rec.employee_number,
             employee_name: rec.employee_name,
+            role_type: roleMap.get(rec.employee_number) ?? "",
             records: [],
             totalMinutes: 0,
             totalPay: 0,
@@ -185,13 +250,20 @@ export default function PayrollPage() {
 
         const minutes = parseDurationMinutes(rec.calc_duration);
         const categoryId = mappingMap.get(rec.service_code) ?? null;
-        const categoryName = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
+        const categoryName = categoryId
+          ? (categoryMap.get(categoryId) ?? "不明")
+          : "未マッピング";
         const officeId = officeMap.get(rec.office_number) ?? null;
         const hourly_rate =
-          categoryId && officeId ? (rateMap.get(`${officeId}:${categoryId}`) ?? null) : null;
-        const pay = hourly_rate !== null ? Math.round((minutes / 60) * hourly_rate) : null;
+          categoryId && officeId
+            ? (rateMap.get(`${officeId}:${categoryId}`) ?? null)
+            : null;
+        const pay =
+          hourly_rate !== null
+            ? Math.round((minutes / 60) * hourly_rate)
+            : null;
 
-        const detail: DetailRow = {
+        emp.records.push({
           id: rec.id,
           service_date: rec.service_date,
           calc_duration: rec.calc_duration,
@@ -200,15 +272,13 @@ export default function PayrollPage() {
           category_name: categoryName,
           hourly_rate,
           pay,
-        };
-
-        emp.records.push(detail);
+        });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay;
         else emp.unmappedCount++;
       }
 
-      // 7. 職員名でソート
+      // 8. 職員名でソート
       const sorted = [...empMap.values()].sort((a, b) =>
         a.employee_name.localeCompare(b.employee_name, "ja")
       );
@@ -219,6 +289,67 @@ export default function PayrollPage() {
       setLoading(false);
     }
   }
+
+  // ─── CSV エクスポート ──────────────────────────────────────
+
+  function exportSummaryCsv() {
+    const label = formatProcessingMonth(selectedMonth).replace(/\s/g, "");
+    const rows: string[][] = [
+      ["職員番号", "職員名", "職種", "件数", "合計算定時間(分)", "合計算定時間", "給与合計(円)"],
+    ];
+    for (const emp of results) {
+      rows.push([
+        emp.employee_number,
+        emp.employee_name,
+        emp.role_type,
+        String(emp.records.length),
+        String(emp.totalMinutes),
+        formatMinutes(emp.totalMinutes),
+        String(emp.totalPay),
+      ]);
+    }
+    downloadCsv(`給与計算_${label}_サマリー.csv`, rows);
+  }
+
+  function exportDetailCsv() {
+    const label = formatProcessingMonth(selectedMonth).replace(/\s/g, "");
+    const rows: string[][] = [
+      [
+        "職員番号",
+        "職員名",
+        "職種",
+        "日付",
+        "サービスコード",
+        "類型",
+        "算定時間(分)",
+        "算定時間",
+        "時給(円)",
+        "金額(円)",
+      ],
+    ];
+    for (const emp of results) {
+      const sorted = [...emp.records].sort((a, b) =>
+        a.service_date.localeCompare(b.service_date)
+      );
+      for (const d of sorted) {
+        rows.push([
+          emp.employee_number,
+          emp.employee_name,
+          emp.role_type,
+          formatDate(d.service_date),
+          d.service_code,
+          d.category_name,
+          String(d.minutes),
+          formatMinutes(d.minutes),
+          d.hourly_rate !== null ? String(d.hourly_rate) : "",
+          d.pay !== null ? String(d.pay) : "",
+        ]);
+      }
+    }
+    downloadCsv(`給与計算_${label}_明細.csv`, rows);
+  }
+
+  // ─── 描画 ────────────────────────────────────────────────────
 
   const grandTotalPay = results.reduce((s, e) => s + e.totalPay, 0);
   const grandTotalMinutes = results.reduce((s, e) => s + e.totalMinutes, 0);
@@ -251,19 +382,33 @@ export default function PayrollPage() {
             <Button onClick={calculate} disabled={!selectedMonth || loading}>
               {loading ? "計算中…" : "給与計算を実行"}
             </Button>
+
+            {/* CSV出力ボタン（計算後に表示） */}
+            {results.length > 0 && (
+              <div className="flex gap-2 ml-auto">
+                <Button variant="outline" onClick={exportSummaryCsv}>
+                  📥 サマリーCSV
+                </Button>
+                <Button variant="outline" onClick={exportDetailCsv}>
+                  📥 明細CSV
+                </Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
 
       {/* エラー */}
       {error && (
-        <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded text-sm">{error}</div>
+        <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded text-sm">
+          {error}
+        </div>
       )}
 
       {/* 結果 */}
       {results.length > 0 && (
         <>
-          {/* サマリー */}
+          {/* サマリーカード */}
           <div className="grid grid-cols-3 gap-4 mb-6">
             <Card>
               <CardHeader className="pb-2">
@@ -302,6 +447,7 @@ export default function PayrollPage() {
                   <tr className="border-b bg-muted/50">
                     <th className="text-left px-4 py-3 font-medium">職員番号</th>
                     <th className="text-left px-4 py-3 font-medium">職員名</th>
+                    <th className="text-left px-4 py-3 font-medium">職種</th>
                     <th className="text-right px-4 py-3 font-medium">件数</th>
                     <th className="text-right px-4 py-3 font-medium">合計算定時間</th>
                     <th className="text-right px-4 py-3 font-medium">給与合計</th>
@@ -323,11 +469,26 @@ export default function PayrollPage() {
                           )
                         }
                       >
-                        <td className="px-4 py-3 font-mono text-xs">{emp.employee_number}</td>
+                        <td className="px-4 py-3 font-mono text-xs">
+                          {emp.employee_number}
+                        </td>
                         <td className="px-4 py-3 font-medium">{emp.employee_name}</td>
-                        <td className="px-4 py-3 text-right">{emp.records.length}件</td>
-                        <td className="px-4 py-3 text-right">{formatMinutes(emp.totalMinutes)}</td>
-                        <td className="px-4 py-3 text-right font-bold">{formatYen(emp.totalPay)}</td>
+                        <td className="px-4 py-3">
+                          {emp.role_type ? (
+                            <RoleBadge role={emp.role_type} />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">未登録</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {emp.records.length}件
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {formatMinutes(emp.totalMinutes)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold">
+                          {formatYen(emp.totalPay)}
+                        </td>
                         <td className="px-4 py-3 text-center">
                           {emp.unmappedCount > 0 && (
                             <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full">
@@ -342,15 +503,22 @@ export default function PayrollPage() {
 
                       {/* 明細展開 */}
                       {expandedEmployee === emp.employee_number && (
-                        <tr key={`${emp.employee_number}-detail`} className="bg-muted/10">
-                          <td colSpan={7} className="px-6 py-3">
+                        <tr
+                          key={`${emp.employee_number}-detail`}
+                          className="bg-muted/10"
+                        >
+                          <td colSpan={8} className="px-8 py-3">
                             <table className="w-full text-xs">
                               <thead>
                                 <tr className="border-b">
                                   <th className="text-left py-1 font-medium">日付</th>
-                                  <th className="text-left py-1 font-medium">サービスコード</th>
+                                  <th className="text-left py-1 font-medium">
+                                    サービスコード
+                                  </th>
                                   <th className="text-left py-1 font-medium">類型</th>
-                                  <th className="text-right py-1 font-medium">算定時間</th>
+                                  <th className="text-right py-1 font-medium">
+                                    算定時間
+                                  </th>
                                   <th className="text-right py-1 font-medium">時給</th>
                                   <th className="text-right py-1 font-medium">金額</th>
                                 </tr>
@@ -358,11 +526,20 @@ export default function PayrollPage() {
                               <tbody>
                                 {emp.records
                                   .slice()
-                                  .sort((a, b) => a.service_date.localeCompare(b.service_date))
+                                  .sort((a, b) =>
+                                    a.service_date.localeCompare(b.service_date)
+                                  )
                                   .map((d) => (
-                                    <tr key={d.id} className="border-b border-border/30">
-                                      <td className="py-1">{formatDate(d.service_date)}</td>
-                                      <td className="py-1 font-mono">{d.service_code}</td>
+                                    <tr
+                                      key={d.id}
+                                      className="border-b border-border/30"
+                                    >
+                                      <td className="py-1">
+                                        {formatDate(d.service_date)}
+                                      </td>
+                                      <td className="py-1 font-mono">
+                                        {d.service_code}
+                                      </td>
                                       <td className="py-1">
                                         <span
                                           className={
@@ -374,10 +551,13 @@ export default function PayrollPage() {
                                           {d.category_name}
                                         </span>
                                       </td>
-                                      <td className="py-1 text-right">{formatMinutes(d.minutes)}</td>
+                                      <td className="py-1 text-right">
+                                        {formatMinutes(d.minutes)}
+                                      </td>
                                       <td className="py-1 text-right">
                                         {d.hourly_rate !== null
-                                          ? d.hourly_rate.toLocaleString("ja-JP") + "円"
+                                          ? d.hourly_rate.toLocaleString("ja-JP") +
+                                            "円"
                                           : "—"}
                                       </td>
                                       <td className="py-1 text-right font-medium">
@@ -388,10 +568,16 @@ export default function PayrollPage() {
                               </tbody>
                               <tfoot>
                                 <tr className="font-bold">
-                                  <td colSpan={3} className="py-2">合計</td>
-                                  <td className="py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
+                                  <td colSpan={3} className="py-2">
+                                    合計
+                                  </td>
+                                  <td className="py-2 text-right">
+                                    {formatMinutes(emp.totalMinutes)}
+                                  </td>
                                   <td className="py-2"></td>
-                                  <td className="py-2 text-right">{formatYen(emp.totalPay)}</td>
+                                  <td className="py-2 text-right">
+                                    {formatYen(emp.totalPay)}
+                                  </td>
                                 </tr>
                               </tfoot>
                             </table>
@@ -416,7 +602,9 @@ export default function PayrollPage() {
             </p>
             <ul className="mt-3 text-sm text-muted-foreground space-y-1 list-disc list-inside">
               <li>サービス実績CSV（MEISAI）が取り込まれていることを確認してください</li>
-              <li>サービスマスタでサービスコードの類型マッピングと時給設定を行ってください</li>
+              <li>
+                サービスマスタでサービスコードの類型マッピングと時給設定を行ってください
+              </li>
             </ul>
           </CardContent>
         </Card>
@@ -425,20 +613,21 @@ export default function PayrollPage() {
   );
 }
 
-// ─── ヘルパー関数 ─────────────────────────────────────────────
+// ─── 職種バッジ ───────────────────────────────────────────────
 
-/** "202503" → "2025年3月" */
-function formatProcessingMonth(m: string): string {
-  if (!m || m.length < 6) return m;
-  const year = m.slice(0, 4);
-  const month = parseInt(m.slice(4, 6), 10);
-  return `${year}年${month}月`;
-}
+const ROLE_COLORS: Record<string, string> = {
+  管理者: "bg-purple-100 text-purple-800",
+  サービス提供責任者: "bg-blue-100 text-blue-800",
+  社員ヘルパー: "bg-green-100 text-green-800",
+  パートヘルパー: "bg-orange-100 text-orange-800",
+  事務員: "bg-gray-100 text-gray-700",
+};
 
-/** "20250315" → "3/15" */
-function formatDate(d: string): string {
-  if (!d || d.length < 8) return d;
-  const month = parseInt(d.slice(4, 6), 10);
-  const day = parseInt(d.slice(6, 8), 10);
-  return `${month}/${day}`;
+function RoleBadge({ role }: { role: string }) {
+  const color = ROLE_COLORS[role] ?? "bg-gray-100 text-gray-700";
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>
+      {role}
+    </span>
+  );
 }
