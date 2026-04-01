@@ -33,15 +33,21 @@ export interface Office {
   updated_at: string;
 }
 
+export type EmploymentStatus = "在職者" | "休職者" | "退職者";
+
 export interface Employee {
   id: string;
   employee_number: string;
   name: string;
   address: string;
   office_id: string;
-  job_type: JobType;   // 職種（訪問介護、訪問入浴 等）
-  role_type: RoleType; // 役職（管理者、提責、社員、パート、事務員）
+  job_type: JobType;           // 職種（訪問介護、訪問入浴 等）
+  role_type: RoleType;         // 役職（管理者、提責、社員、パート、事務員）
   salary_type: SalaryType;
+  employment_status: EmploymentStatus; // 在職区分
+  hire_date: string | null;            // 入社年月日
+  resignation_date: string | null;     // 退職年月日
+  effective_service_months: number;    // 実勤続月数
   base_salary: number | null;
   fixed_overtime_hours: number | null;
   fixed_overtime_pay: number | null;

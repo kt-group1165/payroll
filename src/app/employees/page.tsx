@@ -28,7 +28,14 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import type { Employee, Office, JobType, RoleType, SalaryType } from "@/types/database";
+import type {
+  Employee,
+  Office,
+  JobType,
+  RoleType,
+  SalaryType,
+  EmploymentStatus,
+} from "@/types/database";
 
 // ─── 定数 ────────────────────────────────────────────────────
 
@@ -38,10 +45,11 @@ const JOB_TYPES: JobType[] = [
 ];
 const ROLE_TYPES: RoleType[] = ["管理者", "提責", "社員", "パート", "事務員"];
 const SALARY_TYPES: SalaryType[] = ["月給", "時給"];
+const EMPLOYMENT_STATUSES: EmploymentStatus[] = ["在職者", "休職者", "退職者"];
 
-// CSVカラム定義（エクスポート・インポート共通）
 const CSV_HEADERS = [
   "社員番号", "名前", "住所", "事業所番号",
+  "在職区分", "入社年月日", "退職年月日", "実勤続月数",
   "職種", "役職", "給与形態",
   "基本給", "固定残業時間", "固定残業代",
   "身体介護時給", "生活援助時給", "訪問型時給",
@@ -55,6 +63,10 @@ const defaultForm = {
   name: "",
   address: "",
   office_id: "",
+  employment_status: "在職者" as EmploymentStatus,
+  hire_date: "",
+  resignation_date: "",
+  effective_service_months: "",
   job_type: "訪問介護" as JobType,
   role_type: "パート" as RoleType,
   salary_type: "時給" as SalaryType,
@@ -104,9 +116,18 @@ function parseCsvLine(line: string): string[] {
 }
 
 function parseCsvText(text: string): string[][] {
-  // BOM除去
   const cleaned = text.replace(/^\uFEFF/, "");
   return cleaned.split(/\r?\n/).filter((l) => l.trim() !== "").map(parseCsvLine);
+}
+
+/** 実勤続月数 → "X年Yヶ月" */
+function formatMonths(m: number): string {
+  if (!m) return "—";
+  const y = Math.floor(m / 12);
+  const mo = m % 12;
+  if (y === 0) return `${mo}ヶ月`;
+  if (mo === 0) return `${y}年`;
+  return `${y}年${mo}ヶ月`;
 }
 
 // ─── インポートプレビュー型 ───────────────────────────────────
@@ -116,6 +137,10 @@ type ImportRow = {
   name: string;
   address: string;
   office_number: string;
+  employment_status: string;
+  hire_date: string;
+  resignation_date: string;
+  effective_service_months: number;
   job_type: string;
   role_type: string;
   salary_type: string;
@@ -137,8 +162,8 @@ export default function EmployeesPage() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
+  const [filterStatus, setFilterStatus] = useState<string>("在職者");
 
-  // CSV インポート関連
   const importRef = useRef<HTMLInputElement>(null);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -169,6 +194,12 @@ export default function EmployeesPage() {
       name: form.name,
       address: form.address,
       office_id: form.office_id,
+      employment_status: form.employment_status,
+      hire_date: form.hire_date || null,
+      resignation_date: form.resignation_date || null,
+      effective_service_months: form.effective_service_months
+        ? parseInt(form.effective_service_months, 10)
+        : 0,
       job_type: form.job_type,
       role_type: form.role_type,
       salary_type: form.salary_type,
@@ -201,6 +232,10 @@ export default function EmployeesPage() {
       name: emp.name,
       address: emp.address ?? "",
       office_id: emp.office_id,
+      employment_status: emp.employment_status ?? "在職者",
+      hire_date: emp.hire_date ?? "",
+      resignation_date: emp.resignation_date ?? "",
+      effective_service_months: emp.effective_service_months?.toString() ?? "",
       job_type: emp.job_type ?? "訪問介護",
       role_type: emp.role_type,
       salary_type: emp.salary_type,
@@ -237,6 +272,10 @@ export default function EmployeesPage() {
         emp.name,
         emp.address ?? "",
         office?.office_number ?? "",
+        emp.employment_status ?? "在職者",
+        emp.hire_date ?? "",
+        emp.resignation_date ?? "",
+        emp.effective_service_months?.toString() ?? "0",
         emp.job_type ?? "訪問介護",
         emp.role_type,
         emp.salary_type,
@@ -266,7 +305,6 @@ export default function EmployeesPage() {
 
       const headers = rows[0].map((h) => h.trim());
       const idx = (name: string) => headers.indexOf(name);
-
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
 
       const parsed: ImportRow[] = [];
@@ -289,6 +327,10 @@ export default function EmployeesPage() {
           name,
           address: get("住所"),
           office_number: officeNum,
+          employment_status: get("在職区分") || "在職者",
+          hire_date: get("入社年月日"),
+          resignation_date: get("退職年月日"),
+          effective_service_months: parseInt(get("実勤続月数") || "0", 10) || 0,
           job_type: get("職種") || "訪問介護",
           role_type: get("役職") || "パート",
           salary_type: get("給与形態") || "時給",
@@ -328,6 +370,10 @@ export default function EmployeesPage() {
         name: row.name,
         address: row.address,
         office_id: office.id,
+        employment_status: row.employment_status,
+        hire_date: row.hire_date || null,
+        resignation_date: row.resignation_date || null,
+        effective_service_months: row.effective_service_months,
         job_type: row.job_type,
         role_type: row.role_type,
         salary_type: row.salary_type,
@@ -340,7 +386,6 @@ export default function EmployeesPage() {
         transport_type: row.transport_type,
       };
 
-      // 既存レコードは更新、なければ挿入
       const { error } = await supabase
         .from("employees")
         .upsert(payload, { onConflict: "employee_number,office_id" });
@@ -358,35 +403,34 @@ export default function EmployeesPage() {
     else toast.warning(`${success}件成功、${fail}件失敗`);
   }
 
+  // ─── フィルタ適用 ─────────────────────────────────────────────
+
+  const filteredEmployees = filterStatus === "全員"
+    ? employees
+    : employees.filter((e) => (e.employment_status ?? "在職者") === filterStatus);
+
   // ─── 表示制御 ─────────────────────────────────────────────────
 
   const showMonthlyFields = form.salary_type === "月給";
-  const showFixedOvertimeFields = form.role_type === "提責" || form.role_type === "管理者" || form.role_type === "社員";
+  const showFixedOvertimeFields =
+    form.role_type === "提責" || form.role_type === "管理者" || form.role_type === "社員";
   const showHourlyRateFields = form.salary_type === "時給";
 
   // ─── 描画 ─────────────────────────────────────────────────────
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">職員一覧</h2>
         <div className="flex gap-2">
-          {/* CSV エクスポート */}
           <Button variant="outline" onClick={handleExport} disabled={employees.length === 0}>
             📥 CSV出力
           </Button>
-          {/* CSV インポート */}
           <Button variant="outline" onClick={() => importRef.current?.click()}>
             📤 CSV取り込み
           </Button>
-          <input
-            ref={importRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={handleImportFile}
-          />
-          {/* 新規登録 */}
+          <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
+
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger render={<Button />}>新規登録</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -394,6 +438,7 @@ export default function EmployeesPage() {
                 <DialogTitle>{editingId ? "職員を編集" : "職員を登録"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
+                {/* 基本情報 */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>社員番号</Label>
@@ -405,10 +450,7 @@ export default function EmployeesPage() {
                   </div>
                   <div>
                     <Label>名前</Label>
-                    <Input
-                      value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    />
+                    <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                   </div>
                 </div>
 
@@ -417,7 +459,7 @@ export default function EmployeesPage() {
                   <Input
                     value={form.address}
                     onChange={(e) => setForm({ ...form, address: e.target.value })}
-                    placeholder="例: 大阪府大阪市北区..."
+                    placeholder="例: 千葉県長生郡白子町..."
                   />
                 </div>
 
@@ -436,6 +478,53 @@ export default function EmployeesPage() {
                   </Select>
                 </div>
 
+                {/* 在職情報 */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label>在職区分</Label>
+                    <Select
+                      value={form.employment_status}
+                      onValueChange={(v) =>
+                        setForm({ ...form, employment_status: (v ?? form.employment_status) as EmploymentStatus })
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {EMPLOYMENT_STATUSES.map((s) => (
+                          <SelectItem key={s} value={s}>{s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>入社年月日</Label>
+                    <Input
+                      type="date"
+                      value={form.hire_date}
+                      onChange={(e) => setForm({ ...form, hire_date: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>退職年月日</Label>
+                    <Input
+                      type="date"
+                      value={form.resignation_date}
+                      onChange={(e) => setForm({ ...form, resignation_date: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label>実勤続月数（ヶ月）</Label>
+                  <Input
+                    type="number"
+                    value={form.effective_service_months}
+                    onChange={(e) => setForm({ ...form, effective_service_months: e.target.value })}
+                    placeholder="例: 120（=10年）"
+                  />
+                </div>
+
+                {/* 職種・役職・給与形態 */}
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <Label>職種</Label>
@@ -555,47 +644,67 @@ export default function EmployeesPage() {
         </div>
       </div>
 
+      {/* 在職区分フィルタ */}
+      <div className="flex gap-2 mb-4">
+        {["在職者", "休職者", "退職者", "全員"].map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilterStatus(s)}
+            className={`px-3 py-1 rounded-full text-sm transition-colors ${
+              filterStatus === s
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/80"
+            }`}
+          >
+            {s}
+            <span className="ml-1 text-xs opacity-70">
+              {s === "全員"
+                ? employees.length
+                : employees.filter((e) => (e.employment_status ?? "在職者") === s).length}
+            </span>
+          </button>
+        ))}
+      </div>
+
       {/* 職員テーブル */}
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>社員番号</TableHead>
             <TableHead>名前</TableHead>
-            <TableHead>住所</TableHead>
-            <TableHead>職種</TableHead>
+            <TableHead>在職区分</TableHead>
             <TableHead>役職</TableHead>
             <TableHead>給与形態</TableHead>
-            <TableHead>事業所</TableHead>
-            <TableHead>移動手段</TableHead>
+            <TableHead>入社日</TableHead>
+            <TableHead>実勤続</TableHead>
+            <TableHead>住所</TableHead>
             <TableHead className="w-[100px]">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {employees.length === 0 ? (
+          {filteredEmployees.length === 0 ? (
             <TableRow>
               <TableCell colSpan={9} className="text-center text-muted-foreground">
-                職員が登録されていません
+                {filterStatus === "全員" ? "職員が登録されていません" : `${filterStatus}の職員はいません`}
               </TableCell>
             </TableRow>
           ) : (
-            employees.map((emp) => (
-              <TableRow key={emp.id}>
+            filteredEmployees.map((emp) => (
+              <TableRow key={emp.id} className={emp.employment_status === "退職者" ? "opacity-50" : ""}>
                 <TableCell className="font-mono text-xs">{emp.employee_number}</TableCell>
                 <TableCell className="font-medium">{emp.name}</TableCell>
-                <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate">
-                  {emp.address || "—"}
-                </TableCell>
-                <TableCell>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                    {emp.job_type ?? "—"}
-                  </span>
-                </TableCell>
+                <TableCell><StatusBadge status={emp.employment_status ?? "在職者"} /></TableCell>
                 <TableCell><RoleBadge role={emp.role_type} /></TableCell>
                 <TableCell><SalaryBadge type={emp.salary_type} /></TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {officeMap.get(emp.office_id)?.name ?? "—"}
+                  {emp.hire_date ? emp.hire_date.replace(/-/g, "/") : "—"}
                 </TableCell>
-                <TableCell>{emp.transport_type}</TableCell>
+                <TableCell className="text-sm">
+                  {formatMonths(emp.effective_service_months ?? 0)}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate">
+                  {emp.address || "—"}
+                </TableCell>
                 <TableCell>
                   <div className="flex gap-1">
                     <Button variant="ghost" size="sm" onClick={() => handleEdit(emp)}>編集</Button>
@@ -615,7 +724,7 @@ export default function EmployeesPage() {
             <DialogTitle>CSV取り込み確認</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground mb-3">
-            {importRows.length}件を読み込みました。エラーのある行はスキップされます。確認後「取り込み実行」を押してください。
+            {importRows.length}件を読み込みました。エラーのある行はスキップされます。
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
@@ -623,9 +732,10 @@ export default function EmployeesPage() {
                 <tr className="bg-muted/50">
                   <th className="border px-2 py-1 text-left">社員番号</th>
                   <th className="border px-2 py-1 text-left">名前</th>
-                  <th className="border px-2 py-1 text-left">事業所番号</th>
+                  <th className="border px-2 py-1 text-left">在職区分</th>
                   <th className="border px-2 py-1 text-left">役職</th>
-                  <th className="border px-2 py-1 text-left">給与形態</th>
+                  <th className="border px-2 py-1 text-left">入社日</th>
+                  <th className="border px-2 py-1 text-left">実勤続月数</th>
                   <th className="border px-2 py-1 text-left">状態</th>
                 </tr>
               </thead>
@@ -634,14 +744,14 @@ export default function EmployeesPage() {
                   <tr key={i} className={r.error ? "bg-red-50" : ""}>
                     <td className="border px-2 py-1 font-mono">{r.employee_number}</td>
                     <td className="border px-2 py-1">{r.name}</td>
-                    <td className="border px-2 py-1 font-mono">{r.office_number}</td>
+                    <td className="border px-2 py-1">{r.employment_status}</td>
                     <td className="border px-2 py-1">{r.role_type}</td>
-                    <td className="border px-2 py-1">{r.salary_type}</td>
+                    <td className="border px-2 py-1">{r.hire_date || "—"}</td>
+                    <td className="border px-2 py-1">{r.effective_service_months}ヶ月</td>
                     <td className="border px-2 py-1">
                       {r.error
                         ? <span className="text-red-600">⚠ {r.error}</span>
-                        : <span className="text-green-600">✓ OK</span>
-                      }
+                        : <span className="text-green-600">✓ OK</span>}
                     </td>
                   </tr>
                 ))}
@@ -662,6 +772,16 @@ export default function EmployeesPage() {
 
 // ─── バッジ ───────────────────────────────────────────────────
 
+const STATUS_COLORS: Record<string, string> = {
+  在職者: "bg-green-100 text-green-800",
+  休職者: "bg-yellow-100 text-yellow-800",
+  退職者: "bg-gray-100 text-gray-500",
+};
+function StatusBadge({ status }: { status: string }) {
+  const color = STATUS_COLORS[status] ?? "bg-gray-100 text-gray-500";
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{status}</span>;
+}
+
 const ROLE_COLORS: Record<string, string> = {
   管理者: "bg-purple-100 text-purple-800",
   提責: "bg-blue-100 text-blue-800",
@@ -669,7 +789,6 @@ const ROLE_COLORS: Record<string, string> = {
   パート: "bg-orange-100 text-orange-800",
   事務員: "bg-gray-100 text-gray-700",
 };
-
 function RoleBadge({ role }: { role: string }) {
   const color = ROLE_COLORS[role] ?? "bg-gray-100 text-gray-700";
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{role}</span>;
