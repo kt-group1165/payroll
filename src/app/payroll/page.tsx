@@ -239,8 +239,10 @@ function formatProcessingMonth(m: string): string {
 }
 
 function formatDate(d: string): string {
-  if (!d || d.length < 8) return d;
-  return `${parseInt(d.slice(4, 6), 10)}/${parseInt(d.slice(6, 8), 10)}`;
+  if (!d) return d;
+  const digits = d.replace(/\D/g, "");
+  if (digits.length < 8) return d;
+  return `${parseInt(digits.slice(4, 6), 10)}/${parseInt(digits.slice(6, 8), 10)}`;
 }
 
 /** service_date 文字列から「日」の数値を抽出（YYYYMMDD / YYYY/MM/DD 等に対応） */
