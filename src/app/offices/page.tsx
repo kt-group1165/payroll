@@ -1,0 +1,265 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
+import type { Office, OfficeType } from "@/types/database";
+
+const OFFICE_TYPES: OfficeType[] = [
+  "訪問介護",
+  "訪問看護",
+  "訪問入浴",
+  "居宅介護支援",
+  "福祉用具貸与",
+  "薬局",
+  "本社",
+];
+
+export default function OfficesPage() {
+  const [offices, setOffices] = useState<Office[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    office_number: "",
+    name: "",
+    address: "",
+    office_type: "訪問介護" as OfficeType,
+  });
+
+  const fetchOffices = useCallback(async () => {
+    const { data } = await supabase
+      .from("offices")
+      .select("*")
+      .order("created_at");
+    if (data) setOffices(data as Office[]);
+  }, []);
+
+  useEffect(() => {
+    fetchOffices();
+  }, [fetchOffices]);
+
+  const resetForm = () => {
+    setForm({
+      office_number: "",
+      name: "",
+      address: "",
+      office_type: "訪問介護",
+    });
+    setEditingId(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!form.office_number || !form.name) {
+      toast.error("事業所番号と名称は必須です");
+      return;
+    }
+
+    if (editingId) {
+      const { error } = await supabase
+        .from("offices")
+        .update({
+          name: form.name,
+          address: form.address,
+          office_type: form.office_type,
+        })
+        .eq("id", editingId);
+      if (error) {
+        toast.error(`更新エラー: ${error.message}`);
+        return;
+      }
+      toast.success("事業所を更新しました");
+    } else {
+      const { error } = await supabase.from("offices").insert(form);
+      if (error) {
+        toast.error(`登録エラー: ${error.message}`);
+        return;
+      }
+      toast.success("事業所を登録しました");
+    }
+
+    setIsOpen(false);
+    resetForm();
+    fetchOffices();
+  };
+
+  const handleEdit = (office: Office) => {
+    setForm({
+      office_number: office.office_number,
+      name: office.name,
+      address: office.address,
+      office_type: office.office_type,
+    });
+    setEditingId(office.id);
+    setIsOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("この事業所を削除しますか？")) return;
+    const { error } = await supabase.from("offices").delete().eq("id", id);
+    if (error) {
+      toast.error(`削除エラー: ${error.message}`);
+      return;
+    }
+    toast.success("事業所を削除しました");
+    fetchOffices();
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold">事業所一覧</h2>
+        <Dialog
+          open={isOpen}
+          onOpenChange={(open) => {
+            setIsOpen(open);
+            if (!open) resetForm();
+          }}
+        >
+          <DialogTrigger
+            render={<Button />}
+          >
+            新規登録
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {editingId ? "事業所を編集" : "事業所を登録"}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>事業所番号</Label>
+                <Input
+                  value={form.office_number}
+                  onChange={(e) =>
+                    setForm({ ...form, office_number: e.target.value })
+                  }
+                  disabled={!!editingId}
+                  placeholder="例: 1271500942"
+                />
+              </div>
+              <div>
+                <Label>名称</Label>
+                <Input
+                  value={form.name}
+                  onChange={(e) =>
+                    setForm({ ...form, name: e.target.value })
+                  }
+                  placeholder="例: リンクスヘルパー茂原"
+                />
+              </div>
+              <div>
+                <Label>住所</Label>
+                <Input
+                  value={form.address}
+                  onChange={(e) =>
+                    setForm({ ...form, address: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label>事業所種別</Label>
+                <Select
+                  value={form.office_type}
+                  onValueChange={(v) =>
+                    setForm({ ...form, office_type: (v ?? form.office_type) as OfficeType })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {OFFICE_TYPES.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {t}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={handleSubmit} className="w-full">
+                {editingId ? "更新" : "登録"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>事業所番号</TableHead>
+            <TableHead>名称</TableHead>
+            <TableHead>種別</TableHead>
+            <TableHead>住所</TableHead>
+            <TableHead className="w-[120px]">操作</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {offices.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={5}
+                className="text-center text-muted-foreground"
+              >
+                事業所が登録されていません
+              </TableCell>
+            </TableRow>
+          ) : (
+            offices.map((office) => (
+              <TableRow key={office.id}>
+                <TableCell>{office.office_number}</TableCell>
+                <TableCell>{office.name}</TableCell>
+                <TableCell>{office.office_type}</TableCell>
+                <TableCell>{office.address || "-"}</TableCell>
+                <TableCell>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEdit(office)}
+                    >
+                      編集
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDelete(office.id)}
+                    >
+                      削除
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
