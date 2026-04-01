@@ -629,8 +629,8 @@ export default function PayrollPage() {
                   <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted/50 w-24">職員番号</th>
-                        <th className="text-left px-3 py-3 font-medium sticky left-24 z-20 bg-muted/50">職員名</th>
+                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted w-24">職員番号</th>
+                        <th className="text-left px-3 py-3 font-medium sticky left-24 z-20 bg-muted">職員名</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
@@ -777,8 +777,8 @@ export default function PayrollPage() {
                   <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted/50 w-24">職員番号</th>
-                        <th className="text-left px-3 py-3 font-medium sticky left-24 z-20 bg-muted/50">職員名</th>
+                        <th className="text-left px-3 py-3 font-medium sticky left-0 z-20 bg-muted w-24">職員番号</th>
+                        <th className="text-left px-3 py-3 font-medium sticky left-24 z-20 bg-muted">職員名</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
