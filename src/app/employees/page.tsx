@@ -79,6 +79,7 @@ const defaultForm = {
   transport_type: "車",
   has_care_qualification: false,
   social_insurance: false,
+  paid_leave_unit_price: "",
 };
 
 // ─── CSVユーティリティ ────────────────────────────────────────
@@ -214,6 +215,7 @@ export default function EmployeesPage() {
       transport_type: form.transport_type,
       has_care_qualification: form.has_care_qualification,
       social_insurance: form.social_insurance,
+      paid_leave_unit_price: form.paid_leave_unit_price ? parseFloat(form.paid_leave_unit_price) : 0,
     };
 
     if (editingId) {
@@ -252,6 +254,7 @@ export default function EmployeesPage() {
       transport_type: emp.transport_type,
       has_care_qualification: emp.has_care_qualification ?? false,
       social_insurance: emp.social_insurance ?? false,
+      paid_leave_unit_price: emp.paid_leave_unit_price?.toString() ?? "",
     });
     setEditingId(emp.id);
     setIsOpen(true);
@@ -661,6 +664,15 @@ export default function EmployeesPage() {
                     />
                     <span className="text-sm">社会保険加入（処遇改善補助金手当対象）</span>
                   </label>
+                </div>
+                <div>
+                  <Label>有給手当単価（円/時間）</Label>
+                  <Input
+                    type="number" min={0}
+                    value={form.paid_leave_unit_price}
+                    placeholder="0"
+                    onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
+                  />
                 </div>
 
                 <div>

@@ -1,0 +1,1 @@
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS paid_leave_unit_price NUMERIC(10,2) NOT NULL DEFAULT 0;

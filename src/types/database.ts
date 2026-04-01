@@ -62,6 +62,7 @@ export interface Employee {
   transport_type: string;
   has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
   social_insurance: boolean;        // 社会保険加入
+  paid_leave_unit_price: number;    // 有給手当単価（円/時間）
   created_at: string;
   updated_at: string;
 }
