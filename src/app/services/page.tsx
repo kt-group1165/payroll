@@ -215,13 +215,13 @@ function MappingsTab() {
       while (true) {
         const { data } = await supabase
           .from("service_records")
-          .select("service_code,service_category")
+          .select("service_code,service_type")
           .order("id")
           .range(from, from + pageSize - 1);
         if (!data || data.length === 0) break;
         for (const r of data) {
-          const code = (r as { service_code: string; service_category: string }).service_code;
-          const name = (r as { service_code: string; service_category: string }).service_category;
+          const code = (r as { service_code: string; service_type: string }).service_code;
+          const name = (r as { service_code: string; service_type: string }).service_type;
           if (code && code.trim() && !codeNameMap.has(code)) {
             codeNameMap.set(code, name || "");
           }
