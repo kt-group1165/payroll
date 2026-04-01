@@ -545,7 +545,14 @@ export default function PayrollPage() {
         const workDays = [...allWorkedDays].reduce((s, d) => s + (halfDayNums.has(d) ? 0.5 : 1.0), 0);
 
         // 有給・半有給・特休・HRDは事業所書式から取得
-        const paidLeave    = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "有給").length;
+        // item_name は部分一致（"有給休暇"等の表記ゆれを吸収）
+        const paidLeaveFromOf  = ofRecs.filter((r) => r.record_type === "leave" && r.item_name.includes("有給") && !r.item_name.includes("半")).length;
+        // 出勤簿の work_note にある "有"（半有給を除く）もカウント
+        const paidLeaveFromAtt = attDays.filter((r) =>
+          [r.work_note_1, r.work_note_2, r.work_note_3, r.work_note_4, r.work_note_5]
+            .some((n) => n && n.includes("有") && !n.includes("半"))
+        ).length;
+        const paidLeave    = Math.max(paidLeaveFromOf, paidLeaveFromAtt);
         const halfLeave    = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "半有給").length;
         const specialLeave = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "特休").length;
         const hrdCount     = ofRecs.filter((r) => r.record_type === "training" && r.item_name === "HRD研修").length;
