@@ -57,6 +57,29 @@ export function AttendanceImporter() {
     setIsImporting(true);
 
     try {
+      // 重複チェック（既存データがあれば取り込み不可）
+      const duplicates: string[] = [];
+      for (const attendance of allData) {
+        const { meta } = attendance;
+        const { count } = await supabase
+          .from("attendance_records")
+          .select("id", { count: "exact", head: true })
+          .eq("employee_number", meta.employeeNumber)
+          .eq("year", meta.year)
+          .eq("month", meta.month);
+        if (count && count > 0) {
+          duplicates.push(`${meta.employeeName}（${meta.year}年${meta.month}月）`);
+        }
+      }
+
+      if (duplicates.length > 0) {
+        toast.error(
+          `以下のデータはすでに登録されています。労働時間管理画面でデータを削除してから取り込んでください。\n${duplicates.join("、")}`
+        );
+        setIsImporting(false);
+        return;
+      }
+
       for (const attendance of allData) {
         const { meta, rows } = attendance;
 
