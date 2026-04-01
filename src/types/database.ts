@@ -56,6 +56,7 @@ export interface Employee {
   hourly_rate_living: number | null;
   hourly_rate_visit: number | null;
   transport_type: string;
+  has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
   created_at: string;
   updated_at: string;
 }

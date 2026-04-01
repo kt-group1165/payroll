@@ -77,6 +77,7 @@ const defaultForm = {
   hourly_rate_living: "",
   hourly_rate_visit: "",
   transport_type: "車",
+  has_care_qualification: false,
 };
 
 // ─── CSVユーティリティ ────────────────────────────────────────
@@ -210,6 +211,7 @@ export default function EmployeesPage() {
       hourly_rate_living: form.hourly_rate_living ? parseInt(form.hourly_rate_living, 10) : null,
       hourly_rate_visit: form.hourly_rate_visit ? parseInt(form.hourly_rate_visit, 10) : null,
       transport_type: form.transport_type,
+      has_care_qualification: form.has_care_qualification,
     };
 
     if (editingId) {
@@ -246,6 +248,7 @@ export default function EmployeesPage() {
       hourly_rate_living: emp.hourly_rate_living?.toString() ?? "",
       hourly_rate_visit: emp.hourly_rate_visit?.toString() ?? "",
       transport_type: emp.transport_type,
+      has_care_qualification: emp.has_care_qualification ?? false,
     });
     setEditingId(emp.id);
     setIsOpen(true);
@@ -618,6 +621,17 @@ export default function EmployeesPage() {
                     </div>
                   </div>
                 )}
+
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.has_care_qualification}
+                      onChange={(e) => setForm({ ...form, has_care_qualification: e.target.checked })}
+                    />
+                    <span className="text-sm">介護福祉士または実務者研修修了（勤続手当対象）</span>
+                  </label>
+                </div>
 
                 <div>
                   <Label>移動手段</Label>

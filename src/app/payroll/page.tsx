@@ -43,6 +43,9 @@ type Employee = {
   role_type: string;
   salary_type: string;
   employment_status: string;
+  has_care_qualification: boolean;
+  job_type: string;
+  effective_service_months: number;
 };
 
 type SalarySettings = {
@@ -82,6 +85,10 @@ type HourlyPayroll = {
   employee_number: string;
   employee_name: string;
   role_type: string;
+  has_care_qualification: boolean;
+  job_type: string;
+  effective_service_months: number;
+  care_plan_count: number;  // 居宅介護支援：担当要介護プラン相当件数（手動入力）
   records: HourlyDetailRow[];
   totalMinutes: number;
   totalPay: number;
@@ -166,6 +173,49 @@ function formatDate(d: string): string {
 function extractDay(serviceDate: string): number {
   const digits = serviceDate.replace(/\D/g, ""); // 数字のみ
   if (digits.length >= 8) return parseInt(digits.slice(6, 8), 10);
+  return 0;
+}
+
+/**
+ * 勤続手当計算（資格・経験による定期昇給）
+ * 対象: 介護福祉士または実務者研修修了者
+ *   社員(月給)    : 1年=1,000円、以降1年ごと+500円
+ *   パートヘルパー: 1年=10円/h、5年=20円/h、以降5年ごと+10円/h
+ *   パート訪問入浴: 1年=10円/件、5年=20円/件、以降5年ごと+10円/件
+ *   非常勤居宅介護支援: 1年=50円/件、5年=100円/件、以降5年ごと+50円/件
+ */
+function computeTenureAllowance(
+  hasQualification: boolean,
+  effectiveServiceMonths: number,
+  salaryType: string,
+  jobType: string,
+  workHoursMin: number,   // パートヘルパー用（出勤簿の総労働時間）
+  recordCount: number,    // パート訪問入浴用（実績件数）
+  carePlanCount: number,  // 非常勤居宅介護支援用（要介護プラン相当件数）
+): number {
+  if (!hasQualification) return 0;
+  const years = Math.floor(effectiveServiceMonths / 12);
+  if (years < 1) return 0;
+
+  if (salaryType === "月給") {
+    return 1000 + (years - 1) * 500;
+  }
+
+  if (salaryType === "時給") {
+    if (jobType === "訪問介護" || jobType === "訪問看護") {
+      const rate = (Math.floor(years / 5) + 1) * 10;
+      return Math.round((workHoursMin / 60) * rate);
+    }
+    if (jobType === "訪問入浴") {
+      const rate = (Math.floor(years / 5) + 1) * 10;
+      return rate * recordCount;
+    }
+    if (jobType === "居宅介護支援") {
+      const rate = (Math.floor(years / 5) + 1) * 50;
+      return rate * carePlanCount;
+    }
+  }
+
   return 0;
 }
 
@@ -269,7 +319,7 @@ export default function PayrollPage() {
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status").neq("employment_status", "退職者"),
+        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours")
@@ -324,7 +374,13 @@ export default function PayrollPage() {
       }
 
       // 時給者
-      const roleMap = new Map(employees.map((e) => [e.employee_number, { role: e.role_type, salary: e.salary_type }]));
+      const roleMap = new Map(employees.map((e) => [e.employee_number, {
+        role: e.role_type,
+        salary: e.salary_type,
+        hasQual: e.has_care_qualification ?? false,
+        jobType: e.job_type ?? "",
+        serviceMonths: e.effective_service_months ?? 0,
+      }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
       for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys()])) {
@@ -336,6 +392,10 @@ export default function PayrollPage() {
           employee_number: empNum,
           employee_name: firstRec?.employee_name ?? empNum,
           role_type: info?.role ?? "",
+          has_care_qualification: info?.hasQual ?? false,
+          job_type: info?.jobType ?? "",
+          effective_service_months: info?.serviceMonths ?? 0,
+          care_plan_count: 0,
           records: [],
           totalMinutes: 0,
           totalPay: 0,
@@ -367,18 +427,30 @@ export default function PayrollPage() {
         (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者")
       );
       setMonthlyResults(
-        monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => ({
-          employee_id: e.id,
-          employee_number: e.employee_number,
-          employee_name: e.name,
-          role_type: e.role_type,
-          settings: salMap.get(e.id) ?? null,
-          bonus_paid: false,
-          travel_km: 0,
-          business_trip_fee: 0,
-          yocho_hours: 0,
-          summary: computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []),
-        }))
+        monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
+          const sal = salMap.get(e.id) ?? null;
+          // 勤続手当を自動計算してsettingsをオーバーライド
+          const computedTenure = computeTenureAllowance(
+            e.has_care_qualification ?? false,
+            e.effective_service_months ?? 0,
+            "月給",
+            e.job_type ?? "",
+            0, 0, 0
+          );
+          const settingsWithTenure = sal ? { ...sal, tenure_allowance: computedTenure } : null;
+          return {
+            employee_id: e.id,
+            employee_number: e.employee_number,
+            employee_name: e.name,
+            role_type: e.role_type,
+            settings: settingsWithTenure,
+            bonus_paid: false,
+            travel_km: 0,
+            business_trip_fee: 0,
+            yocho_hours: 0,
+            summary: computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []),
+          };
+        })
       );
     } catch (e) {
       setError(`計算エラー: ${e instanceof Error ? e.message : String(e)}`);
@@ -391,6 +463,10 @@ export default function PayrollPage() {
     setMonthlyResults((prev) => prev.map((p) => p.employee_id === empId ? { ...p, ...patch } : p));
   }
 
+  function updateHourly(empNum: string, patch: Partial<HourlyPayroll>) {
+    setHourlyResults((prev) => prev.map((p) => p.employee_number === empNum ? { ...p, ...patch } : p));
+  }
+
   // ── CSV出力 ─────────────────────────────────────────────────
 
   function exportHourlyCsv() {
@@ -399,16 +475,20 @@ export default function PayrollPage() {
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
-      "合計算定時間(分)","合計算定時間","給与合計(円)",
+      "合計算定時間(分)","合計算定時間","実績給与(円)","勤続手当(円)","合計(円)",
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
+      const tenure = computeTenureAllowance(
+        e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
+        s.workHoursMin, s.recordCount, e.care_plan_count
+      );
       rows.push([
         e.employee_number, e.employee_name, e.role_type,
         String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.specialLeave),
         formatWorkHours(s.workHoursMin),
         String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), String(s.hrdCount),
-        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay),
+        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay), String(tenure), String(e.totalPay + tenure),
       ]);
     }
     downloadCsv(`給与計算_${label}_時給者サマリー.csv`, rows);
@@ -456,7 +536,13 @@ export default function PayrollPage() {
     downloadCsv(`給与計算_${label}_月給者.csv`, rows);
   }
 
-  const hourlyGrandTotal   = hourlyResults.reduce((s, e) => s + e.totalPay, 0);
+  const hourlyGrandTotal   = hourlyResults.reduce((s, e) => {
+    const tenure = computeTenureAllowance(
+      e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
+      e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
+    );
+    return s + e.totalPay + tenure;
+  }, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
   const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p), 0);
 
@@ -545,7 +631,9 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">算定時間</th>
-                        <th className="text-right px-3 py-3 font-medium">給与合計</th>
+                        <th className="text-right px-3 py-3 font-medium">実績給与</th>
+                        <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
+                        <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="text-center px-3 py-3 font-medium">注記</th>
                         <th className="px-3 py-3"></th>
                       </tr>
@@ -553,6 +641,11 @@ export default function PayrollPage() {
                     <tbody>
                       {hourlyResults.map((emp) => {
                         const sm = emp.summary;
+                        const tenure = computeTenureAllowance(
+                          emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
+                          sm.workHoursMin, sm.recordCount, emp.care_plan_count
+                        );
+                        const grandTotal = emp.totalPay + tenure;
                         return (
                           <>
                             <tr
@@ -573,7 +666,13 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{formatMinutes(sm.visitMinutes)}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
-                              <td className="px-3 py-2 text-right font-bold">{yen(emp.totalPay)}</td>
+                              <td className="px-3 py-2 text-right">{yen(emp.totalPay)}</td>
+                              <td className="px-3 py-2 text-right">
+                                {tenure > 0
+                                  ? <span className="font-medium text-green-700">{yen(tenure)}</span>
+                                  : <span className="text-muted-foreground text-xs">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
                                 {emp.unmappedCount > 0 && (
                                   <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full">未設定{emp.unmappedCount}件</span>
@@ -585,7 +684,22 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={16} className="px-8 py-3">
+                                <td colSpan={19} className="px-8 py-3">
+                                  {/* 居宅介護支援：プラン件数入力 */}
+                                  {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
+                                    <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
+                                      <span className="text-muted-foreground">担当要介護プラン相当件数</span>
+                                      <Input
+                                        type="number" min={0}
+                                        value={emp.care_plan_count || ""}
+                                        placeholder="0"
+                                        onChange={(e) => updateHourly(emp.employee_number, { care_plan_count: parseInt(e.target.value) || 0 })}
+                                        className="w-20 text-right h-6 px-2 text-xs"
+                                      />
+                                      <span className="text-muted-foreground">件</span>
+                                      {tenure > 0 && <span className="text-green-700 font-medium">勤続手当: {yen(tenure)}</span>}
+                                    </div>
+                                  )}
                                   <table className="w-full text-xs">
                                     <thead>
                                       <tr className="border-b">
@@ -616,7 +730,7 @@ export default function PayrollPage() {
                                         <td colSpan={3} className="py-2">合計</td>
                                         <td className="py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
                                         <td></td>
-                                        <td className="py-2 text-right">{yen(emp.totalPay)}</td>
+                                        <td className="py-2 text-right">{yen(emp.totalPay)}{tenure > 0 ? ` + 勤続 ${yen(tenure)} = ${yen(grandTotal)}` : ""}</td>
                                       </tr>
                                     </tfoot>
                                   </table>
