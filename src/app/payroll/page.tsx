@@ -863,9 +863,6 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">半有給</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝同行時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
@@ -909,9 +906,6 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.halfLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
-                              <td className="px-3 py-2 text-right">{sm.recordCount}</td>
-                              <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
-                              <td className="px-3 py-2 text-right">{formatMinutes(sm.visitMinutes)}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? formatMinutes(sm.weekendHolidayMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayAccompaniedMinutes > 0 ? formatMinutes(sm.weekendHolidayAccompaniedMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
@@ -938,7 +932,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={25} className="px-8 py-3">
+                                <td colSpan={21} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -1005,9 +999,6 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.halfLeave, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.specialLeave, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{formatWorkHours(hourlyResults.reduce((s, e) => s + e.summary.workHoursMin, 0))}</td>
-                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.recordCount, 0) || "—"}</td>
-                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.accompaniedCount, 0) || "—"}</td>
-                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayAccompaniedMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.hrdCount, 0) || "—"}</td>
