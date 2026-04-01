@@ -491,7 +491,7 @@ export default function PayrollPage() {
         while (true) {
           const { data } = await supabase
             .from("office_form_records")
-            .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
+            .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
             .eq("processing_month", selectedMonth)
             .order("id")
             .range(from, from + pageSize - 1);
