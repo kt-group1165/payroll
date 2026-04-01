@@ -269,7 +269,7 @@ export default function PayrollPage() {
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status"),
+        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours")
