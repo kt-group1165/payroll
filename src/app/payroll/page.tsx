@@ -185,11 +185,8 @@ function parseWorkHoursMinutes(s: string): number {
 }
 
 function formatMinutes(min: number): string {
-  if (min === 0) return "0分";
   const h = Math.floor(min / 60), m = min % 60;
-  if (h === 0) return `${m}分`;
-  if (m === 0) return `${h}時間`;
-  return `${h}時間${m}分`;
+  return `${h}:${String(m).padStart(2, "0")}`;
 }
 
 function formatWorkHours(min: number): string {
