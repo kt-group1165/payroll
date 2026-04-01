@@ -470,7 +470,7 @@ export default function PayrollPage() {
         }
       }
 
-      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes, otRes] = await Promise.all([
+      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price"),
@@ -480,11 +480,27 @@ export default function PayrollPage() {
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
           .eq("year", year).eq("month", month),
-        supabase.from("office_form_records")
-          .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
-          .eq("processing_month", selectedMonth),
         supabase.from("overtime_settings").select("*"),
       ]);
+
+      // office_form_records は1000件上限を回避するためページネーション
+      const allOfRecords: OfficeFormRecord[] = [];
+      {
+        const pageSize = 1000;
+        let from = 0;
+        while (true) {
+          const { data } = await supabase
+            .from("office_form_records")
+            .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
+            .eq("processing_month", selectedMonth)
+            .order("id")
+            .range(from, from + pageSize - 1);
+          if (!data || data.length === 0) break;
+          allOfRecords.push(...(data as OfficeFormRecord[]));
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
+      }
 
       const records    = allServiceRecords;
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
@@ -495,7 +511,7 @@ export default function PayrollPage() {
       const employees  = (empRes.data ?? []) as Employee[];
       const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));
       const attRecords = (attRes.data ?? []) as AttendanceRecord[];
-      const ofRecords  = (ofRes.data ?? []) as OfficeFormRecord[];
+      const ofRecords  = allOfRecords;
       const otMap = new Map((otRes.data ?? []).map((r: OvertimeSetting) => [r.job_type, r]));
       setOtSettings(otMap);
 
