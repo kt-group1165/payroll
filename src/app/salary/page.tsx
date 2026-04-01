@@ -32,6 +32,8 @@ type SalarySettings = {
   special_bonus: number;
   bonus_amount: number;
   travel_unit_price: number;
+  care_overtime_threshold_hours: number;
+  care_overtime_unit_price: number;
   note: string;
 };
 
@@ -42,6 +44,7 @@ const CSV_HEADERS = [
   "処遇改善手当", "特定処遇改善手当", "処遇改善補助金手当",
   "固定残業代", "特別報奨金",
   "報奨金（条件付き）", "移動費単価(円/km)",
+  "介護超過閾値(時間)", "介護超過単価(円/時間)",
   "備考",
 ] as const;
 
@@ -59,6 +62,8 @@ const emptySettings = (employeeId: string): SalarySettings => ({
   special_bonus: 0,
   bonus_amount: 0,
   travel_unit_price: 0,
+  care_overtime_threshold_hours: 0,
+  care_overtime_unit_price: 0,
   note: "",
 });
 
@@ -254,6 +259,8 @@ export default function SalaryPage() {
         String(s.special_bonus),
         String(s.bonus_amount),
         String(s.travel_unit_price),
+        String(s.care_overtime_threshold_hours),
+        String(s.care_overtime_unit_price),
         s.note,
       ]);
     }
@@ -304,6 +311,8 @@ export default function SalaryPage() {
             special_bonus: toInt(get("特別報奨金")),
             bonus_amount: toInt(get("報奨金（条件付き）")),
             travel_unit_price: toInt(get("移動費単価(円/km)")),
+            care_overtime_threshold_hours: toInt(get("介護超過閾値(時間)")),
+            care_overtime_unit_price: toInt(get("介護超過単価(円/時間)")),
             note: get("備考"),
           },
           error: emp ? undefined : `社員番号「${empNum}」が職員マスタに未登録`,
@@ -505,6 +514,51 @@ export default function SalaryPage() {
               </CardContent>
             </Card>
 
+            {/* 介護超過手当（社員のみ） */}
+            <Card className="border-dashed md:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">介護超過手当（社員のみ）</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-[1fr_160px] items-center gap-3">
+                  <div>
+                    <p className="text-sm font-medium">超過判定 閾値</p>
+                    <p className="text-xs text-muted-foreground">月間サービス時間がこの時間を超えたとき支給。0 = 無効</p>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      type="number" min={0} step={1}
+                      value={settings.care_overtime_threshold_hours || ""} placeholder="0"
+                      onChange={(e) => upd("care_overtime_threshold_hours", parseInt(e.target.value, 10) || 0)}
+                      className="pr-12 text-right"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">時間</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-[1fr_160px] items-center gap-3">
+                  <div>
+                    <p className="text-sm font-medium">超過単価</p>
+                    <p className="text-xs text-muted-foreground">超過時間 × 単価 = 介護超過手当</p>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      type="number" min={0} step={1}
+                      value={settings.care_overtime_unit_price || ""} placeholder="0"
+                      onChange={(e) => upd("care_overtime_unit_price", parseInt(e.target.value, 10) || 0)}
+                      className="pr-16 text-right"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/時間</span>
+                  </div>
+                </div>
+                {settings.care_overtime_threshold_hours > 0 && settings.care_overtime_unit_price > 0 && (
+                  <p className="text-xs text-blue-600 bg-blue-50 rounded px-3 py-1.5">
+                    月間サービス時間が {settings.care_overtime_threshold_hours} 時間を超えた分 × {settings.care_overtime_unit_price.toLocaleString()}円/時間 を支給
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">※ 給与計算画面で訪問時間が閾値を超えると自動計算されます（社員のみ）</p>
+              </CardContent>
+            </Card>
+
             {/* 備考 */}
             <Card className="md:col-span-2">
               <CardHeader className="pb-2">
@@ -553,6 +607,12 @@ export default function SalaryPage() {
                 <div className="mt-1 flex justify-between text-sm text-muted-foreground">
                   <span>移動費単価</span>
                   <span>{settings.travel_unit_price.toLocaleString("ja-JP")}円/km</span>
+                </div>
+              )}
+              {settings.care_overtime_threshold_hours > 0 && (
+                <div className="mt-1 flex justify-between text-sm text-muted-foreground">
+                  <span>介護超過手当</span>
+                  <span>{settings.care_overtime_threshold_hours}時間超 × {settings.care_overtime_unit_price.toLocaleString("ja-JP")}円/時間</span>
                 </div>
               )}
             </CardContent>

@@ -59,6 +59,8 @@ type SalarySettings = {
   special_bonus: number;
   bonus_amount: number;
   travel_unit_price: number;
+  care_overtime_threshold_hours: number;
+  care_overtime_unit_price: number;
 };
 
 // 勤怠サマリー（職員ごと）
@@ -168,13 +170,24 @@ function fixedTotal(s: SalarySettings): number {
   );
 }
 
+// 介護超過手当（社員のみ、訪問時間ベース）
+function careOvertimePay(p: MonthlyPayroll): number {
+  if (p.role_type !== "社員") return 0;
+  const s = p.settings;
+  if (!s || s.care_overtime_threshold_hours <= 0 || s.care_overtime_unit_price <= 0) return 0;
+  const thresholdMin = s.care_overtime_threshold_hours * 60;
+  const overMin = Math.max(0, p.summary.visitMinutes - thresholdMin);
+  return Math.round((overMin / 60) * s.care_overtime_unit_price);
+}
+
 function monthlyGrandTotal(p: MonthlyPayroll): number {
   if (!p.settings) return 0;
   return (
     fixedTotal(p.settings) +
     (p.bonus_paid ? p.settings.bonus_amount : 0) +
     Math.round(p.travel_km * (p.settings.travel_unit_price || 0)) +
-    p.business_trip_fee
+    p.business_trip_fee +
+    careOvertimePay(p)
   );
 }
 
@@ -422,7 +435,7 @@ export default function PayrollPage() {
       "実績","同行","訪問時間","HRD",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
-      "固定残業代","特別報奨金","報奨金","移動費","出張費","合計(円)",
+      "固定残業代","特別報奨金","報奨金","移動費","出張費","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
       const s = p.settings;
@@ -446,6 +459,7 @@ export default function PayrollPage() {
         String(p.bonus_paid ? (s?.bonus_amount ?? 0) : 0),
         String(travelFee),
         String(p.business_trip_fee),
+        String(careOvertimePay(p)),
         String(monthlyGrandTotal(p)),
       ]);
     }
@@ -673,6 +687,7 @@ export default function PayrollPage() {
                         <th className="text-center px-3 py-3 font-medium">報奨金</th>
                         <th className="text-right px-3 py-3 font-medium">移動(km)</th>
                         <th className="text-right px-3 py-3 font-medium">出張費</th>
+                        <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="text-center px-3 py-3 font-medium">設定</th>
                       </tr>
@@ -743,6 +758,17 @@ export default function PayrollPage() {
                                 className="w-24 text-right text-xs h-7 px-2"
                               />
                             </td>
+                            {/* 介護超過手当 */}
+                            <td className="px-3 py-2 text-right">
+                              {(() => {
+                                const cop = careOvertimePay(p);
+                                if (p.role_type !== "社員") return <span className="text-xs text-muted-foreground">—</span>;
+                                if (!s || s.care_overtime_threshold_hours <= 0) return <span className="text-xs text-muted-foreground">未設定</span>;
+                                return cop > 0
+                                  ? <span className="font-medium text-orange-700">{yen(cop)}</span>
+                                  : <span className="text-xs text-muted-foreground">0円</span>;
+                              })()}
+                            </td>
                             {/* 合計 */}
                             <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
                             {/* 設定リンク */}
@@ -757,7 +783,7 @@ export default function PayrollPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold">
-                        <td colSpan={15} className="px-3 py-2">合計</td>
+                        <td colSpan={16} className="px-3 py-2">合計</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
@@ -792,6 +818,12 @@ export default function PayrollPage() {
                         {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
                         {p.travel_km > 0 && <DetailLine label={`移動費(${p.travel_km}km)`} v={Math.round(p.travel_km * s.travel_unit_price)} />}
                         {p.business_trip_fee > 0 && <DetailLine label="出張費" v={p.business_trip_fee} />}
+                        {careOvertimePay(p) > 0 && (
+                          <DetailLine
+                            label={`介護超過手当(${formatMinutes(Math.max(0, p.summary.visitMinutes - s.care_overtime_threshold_hours * 60))}超過)`}
+                            v={careOvertimePay(p)}
+                          />
+                        )}
                       </CardContent>
                     </Card>
                   );
