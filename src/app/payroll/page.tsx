@@ -665,6 +665,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">固定支給計</th>
+                        <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
                       </tr>
@@ -700,6 +701,15 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">
                                 {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {p.role_type !== "社員"
+                                  ? <span className="text-xs text-muted-foreground">—</span>
+                                  : !s || s.care_overtime_threshold_hours <= 0
+                                    ? <span className="text-xs text-muted-foreground">未設定</span>
+                                    : cop > 0
+                                      ? <span className="font-medium text-orange-700">{yen(cop)}</span>
+                                      : <span className="text-xs text-muted-foreground">0円</span>}
                               </td>
                               <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
                               <td className="px-3 py-2 text-center text-muted-foreground text-xs">
@@ -816,7 +826,7 @@ export default function PayrollPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold">
-                        <td colSpan={13} className="px-3 py-2">合計</td>
+                        <td colSpan={14} className="px-3 py-2">合計</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
