@@ -6,6 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+// ─── 実勤続月数の基準月 ─────────────────────────────────────
+// effective_service_months の初期データが何月時点の値かを設定する
+// 初期データを入れ直す場合はここを変更する
+const TENURE_BASE_YEAR  = 2026;
+const TENURE_BASE_MONTH = 3;
+
 // ─── 型定義 ──────────────────────────────────────────────────
 
 type ServiceRecord = {
@@ -311,6 +317,11 @@ export default function PayrollPage() {
       const year  = parseInt(selectedMonth.slice(0, 4), 10);
       const month = parseInt(selectedMonth.slice(4, 6), 10);
 
+      // 実勤続月数の基準月（初期データ投入時点）
+      // 処理月に応じてoffsetを加算し動的に調整する
+      const monthOffset = (year * 12 + month) - (TENURE_BASE_YEAR * 12 + TENURE_BASE_MONTH);
+      const adjustedMonths = (m: number) => Math.max(0, m + monthOffset);
+
       const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes] = await Promise.all([
         supabase.from("service_records")
           .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
@@ -379,7 +390,7 @@ export default function PayrollPage() {
         salary: e.salary_type,
         hasQual: e.has_care_qualification ?? false,
         jobType: e.job_type ?? "",
-        serviceMonths: e.effective_service_months ?? 0,
+        serviceMonths: adjustedMonths(e.effective_service_months ?? 0),
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
@@ -432,7 +443,7 @@ export default function PayrollPage() {
           // 勤続手当を自動計算してsettingsをオーバーライド
           const computedTenure = computeTenureAllowance(
             e.has_care_qualification ?? false,
-            e.effective_service_months ?? 0,
+            adjustedMonths(e.effective_service_months ?? 0),
             "月給",
             e.job_type ?? "",
             0, 0, 0
