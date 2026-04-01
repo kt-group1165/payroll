@@ -871,7 +871,6 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">実績給与</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
                         <th className="text-right px-3 py-3 font-medium">処遇補助金</th>
-                        <th className="text-right px-3 py-3 font-medium">キャンセル件数</th>
                         <th className="text-right px-3 py-3 font-medium">キャンセル手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="text-center px-3 py-3 font-medium">注記</th>
@@ -918,7 +917,6 @@ export default function PayrollPage() {
                                   : <span className="text-muted-foreground text-xs">—</span>}
                               </td>
                               <td className="px-3 py-2 text-right">{emp.treatment_subsidy > 0 ? yen(emp.treatment_subsidy) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{emp.cancel_count > 0 ? emp.cancel_count : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
@@ -932,7 +930,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={21} className="px-8 py-3">
+                                <td colSpan={20} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -1007,7 +1005,6 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
                         <td className="px-3 py-2 text-right">{hourlyTenureTotal > 0 ? yen(hourlyTenureTotal) : "—"}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.treatment_subsidy, 0))}</td>
-                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.cancel_count, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
                         <td></td>
