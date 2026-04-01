@@ -65,7 +65,7 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; travel_unit_price: number };
+type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -154,7 +154,8 @@ type MonthlyPayroll = {
   bonus_paid: boolean;
   travel_km: number;        // 手動オーバーライド（0=自動値を使用）
   travel_km_auto: number;   // 事業所書式/出勤簿から自動取得した出張km
-  office_travel_unit_price: number; // 事業所の出張単価
+  office_travel_unit_price: number;  // 事業所の出張単価
+  office_commute_unit_price: number; // 事業所の通勤単価
   business_trip_fee: number;
   yocho_hours: number;   // 夜朝時間（月次手動入力）
   summary: AttendanceSummary;
@@ -318,6 +319,10 @@ function travelFeeAmount(p: MonthlyPayroll): number {
   return Math.round(effectiveTravelKm(p) * p.office_travel_unit_price);
 }
 
+function commuteFeeAmount(p: MonthlyPayroll): number {
+  return Math.round(p.summary.commuteKmTotal * p.office_commute_unit_price);
+}
+
 function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
   return Math.max(0, computeOvertimePay(p, otSettings) - (p.settings?.fixed_overtime_pay ?? 0));
 }
@@ -328,6 +333,7 @@ function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSe
     fixedTotal(p.settings) +
     (p.bonus_paid ? p.settings.bonus_amount : 0) +
     travelFeeAmount(p) +
+    commuteFeeAmount(p) +
     p.business_trip_fee +
     careOvertimePay(p) +
     yochoAllowance(p) +
@@ -403,7 +409,7 @@ export default function PayrollPage() {
           .eq("processing_month", selectedMonth),
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name,travel_unit_price"),
+        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
@@ -569,6 +575,7 @@ export default function PayrollPage() {
             travel_km: 0,
             travel_km_auto: travelKmAuto,
             office_travel_unit_price: office?.travel_unit_price ?? 0,
+            office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
             yocho_hours: 0,
             summary,
@@ -622,7 +629,7 @@ export default function PayrollPage() {
     const rows: string[][] = [[
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
-      "実績","同行","訪問時間","HRD","出張距離(km)","通勤距離(km)",
+      "実績","同行","訪問時間","HRD","出張距離(km)","出張手当","通勤距離(km)","通勤手当",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
       "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
@@ -636,7 +643,7 @@ export default function PayrollPage() {
         String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.halfLeave), String(sm.specialLeave),
         formatWorkHours(sm.workHoursMin),
         String(sm.recordCount), String(sm.accompaniedCount), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
-        String(effectiveTravelKm(p)), String(sm.commuteKmTotal),
+        String(effectiveTravelKm(p)), String(travelFeeAmount(p)), String(sm.commuteKmTotal), String(commuteFeeAmount(p)),
         String(s?.base_personal_salary ?? 0),
         String(s?.skill_salary ?? 0),
         String(s?.position_allowance ?? 0),
@@ -909,7 +916,9 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">出張距離</th>
+                        <th className="text-right px-3 py-3 font-medium">出張手当</th>
                         <th className="text-right px-3 py-3 font-medium">通勤距離</th>
+                        <th className="text-right px-3 py-3 font-medium">通勤手当</th>
                         <th className="text-right px-3 py-3 font-medium">本人給</th>
                         <th className="text-right px-3 py-3 font-medium">職能給</th>
                         <th className="text-right px-3 py-3 font-medium">役職手当</th>
@@ -962,7 +971,9 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${effectiveTravelKm(p)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{travelFeeAmount(p) > 0 ? yen(travelFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.commuteKmTotal > 0 ? `${sm.commuteKmTotal}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{commuteFeeAmount(p) > 0 ? yen(commuteFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.base_personal_salary > 0 ? yen(s.base_personal_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.skill_salary > 0 ? yen(s.skill_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.position_allowance > 0 ? yen(s.position_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -1011,7 +1022,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={29} className="px-8 py-4">
+                                <td colSpan={31} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -1136,7 +1147,9 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{formatMinutes(monthlyResults.reduce((s, p) => s + p.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.hrdCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0) > 0 ? `${monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0)}km` : "—"}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + travelFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0) > 0 ? `${monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0)}km` : "—"}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + commuteFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.base_personal_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.skill_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.position_allowance ?? 0), 0))}</td>

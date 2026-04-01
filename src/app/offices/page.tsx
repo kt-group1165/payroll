@@ -51,6 +51,7 @@ export default function OfficesPage() {
     office_type: "訪問介護" as OfficeType,
     work_week_start: 0,
     travel_unit_price: 0,
+    commute_unit_price: 0,
   });
 
   const fetchOffices = useCallback(async () => {
@@ -73,6 +74,7 @@ export default function OfficesPage() {
       office_type: "訪問介護",
       work_week_start: 0,
       travel_unit_price: 0,
+      commute_unit_price: 0,
     });
     setEditingId(null);
   };
@@ -92,6 +94,7 @@ export default function OfficesPage() {
           office_type: form.office_type,
           work_week_start: form.work_week_start,
           travel_unit_price: form.travel_unit_price,
+          commute_unit_price: form.commute_unit_price,
         })
         .eq("id", editingId);
       if (error) {
@@ -121,6 +124,7 @@ export default function OfficesPage() {
       office_type: office.office_type,
       work_week_start: office.work_week_start ?? 0,
       travel_unit_price: office.travel_unit_price ?? 0,
+      commute_unit_price: office.commute_unit_price ?? 0,
     });
     setEditingId(office.id);
     setIsOpen(true);
@@ -239,6 +243,17 @@ export default function OfficesPage() {
                   }
                 />
               </div>
+              <div>
+                <Label>通勤手当単価（円/km）</Label>
+                <Input
+                  type="number" min={0} step={0.01}
+                  value={form.commute_unit_price || ""}
+                  placeholder="0"
+                  onChange={(e) =>
+                    setForm({ ...form, commute_unit_price: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
               <Button onClick={handleSubmit} className="w-full">
                 {editingId ? "更新" : "登録"}
               </Button>
@@ -255,6 +270,7 @@ export default function OfficesPage() {
             <TableHead>種別</TableHead>
             <TableHead>週起算</TableHead>
             <TableHead className="text-right">出張単価</TableHead>
+            <TableHead className="text-right">通勤単価</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -278,6 +294,9 @@ export default function OfficesPage() {
                 <TableCell>{["日","月","火","水","木","金","土"][office.work_week_start ?? 0]}曜</TableCell>
                 <TableCell className="text-right text-sm">
                   {office.travel_unit_price ? `${office.travel_unit_price}円/km` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.commute_unit_price ? `${office.commute_unit_price}円/km` : "—"}
                 </TableCell>
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>
