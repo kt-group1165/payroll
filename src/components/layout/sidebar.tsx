@@ -10,6 +10,7 @@ const navItems = [
   { href: "/employees", label: "職員一覧", icon: "👥" },
   { href: "/offices", label: "事業所一覧", icon: "🏢" },
   { href: "/clients", label: "利用者一覧", icon: "📋" },
+  { href: "/services", label: "サービスマスタ", icon: "📑" },
   { href: "/payroll", label: "給与計算", icon: "💰" },
 ];
 
