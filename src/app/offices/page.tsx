@@ -53,6 +53,7 @@ export default function OfficesPage() {
     travel_unit_price: 0,
     commute_unit_price: 0,
     treatment_subsidy_amount: 0,
+    cancel_unit_price: 0,
   });
 
   const fetchOffices = useCallback(async () => {
@@ -97,6 +98,7 @@ export default function OfficesPage() {
           travel_unit_price: form.travel_unit_price,
           commute_unit_price: form.commute_unit_price,
           treatment_subsidy_amount: form.treatment_subsidy_amount,
+          cancel_unit_price: form.cancel_unit_price,
         })
         .eq("id", editingId);
       if (error) {
@@ -128,6 +130,7 @@ export default function OfficesPage() {
       travel_unit_price: office.travel_unit_price ?? 0,
       commute_unit_price: office.commute_unit_price ?? 0,
       treatment_subsidy_amount: office.treatment_subsidy_amount ?? 0,
+      cancel_unit_price: office.cancel_unit_price ?? 0,
     });
     setEditingId(office.id);
     setIsOpen(true);
@@ -268,6 +271,17 @@ export default function OfficesPage() {
                   }
                 />
               </div>
+              <div>
+                <Label>キャンセル手当単価（円/件）</Label>
+                <Input
+                  type="number" min={0}
+                  value={form.cancel_unit_price || ""}
+                  placeholder="0"
+                  onChange={(e) =>
+                    setForm({ ...form, cancel_unit_price: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
               <Button onClick={handleSubmit} className="w-full">
                 {editingId ? "更新" : "登録"}
               </Button>
@@ -286,6 +300,7 @@ export default function OfficesPage() {
             <TableHead className="text-right">出張単価</TableHead>
             <TableHead className="text-right">通勤単価</TableHead>
             <TableHead className="text-right">処遇補助金</TableHead>
+            <TableHead className="text-right">キャンセル単価</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -315,6 +330,9 @@ export default function OfficesPage() {
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.treatment_subsidy_amount ? `${office.treatment_subsidy_amount}円` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.cancel_unit_price ? `${office.cancel_unit_price}円/件` : "—"}
                 </TableCell>
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>
