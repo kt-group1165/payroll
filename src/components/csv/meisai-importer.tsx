@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +26,36 @@ export function MeisaiImporter() {
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
+  const [existingMonths, setExistingMonths] = useState<{ month: string; count: number }[]>([]);
+
+  const fetchExistingMonths = useCallback(async () => {
+    const { data } = await supabase
+      .from("service_records")
+      .select("processing_month");
+    if (!data) return;
+    const countMap = new Map<string, number>();
+    for (const r of data as { processing_month: string }[]) {
+      countMap.set(r.processing_month, (countMap.get(r.processing_month) ?? 0) + 1);
+    }
+    const sorted = [...countMap.entries()]
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+    setExistingMonths(sorted);
+  }, []);
+
+  useEffect(() => { fetchExistingMonths(); }, [fetchExistingMonths]);
+
+  const handleClearMonth = async (month: string, count: number) => {
+    const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+    if (!confirm(`${label}のサービス実績データ（${count}件）を削除しますか？`)) return;
+    const { error } = await supabase
+      .from("service_records")
+      .delete()
+      .eq("processing_month", month);
+    if (error) { toast.error(`削除エラー: ${error.message}`); return; }
+    toast.success(`${label}のデータを削除しました`);
+    fetchExistingMonths();
+  };
 
   const handleFilesSelected = async (newFiles: File[]) => {
     const csvFiles = [...files, ...newFiles];
@@ -155,9 +185,8 @@ export function MeisaiImporter() {
         .eq("id", batch.id);
 
       setImported(true);
-      toast.success(
-        `${allData.length}件のサービス実績を登録しました`
-      );
+      toast.success(`${allData.length}件のサービス実績を登録しました`);
+      fetchExistingMonths();
     } catch (e) {
       toast.error(
         `エラー: ${e instanceof Error ? e.message : String(e)}`
@@ -171,6 +200,29 @@ export function MeisaiImporter() {
 
   return (
     <div className="space-y-4">
+      {/* 取り込み済みデータ */}
+      {existingMonths.length > 0 && (
+        <div className="border rounded-md p-4 space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
+          <div className="flex flex-wrap gap-2">
+            {existingMonths.map(({ month, count }) => {
+              const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+              return (
+                <div key={month} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
+                  <span>{label}（{count.toLocaleString()}件）</span>
+                  <button
+                    onClick={() => handleClearMonth(month, count)}
+                    className="text-destructive hover:text-destructive/80 ml-1 text-xs font-medium"
+                  >
+                    削除
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <FileDropzone
         onFilesSelected={handleFilesSelected}
         label="介護ソフトCSVファイルをドロップ"
