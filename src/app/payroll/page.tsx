@@ -516,30 +516,32 @@ export default function PayrollPage() {
       setOtSettings(otMap);
 
       // 出勤簿・実績・事業所書式を職員番号でグループ化
-      // String() で型不一致（INTEGER vs TEXT）を回避
+      // 先頭ゼロを除去して正規化（"0048" と "48" を同一視）
+      const normEmp = (n: string | number) => String(n).replace(/^0+/, "") || "0";
+
       const attByEmp = new Map<string, AttendanceRecord[]>();
       for (const ar of attRecords) {
-        const key = String(ar.employee_number);
+        const key = normEmp(ar.employee_number);
         if (!attByEmp.has(key)) attByEmp.set(key, []);
         attByEmp.get(key)!.push(ar);
       }
       const recsByEmp = new Map<string, ServiceRecord[]>();
       for (const r of records) {
-        const key = String(r.employee_number);
+        const key = normEmp(r.employee_number);
         if (!recsByEmp.has(key)) recsByEmp.set(key, []);
         recsByEmp.get(key)!.push(r);
       }
       const ofByEmp = new Map<string, OfficeFormRecord[]>();
       for (const r of ofRecords) {
-        const key = String(r.employee_number);
+        const key = normEmp(r.employee_number);
         if (!ofByEmp.has(key)) ofByEmp.set(key, []);
         ofByEmp.get(key)!.push(r);
       }
 
       // 勤怠サマリー計算
       function computeSummary(empNum: string, empRecs: ServiceRecord[]): AttendanceSummary {
-        const attDays = attByEmp.get(String(empNum)) ?? [];
-        const ofRecs  = ofByEmp.get(String(empNum)) ?? [];
+        const attDays = attByEmp.get(normEmp(empNum)) ?? [];
+        const ofRecs  = ofByEmp.get(normEmp(empNum)) ?? [];
 
         // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
         const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -597,7 +599,7 @@ export default function PayrollPage() {
       }
 
       // 時給者
-      const roleMap = new Map(employees.map((e) => [String(e.employee_number), {
+      const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
         role: e.role_type,
         salary: e.salary_type,
         hasQual: e.has_care_qualification ?? false,
@@ -685,7 +687,7 @@ export default function PayrollPage() {
           const settingsWithTenure = sal ? { ...sal, tenure_allowance: computedTenure } : null;
           const summary = computeSummary(String(e.employee_number), recsByEmp.get(String(e.employee_number)) ?? []);
           // 出張km: 事業所書式 > 出勤簿
-          const empOfRecs = ofByEmp.get(String(e.employee_number)) ?? [];
+          const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
           const ofTravelKm = empOfRecs
             .filter((r) => r.record_type === "km" && r.item_name === "出張km")
             .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
