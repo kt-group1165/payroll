@@ -16,6 +16,19 @@ type ServiceRecord = {
   calc_duration: string;
   service_code: string;
   office_number: string;
+  accompanied_visit: string;
+};
+
+type AttendanceRecord = {
+  employee_number: string;
+  day: number;
+  work_note_1: string;
+  work_note_2: string;
+  work_note_3: string;
+  work_note_4: string;
+  work_note_5: string;
+  start_time_1: string;
+  work_hours: string;
 };
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
@@ -48,6 +61,19 @@ type SalarySettings = {
   travel_unit_price: number;
 };
 
+// 勤怠サマリー（職員ごと）
+type AttendanceSummary = {
+  workDays: number;          // 出勤日数（実績OR出勤簿）
+  helperDays: number;        // ヘルパー日数（実績の日付数）
+  paidLeave: number;         // 有給
+  specialLeave: number;      // 特休欠勤
+  workHoursMin: number;      // 出勤時間（分）
+  recordCount: number;       // 実績件数
+  accompaniedCount: number;  // 同行件数
+  visitMinutes: number;      // 訪問時間（分）
+  hrdCount: number;          // HRD
+};
+
 // 時給者：職員ごとの計算結果
 type HourlyPayroll = {
   employee_number: string;
@@ -57,6 +83,7 @@ type HourlyPayroll = {
   totalMinutes: number;
   totalPay: number;
   unmappedCount: number;
+  summary: AttendanceSummary;
 };
 
 type HourlyDetailRow = {
@@ -80,6 +107,7 @@ type MonthlyPayroll = {
   bonus_paid: boolean;         // 報奨金 支給/不支給
   travel_km: number;           // 移動距離(km)
   business_trip_fee: number;   // 出張費
+  summary: AttendanceSummary;
 };
 
 // ─── ユーティリティ ──────────────────────────────────────────
@@ -94,12 +122,29 @@ function parseDurationMinutes(str: string): number {
   return parseInt(str, 10) || 0;
 }
 
+function parseWorkHoursMinutes(s: string): number {
+  if (!s || !s.trim()) return 0;
+  s = s.trim();
+  if (s.includes(":")) {
+    const [h, m] = s.split(":").map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : Math.round(n * 60);
+}
+
 function formatMinutes(min: number): string {
   if (min === 0) return "0分";
   const h = Math.floor(min / 60), m = min % 60;
   if (h === 0) return `${m}分`;
   if (m === 0) return `${h}時間`;
   return `${h}時間${m}分`;
+}
+
+function formatWorkHours(min: number): string {
+  if (min === 0) return "0:00";
+  const h = Math.floor(min / 60), m = min % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
 }
 
 const yen = (n: number) => n.toLocaleString("ja-JP") + "円";
@@ -146,6 +191,18 @@ function downloadCsv(filename: string, rows: string[][]): void {
   URL.revokeObjectURL(url);
 }
 
+// 勤怠ノートに特定キーワードが含まれる日数を計算
+function countNoteKeyword(attDays: AttendanceRecord[], keyword: string): number {
+  return attDays.filter((r) =>
+    [r.work_note_1, r.work_note_2, r.work_note_3, r.work_note_4, r.work_note_5]
+      .some((n) => n && n.includes(keyword))
+  ).length;
+}
+
+function emptyAttSummary(): AttendanceSummary {
+  return { workDays: 0, helperDays: 0, paidLeave: 0, specialLeave: 0, workHoursMin: 0, recordCount: 0, accompaniedCount: 0, visitMinutes: 0, hrdCount: 0 };
+}
+
 // ─── メインコンポーネント ─────────────────────────────────────
 
 export default function PayrollPage() {
@@ -180,10 +237,13 @@ export default function PayrollPage() {
     setHourlyResults([]); setMonthlyResults([]); setExpandedEmp(null);
 
     try {
+      const year  = parseInt(selectedMonth.slice(0, 4), 10);
+      const month = parseInt(selectedMonth.slice(4, 6), 10);
+
       // 共通マスタ取得
-      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes] = await Promise.all([
+      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes] = await Promise.all([
         supabase.from("service_records")
-          .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number")
+          .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
           .eq("processing_month", selectedMonth),
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
@@ -191,6 +251,10 @@ export default function PayrollPage() {
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status"),
         supabase.from("salary_settings").select("*"),
+        supabase.from("attendance_records")
+          .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours")
+          .eq("year", year)
+          .eq("month", month),
       ]);
 
       const records    = (recRes.data ?? []) as ServiceRecord[];
@@ -200,26 +264,87 @@ export default function PayrollPage() {
       const rateMap    = new Map((rateRes.data ?? []).map((r: CategoryHourlyRate) => [`${r.office_id}:${r.category_id}`, r.hourly_rate]));
       const employees  = (empRes.data ?? []) as Employee[];
       const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));
+      const attRecords = (attRes.data ?? []) as AttendanceRecord[];
+
+      // ── 出勤簿を職員番号でグループ化 ──────────────────────────
+      const attByEmp = new Map<string, AttendanceRecord[]>();
+      for (const ar of attRecords) {
+        if (!attByEmp.has(ar.employee_number)) attByEmp.set(ar.employee_number, []);
+        attByEmp.get(ar.employee_number)!.push(ar);
+      }
+
+      // ── サービス実績を職員番号でグループ化 ────────────────────
+      const recsByEmp = new Map<string, ServiceRecord[]>();
+      for (const r of records) {
+        if (!recsByEmp.has(r.employee_number)) recsByEmp.set(r.employee_number, []);
+        recsByEmp.get(r.employee_number)!.push(r);
+      }
+
+      // ── 勤怠サマリーを計算 ────────────────────────────────────
+      function computeSummary(empNum: string, empRecs: ServiceRecord[]): AttendanceSummary {
+        const attDays = attByEmp.get(empNum) ?? [];
+
+        // ヘルパー実績の日付セット (service_date: YYYYMMDD → day number)
+        const helperDaySet = new Set(empRecs.map((r) => r.service_date.slice(6, 8)));  // dd
+        const helperDays   = helperDaySet.size;
+
+        // 出勤簿で実勤務がある日
+        const attWorkDaySet = new Set(
+          attDays.filter((r) => r.start_time_1 && r.start_time_1.trim() !== "")
+            .map((r) => String(r.day))
+        );
+        // 出勤日数 = ヘルパー実績日 ∪ 出勤簿実勤務日
+        const helperDayNums = new Set(empRecs.map((r) => r.service_date.slice(6, 8).replace(/^0/, "")));
+        const workDays = new Set([...helperDayNums, ...attWorkDaySet]).size;
+
+        // 有給・特休欠勤・HRD
+        const paidLeave    = countNoteKeyword(attDays, "有");
+        const specialLeave = countNoteKeyword(attDays, "特休");
+        const hrdCount     = countNoteKeyword(attDays, "HRD");
+
+        // 出勤時間（分換算）
+        const workHoursMin = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
+
+        // 実績
+        const recordCount = empRecs.length;
+
+        // 同行
+        const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
+
+        // 訪問時間
+        const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+
+        return { workDays, helperDays, paidLeave, specialLeave, workHoursMin, recordCount, accompaniedCount, visitMinutes, hrdCount };
+      }
 
       // ── 時給者計算 ──────────────────────────────────────────
       const roleMap = new Map(employees.map((e) => [e.employee_number, { role: e.role_type, salary: e.salary_type }]));
 
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
+      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys()])) {
+        const info    = roleMap.get(empNum);
+        const empRecs = recsByEmp.get(empNum) ?? [];
+        // 時給者（またはDB未登録）のみ
+        if (info && info.salary === "月給") continue;
+        // サービス実績なく出勤簿のみ → 給与0として表示
+        const firstRec = empRecs[0];
+        hourlyEmpMap.set(empNum, {
+          employee_number: empNum,
+          employee_name: firstRec?.employee_name ?? empNum,
+          role_type: info?.role ?? "",
+          records: [],
+          totalMinutes: 0,
+          totalPay: 0,
+          unmappedCount: 0,
+          summary: computeSummary(empNum, empRecs),
+        });
+      }
+
+      // 各レコードを集計
       for (const rec of records) {
         const key = rec.employee_number;
-        if (!hourlyEmpMap.has(key)) {
-          const info = roleMap.get(key);
-          hourlyEmpMap.set(key, {
-            employee_number: key,
-            employee_name: rec.employee_name,
-            role_type: info?.role ?? "",
-            records: [],
-            totalMinutes: 0,
-            totalPay: 0,
-            unmappedCount: 0,
-          });
-        }
-        const emp = hourlyEmpMap.get(key)!;
+        const emp = hourlyEmpMap.get(key);
+        if (!emp) continue;
         const minutes    = parseDurationMinutes(rec.calc_duration);
         const categoryId = mappingMap.get(rec.service_code) ?? null;
         const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
@@ -230,6 +355,7 @@ export default function PayrollPage() {
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
       }
+
       setHourlyResults(
         [...hourlyEmpMap.values()].sort((a, b) => a.employee_name.localeCompare(b.employee_name, "ja"))
       );
@@ -248,6 +374,7 @@ export default function PayrollPage() {
           bonus_paid: false,
           travel_km: 0,
           business_trip_fee: 0,
+          summary: computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []),
         }))
       );
     } catch (e) {
@@ -268,21 +395,44 @@ export default function PayrollPage() {
 
   function exportHourlyCsv() {
     const label = formatProcessingMonth(selectedMonth).replace(/\s/g, "");
-    const rows: string[][] = [["職員番号", "職員名", "役職", "件数", "合計算定時間(分)", "合計算定時間", "給与合計(円)"]];
+    const rows: string[][] = [[
+      "職員番号","職員名","役職",
+      "出勤日数","ヘルパー日数","有給","特休欠勤","出勤時間",
+      "実績","同行","訪問時間","HRD",
+      "合計算定時間(分)","合計算定時間","給与合計(円)",
+    ]];
     for (const e of hourlyResults) {
-      rows.push([e.employee_number, e.employee_name, e.role_type, String(e.records.length), String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay)]);
+      const s = e.summary;
+      rows.push([
+        e.employee_number, e.employee_name, e.role_type,
+        String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.specialLeave),
+        formatWorkHours(s.workHoursMin),
+        String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), String(s.hrdCount),
+        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay),
+      ]);
     }
     downloadCsv(`給与計算_${label}_時給者サマリー.csv`, rows);
   }
 
   function exportMonthlyCsv() {
     const label = formatProcessingMonth(selectedMonth).replace(/\s/g, "");
-    const rows: string[][] = [["職員番号", "職員名", "役職", "本人給", "職能給", "役職手当", "資格手当", "勤続手当", "処遇改善手当", "特定処遇改善手当", "処遇改善補助金手当", "固定残業代", "特別報奨金", "報奨金", "移動費", "出張費", "合計(円)"]];
+    const rows: string[][] = [[
+      "職員番号","職員名","役職",
+      "出勤日数","ヘルパー日数","有給","特休欠勤","出勤時間",
+      "実績","同行","訪問時間","HRD",
+      "本人給","職能給","役職手当","資格手当","勤続手当",
+      "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
+      "固定残業代","特別報奨金","報奨金","移動費","出張費","合計(円)",
+    ]];
     for (const p of monthlyResults) {
       const s = p.settings;
+      const sm = p.summary;
       const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
       rows.push([
         p.employee_number, p.employee_name, p.role_type,
+        String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.specialLeave),
+        formatWorkHours(sm.workHoursMin),
+        String(sm.recordCount), String(sm.accompaniedCount), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
         String(s?.base_personal_salary ?? 0),
         String(s?.skill_salary ?? 0),
         String(s?.position_allowance ?? 0),
@@ -378,85 +528,108 @@ export default function PayrollPage() {
                   <CardTitle>{formatProcessingMonth(selectedMonth)} 時給者 給与計算結果</CardTitle>
                   <Button variant="outline" size="sm" onClick={exportHourlyCsv}>📥 CSV出力</Button>
                 </CardHeader>
-                <CardContent className="p-0">
-                  <table className="w-full text-sm">
+                <CardContent className="p-0 overflow-x-auto">
+                  <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-4 py-3 font-medium">職員番号</th>
-                        <th className="text-left px-4 py-3 font-medium">職員名</th>
-                        <th className="text-left px-4 py-3 font-medium">役職</th>
-                        <th className="text-right px-4 py-3 font-medium">件数</th>
-                        <th className="text-right px-4 py-3 font-medium">合計算定時間</th>
-                        <th className="text-right px-4 py-3 font-medium">給与合計</th>
-                        <th className="text-center px-4 py-3 font-medium">注記</th>
-                        <th className="px-4 py-3"></th>
+                        <th className="text-left px-3 py-3 font-medium">職員番号</th>
+                        <th className="text-left px-3 py-3 font-medium">職員名</th>
+                        <th className="text-left px-3 py-3 font-medium">役職</th>
+                        {/* 勤怠サマリー */}
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
+                        {/* 給与 */}
+                        <th className="text-right px-3 py-3 font-medium">算定時間</th>
+                        <th className="text-right px-3 py-3 font-medium">給与合計</th>
+                        <th className="text-center px-3 py-3 font-medium">注記</th>
+                        <th className="px-3 py-3"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {hourlyResults.map((emp) => (
-                        <>
-                          <tr
-                            key={emp.employee_number}
-                            className="border-b hover:bg-muted/30 cursor-pointer"
-                            onClick={() => setExpandedEmp(expandedEmp === emp.employee_number ? null : emp.employee_number)}
-                          >
-                            <td className="px-4 py-3 font-mono text-xs">{emp.employee_number}</td>
-                            <td className="px-4 py-3 font-medium">{emp.employee_name}</td>
-                            <td className="px-4 py-3"><RoleBadge role={emp.role_type} /></td>
-                            <td className="px-4 py-3 text-right">{emp.records.length}件</td>
-                            <td className="px-4 py-3 text-right">{formatMinutes(emp.totalMinutes)}</td>
-                            <td className="px-4 py-3 text-right font-bold">{yen(emp.totalPay)}</td>
-                            <td className="px-4 py-3 text-center">
-                              {emp.unmappedCount > 0 && (
-                                <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full">未設定{emp.unmappedCount}件</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-center text-muted-foreground text-xs">
-                              {expandedEmp === emp.employee_number ? "▲" : "▼"}
-                            </td>
-                          </tr>
-                          {expandedEmp === emp.employee_number && (
-                            <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                              <td colSpan={8} className="px-8 py-3">
-                                <table className="w-full text-xs">
-                                  <thead>
-                                    <tr className="border-b">
-                                      <th className="text-left py-1 font-medium">日付</th>
-                                      <th className="text-left py-1 font-medium">サービスコード</th>
-                                      <th className="text-left py-1 font-medium">類型</th>
-                                      <th className="text-right py-1 font-medium">算定時間</th>
-                                      <th className="text-right py-1 font-medium">時給</th>
-                                      <th className="text-right py-1 font-medium">金額</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {emp.records.slice().sort((a, b) => a.service_date.localeCompare(b.service_date)).map((d) => (
-                                      <tr key={d.id} className="border-b border-border/30">
-                                        <td className="py-1">{formatDate(d.service_date)}</td>
-                                        <td className="py-1 font-mono">{d.service_code}</td>
-                                        <td className="py-1">
-                                          <span className={d.category_name === "未マッピング" ? "text-yellow-600" : ""}>{d.category_name}</span>
-                                        </td>
-                                        <td className="py-1 text-right">{formatMinutes(d.minutes)}</td>
-                                        <td className="py-1 text-right">{d.hourly_rate !== null ? d.hourly_rate.toLocaleString() + "円" : "—"}</td>
-                                        <td className="py-1 text-right font-medium">{d.pay !== null ? yen(d.pay) : "—"}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                  <tfoot>
-                                    <tr className="font-bold">
-                                      <td colSpan={3} className="py-2">合計</td>
-                                      <td className="py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
-                                      <td></td>
-                                      <td className="py-2 text-right">{yen(emp.totalPay)}</td>
-                                    </tr>
-                                  </tfoot>
-                                </table>
+                      {hourlyResults.map((emp) => {
+                        const sm = emp.summary;
+                        return (
+                          <>
+                            <tr
+                              key={emp.employee_number}
+                              className="border-b hover:bg-muted/30 cursor-pointer"
+                              onClick={() => setExpandedEmp(expandedEmp === emp.employee_number ? null : emp.employee_number)}
+                            >
+                              <td className="px-3 py-2 font-mono text-xs">{emp.employee_number}</td>
+                              <td className="px-3 py-2 font-medium">{emp.employee_name}</td>
+                              <td className="px-3 py-2"><RoleBadge role={emp.role_type} /></td>
+                              {/* 勤怠サマリー */}
+                              <td className="px-3 py-2 text-right">{sm.workDays}</td>
+                              <td className="px-3 py-2 text-right">{sm.helperDays}</td>
+                              <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
+                              <td className="px-3 py-2 text-right">{sm.recordCount}</td>
+                              <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
+                              <td className="px-3 py-2 text-right">{formatMinutes(sm.visitMinutes)}</td>
+                              <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
+                              {/* 給与 */}
+                              <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
+                              <td className="px-3 py-2 text-right font-bold">{yen(emp.totalPay)}</td>
+                              <td className="px-3 py-2 text-center">
+                                {emp.unmappedCount > 0 && (
+                                  <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full">未設定{emp.unmappedCount}件</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-center text-muted-foreground text-xs">
+                                {expandedEmp === emp.employee_number ? "▲" : "▼"}
                               </td>
                             </tr>
-                          )}
-                        </>
-                      ))}
+                            {expandedEmp === emp.employee_number && (
+                              <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
+                                <td colSpan={16} className="px-8 py-3">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b">
+                                        <th className="text-left py-1 font-medium">日付</th>
+                                        <th className="text-left py-1 font-medium">サービスコード</th>
+                                        <th className="text-left py-1 font-medium">類型</th>
+                                        <th className="text-right py-1 font-medium">算定時間</th>
+                                        <th className="text-right py-1 font-medium">時給</th>
+                                        <th className="text-right py-1 font-medium">金額</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {emp.records.slice().sort((a, b) => a.service_date.localeCompare(b.service_date)).map((d) => (
+                                        <tr key={d.id} className="border-b border-border/30">
+                                          <td className="py-1">{formatDate(d.service_date)}</td>
+                                          <td className="py-1 font-mono">{d.service_code}</td>
+                                          <td className="py-1">
+                                            <span className={d.category_name === "未マッピング" ? "text-yellow-600" : ""}>{d.category_name}</span>
+                                          </td>
+                                          <td className="py-1 text-right">{formatMinutes(d.minutes)}</td>
+                                          <td className="py-1 text-right">{d.hourly_rate !== null ? d.hourly_rate.toLocaleString() + "円" : "—"}</td>
+                                          <td className="py-1 text-right font-medium">{d.pay !== null ? yen(d.pay) : "—"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                    <tfoot>
+                                      <tr className="font-bold">
+                                        <td colSpan={3} className="py-2">合計</td>
+                                        <td className="py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
+                                        <td></td>
+                                        <td className="py-2 text-right">{yen(emp.totalPay)}</td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </CardContent>
@@ -479,12 +652,23 @@ export default function PayrollPage() {
                   <CardTitle>{formatProcessingMonth(selectedMonth)} 月給者 給与計算</CardTitle>
                   <Button variant="outline" size="sm" onClick={exportMonthlyCsv}>📥 CSV出力</Button>
                 </CardHeader>
-                <CardContent className="p-0">
-                  <table className="w-full text-sm">
+                <CardContent className="p-0 overflow-x-auto">
+                  <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
                         <th className="text-left px-3 py-3 font-medium">職員</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
+                        {/* 勤怠サマリー */}
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
+                        {/* 給与 */}
                         <th className="text-right px-3 py-3 font-medium">固定支給計</th>
                         <th className="text-center px-3 py-3 font-medium">報奨金</th>
                         <th className="text-right px-3 py-3 font-medium">移動(km)</th>
@@ -495,7 +679,8 @@ export default function PayrollPage() {
                     </thead>
                     <tbody>
                       {monthlyResults.map((p) => {
-                        const s = p.settings;
+                        const s  = p.settings;
+                        const sm = p.summary;
                         const fixed = s ? fixedTotal(s) : 0;
                         const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
                         const total = monthlyGrandTotal(p);
@@ -506,8 +691,19 @@ export default function PayrollPage() {
                               <div className="text-xs font-mono text-muted-foreground">{p.employee_number}</div>
                             </td>
                             <td className="px-3 py-2"><RoleBadge role={p.role_type} /></td>
+                            {/* 勤怠サマリー */}
+                            <td className="px-3 py-2 text-right">{sm.workDays}</td>
+                            <td className="px-3 py-2 text-right">{sm.helperDays || "—"}</td>
+                            <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
+                            <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
+                            <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
+                            <td className="px-3 py-2 text-right">{sm.recordCount || "—"}</td>
+                            <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
+                            <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
+                            <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
+                            {/* 給与 */}
                             <td className="px-3 py-2 text-right">
-                              {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 給与設定なし</span>}
+                              {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
                             </td>
                             {/* 報奨金 toggle */}
                             <td className="px-3 py-2 text-center">
@@ -561,7 +757,7 @@ export default function PayrollPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold">
-                        <td colSpan={6} className="px-3 py-2">合計</td>
+                        <td colSpan={15} className="px-3 py-2">合計</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
@@ -570,7 +766,7 @@ export default function PayrollPage() {
                 </CardContent>
               </Card>
 
-              {/* 月給者 内訳カード（クリックで展開しない代わりに詳細表示） */}
+              {/* 月給者 内訳カード */}
               <div className="mt-4 grid md:grid-cols-2 gap-3">
                 {monthlyResults.filter((p) => p.settings).map((p) => {
                   const s = p.settings!;

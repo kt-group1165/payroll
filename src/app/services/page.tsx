@@ -288,16 +288,18 @@ function MappingsTab() {
     fetchData();
   };
 
-  // CSVエクスポート
+  // CSVエクスポート（マッピング済み＋未マッピングを含む）
   const handleExport = () => {
     const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
     const header = "サービスコード,サービス名,類型\n";
-    const rows = mappings
-      .map(
-        (m) =>
-          `${m.service_code},${m.service_name},${categoryMap.get(m.category_id) || ""}`
-      )
-      .join("\n");
+    const mappedRows = mappings.map(
+      (m) =>
+        `${m.service_code},${m.service_name},${categoryMap.get(m.category_id) || ""}`
+    );
+    const unmappedRows = unmapped.map(
+      (u) => `${u.service_code},${u.service_name},`
+    );
+    const rows = [...mappedRows, ...unmappedRows].join("\n");
     const bom = "\uFEFF";
     const blob = new Blob([bom + header + rows], {
       type: "text/csv;charset=utf-8",
