@@ -479,11 +479,19 @@ export default function PayrollPage() {
         const helperDays    = helperDateSet.size;
 
         // 出勤日数：実績の「日」+ 出勤簿の実勤務日の和集合
+        // 半有給・半欠勤等の半日事象がある日は 0.5 として計算
         const helperDayNums = new Set(empRecs.map((r) => extractDay(r.service_date)).filter((d) => d > 0));
         const attWorkDayNums = new Set(
           attDays.filter((r) => r.start_time_1 && r.start_time_1.trim() !== "").map((r) => r.day)
         );
-        const workDays = new Set([...helperDayNums, ...attWorkDayNums]).size;
+        const halfDayNums = new Set(
+          ofRecs
+            .filter((r) => r.item_name.startsWith("半"))
+            .map((r) => extractDay(r.item_date ?? ""))
+            .filter((d) => d > 0)
+        );
+        const allWorkedDays = new Set([...helperDayNums, ...attWorkDayNums]);
+        const workDays = [...allWorkedDays].reduce((s, d) => s + (halfDayNums.has(d) ? 0.5 : 1.0), 0);
 
         // 有給・半有給・特休・HRDは事業所書式から取得
         const paidLeave    = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "有給").length;
