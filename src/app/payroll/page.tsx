@@ -41,7 +41,7 @@ type Employee = {
   employee_number: string;
   name: string;
   role_type: string;
-  salary_type: string;   // "月給" | "時給"
+  salary_type: string;
   employment_status: string;
 };
 
@@ -61,22 +61,23 @@ type SalarySettings = {
   travel_unit_price: number;
   care_overtime_threshold_hours: number;
   care_overtime_unit_price: number;
+  yocho_unit_price: number;
 };
 
 // 勤怠サマリー（職員ごと）
 type AttendanceSummary = {
-  workDays: number;          // 出勤日数（実績OR出勤簿）
-  helperDays: number;        // ヘルパー日数（実績の日付数）
-  paidLeave: number;         // 有給
-  specialLeave: number;      // 特休欠勤
-  workHoursMin: number;      // 出勤時間（分）
-  recordCount: number;       // 実績件数
-  accompaniedCount: number;  // 同行件数
-  visitMinutes: number;      // 訪問時間（分）
-  hrdCount: number;          // HRD
+  workDays: number;
+  helperDays: number;
+  paidLeave: number;
+  specialLeave: number;
+  workHoursMin: number;
+  recordCount: number;
+  accompaniedCount: number;
+  visitMinutes: number;
+  hrdCount: number;
 };
 
-// 時給者：職員ごとの計算結果
+// 時給者
 type HourlyPayroll = {
   employee_number: string;
   employee_name: string;
@@ -98,17 +99,17 @@ type HourlyDetailRow = {
   pay: number | null;
 };
 
-// 月給者：職員ごとの計算結果（変動入力付き）
+// 月給者
 type MonthlyPayroll = {
   employee_id: string;
   employee_number: string;
   employee_name: string;
   role_type: string;
   settings: SalarySettings | null;
-  // 月次入力（変動）
-  bonus_paid: boolean;         // 報奨金 支給/不支給
-  travel_km: number;           // 移動距離(km)
-  business_trip_fee: number;   // 出張費
+  bonus_paid: boolean;
+  travel_km: number;
+  business_trip_fee: number;
+  yocho_hours: number;   // 夜朝時間（月次手動入力）
   summary: AttendanceSummary;
 };
 
@@ -161,6 +162,13 @@ function formatDate(d: string): string {
   return `${parseInt(d.slice(4, 6), 10)}/${parseInt(d.slice(6, 8), 10)}`;
 }
 
+/** service_date 文字列から「日」の数値を抽出（YYYYMMDD / YYYY/MM/DD 等に対応） */
+function extractDay(serviceDate: string): number {
+  const digits = serviceDate.replace(/\D/g, ""); // 数字のみ
+  if (digits.length >= 8) return parseInt(digits.slice(6, 8), 10);
+  return 0;
+}
+
 function fixedTotal(s: SalarySettings): number {
   return (
     s.base_personal_salary + s.skill_salary +
@@ -170,7 +178,6 @@ function fixedTotal(s: SalarySettings): number {
   );
 }
 
-// 介護超過手当（社員のみ、訪問時間ベース）
 function careOvertimePay(p: MonthlyPayroll): number {
   if (p.role_type !== "社員") return 0;
   const s = p.settings;
@@ -180,6 +187,12 @@ function careOvertimePay(p: MonthlyPayroll): number {
   return Math.round((overMin / 60) * s.care_overtime_unit_price);
 }
 
+function yochoAllowance(p: MonthlyPayroll): number {
+  const s = p.settings;
+  if (!s || s.yocho_unit_price <= 0 || p.yocho_hours <= 0) return 0;
+  return Math.round(p.yocho_hours * s.yocho_unit_price);
+}
+
 function monthlyGrandTotal(p: MonthlyPayroll): number {
   if (!p.settings) return 0;
   return (
@@ -187,7 +200,8 @@ function monthlyGrandTotal(p: MonthlyPayroll): number {
     (p.bonus_paid ? p.settings.bonus_amount : 0) +
     Math.round(p.travel_km * (p.settings.travel_unit_price || 0)) +
     p.business_trip_fee +
-    careOvertimePay(p)
+    careOvertimePay(p) +
+    yochoAllowance(p)
   );
 }
 
@@ -204,16 +218,11 @@ function downloadCsv(filename: string, rows: string[][]): void {
   URL.revokeObjectURL(url);
 }
 
-// 勤怠ノートに特定キーワードが含まれる日数を計算
 function countNoteKeyword(attDays: AttendanceRecord[], keyword: string): number {
   return attDays.filter((r) =>
     [r.work_note_1, r.work_note_2, r.work_note_3, r.work_note_4, r.work_note_5]
       .some((n) => n && n.includes(keyword))
   ).length;
-}
-
-function emptyAttSummary(): AttendanceSummary {
-  return { workDays: 0, helperDays: 0, paidLeave: 0, specialLeave: 0, workHoursMin: 0, recordCount: 0, accompaniedCount: 0, visitMinutes: 0, hrdCount: 0 };
 }
 
 // ─── メインコンポーネント ─────────────────────────────────────
@@ -225,14 +234,12 @@ export default function PayrollPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // 時給者
   const [hourlyResults, setHourlyResults] = useState<HourlyPayroll[]>([]);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
 
-  // 月給者
   const [monthlyResults, setMonthlyResults] = useState<MonthlyPayroll[]>([]);
+  const [expandedMonthly, setExpandedMonthly] = useState<string | null>(null);
 
-  // 処理月リスト
   useEffect(() => {
     supabase.from("service_records").select("processing_month").then(({ data }) => {
       if (!data) return;
@@ -247,13 +254,13 @@ export default function PayrollPage() {
   async function calculate() {
     if (!selectedMonth) return;
     setLoading(true); setError("");
-    setHourlyResults([]); setMonthlyResults([]); setExpandedEmp(null);
+    setHourlyResults([]); setMonthlyResults([]);
+    setExpandedEmp(null); setExpandedMonthly(null);
 
     try {
       const year  = parseInt(selectedMonth.slice(0, 4), 10);
       const month = parseInt(selectedMonth.slice(4, 6), 10);
 
-      // 共通マスタ取得
       const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes] = await Promise.all([
         supabase.from("service_records")
           .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
@@ -266,8 +273,7 @@ export default function PayrollPage() {
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours")
-          .eq("year", year)
-          .eq("month", month),
+          .eq("year", year).eq("month", month),
       ]);
 
       const records    = (recRes.data ?? []) as ServiceRecord[];
@@ -279,67 +285,52 @@ export default function PayrollPage() {
       const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));
       const attRecords = (attRes.data ?? []) as AttendanceRecord[];
 
-      // ── 出勤簿を職員番号でグループ化 ──────────────────────────
+      // 出勤簿・実績を職員番号でグループ化
       const attByEmp = new Map<string, AttendanceRecord[]>();
       for (const ar of attRecords) {
         if (!attByEmp.has(ar.employee_number)) attByEmp.set(ar.employee_number, []);
         attByEmp.get(ar.employee_number)!.push(ar);
       }
-
-      // ── サービス実績を職員番号でグループ化 ────────────────────
       const recsByEmp = new Map<string, ServiceRecord[]>();
       for (const r of records) {
         if (!recsByEmp.has(r.employee_number)) recsByEmp.set(r.employee_number, []);
         recsByEmp.get(r.employee_number)!.push(r);
       }
 
-      // ── 勤怠サマリーを計算 ────────────────────────────────────
+      // 勤怠サマリー計算
       function computeSummary(empNum: string, empRecs: ServiceRecord[]): AttendanceSummary {
         const attDays = attByEmp.get(empNum) ?? [];
 
-        // ヘルパー実績の日付セット (service_date: YYYYMMDD → day number)
-        const helperDaySet = new Set(empRecs.map((r) => r.service_date.slice(6, 8)));  // dd
-        const helperDays   = helperDaySet.size;
+        // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
+        const helperDateSet = new Set(empRecs.map((r) => r.service_date));
+        const helperDays    = helperDateSet.size;
 
-        // 出勤簿で実勤務がある日
-        const attWorkDaySet = new Set(
-          attDays.filter((r) => r.start_time_1 && r.start_time_1.trim() !== "")
-            .map((r) => String(r.day))
+        // 出勤日数：実績の「日」+ 出勤簿の実勤務日の和集合
+        const helperDayNums = new Set(empRecs.map((r) => extractDay(r.service_date)).filter((d) => d > 0));
+        const attWorkDayNums = new Set(
+          attDays.filter((r) => r.start_time_1 && r.start_time_1.trim() !== "").map((r) => r.day)
         );
-        // 出勤日数 = ヘルパー実績日 ∪ 出勤簿実勤務日
-        const helperDayNums = new Set(empRecs.map((r) => r.service_date.slice(6, 8).replace(/^0/, "")));
-        const workDays = new Set([...helperDayNums, ...attWorkDaySet]).size;
+        const workDays = new Set([...helperDayNums, ...attWorkDayNums]).size;
 
-        // 有給・特休欠勤・HRD
         const paidLeave    = countNoteKeyword(attDays, "有");
         const specialLeave = countNoteKeyword(attDays, "特休");
         const hrdCount     = countNoteKeyword(attDays, "HRD");
-
-        // 出勤時間（分換算）
         const workHoursMin = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
-
-        // 実績
-        const recordCount = empRecs.length;
-
-        // 同行
+        const recordCount  = empRecs.length;
         const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
-
-        // 訪問時間
         const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
         return { workDays, helperDays, paidLeave, specialLeave, workHoursMin, recordCount, accompaniedCount, visitMinutes, hrdCount };
       }
 
-      // ── 時給者計算 ──────────────────────────────────────────
+      // 時給者
       const roleMap = new Map(employees.map((e) => [e.employee_number, { role: e.role_type, salary: e.salary_type }]));
-
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
+
       for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys()])) {
         const info    = roleMap.get(empNum);
-        const empRecs = recsByEmp.get(empNum) ?? [];
-        // 時給者（またはDB未登録）のみ
         if (info && info.salary === "月給") continue;
-        // サービス実績なく出勤簿のみ → 給与0として表示
+        const empRecs = recsByEmp.get(empNum) ?? [];
         const firstRec = empRecs[0];
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
@@ -353,10 +344,8 @@ export default function PayrollPage() {
         });
       }
 
-      // 各レコードを集計
       for (const rec of records) {
-        const key = rec.employee_number;
-        const emp = hourlyEmpMap.get(key);
+        const emp = hourlyEmpMap.get(rec.employee_number);
         if (!emp) continue;
         const minutes    = parseDurationMinutes(rec.calc_duration);
         const categoryId = mappingMap.get(rec.service_code) ?? null;
@@ -373,7 +362,7 @@ export default function PayrollPage() {
         [...hourlyEmpMap.values()].sort((a, b) => a.employee_name.localeCompare(b.employee_name, "ja"))
       );
 
-      // ── 月給者計算 ──────────────────────────────────────────
+      // 月給者
       const monthlyEmps = employees.filter(
         (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者")
       );
@@ -387,6 +376,7 @@ export default function PayrollPage() {
           bonus_paid: false,
           travel_km: 0,
           business_trip_fee: 0,
+          yocho_hours: 0,
           summary: computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []),
         }))
       );
@@ -397,11 +387,8 @@ export default function PayrollPage() {
     }
   }
 
-  // 月給者：変動入力更新
   function updateMonthly(empId: string, patch: Partial<MonthlyPayroll>) {
-    setMonthlyResults((prev) =>
-      prev.map((p) => p.employee_id === empId ? { ...p, ...patch } : p)
-    );
+    setMonthlyResults((prev) => prev.map((p) => p.employee_id === empId ? { ...p, ...patch } : p));
   }
 
   // ── CSV出力 ─────────────────────────────────────────────────
@@ -435,7 +422,8 @@ export default function PayrollPage() {
       "実績","同行","訪問時間","HRD",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
-      "固定残業代","特別報奨金","報奨金","移動費","出張費","介護超過手当","合計(円)",
+      "固定残業代","特別報奨金","報奨金","移動費","出張費",
+      "夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
       const s = p.settings;
@@ -459,14 +447,14 @@ export default function PayrollPage() {
         String(p.bonus_paid ? (s?.bonus_amount ?? 0) : 0),
         String(travelFee),
         String(p.business_trip_fee),
+        String(p.yocho_hours),
+        String(yochoAllowance(p)),
         String(careOvertimePay(p)),
         String(monthlyGrandTotal(p)),
       ]);
     }
     downloadCsv(`給与計算_${label}_月給者.csv`, rows);
   }
-
-  // ─── 合計値 ──────────────────────────────────────────────────
 
   const hourlyGrandTotal   = hourlyResults.reduce((s, e) => s + e.totalPay, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
@@ -478,7 +466,6 @@ export default function PayrollPage() {
     <div>
       <h2 className="text-2xl font-bold mb-6">給与計算</h2>
 
-      {/* 月選択・実行 */}
       <Card className="mb-6">
         <CardContent className="pt-6">
           <div className="flex items-center gap-4 flex-wrap">
@@ -508,7 +495,6 @@ export default function PayrollPage() {
 
       {(hourlyResults.length > 0 || monthlyResults.length > 0) && (
         <>
-          {/* タブ */}
           <div className="flex gap-1 mb-4 border-b">
             {(["hourly", "monthly"] as const).map((t) => (
               <button
@@ -549,7 +535,6 @@ export default function PayrollPage() {
                         <th className="text-left px-3 py-3 font-medium">職員番号</th>
                         <th className="text-left px-3 py-3 font-medium">職員名</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
-                        {/* 勤怠サマリー */}
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
@@ -559,7 +544,6 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
-                        {/* 給与 */}
                         <th className="text-right px-3 py-3 font-medium">算定時間</th>
                         <th className="text-right px-3 py-3 font-medium">給与合計</th>
                         <th className="text-center px-3 py-3 font-medium">注記</th>
@@ -579,7 +563,6 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 font-mono text-xs">{emp.employee_number}</td>
                               <td className="px-3 py-2 font-medium">{emp.employee_name}</td>
                               <td className="px-3 py-2"><RoleBadge role={emp.role_type} /></td>
-                              {/* 勤怠サマリー */}
                               <td className="px-3 py-2 text-right">{sm.workDays}</td>
                               <td className="px-3 py-2 text-right">{sm.helperDays}</td>
                               <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
@@ -589,7 +572,6 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatMinutes(sm.visitMinutes)}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
-                              {/* 給与 */}
                               <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(emp.totalPay)}</td>
                               <td className="px-3 py-2 text-center">
@@ -670,9 +652,9 @@ export default function PayrollPage() {
                   <table className="w-full text-sm whitespace-nowrap">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-3 py-3 font-medium">職員</th>
+                        <th className="text-left px-3 py-3 font-medium">職員番号</th>
+                        <th className="text-left px-3 py-3 font-medium">職員名</th>
                         <th className="text-left px-3 py-3 font-medium">役職</th>
-                        {/* 勤怠サマリー */}
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
@@ -682,14 +664,9 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
-                        {/* 給与 */}
                         <th className="text-right px-3 py-3 font-medium">固定支給計</th>
-                        <th className="text-center px-3 py-3 font-medium">報奨金</th>
-                        <th className="text-right px-3 py-3 font-medium">移動(km)</th>
-                        <th className="text-right px-3 py-3 font-medium">出張費</th>
-                        <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
-                        <th className="text-center px-3 py-3 font-medium">設定</th>
+                        <th className="px-3 py-3"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -697,93 +674,149 @@ export default function PayrollPage() {
                         const s  = p.settings;
                         const sm = p.summary;
                         const fixed = s ? fixedTotal(s) : 0;
-                        const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
                         const total = monthlyGrandTotal(p);
+                        const cop   = careOvertimePay(p);
+                        const yocho = yochoAllowance(p);
+                        const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
+                        const isExpanded = expandedMonthly === p.employee_id;
                         return (
-                          <tr key={p.employee_id} className="border-b hover:bg-muted/20">
-                            <td className="px-3 py-2">
-                              <div className="font-medium">{p.employee_name}</div>
-                              <div className="text-xs font-mono text-muted-foreground">{p.employee_number}</div>
-                            </td>
-                            <td className="px-3 py-2"><RoleBadge role={p.role_type} /></td>
-                            {/* 勤怠サマリー */}
-                            <td className="px-3 py-2 text-right">{sm.workDays}</td>
-                            <td className="px-3 py-2 text-right">{sm.helperDays || "—"}</td>
-                            <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
-                            <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
-                            <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
-                            <td className="px-3 py-2 text-right">{sm.recordCount || "—"}</td>
-                            <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
-                            <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
-                            <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
-                            {/* 給与 */}
-                            <td className="px-3 py-2 text-right">
-                              {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
-                            </td>
-                            {/* 報奨金 toggle */}
-                            <td className="px-3 py-2 text-center">
-                              {s && s.bonus_amount > 0 ? (
-                                <label className="flex items-center justify-center gap-1 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={p.bonus_paid}
-                                    onChange={(e) => updateMonthly(p.employee_id, { bonus_paid: e.target.checked })}
-                                  />
-                                  <span className="text-xs">{yen(s.bonus_amount)}</span>
-                                </label>
-                              ) : <span className="text-xs text-muted-foreground">—</span>}
-                            </td>
-                            {/* 移動距離 */}
-                            <td className="px-3 py-2">
-                              <div className="flex items-center gap-1 justify-end">
-                                <Input
-                                  type="number" min={0} step={0.1}
-                                  value={p.travel_km || ""}
-                                  placeholder="0"
-                                  onChange={(e) => updateMonthly(p.employee_id, { travel_km: parseFloat(e.target.value) || 0 })}
-                                  className="w-20 text-right text-xs h-7 px-2"
-                                />
-                                {travelFee > 0 && (
-                                  <span className="text-xs text-muted-foreground whitespace-nowrap">={yen(travelFee)}</span>
-                                )}
-                              </div>
-                            </td>
-                            {/* 出張費 */}
-                            <td className="px-3 py-2">
-                              <Input
-                                type="number" min={0}
-                                value={p.business_trip_fee || ""}
-                                placeholder="0"
-                                onChange={(e) => updateMonthly(p.employee_id, { business_trip_fee: parseInt(e.target.value) || 0 })}
-                                className="w-24 text-right text-xs h-7 px-2"
-                              />
-                            </td>
-                            {/* 介護超過手当 */}
-                            <td className="px-3 py-2 text-right">
-                              {(() => {
-                                const cop = careOvertimePay(p);
-                                if (p.role_type !== "社員") return <span className="text-xs text-muted-foreground">—</span>;
-                                if (!s || s.care_overtime_threshold_hours <= 0) return <span className="text-xs text-muted-foreground">未設定</span>;
-                                return cop > 0
-                                  ? <span className="font-medium text-orange-700">{yen(cop)}</span>
-                                  : <span className="text-xs text-muted-foreground">0円</span>;
-                              })()}
-                            </td>
-                            {/* 合計 */}
-                            <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
-                            {/* 設定リンク */}
-                            <td className="px-3 py-2 text-center">
-                              {!s && (
-                                <a href="/salary" className="text-xs text-primary underline">設定へ</a>
-                              )}
-                            </td>
-                          </tr>
+                          <>
+                            <tr
+                              key={p.employee_id}
+                              className="border-b hover:bg-muted/30 cursor-pointer"
+                              onClick={() => setExpandedMonthly(isExpanded ? null : p.employee_id)}
+                            >
+                              <td className="px-3 py-2 font-mono text-xs">{p.employee_number}</td>
+                              <td className="px-3 py-2 font-medium">{p.employee_name}</td>
+                              <td className="px-3 py-2"><RoleBadge role={p.role_type} /></td>
+                              <td className="px-3 py-2 text-right">{sm.workDays}</td>
+                              <td className="px-3 py-2 text-right">{sm.helperDays || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
+                              <td className="px-3 py-2 text-right">{sm.recordCount || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
+                              <td className="px-3 py-2 text-right">
+                                {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
+                              <td className="px-3 py-2 text-center text-muted-foreground text-xs">
+                                {isExpanded ? "▲" : "▼"}
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <tr key={`${p.employee_id}-d`} className="bg-muted/10">
+                                <td colSpan={15} className="px-8 py-4">
+                                  <div className="grid md:grid-cols-2 gap-6 text-xs">
+                                    {/* 左：支給内訳 */}
+                                    <div>
+                                      <p className="font-semibold text-sm mb-2 text-muted-foreground">支給内訳</p>
+                                      {s ? (
+                                        <div className="space-y-0.5">
+                                          <DetailLine label="本人給" v={s.base_personal_salary} />
+                                          <DetailLine label="職能給" v={s.skill_salary} />
+                                          <DetailLine label="役職手当" v={s.position_allowance} />
+                                          <DetailLine label="資格手当" v={s.qualification_allowance} />
+                                          <DetailLine label="勤続手当" v={s.tenure_allowance} />
+                                          <DetailLine label="処遇改善手当" v={s.treatment_improvement} />
+                                          <DetailLine label="特定処遇改善手当" v={s.specific_treatment_improvement} />
+                                          <DetailLine label="処遇改善補助金手当" v={s.treatment_subsidy} />
+                                          <DetailLine label="固定残業代" v={s.fixed_overtime_pay} />
+                                          <DetailLine label="特別報奨金" v={s.special_bonus} />
+                                          {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
+                                          {travelFee > 0 && <DetailLine label={`移動費(${p.travel_km}km)`} v={travelFee} />}
+                                          {p.business_trip_fee > 0 && <DetailLine label="出張費" v={p.business_trip_fee} />}
+                                          {yocho > 0 && <DetailLine label={`夜朝手当(${p.yocho_hours}h)`} v={yocho} />}
+                                          {cop > 0 && <DetailLine label={`介護超過手当`} v={cop} />}
+                                          <div className="flex justify-between pt-2 border-t font-bold text-sm mt-1">
+                                            <span>合計</span>
+                                            <span>{yen(total)}</span>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <p className="text-yellow-600">⚠ 給与設定がありません。<a href="/salary" className="underline text-primary">設定画面へ</a></p>
+                                      )}
+                                    </div>
+                                    {/* 右：変動入力 */}
+                                    <div>
+                                      <p className="font-semibold text-sm mb-2 text-muted-foreground">変動入力</p>
+                                      <div className="space-y-3">
+                                        {/* 報奨金 */}
+                                        {s && s.bonus_amount > 0 && (
+                                          <label className="flex items-center gap-3 cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={p.bonus_paid}
+                                              onChange={(e) => updateMonthly(p.employee_id, { bonus_paid: e.target.checked })}
+                                              onClick={(e) => e.stopPropagation()}
+                                            />
+                                            <span>報奨金を支給　<span className="font-medium">{yen(s.bonus_amount)}</span></span>
+                                          </label>
+                                        )}
+                                        {/* 夜朝時間 */}
+                                        {s && s.yocho_unit_price > 0 && (
+                                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                            <span className="w-28">夜朝時間</span>
+                                            <Input
+                                              type="number" min={0} step={0.5}
+                                              value={p.yocho_hours || ""}
+                                              placeholder="0"
+                                              onChange={(e) => updateMonthly(p.employee_id, { yocho_hours: parseFloat(e.target.value) || 0 })}
+                                              className="w-24 text-right h-7 px-2"
+                                            />
+                                            <span className="text-muted-foreground">時間</span>
+                                            {p.yocho_hours > 0 && <span className="text-muted-foreground">= {yen(yocho)}</span>}
+                                          </div>
+                                        )}
+                                        {/* 移動距離 */}
+                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                          <span className="w-28">移動距離</span>
+                                          <Input
+                                            type="number" min={0} step={0.1}
+                                            value={p.travel_km || ""}
+                                            placeholder="0"
+                                            onChange={(e) => updateMonthly(p.employee_id, { travel_km: parseFloat(e.target.value) || 0 })}
+                                            className="w-24 text-right h-7 px-2"
+                                          />
+                                          <span className="text-muted-foreground">km</span>
+                                          {travelFee > 0 && <span className="text-muted-foreground">= {yen(travelFee)}</span>}
+                                        </div>
+                                        {/* 出張費 */}
+                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                          <span className="w-28">出張費</span>
+                                          <Input
+                                            type="number" min={0}
+                                            value={p.business_trip_fee || ""}
+                                            placeholder="0"
+                                            onChange={(e) => updateMonthly(p.employee_id, { business_trip_fee: parseInt(e.target.value) || 0 })}
+                                            className="w-24 text-right h-7 px-2"
+                                          />
+                                          <span className="text-muted-foreground">円</span>
+                                        </div>
+                                        {/* 介護超過（参考表示） */}
+                                        {p.role_type === "社員" && s && s.care_overtime_threshold_hours > 0 && (
+                                          <div className="flex items-center gap-2 text-muted-foreground">
+                                            <span className="w-28">介護超過手当</span>
+                                            <span className={cop > 0 ? "font-medium text-orange-700" : ""}>
+                                              {cop > 0 ? yen(cop) : `閾値${s.care_overtime_threshold_hours}h 未超過`}
+                                            </span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </>
                         );
                       })}
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold">
-                        <td colSpan={16} className="px-3 py-2">合計</td>
+                        <td colSpan={13} className="px-3 py-2">合計</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
@@ -791,44 +824,6 @@ export default function PayrollPage() {
                   </table>
                 </CardContent>
               </Card>
-
-              {/* 月給者 内訳カード */}
-              <div className="mt-4 grid md:grid-cols-2 gap-3">
-                {monthlyResults.filter((p) => p.settings).map((p) => {
-                  const s = p.settings!;
-                  return (
-                    <Card key={p.employee_id} className="text-sm">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm flex justify-between">
-                          <span>{p.employee_name}</span>
-                          <span className="font-bold">{yen(monthlyGrandTotal(p))}</span>
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-0.5 text-xs">
-                        <DetailLine label="本人給" v={s.base_personal_salary} />
-                        <DetailLine label="職能給" v={s.skill_salary} />
-                        <DetailLine label="役職手当" v={s.position_allowance} />
-                        <DetailLine label="資格手当" v={s.qualification_allowance} />
-                        <DetailLine label="勤続手当" v={s.tenure_allowance} />
-                        <DetailLine label="処遇改善手当" v={s.treatment_improvement} />
-                        <DetailLine label="特定処遇改善手当" v={s.specific_treatment_improvement} />
-                        <DetailLine label="処遇改善補助金手当" v={s.treatment_subsidy} />
-                        <DetailLine label="固定残業代" v={s.fixed_overtime_pay} />
-                        <DetailLine label="特別報奨金" v={s.special_bonus} />
-                        {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
-                        {p.travel_km > 0 && <DetailLine label={`移動費(${p.travel_km}km)`} v={Math.round(p.travel_km * s.travel_unit_price)} />}
-                        {p.business_trip_fee > 0 && <DetailLine label="出張費" v={p.business_trip_fee} />}
-                        {careOvertimePay(p) > 0 && (
-                          <DetailLine
-                            label={`介護超過手当(${formatMinutes(Math.max(0, p.summary.visitMinutes - s.care_overtime_threshold_hours * 60))}超過)`}
-                            v={careOvertimePay(p)}
-                          />
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
             </>
           )}
         </>
