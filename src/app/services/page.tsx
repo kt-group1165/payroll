@@ -194,36 +194,40 @@ function MappingsTab() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const [mapRes, catRes, svcRes] = await Promise.all([
+    const [mapRes, catRes] = await Promise.all([
       supabase
         .from("service_type_mappings")
         .select("*, service_categories(name)")
         .order("service_code"),
       supabase.from("service_categories").select("*").order("sort_order"),
-      // CSVから取り込んだサービスコードとサービス型の一覧を取得
-      supabase
-        .from("service_records")
-        .select("service_code, service_category")
-        .limit(10000),
     ]);
     if (mapRes.data) setMappings(mapRes.data);
     if (catRes.data) setCategories(catRes.data);
 
-    // 未マッピングのサービスコードを検出
-    if (svcRes.data && mapRes.data) {
+    // 未マッピングのサービスコードを検出（ページング取得で上限回避）
+    if (mapRes.data) {
       const mappedCodes = new Set(
         mapRes.data.map((m: ServiceTypeMapping) => m.service_code)
       );
-      // サービスコード→サービス名のマップを構築（重複排除）
       const codeNameMap = new Map<string, string>();
-      for (const r of svcRes.data) {
-        const code = (r as { service_code: string; service_category: string })
-          .service_code;
-        const name = (r as { service_code: string; service_category: string })
-          .service_category;
-        if (code && code.trim() && !codeNameMap.has(code)) {
-          codeNameMap.set(code, name || "");
+      const pageSize = 1000;
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("service_records")
+          .select("service_code,service_category")
+          .order("id")
+          .range(from, from + pageSize - 1);
+        if (!data || data.length === 0) break;
+        for (const r of data) {
+          const code = (r as { service_code: string; service_category: string }).service_code;
+          const name = (r as { service_code: string; service_category: string }).service_category;
+          if (code && code.trim() && !codeNameMap.has(code)) {
+            codeNameMap.set(code, name || "");
+          }
         }
+        if (data.length < pageSize) break;
+        from += pageSize;
       }
       const unmappedList: UnmappedService[] = [];
       for (const [code, name] of codeNameMap) {
