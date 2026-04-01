@@ -410,6 +410,7 @@ export default function PayrollPage() {
             .from("service_records")
             .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
             .eq("processing_month", selectedMonth)
+            .order("id")
             .range(from, from + pageSize - 1);
           if (!data || data.length === 0) break;
           allServiceRecords.push(...(data as ServiceRecord[]));
@@ -448,26 +449,30 @@ export default function PayrollPage() {
       setOtSettings(otMap);
 
       // 出勤簿・実績・事業所書式を職員番号でグループ化
+      // String() で型不一致（INTEGER vs TEXT）を回避
       const attByEmp = new Map<string, AttendanceRecord[]>();
       for (const ar of attRecords) {
-        if (!attByEmp.has(ar.employee_number)) attByEmp.set(ar.employee_number, []);
-        attByEmp.get(ar.employee_number)!.push(ar);
+        const key = String(ar.employee_number);
+        if (!attByEmp.has(key)) attByEmp.set(key, []);
+        attByEmp.get(key)!.push(ar);
       }
       const recsByEmp = new Map<string, ServiceRecord[]>();
       for (const r of records) {
-        if (!recsByEmp.has(r.employee_number)) recsByEmp.set(r.employee_number, []);
-        recsByEmp.get(r.employee_number)!.push(r);
+        const key = String(r.employee_number);
+        if (!recsByEmp.has(key)) recsByEmp.set(key, []);
+        recsByEmp.get(key)!.push(r);
       }
       const ofByEmp = new Map<string, OfficeFormRecord[]>();
       for (const r of ofRecords) {
-        if (!ofByEmp.has(r.employee_number)) ofByEmp.set(r.employee_number, []);
-        ofByEmp.get(r.employee_number)!.push(r);
+        const key = String(r.employee_number);
+        if (!ofByEmp.has(key)) ofByEmp.set(key, []);
+        ofByEmp.get(key)!.push(r);
       }
 
       // 勤怠サマリー計算
       function computeSummary(empNum: string, empRecs: ServiceRecord[]): AttendanceSummary {
-        const attDays = attByEmp.get(empNum) ?? [];
-        const ofRecs  = ofByEmp.get(empNum) ?? [];
+        const attDays = attByEmp.get(String(empNum)) ?? [];
+        const ofRecs  = ofByEmp.get(String(empNum)) ?? [];
 
         // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
         const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -503,7 +508,7 @@ export default function PayrollPage() {
       }
 
       // 時給者
-      const roleMap = new Map(employees.map((e) => [e.employee_number, {
+      const roleMap = new Map(employees.map((e) => [String(e.employee_number), {
         role: e.role_type,
         salary: e.salary_type,
         hasQual: e.has_care_qualification ?? false,
@@ -567,9 +572,9 @@ export default function PayrollPage() {
             0, 0, 0
           );
           const settingsWithTenure = sal ? { ...sal, tenure_allowance: computedTenure } : null;
-          const summary = computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []);
+          const summary = computeSummary(String(e.employee_number), recsByEmp.get(String(e.employee_number)) ?? []);
           // 出張km: 事業所書式 > 出勤簿
-          const empOfRecs = ofByEmp.get(e.employee_number) ?? [];
+          const empOfRecs = ofByEmp.get(String(e.employee_number)) ?? [];
           const ofTravelKm = empOfRecs
             .filter((r) => r.record_type === "km" && r.item_name === "出張km")
             .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
@@ -680,6 +685,12 @@ export default function PayrollPage() {
     downloadCsv(`給与計算_${label}_月給者.csv`, rows);
   }
 
+  const hourlyTenureTotal  = hourlyResults.reduce((s, e) => {
+    return s + computeTenureAllowance(
+      e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
+      e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
+    );
+  }, 0);
   const hourlyGrandTotal   = hourlyResults.reduce((s, e) => {
     const tenure = computeTenureAllowance(
       e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
@@ -890,6 +901,28 @@ export default function PayrollPage() {
                         );
                       })}
                     </tbody>
+                    <tfoot>
+                      <tr className="bg-muted/30 font-bold border-t-2">
+                        <td className="px-3 py-2 sticky left-0 z-10 bg-muted/30">合計</td>
+                        <td></td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.workDays, 0)}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.helperDays, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.paidLeave, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.halfLeave, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.specialLeave, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{formatWorkHours(hourlyResults.reduce((s, e) => s + e.summary.workHoursMin, 0))}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.recordCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.accompaniedCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutes, 0))}</td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.hrdCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyGrandMinutes)}</td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
+                        <td className="px-3 py-2 text-right">{hourlyTenureTotal > 0 ? yen(hourlyTenureTotal) : "—"}</td>
+                        <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
+                        <td></td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </CardContent>
               </Card>
