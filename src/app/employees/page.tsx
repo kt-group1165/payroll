@@ -53,7 +53,7 @@ const CSV_HEADERS = [
   "職種", "役職", "給与形態",
   "基本給", "固定残業時間", "固定残業代",
   "身体介護時給", "生活援助時給", "訪問型時給",
-  "移動手段",
+  "移動手段", "介護資格", "社会保険", "有給手当単価",
 ] as const;
 
 // ─── フォーム初期値 ───────────────────────────────────────────
@@ -154,6 +154,9 @@ type ImportRow = {
   hourly_rate_living: number | null;
   hourly_rate_visit: number | null;
   transport_type: string;
+  has_care_qualification: boolean;
+  social_insurance: boolean;
+  paid_leave_unit_price: number;
   error?: string;
 };
 
@@ -295,6 +298,9 @@ export default function EmployeesPage() {
         emp.hourly_rate_living?.toString() ?? "",
         emp.hourly_rate_visit?.toString() ?? "",
         emp.transport_type,
+        emp.has_care_qualification ? "1" : "0",
+        emp.social_insurance ? "1" : "0",
+        emp.paid_leave_unit_price?.toString() ?? "0",
       ]);
     }
     downloadCsv("職員一覧.csv", rows);
@@ -350,6 +356,9 @@ export default function EmployeesPage() {
           hourly_rate_living: toInt(get("生活援助時給")),
           hourly_rate_visit: toInt(get("訪問型時給")),
           transport_type: get("移動手段") || "車",
+          has_care_qualification: get("介護資格") === "1",
+          social_insurance: get("社会保険") === "1",
+          paid_leave_unit_price: parseFloat(get("有給手当単価") || "0") || 0,
           error: errors.length > 0 ? errors.join(" / ") : undefined,
         });
       }
@@ -393,6 +402,9 @@ export default function EmployeesPage() {
         hourly_rate_living: row.hourly_rate_living,
         hourly_rate_visit: row.hourly_rate_visit,
         transport_type: row.transport_type,
+        has_care_qualification: row.has_care_qualification,
+        social_insurance: row.social_insurance,
+        paid_leave_unit_price: row.paid_leave_unit_price,
       };
 
       const { error } = await supabase
