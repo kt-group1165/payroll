@@ -546,7 +546,7 @@ export default function PayrollPage() {
         const commuteKmTotal   = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
         const businessKmTotal  = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
         const weekendHolidayMinutes = empRecs
-          .filter((r) => isWeekendOrHoliday(r.service_date))
+          .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
           .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
         return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes };
