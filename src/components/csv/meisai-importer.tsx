@@ -29,14 +29,20 @@ export function MeisaiImporter() {
   const [existingMonths, setExistingMonths] = useState<{ month: string; count: number }[]>([]);
 
   const fetchExistingMonths = useCallback(async () => {
-    const { data } = await supabase
-      .from("service_records")
-      .select("processing_month")
-      .limit(100000);
-    if (!data) return;
     const countMap = new Map<string, number>();
-    for (const r of data as { processing_month: string }[]) {
-      countMap.set(r.processing_month, (countMap.get(r.processing_month) ?? 0) + 1);
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("service_records")
+        .select("processing_month")
+        .range(from, from + pageSize - 1);
+      if (!data || data.length === 0) break;
+      for (const r of data as { processing_month: string }[]) {
+        countMap.set(r.processing_month, (countMap.get(r.processing_month) ?? 0) + 1);
+      }
+      if (data.length < pageSize) break;
+      from += pageSize;
     }
     const sorted = [...countMap.entries()]
       .map(([month, count]) => ({ month, count }))

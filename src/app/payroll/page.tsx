@@ -400,11 +400,25 @@ export default function PayrollPage() {
       const monthOffset = (year * 12 + month) - (TENURE_BASE_YEAR * 12 + TENURE_BASE_MONTH);
       const adjustedMonths = (m: number) => Math.max(0, m + monthOffset);
 
-      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes, otRes] = await Promise.all([
-        supabase.from("service_records")
-          .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
-          .eq("processing_month", selectedMonth)
-          .limit(100000),
+      // service_records はサーバー側上限(1000件)を回避するため range でページング取得
+      const allServiceRecords: ServiceRecord[] = [];
+      {
+        const pageSize = 1000;
+        let from = 0;
+        while (true) {
+          const { data } = await supabase
+            .from("service_records")
+            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
+            .eq("processing_month", selectedMonth)
+            .range(from, from + pageSize - 1);
+          if (!data || data.length === 0) break;
+          allServiceRecords.push(...(data as ServiceRecord[]));
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
+      }
+
+      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price"),
@@ -420,7 +434,7 @@ export default function PayrollPage() {
         supabase.from("overtime_settings").select("*"),
       ]);
 
-      const records    = (recRes.data ?? []) as ServiceRecord[];
+      const records    = allServiceRecords;
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
       const categoryMap= new Map((catRes.data ?? []).map((c: ServiceCategory) => [c.id, c.name]));
       const officeMap         = new Map((officeRes.data ?? []).map((o: Office) => [o.office_number, o.id]));
