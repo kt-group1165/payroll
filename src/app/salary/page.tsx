@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import type { Employee, Office } from "@/types/database";
+import type { Employee, Office, JobType } from "@/types/database";
 
 // ─── 型定義 ──────────────────────────────────────────────────
 
@@ -37,6 +38,43 @@ type SalarySettings = {
   yocho_unit_price: number;
   note: string;
 };
+
+// ─── 残業設定型 ──────────────────────────────────────────────
+
+type OvertimeSetting = {
+  id?: string;
+  job_type: string;
+  scheduled_hours_per_month: number;
+  include_base_personal_salary: boolean;
+  include_skill_salary: boolean;
+  include_position_allowance: boolean;
+  include_qualification_allowance: boolean;
+  include_tenure_allowance: boolean;
+  include_treatment_improvement: boolean;
+  include_specific_treatment: boolean;
+  include_treatment_subsidy: boolean;
+  include_fixed_overtime_pay: boolean;
+  include_special_bonus: boolean;
+};
+
+const JOB_TYPES_FOR_OVERTIME: JobType[] = [
+  "訪問介護", "訪問看護", "訪問入浴", "居宅介護支援", "福祉用具貸与", "薬局", "本社",
+];
+
+const emptyOvertimeSetting = (jobType: string): OvertimeSetting => ({
+  job_type: jobType,
+  scheduled_hours_per_month: 160,
+  include_base_personal_salary: true,
+  include_skill_salary: true,
+  include_position_allowance: false,
+  include_qualification_allowance: false,
+  include_tenure_allowance: false,
+  include_treatment_improvement: false,
+  include_specific_treatment: false,
+  include_treatment_subsidy: false,
+  include_fixed_overtime_pay: false,
+  include_special_bonus: false,
+});
 
 // CSV ヘッダー（社員番号・名前は参照用）
 const CSV_HEADERS = [
@@ -128,6 +166,91 @@ type ImportRow = {
 
 // ─── 入力コンポーネント ───────────────────────────────────────
 
+// ─── 残業設定パネル ────────────────────────────────────────────
+
+const INCLUDE_FIELDS: { key: keyof OvertimeSetting; label: string }[] = [
+  { key: "include_base_personal_salary",    label: "本人給" },
+  { key: "include_skill_salary",            label: "職能給" },
+  { key: "include_position_allowance",      label: "役職手当" },
+  { key: "include_qualification_allowance", label: "資格手当" },
+  { key: "include_tenure_allowance",        label: "勤続手当" },
+  { key: "include_treatment_improvement",   label: "処遇改善手当" },
+  { key: "include_specific_treatment",      label: "特定処遇改善手当" },
+  { key: "include_treatment_subsidy",       label: "処遇補助金手当" },
+  { key: "include_fixed_overtime_pay",      label: "固定残業代" },
+  { key: "include_special_bonus",           label: "特別報奨金" },
+];
+
+function OvertimeSettingsPanel({
+  settings, onUpdate, onSave, saving,
+}: {
+  settings: Map<string, OvertimeSetting>;
+  onUpdate: (jobType: string, patch: Partial<OvertimeSetting>) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        訪問種別ごとに月所定労働時間と残業単価の計算対象手当を設定します。<br />
+        残業単価 = Σ（対象手当） ÷ 月所定労働時間 × 1.25
+      </p>
+
+      <div className="overflow-x-auto border rounded-md">
+        <table className="w-full text-sm whitespace-nowrap">
+          <thead>
+            <tr className="bg-muted/50 border-b">
+              <th className="text-left px-4 py-2 font-medium">訪問種別</th>
+              <th className="text-right px-4 py-2 font-medium">月所定労働時間</th>
+              {INCLUDE_FIELDS.map((f) => (
+                <th key={f.key} className="text-center px-3 py-2 font-medium text-xs">{f.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {JOB_TYPES_FOR_OVERTIME.map((jt) => {
+              const s = settings.get(jt) ?? emptyOvertimeSetting(jt);
+              return (
+                <tr key={jt} className="border-b hover:bg-muted/20">
+                  <td className="px-4 py-2 font-medium">{jt}</td>
+                  <td className="px-4 py-2">
+                    <div className="flex items-center justify-end gap-1">
+                      <Input
+                        type="number" min={0} step={1}
+                        value={s.scheduled_hours_per_month || ""}
+                        placeholder="160"
+                        onChange={(e) => onUpdate(jt, { scheduled_hours_per_month: parseFloat(e.target.value) || 0 })}
+                        className="w-20 text-right h-7 px-2 text-xs"
+                      />
+                      <span className="text-xs text-muted-foreground">h</span>
+                    </div>
+                  </td>
+                  {INCLUDE_FIELDS.map((f) => (
+                    <td key={f.key} className="text-center px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={!!s[f.key]}
+                        onChange={(e) => onUpdate(jt, { [f.key]: e.target.checked })}
+                        className="h-4 w-4"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={onSave} disabled={saving}>
+          {saving ? "保存中…" : "💾 残業設定を保存"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function YenInput({
   label, value, onChange, sublabel,
 }: {
@@ -188,15 +311,25 @@ export default function SalaryPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importing, setImporting] = useState(false);
 
+  // ─── 残業設定 ────────────────────────────────────────────────
+  const [overtimeSettings, setOvertimeSettings] = useState<Map<string, OvertimeSetting>>(new Map());
+  const [savingOvertime, setSavingOvertime] = useState(false);
+
   const fetchAll = useCallback(async () => {
-    const [empRes, offRes, salRes] = await Promise.all([
+    const [empRes, offRes, salRes, otRes] = await Promise.all([
       supabase.from("employees").select("*").order("employee_number"),
       supabase.from("offices").select("*"),
       supabase.from("salary_settings").select("*"),
+      supabase.from("overtime_settings").select("*"),
     ]);
     if (empRes.data) setEmployees(empRes.data as Employee[]);
     if (offRes.data) setOffices(offRes.data as Office[]);
     if (salRes.data) setAllSettings(salRes.data as SalarySettings[]);
+    if (otRes.data) {
+      const map = new Map<string, OvertimeSetting>();
+      for (const r of otRes.data as OvertimeSetting[]) map.set(r.job_type, r);
+      setOvertimeSettings(map);
+    }
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
@@ -362,6 +495,35 @@ export default function SalaryPage() {
     else toast.warning(`${success}件成功、${fail}件失敗`);
   }
 
+  // ─── 残業設定 保存 ───────────────────────────────────────────
+
+  const updOvertime = (jobType: string, patch: Partial<OvertimeSetting>) => {
+    setOvertimeSettings((prev) => {
+      const next = new Map(prev);
+      next.set(jobType, { ...(prev.get(jobType) ?? emptyOvertimeSetting(jobType)), ...patch });
+      return next;
+    });
+  };
+
+  const handleSaveOvertime = async () => {
+    setSavingOvertime(true);
+    let ok = 0, fail = 0;
+    for (const jt of JOB_TYPES_FOR_OVERTIME) {
+      const s = overtimeSettings.get(jt) ?? emptyOvertimeSetting(jt);
+      const { id, ...payload } = s;
+      let error;
+      if (id) {
+        ({ error } = await supabase.from("overtime_settings").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id));
+      } else {
+        ({ error } = await supabase.from("overtime_settings").insert(payload));
+      }
+      if (error) fail++; else ok++;
+    }
+    setSavingOvertime(false);
+    if (fail === 0) { toast.success("残業設定を保存しました"); fetchAll(); }
+    else toast.error(`${fail}件の保存に失敗しました`);
+  };
+
   // ─── 描画 ─────────────────────────────────────────────────────
 
   const emp = employees.find((e) => e.id === selectedId);
@@ -372,8 +534,18 @@ export default function SalaryPage() {
 
   return (
     <div>
+      <h2 className="text-2xl font-bold mb-6">給与設定</h2>
+
+      <Tabs defaultValue="salary">
+        <TabsList className="mb-6">
+          <TabsTrigger value="salary">職員給与設定</TabsTrigger>
+          <TabsTrigger value="overtime">残業設定（訪問種別別）</TabsTrigger>
+        </TabsList>
+
+        {/* ── 職員給与設定タブ ─────────────────────────────── */}
+        <TabsContent value="salary">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">給与設定</h2>
+        <div />
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExport} disabled={employees.length === 0}>
             📥 CSV出力
@@ -667,6 +839,19 @@ export default function SalaryPage() {
           職員を選択すると給与設定が表示されます
         </p>
       )}
+
+        </TabsContent>
+
+        {/* ── 残業設定タブ ──────────────────────────────────── */}
+        <TabsContent value="overtime">
+          <OvertimeSettingsPanel
+            settings={overtimeSettings}
+            onUpdate={updOvertime}
+            onSave={handleSaveOvertime}
+            saving={savingOvertime}
+          />
+        </TabsContent>
+      </Tabs>
 
       {/* インポートプレビュー */}
       <Dialog open={importOpen} onOpenChange={setImportOpen}>

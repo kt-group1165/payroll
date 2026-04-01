@@ -35,6 +35,22 @@ type AttendanceRecord = {
   work_note_5: string;
   start_time_1: string;
   work_hours: string;
+  overtime_daily: string;
+};
+
+type OvertimeSetting = {
+  job_type: string;
+  scheduled_hours_per_month: number;
+  include_base_personal_salary: boolean;
+  include_skill_salary: boolean;
+  include_position_allowance: boolean;
+  include_qualification_allowance: boolean;
+  include_tenure_allowance: boolean;
+  include_treatment_improvement: boolean;
+  include_specific_treatment: boolean;
+  include_treatment_subsidy: boolean;
+  include_fixed_overtime_pay: boolean;
+  include_special_bonus: boolean;
 };
 
 type OfficeFormRecord = {
@@ -49,7 +65,7 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string };
+type Office              = { id: string; office_number: string; name: string; travel_unit_price: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -62,6 +78,7 @@ type Employee = {
   has_care_qualification: boolean;
   job_type: string;
   effective_service_months: number;
+  office_id: string;
 };
 
 type SalarySettings = {
@@ -91,6 +108,7 @@ type AttendanceSummary = {
   halfLeave: number;
   specialLeave: number;
   workHoursMin: number;
+  overtimeMinutes: number;
   recordCount: number;
   accompaniedCount: number;
   visitMinutes: number;
@@ -129,9 +147,12 @@ type MonthlyPayroll = {
   employee_number: string;
   employee_name: string;
   role_type: string;
+  job_type: string;
   settings: SalarySettings | null;
   bonus_paid: boolean;
-  travel_km: number;
+  travel_km: number;        // 手動オーバーライド（0=自動値を使用）
+  travel_km_auto: number;   // 事業所書式/出勤簿から自動取得した出張km
+  office_travel_unit_price: number; // 事業所の出張単価
   business_trip_fee: number;
   yocho_hours: number;   // 夜朝時間（月次手動入力）
   summary: AttendanceSummary;
@@ -260,15 +281,51 @@ function yochoAllowance(p: MonthlyPayroll): number {
   return Math.round(p.yocho_hours * s.yocho_unit_price);
 }
 
-function monthlyGrandTotal(p: MonthlyPayroll): number {
+function computeOvertimePay(
+  p: MonthlyPayroll,
+  otSettings: Map<string, OvertimeSetting>,
+): number {
+  const ot = otSettings.get(p.job_type);
+  if (!ot || ot.scheduled_hours_per_month <= 0) return 0;
+  const overtimeMin = p.summary.overtimeMinutes;
+  if (overtimeMin <= 0) return 0;
+  const s = p.settings;
+  if (!s) return 0;
+
+  let base = 0;
+  if (ot.include_base_personal_salary)    base += s.base_personal_salary;
+  if (ot.include_skill_salary)            base += s.skill_salary;
+  if (ot.include_position_allowance)      base += s.position_allowance;
+  if (ot.include_qualification_allowance) base += s.qualification_allowance;
+  if (ot.include_tenure_allowance)        base += s.tenure_allowance;
+  if (ot.include_treatment_improvement)   base += s.treatment_improvement;
+  if (ot.include_specific_treatment)      base += s.specific_treatment_improvement;
+  if (ot.include_treatment_subsidy)       base += s.treatment_subsidy;
+  if (ot.include_fixed_overtime_pay)      base += s.fixed_overtime_pay;
+  if (ot.include_special_bonus)           base += s.special_bonus;
+
+  const hourlyRate = base / ot.scheduled_hours_per_month;
+  return Math.round((overtimeMin / 60) * hourlyRate * 1.25);
+}
+
+function effectiveTravelKm(p: MonthlyPayroll): number {
+  return p.travel_km > 0 ? p.travel_km : p.travel_km_auto;
+}
+
+function travelFeeAmount(p: MonthlyPayroll): number {
+  return Math.round(effectiveTravelKm(p) * p.office_travel_unit_price);
+}
+
+function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
   if (!p.settings) return 0;
   return (
     fixedTotal(p.settings) +
     (p.bonus_paid ? p.settings.bonus_amount : 0) +
-    Math.round(p.travel_km * (p.settings.travel_unit_price || 0)) +
+    travelFeeAmount(p) +
     p.business_trip_fee +
     careOvertimePay(p) +
-    yochoAllowance(p)
+    yochoAllowance(p) +
+    computeOvertimePay(p, otSettings)
   );
 }
 
@@ -306,6 +363,7 @@ export default function PayrollPage() {
 
   const [monthlyResults, setMonthlyResults] = useState<MonthlyPayroll[]>([]);
   const [expandedMonthly, setExpandedMonthly] = useState<string | null>(null);
+  const [otSettings, setOtSettings] = useState<Map<string, OvertimeSetting>>(new Map());
 
   useEffect(() => {
     supabase.from("service_records").select("processing_month").then(({ data }) => {
@@ -333,33 +391,37 @@ export default function PayrollPage() {
       const monthOffset = (year * 12 + month) - (TENURE_BASE_YEAR * 12 + TENURE_BASE_MONTH);
       const adjustedMonths = (m: number) => Math.max(0, m + monthOffset);
 
-      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes] = await Promise.all([
+      const [recRes, mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, ofRes, otRes] = await Promise.all([
         supabase.from("service_records")
           .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
           .eq("processing_month", selectedMonth),
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name"),
+        supabase.from("offices").select("id,office_number,name,travel_unit_price"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months").neq("employment_status", "退職者"),
+        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id").neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
-          .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours")
+          .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily")
           .eq("year", year).eq("month", month),
         supabase.from("office_form_records")
           .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
           .eq("processing_month", selectedMonth),
+        supabase.from("overtime_settings").select("*"),
       ]);
 
       const records    = (recRes.data ?? []) as ServiceRecord[];
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
       const categoryMap= new Map((catRes.data ?? []).map((c: ServiceCategory) => [c.id, c.name]));
-      const officeMap  = new Map((officeRes.data ?? []).map((o: Office) => [o.office_number, o.id]));
+      const officeMap         = new Map((officeRes.data ?? []).map((o: Office) => [o.office_number, o.id]));
+      const officeByIdMap     = new Map((officeRes.data ?? []).map((o: Office) => [o.id, o]));
       const rateMap    = new Map((rateRes.data ?? []).map((r: CategoryHourlyRate) => [`${r.office_id}:${r.category_id}`, r.hourly_rate]));
       const employees  = (empRes.data ?? []) as Employee[];
       const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));
       const attRecords = (attRes.data ?? []) as AttendanceRecord[];
       const ofRecords  = (ofRes.data ?? []) as OfficeFormRecord[];
+      const otMap = new Map((otRes.data ?? []).map((r: OvertimeSetting) => [r.job_type, r]));
+      setOtSettings(otMap);
 
       // 出勤簿・実績・事業所書式を職員番号でグループ化
       const attByEmp = new Map<string, AttendanceRecord[]>();
@@ -400,12 +462,13 @@ export default function PayrollPage() {
         const specialLeave = ofRecs.filter((r) => r.record_type === "leave" && r.item_name === "特休").length;
         const hrdCount     = ofRecs.filter((r) => r.record_type === "training" && r.item_name === "HRD研修").length;
 
-        const workHoursMin = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
-        const recordCount  = empRecs.length;
+        const workHoursMin    = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
+        const overtimeMinutes = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.overtime_daily ?? ""), 0);
+        const recordCount     = empRecs.length;
         const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
-        const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+        const visitMinutes    = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, recordCount, accompaniedCount, visitMinutes, hrdCount };
+        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount };
       }
 
       // 時給者
@@ -473,14 +536,27 @@ export default function PayrollPage() {
             0, 0, 0
           );
           const settingsWithTenure = sal ? { ...sal, tenure_allowance: computedTenure } : null;
+          // 出張km: 事業所書式 > 出勤簿
+          const empOfRecs = ofByEmp.get(e.employee_number) ?? [];
+          const ofTravelKm = empOfRecs
+            .filter((r) => r.record_type === "km" && r.item_name === "出張km")
+            .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
+          const attTravelKm = (attByEmp.get(e.employee_number) ?? [])
+            .reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
+          const travelKmAuto = ofTravelKm > 0 ? ofTravelKm : attTravelKm;
+          const office = officeByIdMap.get(e.office_id);
+
           return {
             employee_id: e.id,
             employee_number: e.employee_number,
             employee_name: e.name,
             role_type: e.role_type,
+            job_type: e.job_type ?? "",
             settings: settingsWithTenure,
             bonus_paid: false,
             travel_km: 0,
+            travel_km_auto: travelKmAuto,
+            office_travel_unit_price: office?.travel_unit_price ?? 0,
             business_trip_fee: 0,
             yocho_hours: 0,
             summary: computeSummary(e.employee_number, recsByEmp.get(e.employee_number) ?? []),
@@ -537,13 +613,12 @@ export default function PayrollPage() {
       "実績","同行","訪問時間","HRD",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
-      "固定残業代","特別報奨金","報奨金","移動費","出張費",
+      "固定残業代","残業代","特別報奨金","報奨金","移動費","出張費",
       "夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
       const s = p.settings;
       const sm = p.summary;
-      const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
       rows.push([
         p.employee_number, p.employee_name, p.role_type,
         String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.halfLeave), String(sm.specialLeave),
@@ -558,14 +633,15 @@ export default function PayrollPage() {
         String(s?.specific_treatment_improvement ?? 0),
         String(s?.treatment_subsidy ?? 0),
         String(s?.fixed_overtime_pay ?? 0),
+        String(computeOvertimePay(p, otSettings)),
         String(s?.special_bonus ?? 0),
         String(p.bonus_paid ? (s?.bonus_amount ?? 0) : 0),
-        String(travelFee),
+        String(travelFeeAmount(p)),
         String(p.business_trip_fee),
         String(p.yocho_hours),
         String(yochoAllowance(p)),
         String(careOvertimePay(p)),
-        String(monthlyGrandTotal(p)),
+        String(monthlyGrandTotal(p, otSettings)),
       ]);
     }
     downloadCsv(`給与計算_${label}_月給者.csv`, rows);
@@ -579,7 +655,7 @@ export default function PayrollPage() {
     return s + e.totalPay + tenure;
   }, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
-  const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p), 0);
+  const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p, otSettings), 0);
 
   // ─── 描画 ─────────────────────────────────────────────────────
 
@@ -827,6 +903,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">特定処遇</th>
                         <th className="text-right px-3 py-3 font-medium">処遇補助金</th>
                         <th className="text-right px-3 py-3 font-medium">固定残業代</th>
+                        <th className="text-right px-3 py-3 font-medium text-amber-700">残業代</th>
                         <th className="text-right px-3 py-3 font-medium">特別報奨金</th>
                         <th className="text-right px-3 py-3 font-medium">固定支給計</th>
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
@@ -839,10 +916,9 @@ export default function PayrollPage() {
                         const s  = p.settings;
                         const sm = p.summary;
                         const fixed = s ? fixedTotal(s) : 0;
-                        const total = monthlyGrandTotal(p);
+                        const total = monthlyGrandTotal(p, otSettings);
                         const cop   = careOvertimePay(p);
                         const yocho = yochoAllowance(p);
-                        const travelFee = Math.round(p.travel_km * (s?.travel_unit_price ?? 0));
                         const isExpanded = expandedMonthly === p.employee_id;
                         return (
                           <>
@@ -881,6 +957,14 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{s && s.specific_treatment_improvement > 0 ? yen(s.specific_treatment_improvement) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.treatment_subsidy > 0 ? yen(s.treatment_subsidy) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.fixed_overtime_pay > 0 ? yen(s.fixed_overtime_pay) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">
+                                {(() => {
+                                  const otPay = computeOvertimePay(p, otSettings);
+                                  if (otPay > 0) return <span className="font-medium text-amber-700">{yen(otPay)}</span>;
+                                  if (p.summary.overtimeMinutes > 0) return <span className="text-xs text-muted-foreground">単価未設定</span>;
+                                  return <span className="text-xs text-muted-foreground">—</span>;
+                                })()}
+                              </td>
                               <td className="px-3 py-2 text-right">{s && s.special_bonus > 0 ? yen(s.special_bonus) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">
                                 {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
@@ -901,7 +985,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={25} className="px-8 py-4">
+                                <td colSpan={26} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -917,9 +1001,10 @@ export default function PayrollPage() {
                                           <DetailLine label="特定処遇改善手当" v={s.specific_treatment_improvement} />
                                           <DetailLine label="処遇改善補助金手当" v={s.treatment_subsidy} />
                                           <DetailLine label="固定残業代" v={s.fixed_overtime_pay} />
+                                          <DetailLine label="残業代" v={computeOvertimePay(p, otSettings)} />
                                           <DetailLine label="特別報奨金" v={s.special_bonus} />
                                           {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
-                                          {travelFee > 0 && <DetailLine label={`移動費(${p.travel_km}km)`} v={travelFee} />}
+                                          {travelFeeAmount(p) > 0 && <DetailLine label={`移動費(${effectiveTravelKm(p)}km)`} v={travelFeeAmount(p)} />}
                                           {p.business_trip_fee > 0 && <DetailLine label="出張費" v={p.business_trip_fee} />}
                                           {yocho > 0 && <DetailLine label={`夜朝手当(${p.yocho_hours}h)`} v={yocho} />}
                                           {cop > 0 && <DetailLine label={`介護超過手当`} v={cop} />}
@@ -969,12 +1054,15 @@ export default function PayrollPage() {
                                           <Input
                                             type="number" min={0} step={0.1}
                                             value={p.travel_km || ""}
-                                            placeholder="0"
+                                            placeholder={p.travel_km_auto > 0 ? String(p.travel_km_auto) : "0"}
                                             onChange={(e) => updateMonthly(p.employee_id, { travel_km: parseFloat(e.target.value) || 0 })}
                                             className="w-24 text-right h-7 px-2"
                                           />
                                           <span className="text-muted-foreground">km</span>
-                                          {travelFee > 0 && <span className="text-muted-foreground">= {yen(travelFee)}</span>}
+                                          {p.travel_km_auto > 0 && p.travel_km === 0 && (
+                                            <span className="text-xs text-muted-foreground">(自動: {p.travel_km_auto}km)</span>
+                                          )}
+                                          {travelFeeAmount(p) > 0 && <span className="text-muted-foreground">= {yen(travelFeeAmount(p))}</span>}
                                         </div>
                                         {/* 出張費 */}
                                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -1008,8 +1096,32 @@ export default function PayrollPage() {
                       })}
                     </tbody>
                     <tfoot>
-                      <tr className="bg-muted/30 font-bold">
-                        <td colSpan={24} className="px-3 py-2">合計</td>
+                      <tr className="bg-muted/30 font-bold border-t-2">
+                        <td className="px-3 py-2 sticky left-0 z-10 bg-muted/30">合計</td>
+                        <td></td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.workDays, 0)}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.helperDays, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.paidLeave, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.halfLeave, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.specialLeave, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{formatWorkHours(monthlyResults.reduce((s, p) => s + p.summary.workHoursMin, 0))}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.recordCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.accompaniedCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{formatMinutes(monthlyResults.reduce((s, p) => s + p.summary.visitMinutes, 0))}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.hrdCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.base_personal_salary ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.skill_salary ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.position_allowance ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.qualification_allowance ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.tenure_allowance ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.treatment_improvement ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.specific_treatment_improvement ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.treatment_subsidy ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.fixed_overtime_pay ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + computeOvertimePay(p, otSettings), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.special_bonus ?? 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings ? fixedTotal(p.settings) : 0), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + careOvertimePay(p), 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
