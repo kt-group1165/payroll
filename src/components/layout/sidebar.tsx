@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/", label: "ダッシュボード", icon: "📊" },
   { href: "/csv-import", label: "CSV取り込み", icon: "📁" },
+  { href: "/attendance", label: "労働時間管理", icon: "🕐" },
   { href: "/employees", label: "職員一覧", icon: "👥" },
   { href: "/salary", label: "給与設定", icon: "⚙️" },
   { href: "/offices", label: "事業所一覧", icon: "🏢" },
