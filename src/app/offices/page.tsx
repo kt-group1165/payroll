@@ -77,6 +77,8 @@ export default function OfficesPage() {
       work_week_start: 0,
       travel_unit_price: 0,
       commute_unit_price: 0,
+      treatment_subsidy_amount: 0,
+      cancel_unit_price: 0,
     });
     setEditingId(null);
   };
