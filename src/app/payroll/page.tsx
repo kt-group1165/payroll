@@ -617,9 +617,9 @@ export default function PayrollPage() {
 
 const ROLE_COLORS: Record<string, string> = {
   管理者: "bg-purple-100 text-purple-800",
-  サービス提供責任者: "bg-blue-100 text-blue-800",
-  社員ヘルパー: "bg-green-100 text-green-800",
-  パートヘルパー: "bg-orange-100 text-orange-800",
+  提責: "bg-blue-100 text-blue-800",
+  社員: "bg-green-100 text-green-800",
+  パート: "bg-orange-100 text-orange-800",
   事務員: "bg-gray-100 text-gray-700",
 };
 

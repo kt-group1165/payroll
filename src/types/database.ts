@@ -7,14 +7,19 @@ export type OfficeType =
   | "薬局"
   | "本社";
 
+/** 職種（どのサービス部門に属するか） */
+export type JobType = OfficeType;
+
+/** 役職 */
 export type RoleType =
   | "管理者"
-  | "サービス提供責任者"
-  | "社員ヘルパー"
-  | "パートヘルパー"
+  | "提責"
+  | "社員"
+  | "パート"
   | "事務員";
 
-export type SalaryType = "固定給" | "時給";
+/** 給与形態 */
+export type SalaryType = "月給" | "時給";
 
 export type ImportType = "meisai" | "attendance";
 
@@ -33,7 +38,8 @@ export interface Employee {
   employee_number: string;
   name: string;
   office_id: string;
-  role_type: RoleType;
+  job_type: JobType;   // 職種（訪問介護、訪問入浴 等）
+  role_type: RoleType; // 役職（管理者、提責、社員、パート、事務員）
   salary_type: SalaryType;
   base_salary: number | null;
   fixed_overtime_hours: number | null;
