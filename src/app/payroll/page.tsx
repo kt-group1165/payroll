@@ -12,6 +12,39 @@ import { Input } from "@/components/ui/input";
 const TENURE_BASE_YEAR  = 2026;
 const TENURE_BASE_MONTH = 3;
 
+// ─── 日本の祝日一覧（YYYYMMDD） ──────────────────────────────
+const JAPAN_HOLIDAYS = new Set([
+  // 2024
+  "20240101","20240108","20240211","20240212","20240223","20240320",
+  "20240429","20240503","20240504","20240505","20240506",
+  "20240715","20240811","20240812","20240916","20240923","20241014",
+  "20241103","20241104","20241123",
+  // 2025
+  "20250101","20250113","20250211","20250224","20250320",
+  "20250429","20250503","20250504","20250505","20250506",
+  "20250721","20250811","20250915","20250923","20251013",
+  "20251103","20251123","20251124",
+  // 2026
+  "20260101","20260112","20260211","20260223","20260320",
+  "20260429","20260503","20260504","20260505","20260506",
+  "20260720","20260811","20260921","20260923","20261012",
+  "20261103","20261123",
+  // 2027
+  "20270101","20270111","20270211","20270223","20270321",
+  "20270429","20270503","20270504","20270505",
+  "20270719","20270811","20270920","20270923","20271011",
+  "20271103","20271123",
+]);
+
+/** YYYYMMDD 形式の日付が土日または祝日かどうかを判定 */
+function isWeekendOrHoliday(dateStr: string): boolean {
+  const d = dateStr.replace(/\D/g, "");
+  if (d.length < 8) return false;
+  const date = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+  const dow = date.getDay();
+  return dow === 0 || dow === 6 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
+}
+
 // ─── 型定義 ──────────────────────────────────────────────────
 
 type ServiceRecord = {
@@ -115,6 +148,7 @@ type AttendanceSummary = {
   hrdCount: number;
   commuteKmTotal: number;
   businessKmTotal: number;
+  weekendHolidayMinutes: number;
 };
 
 // 時給者
@@ -511,8 +545,11 @@ export default function PayrollPage() {
         const visitMinutes     = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
         const commuteKmTotal   = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
         const businessKmTotal  = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
+        const weekendHolidayMinutes = empRecs
+          .filter((r) => isWeekendOrHoliday(r.service_date))
+          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount, commuteKmTotal, businessKmTotal };
+        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes };
       }
 
       // 時給者
@@ -792,6 +829,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">算定時間</th>
                         <th className="text-right px-3 py-3 font-medium">実績給与</th>
@@ -832,6 +870,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.recordCount}</td>
                               <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatMinutes(sm.visitMinutes)}</td>
+                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? formatMinutes(sm.weekendHolidayMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
                               <td className="px-3 py-2 text-right">{yen(emp.totalPay)}</td>
@@ -852,7 +891,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={19} className="px-8 py-3">
+                                <td colSpan={20} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -922,6 +961,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.recordCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.accompaniedCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutes, 0))}</td>
+                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.hrdCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyGrandMinutes)}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
