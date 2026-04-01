@@ -789,8 +789,17 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
-                        <th className="text-right px-3 py-3 font-medium">固定支給計</th>
+                        <th className="text-right px-3 py-3 font-medium">本人給</th>
+                        <th className="text-right px-3 py-3 font-medium">職能給</th>
+                        <th className="text-right px-3 py-3 font-medium">役職手当</th>
+                        <th className="text-right px-3 py-3 font-medium">資格手当</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
+                        <th className="text-right px-3 py-3 font-medium">処遇改善</th>
+                        <th className="text-right px-3 py-3 font-medium">特定処遇</th>
+                        <th className="text-right px-3 py-3 font-medium">処遇補助金</th>
+                        <th className="text-right px-3 py-3 font-medium">固定残業代</th>
+                        <th className="text-right px-3 py-3 font-medium">特別報奨金</th>
+                        <th className="text-right px-3 py-3 font-medium">固定支給計</th>
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
@@ -825,13 +834,22 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
-                              <td className="px-3 py-2 text-right">
-                                {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
-                              </td>
+                              <td className="px-3 py-2 text-right">{s && s.base_personal_salary > 0 ? yen(s.base_personal_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.skill_salary > 0 ? yen(s.skill_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.position_allowance > 0 ? yen(s.position_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.qualification_allowance > 0 ? yen(s.qualification_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">
                                 {s && s.tenure_allowance > 0
                                   ? <span className="font-medium text-green-700">{yen(s.tenure_allowance)}</span>
                                   : <span className="text-xs text-muted-foreground">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right">{s && s.treatment_improvement > 0 ? yen(s.treatment_improvement) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.specific_treatment_improvement > 0 ? yen(s.specific_treatment_improvement) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.treatment_subsidy > 0 ? yen(s.treatment_subsidy) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.fixed_overtime_pay > 0 ? yen(s.fixed_overtime_pay) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{s && s.special_bonus > 0 ? yen(s.special_bonus) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">
+                                {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
                               </td>
                               <td className="px-3 py-2 text-right">
                                 {p.role_type !== "社員"
@@ -849,7 +867,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={16} className="px-8 py-4">
+                                <td colSpan={25} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -957,7 +975,7 @@ export default function PayrollPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold">
-                        <td colSpan={15} className="px-3 py-2">合計</td>
+                        <td colSpan={24} className="px-3 py-2">合計</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
