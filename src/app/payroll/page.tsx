@@ -790,6 +790,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">固定支給計</th>
+                        <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
@@ -828,6 +829,11 @@ export default function PayrollPage() {
                                 {s ? yen(fixed) : <span className="text-xs text-yellow-600">⚠ 設定なし</span>}
                               </td>
                               <td className="px-3 py-2 text-right">
+                                {s && s.tenure_allowance > 0
+                                  ? <span className="font-medium text-green-700">{yen(s.tenure_allowance)}</span>
+                                  : <span className="text-xs text-muted-foreground">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right">
                                 {p.role_type !== "社員"
                                   ? <span className="text-xs text-muted-foreground">—</span>
                                   : !s || s.care_overtime_threshold_hours <= 0
@@ -843,7 +849,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={15} className="px-8 py-4">
+                                <td colSpan={16} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -951,7 +957,7 @@ export default function PayrollPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold">
-                        <td colSpan={14} className="px-3 py-2">合計</td>
+                        <td colSpan={15} className="px-3 py-2">合計</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
