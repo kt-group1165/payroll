@@ -1395,42 +1395,88 @@ export default function PayrollPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold border-t-2">
+                        {/* sticky: 合計 */}
                         <td className="px-3 py-2 sticky left-0 z-10 bg-muted/30">合計</td>
+                        {/* 役職 */}
                         <td></td>
+                        {/* 出勤日数 */}
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.workDays, 0)}</td>
+                        {/* ヘルパー日数 */}
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.helperDays, 0) || "—"}</td>
+                        {/* 有給 */}
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.paidLeave, 0) || "—"}</td>
-                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.halfLeave, 0) || "—"}</td>
+                        {/* 特休 */}
                         <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.specialLeave, 0) || "—"}</td>
+                        {/* 欠勤 */}
+                        <td></td>
+                        {/* 出勤時間 */}
                         <td className="px-3 py-2 text-right">{formatWorkHours(hourlyResults.reduce((s, e) => s + e.summary.workHoursMin, 0))}</td>
-                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayMinutes, 0))}</td>
-                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayAccompaniedMinutes, 0))}</td>
-                        <td className="px-3 py-2 text-right font-mono text-xs">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.hrdMinutes, 0))}</td>
-                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyGrandMinutes)}</td>
+                        {/* 内事務入浴・内初任者研修時間・内研修時間 */}
+                        <td></td><td></td><td></td>
+                        {/* 実績時間 */}
+                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutesExcludingAccompanied, 0))}</td>
+                        {/* 同行時間 */}
+                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + (e.summary.visitMinutes - e.summary.visitMinutesExcludingAccompanied), 0))}</td>
+                        {/* 訪問時間 */}
+                        <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutes, 0))}</td>
+                        {/* 内残業・内休日時間・入浴残業 */}
+                        <td></td><td></td><td></td>
+                        {/* 集計項目小計 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
-                        <td></td>
-                        <td className="px-3 py-2 text-right">{hourlyTenureTotal > 0 ? yen(hourlyTenureTotal) : "—"}</td>
-                        <td></td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.treatment_subsidy, 0))}</td>
-                        <td></td>
-                        <td className="px-3 py-2 text-right font-mono text-xs">{secToHm(hourlyResults.reduce((s, e) => s + e.travel_time_sec, 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.travel_allowance, 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.paid_leave_allowance, 0))}</td>
-                        <td></td><td></td><td></td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.meeting_fee, 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.childcare_allowance, 0))}</td>
-                        <td></td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.communication_fee, 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + Math.round(e.summary.weekendHolidayMinutes / 60 * 100), 0))}</td>
+                        {/* ドタキャン */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
+                        {/* 特日 */}
+                        <td></td>
+                        {/* 土日祝 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + Math.round(e.summary.weekendHolidayMinutes / 60 * 100), 0))}</td>
+                        {/* 初任者研修調整費 */}
+                        <td></td>
+                        {/* 過誤 */}
+                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + (e.error_adjustment || 0), 0) !== 0 ? yen(hourlyResults.reduce((s, e) => s + (e.error_adjustment || 0), 0)) : ""}</td>
+                        {/* 初任者研修費 */}
+                        <td></td>
+                        {/* 勤続手当単価 */}
+                        <td></td>
+                        {/* 勤続手当 */}
+                        <td className="px-3 py-2 text-right">{hourlyTenureTotal > 0 ? yen(hourlyTenureTotal) : "—"}</td>
+                        {/* 資格手当 */}
+                        <td></td>
+                        {/* 処遇改善補助金手当 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.treatment_subsidy, 0))}</td>
+                        {/* 報奨金 */}
+                        <td></td>
+                        {/* 移動手当 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.travel_allowance, 0))}</td>
+                        {/* 訪問入浴 */}
+                        <td></td>
+                        {/* 有給休暇手当 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.paid_leave_allowance, 0))}</td>
+                        {/* 調整手当 */}
+                        <td></td>
+                        {/* 育児手当 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.childcare_allowance, 0))}</td>
+                        {/* HRD研修 */}
+                        <td></td>
+                        {/* 会議費 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.meeting_fee, 0))}</td>
+                        {/* その他手当 */}
+                        <td></td>
+                        {/* 通信手当 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.communication_fee, 0))}</td>
+                        {/* 残業・休日・残業総額 */}
                         <td></td><td></td><td></td>
+                        {/* 通勤距離 */}
                         <td className="px-3 py-2 text-right font-mono text-xs">{`${hourlyResults.reduce((s, e) => s + e.summary.commuteKmTotal, 0)} km`}</td>
+                        {/* 通勤費 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.commute_fee, 0))}</td>
+                        {/* 出張距離 */}
                         <td className="px-3 py-2 text-right font-mono text-xs">{`${(hourlyResults.reduce((s, e) => s + e.commute_distance_m, 0) / 1000).toFixed(1)} km`}</td>
+                        {/* 出張費 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.business_trip_fee, 0))}</td>
+                        {/* 総支給額 */}
                         <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
-                        <td></td>
-                        <td></td>
+                        {/* 注記・展開 */}
+                        <td></td><td></td>
                       </tr>
                     </tfoot>
                   </table>
