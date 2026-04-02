@@ -1,14 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 
-const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
 type Pair = { origin: string; destination: string };
 type DistResult = Pair & { distance_meters: number; duration_seconds: number };
 
 export async function POST(request: Request) {
   try {
+  const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const { pairs }: { pairs: Pair[] } = await request.json();
   if (!pairs || pairs.length === 0) return Response.json({ results: [] });
 
