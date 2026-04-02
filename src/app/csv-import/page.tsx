@@ -2,6 +2,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MeisaiImporter } from "@/components/csv/meisai-importer";
 import { AttendanceImporter } from "@/components/csv/attendance-importer";
 import { OfficeFormImporter } from "@/components/csv/office-form-importer";
+import { ClientImporter } from "@/components/csv/client-importer";
 
 export default function CsvImportPage() {
   return (
@@ -12,6 +13,7 @@ export default function CsvImportPage() {
           <TabsTrigger value="meisai">介護ソフトCSV</TabsTrigger>
           <TabsTrigger value="attendance">出勤簿</TabsTrigger>
           <TabsTrigger value="office_form">事業所書式</TabsTrigger>
+          <TabsTrigger value="clients">利用者</TabsTrigger>
         </TabsList>
         <TabsContent value="meisai" className="mt-4">
           <MeisaiImporter />
@@ -21,6 +23,9 @@ export default function CsvImportPage() {
         </TabsContent>
         <TabsContent value="office_form" className="mt-4">
           <OfficeFormImporter />
+        </TabsContent>
+        <TabsContent value="clients" className="mt-4">
+          <ClientImporter />
         </TabsContent>
       </Tabs>
     </div>
