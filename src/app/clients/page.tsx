@@ -33,6 +33,7 @@ import type { Client, Office } from "@/types/database";
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
+  const [filterOfficeId, setFilterOfficeId] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -118,7 +119,7 @@ export default function ClientsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">利用者一覧</h2>
         <Dialog
           open={isOpen}
@@ -196,6 +197,27 @@ export default function ClientsPage() {
         </Dialog>
       </div>
 
+      {/* 事業所フィルター */}
+      <div className="flex items-center gap-2 mb-4">
+        <label className="text-sm font-medium whitespace-nowrap">事業所</label>
+        <Select value={filterOfficeId || "__all__"} onValueChange={(v) => setFilterOfficeId(v === "__all__" ? "" : (v ?? ""))}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">すべて</SelectItem>
+            {offices.map((o) => (
+              <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-sm text-muted-foreground">
+          {filterOfficeId
+            ? `${clients.filter(c => c.office_id === filterOfficeId).length}名`
+            : `${clients.length}名`}
+        </span>
+      </div>
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -206,42 +228,31 @@ export default function ClientsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {clients.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={4}
-                className="text-center text-muted-foreground"
-              >
-                利用者が登録されていません
-              </TableCell>
-            </TableRow>
-          ) : (
-            clients.map((client) => (
+          {(() => {
+            const filtered = filterOfficeId
+              ? clients.filter(c => c.office_id === filterOfficeId)
+              : clients;
+            if (filtered.length === 0) return (
+              <TableRow>
+                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  利用者が登録されていません
+                </TableCell>
+              </TableRow>
+            );
+            return filtered.map((client) => (
               <TableRow key={client.id}>
                 <TableCell>{client.client_number}</TableCell>
                 <TableCell>{client.name}</TableCell>
                 <TableCell>{client.address || "-"}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleEdit(client)}
-                    >
-                      編集
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(client.id)}
-                    >
-                      削除
-                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleEdit(client)}>編集</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(client.id)}>削除</Button>
                   </div>
                 </TableCell>
               </TableRow>
-            ))
-          )}
+            ));
+          })()}
         </TableBody>
       </Table>
     </div>
