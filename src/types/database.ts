@@ -44,6 +44,7 @@ export interface Office {
   treatment_subsidy_amount: number; // 処遇改善補助金手当（社保加入者・月額）
   cancel_unit_price: number;        // キャンセル手当単価（円/件）
   travel_allowance_rate: number;    // 移動手当単価（円/時）
+  communication_fee_amount: number; // 固定通信費額（円）
   company_id: string | null;
   created_at: string;
   updated_at: string;
@@ -74,6 +75,7 @@ export interface Employee {
   has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
   social_insurance: boolean;        // 社会保険加入
   paid_leave_unit_price: number;    // 有給手当単価（円/時間）
+  communication_fee_type: string;   // 通信費タイプ（none / fixed / variable）
   created_at: string;
   updated_at: string;
 }

@@ -56,6 +56,7 @@ export default function OfficesPage() {
     treatment_subsidy_amount: 0,
     cancel_unit_price: 0,
     travel_allowance_rate: 0,
+    communication_fee_amount: 0,
     company_id: "",
   });
 
@@ -86,6 +87,7 @@ export default function OfficesPage() {
       treatment_subsidy_amount: 0,
       cancel_unit_price: 0,
       travel_allowance_rate: 0,
+      communication_fee_amount: 0,
       company_id: "",
     });
     setEditingId(null);
@@ -110,6 +112,7 @@ export default function OfficesPage() {
           treatment_subsidy_amount: form.treatment_subsidy_amount,
           cancel_unit_price: form.cancel_unit_price,
           travel_allowance_rate: form.travel_allowance_rate,
+          communication_fee_amount: form.communication_fee_amount,
           company_id: form.company_id || null,
         })
         .eq("id", editingId);
@@ -147,6 +150,7 @@ export default function OfficesPage() {
       treatment_subsidy_amount: office.treatment_subsidy_amount ?? 0,
       cancel_unit_price: office.cancel_unit_price ?? 0,
       travel_allowance_rate: office.travel_allowance_rate ?? 0,
+      communication_fee_amount: office.communication_fee_amount ?? 0,
       company_id: office.company_id ?? "",
     });
     setEditingId(office.id);
@@ -307,6 +311,17 @@ export default function OfficesPage() {
                   placeholder="0"
                   onChange={(e) =>
                     setForm({ ...form, travel_allowance_rate: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div>
+                <Label>固定通信費（円）</Label>
+                <Input
+                  type="number" min={0}
+                  value={form.communication_fee_amount || ""}
+                  placeholder="0"
+                  onChange={(e) =>
+                    setForm({ ...form, communication_fee_amount: parseFloat(e.target.value) || 0 })
                   }
                 />
               </div>

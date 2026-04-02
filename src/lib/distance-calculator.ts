@@ -151,11 +151,9 @@ export function mToKm(m: number): string {
   return (m / 1000).toFixed(1);
 }
 
-/** 秒 → "X時間Y分" */
+/** 秒 → "H:MM" */
 export function secToHm(sec: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
-  if (h === 0) return `${m}分`;
-  if (m === 0) return `${h}時間`;
-  return `${h}時間${m}分`;
+  return `${h}:${String(m).padStart(2, "0")}`;
 }

@@ -80,6 +80,7 @@ const defaultForm = {
   has_care_qualification: false,
   social_insurance: false,
   paid_leave_unit_price: "",
+  communication_fee_type: "none",
 };
 
 // ─── CSVユーティリティ ────────────────────────────────────────
@@ -157,6 +158,7 @@ type ImportRow = {
   has_care_qualification: boolean;
   social_insurance: boolean;
   paid_leave_unit_price: number;
+  communication_fee_type: string;
   error?: string;
 };
 
@@ -220,6 +222,7 @@ export default function EmployeesPage() {
       has_care_qualification: form.has_care_qualification,
       social_insurance: form.social_insurance,
       paid_leave_unit_price: form.paid_leave_unit_price ? parseFloat(form.paid_leave_unit_price) : 0,
+      communication_fee_type: form.communication_fee_type,
     };
 
     if (editingId) {
@@ -259,6 +262,7 @@ export default function EmployeesPage() {
       has_care_qualification: emp.has_care_qualification ?? false,
       social_insurance: emp.social_insurance ?? false,
       paid_leave_unit_price: emp.paid_leave_unit_price?.toString() ?? "",
+      communication_fee_type: emp.communication_fee_type ?? "none",
     });
     setEditingId(emp.id);
     setIsOpen(true);
@@ -364,6 +368,7 @@ export default function EmployeesPage() {
           has_care_qualification: get("介護資格") === "1",
           social_insurance: get("社会保険") === "1",
           paid_leave_unit_price: parseFloat(get("有給手当単価") || "0") || 0,
+          communication_fee_type: get("通信費タイプ") || "none",
           error: errors.length > 0 ? errors.join(" / ") : undefined,
         });
       }
@@ -690,6 +695,20 @@ export default function EmployeesPage() {
                     placeholder="0"
                     onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
                   />
+                </div>
+                <div>
+                  <Label>通信費タイプ</Label>
+                  <Select
+                    value={form.communication_fee_type}
+                    onValueChange={(v) => setForm({ ...form, communication_fee_type: v ?? "none" })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">なし</SelectItem>
+                      <SelectItem value="fixed">固定（事業所設定額）</SelectItem>
+                      <SelectItem value="variable">変動（訪問時間連動）</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
