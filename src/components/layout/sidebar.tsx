@@ -24,7 +24,7 @@ export function Sidebar() {
   return (
     <aside className="w-60 border-r bg-muted/30 flex flex-col">
       <div className="p-4 border-b">
-        <h1 className="text-lg font-bold">給与計算システム</h1>
+        <h1 className="text-lg font-bold">給与計算システム <span className="text-xs font-normal text-muted-foreground">V6</span></h1>
       </div>
       <nav className="flex-1 p-2">
         {navItems.map((item) => {

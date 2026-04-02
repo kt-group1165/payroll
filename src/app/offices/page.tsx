@@ -315,17 +315,6 @@ export default function OfficesPage() {
                 />
               </div>
               <div>
-                <Label>固定通信費（円）</Label>
-                <Input
-                  type="number" min={0}
-                  value={form.communication_fee_amount || ""}
-                  placeholder="0"
-                  onChange={(e) =>
-                    setForm({ ...form, communication_fee_amount: parseFloat(e.target.value) || 0 })
-                  }
-                />
-              </div>
-              <div>
                 <Label>法人</Label>
                 <Select
                   value={form.company_id || "__none__"}

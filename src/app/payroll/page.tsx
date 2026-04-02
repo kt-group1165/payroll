@@ -670,11 +670,9 @@ export default function PayrollPage() {
         }).length;
         const cancelAllowance = Math.round(cancelCount * (empOffice?.cancel_unit_price ?? 0));
         const paidLeaveAllowance = Math.round(empSummary.paidLeave * (info?.paidLeaveUnitPrice ?? 0));
-        const communicationFeeType = info?.communicationFeeType ?? "none";
+        // 通信手当：社保未加入者のみ変動支給（50時間超:1000円、0〜50時間:500円）
         let communicationFee = 0;
-        if (communicationFeeType === "fixed") {
-          communicationFee = empOffice?.communication_fee_amount ?? 0;
-        } else if (communicationFeeType === "variable") {
+        if (!(info?.socialInsurance ?? false)) {
           const visitHours = empSummary.visitMinutes / 60;
           if (visitHours > 50) communicationFee = 1000;
           else if (visitHours > 0) communicationFee = 500;

@@ -696,20 +696,6 @@ export default function EmployeesPage() {
                     onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
                   />
                 </div>
-                <div>
-                  <Label>通信費タイプ</Label>
-                  <Select
-                    value={form.communication_fee_type}
-                    onValueChange={(v) => setForm({ ...form, communication_fee_type: v ?? "none" })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">なし</SelectItem>
-                      <SelectItem value="fixed">固定（事業所設定額）</SelectItem>
-                      <SelectItem value="variable">変動（訪問時間連動）</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
 
                 <div>
                   <Label>移動手段</Label>
