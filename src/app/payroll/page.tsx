@@ -291,7 +291,7 @@ function computeTenureAllowance(
   effectiveServiceMonths: number,
   salaryType: string,
   jobType: string,
-  workHoursMin: number,   // パートヘルパー用（出勤簿の総労働時間）
+  workHoursMin: number,   // パートヘルパー用（実績の訪問時間合計）
   recordCount: number,    // パート訪問入浴用（実績件数）
   carePlanCount: number,  // 非常勤居宅介護支援用（要介護プラン相当件数）
 ): number {
@@ -876,7 +876,7 @@ export default function PayrollPage() {
       const s = e.summary;
       const tenure = computeTenureAllowance(
         e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-        s.workHoursMin, s.recordCount, e.care_plan_count
+        s.visitMinutes, s.recordCount, e.care_plan_count
       );
       const total = e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee;
       rows.push([
@@ -945,7 +945,7 @@ export default function PayrollPage() {
   const hourlyTenureTotal  = hourlyResults.reduce((s, e) => {
     return s + computeTenureAllowance(
       e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-      e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
+      e.summary.visitMinutes, e.summary.recordCount, e.care_plan_count
     );
   }, 0);
   const hourlyGrandTotal   = hourlyResults.reduce((s, e) => {
@@ -1088,7 +1088,7 @@ export default function PayrollPage() {
                         const sm = emp.summary;
                         const tenure = computeTenureAllowance(
                           emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
-                          sm.workHoursMin, sm.recordCount, emp.care_plan_count
+                          sm.visitMinutes, sm.recordCount, emp.care_plan_count
                         );
                         const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.commute_fee + emp.business_trip_fee;
                         return (
