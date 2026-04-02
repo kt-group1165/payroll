@@ -52,7 +52,6 @@ const CSV_HEADERS = [
   "在職区分", "入社年月日", "退職年月日", "実勤続月数",
   "職種", "役職", "給与形態",
   "基本給", "固定残業時間", "固定残業代",
-  "身体介護時給", "生活援助時給", "訪問型時給",
   "移動手段", "介護資格", "社会保険", "有給手当単価",
 ] as const;
 
@@ -300,9 +299,6 @@ export default function EmployeesPage() {
         emp.base_salary?.toString() ?? "",
         emp.fixed_overtime_hours?.toString() ?? "",
         emp.fixed_overtime_pay?.toString() ?? "",
-        emp.hourly_rate_physical?.toString() ?? "",
-        emp.hourly_rate_living?.toString() ?? "",
-        emp.hourly_rate_visit?.toString() ?? "",
         emp.transport_type,
         emp.has_care_qualification ? "1" : "0",
         emp.social_insurance ? "1" : "0",
@@ -631,17 +627,16 @@ export default function EmployeesPage() {
 
                 <div>
                   <Label>所属事業所</Label>
-                  <Select
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                     value={form.office_id}
-                    onValueChange={(v) => setForm({ ...form, office_id: v ?? "" })}
+                    onChange={(e) => setForm({ ...form, office_id: e.target.value })}
                   >
-                    <SelectTrigger><SelectValue placeholder="事業所を選択" /></SelectTrigger>
-                    <SelectContent>
-                      {offices.map((o) => (
-                        <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <option value="">事業所を選択</option>
+                    {offices.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* 在職情報 */}
@@ -765,25 +760,6 @@ export default function EmployeesPage() {
                   </div>
                 )}
 
-                {showHourlyRateFields && (
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <Label>身体介護時給</Label>
-                      <Input type="number" value={form.hourly_rate_physical}
-                        onChange={(e) => setForm({ ...form, hourly_rate_physical: e.target.value })} />
-                    </div>
-                    <div>
-                      <Label>生活援助時給</Label>
-                      <Input type="number" value={form.hourly_rate_living}
-                        onChange={(e) => setForm({ ...form, hourly_rate_living: e.target.value })} />
-                    </div>
-                    <div>
-                      <Label>訪問型時給</Label>
-                      <Input type="number" value={form.hourly_rate_visit}
-                        onChange={(e) => setForm({ ...form, hourly_rate_visit: e.target.value })} />
-                    </div>
-                  </div>
-                )}
 
                 <div>
                   <label className="flex items-center gap-2 cursor-pointer">
