@@ -321,7 +321,16 @@ export default function EmployeesPage() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target?.result as string;
+      const buf = ev.target?.result as ArrayBuffer;
+      // BOM判定: EF BB BF → UTF-8、それ以外はShift-JISとして試みる
+      const bytes = new Uint8Array(buf);
+      const isUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+      const enc = isUtf8Bom ? "utf-8" : (() => {
+        // UTF-8として読んでみて、社員番号ヘッダーが含まれるか確認
+        const tryUtf8 = new TextDecoder("utf-8").decode(buf);
+        return tryUtf8.includes("社員番号") ? "utf-8" : "shift_jis";
+      })();
+      const text = new TextDecoder(enc).decode(buf);
       const rows = parseCsvText(text);
       if (rows.length < 2) { toast.error("データ行がありません"); return; }
 
@@ -378,7 +387,7 @@ export default function EmployeesPage() {
       setImportDialogOpen(true);
       if (importRef.current) importRef.current.value = "";
     };
-    reader.readAsText(file, "utf-8");
+    reader.readAsArrayBuffer(file);
   }
 
   // ─── 給与管理システムCSV取り込み ─────────────────────────────
