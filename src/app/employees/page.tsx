@@ -440,10 +440,9 @@ export default function EmployeesPage() {
 
         // 「支払形態」「雇用形態」どちらの列名でも対応、列5のフォールバックも使用
         const employmentForm = get("支払形態") || get("雇用形態") || (r[5] ?? "").trim();
-        const salaryType: SalaryType = employmentForm === "月給制" ? "月給" :
-                                       employmentForm === "時給制" ? "時給" :
-                                       employmentForm === "月給"  ? "月給" :
-                                       employmentForm === "時給"  ? "時給" : "時給";
+        console.log("[給与管理取込] employmentForm raw:", JSON.stringify(employmentForm));
+        // 月給制・月給・月給型 等、「月給」が含まれれば月給とみなす
+        const salaryType: SalaryType = employmentForm.includes("月給") ? "月給" : "時給";
         const jobType: JobType = JOB_TYPE_MAP[get("業種") || (r[24] ?? "").trim()] ?? "訪問介護";
         const address = get("住所1") || (r[13] ?? "").trim();
         const employmentStatus = get("在職区分") || (r[4] ?? "").trim() || "在職者";
