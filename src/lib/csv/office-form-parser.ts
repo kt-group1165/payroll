@@ -2,24 +2,17 @@ import type { OfficeFormRecord, CsvParseResult } from "@/types/csv";
 import { readCsvFile } from "./decoder";
 
 /**
- * ファイル名から年を抽出する（例: xxx_20260203.csv → 2026）
+ * ファイル名から処理月（YYYYMM）を抽出する
+ * 例: xxx_20260203.csv → "202602"（先頭6桁）
  */
-function extractYearFromFilename(filename: string): number | null {
-  const m = filename.match(/(\d{4})\d{4}\.csv$/i);
-  if (m) return parseInt(m[1], 10);
-  const m2 = filename.match(/(\d{4})/);
-  if (m2) return parseInt(m2[1], 10);
+function extractProcessingMonthFromFilename(filename: string): string | null {
+  const m = filename.match(/(\d{6})\d{2}\.csv$/i);
+  if (m) return m[1]; // YYYYMM
+  const m2 = filename.match(/(\d{4})(\d{2})/);
+  if (m2) return m2[1] + m2[2]; // YYYYMM
   return null;
 }
 
-/**
- * "M/D" 形式の日付から月番号を返す
- */
-function monthFromDate(d: string): number | null {
-  if (!d) return null;
-  const m = d.match(/^(\d{1,2})\//);
-  return m ? parseInt(m[1], 10) : null;
-}
 
 /**
  * 事業所書式CSVをパースしてOfficeFormRecord配列を返す
@@ -89,28 +82,10 @@ export async function parseOfficeFormFile(
       if (nameIdx >= 0) childSlots.push({ nameIdx, ymIdx, kidIdx, amtIdx });
     }
 
-    // 処理月の推定: ファイル名から年を取得し、データ内の日付から月を推定
-    const fileYear = extractYearFromFilename(file.name) ?? new Date().getFullYear();
-    let inferredMonth: number | null = null;
-
-    // 先に全行スキャンして月を推定
-    for (let i = 1; i < rows.length; i++) {
-      const cols = rows[i];
-      for (const { dateIdx } of dateSlots) {
-        const d = cols[dateIdx]?.trim();
-        if (d) { inferredMonth = monthFromDate(d); break; }
-      }
-      if (inferredMonth) break;
-      for (const { dateIdx } of dtSlots) {
-        const d = cols[dateIdx]?.trim();
-        if (d) { inferredMonth = monthFromDate(d); break; }
-      }
-      if (inferredMonth) break;
-    }
-
-    const processingMonth = inferredMonth
-      ? `${fileYear}${String(inferredMonth).padStart(2, "0")}`
-      : `${fileYear}01`; // fallback
+    // 処理月: ファイル名の年月（YYYYMM）を優先使用
+    // 例: xxx_20260203.csv → "202602"
+    const processingMonth = extractProcessingMonthFromFilename(file.name)
+      ?? `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}`;
 
     for (let i = 1; i < rows.length; i++) {
       const cols = rows[i];
