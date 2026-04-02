@@ -718,14 +718,17 @@ export default function PayrollPage() {
           .filter((ym): ym is string => !!ym && ym !== selectedMonth)
       );
       for (const ym of otherMonths) {
-        const { data: ymData, error: ymErr } = await supabase
-          .from("service_records")
-          .select("employee_number,calc_duration,accompanied_visit")
-          .eq("processing_month", ym)
-          .eq("office_number", selectedOffice.office_number);
-        console.log(`[保育手当DEBUG] クロス月フェッチ ym=${ym} office=${selectedOffice.office_number} 件数=${ymData?.length ?? "ERROR"} error=${ymErr?.message ?? "none"}`);
-        if (ymData) {
-          const byEmpYm = new Map<string, number>();
+        const byEmpYm = new Map<string, number>();
+        let ymFrom = 0;
+        while (true) {
+          const { data: ymData } = await supabase
+            .from("service_records")
+            .select("employee_number,calc_duration,accompanied_visit")
+            .eq("processing_month", ym)
+            .eq("office_number", selectedOffice.office_number)
+            .order("id")
+            .range(ymFrom, ymFrom + 999);
+          if (!ymData || ymData.length === 0) break;
           for (const r of ymData as { employee_number: string; calc_duration: string; accompanied_visit: string }[]) {
             const k = normEmp(r.employee_number);
             if (!byEmpYm.has(k)) byEmpYm.set(k, 0);
@@ -733,10 +736,11 @@ export default function PayrollPage() {
               byEmpYm.set(k, (byEmpYm.get(k) ?? 0) + parseDurationMinutes(r.calc_duration));
             }
           }
-          for (const [en, min] of byEmpYm) {
-            visitMinutesByEmpMonth.set(`${en}:${ym}`, min);
-          }
-          console.log(`[保育手当DEBUG] クロス月マップ登録:`, Object.fromEntries([...byEmpYm].map(([k,v]) => [`${k}:${ym}`, v])));
+          if (ymData.length < 1000) break;
+          ymFrom += 1000;
+        }
+        for (const [en, min] of byEmpYm) {
+          visitMinutesByEmpMonth.set(`${en}:${ym}`, min);
         }
       }
 
@@ -760,7 +764,6 @@ export default function PayrollPage() {
             const ym = normalizeYM(rawYm);
             const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
             const ratio = Math.min(visitMin / (120 * 60), 1.0);
-            console.log(`[保育手当DEBUG] empNum=${empNum} rawYm=${rawYm} ym=${ym} visitMin=${visitMin} amount=${amount} baseRate=${baseRate} contribution=${Math.round(amount * baseRate * ratio)}`);
             total += Math.round(amount * baseRate * ratio);
           }
         }
