@@ -39,7 +39,7 @@ export default function DistancePage() {
   const [progress, setProgress] = useState("");
   const [results, setResults] = useState<EmployeeResult[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
-  type DebugInfo = { pairsSent: number; resultsGot: number; sampleOrigin?: string; sampleDest?: string; uncachedCount?: number; apiSample?: { origin: string; destination: string; dist: number }[] };
+  type DebugInfo = { pairsSent: number; resultsGot: number; sampleOrigin?: string; sampleDest?: string; uncachedCount?: number; apiKeySet?: boolean; apiKeyLen?: number; googleStatus?: string; apiSample?: { origin: string; destination: string; dist: number }[] };
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   useEffect(() => {
@@ -150,7 +150,7 @@ export default function DistancePage() {
       const json = await res.json();
       if (json.error) throw new Error(`距離APIエラー: ${json.error}`);
       const distResults: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = json.results ?? [];
-      const _debug: { uncachedCount?: number; sample?: { origin: string; destination: string; dist: number }[] } | undefined = json._debug;
+      const _debug: { uncachedCount?: number; apiKeySet?: boolean; apiKeyLen?: number; googleStatus?: string; sample?: { origin: string; destination: string; dist: number }[] } | undefined = json._debug;
 
       setDebugInfo({
         pairsSent: allPairs.length,
@@ -158,6 +158,9 @@ export default function DistancePage() {
         sampleOrigin: allPairs[0]?.origin?.slice(0, 60),
         sampleDest: allPairs[0]?.destination?.slice(0, 60),
         uncachedCount: _debug?.uncachedCount,
+        apiKeySet: _debug?.apiKeySet,
+        apiKeyLen: _debug?.apiKeyLen,
+        googleStatus: _debug?.googleStatus,
         apiSample: _debug?.sample,
       });
 
@@ -240,6 +243,8 @@ export default function DistancePage() {
           <CardContent className="pt-4 text-xs font-mono space-y-1">
             <p className="font-bold text-yellow-700">【診断情報】</p>
             <p>送信ペア数: {debugInfo.pairsSent} / API取得数: {debugInfo.resultsGot} / うち未キャッシュ: {debugInfo.uncachedCount ?? "?"}</p>
+            <p>APIキー設定: {debugInfo.apiKeySet === undefined ? "?" : debugInfo.apiKeySet ? `あり (${debugInfo.apiKeyLen}文字)` : "なし（未設定）"}</p>
+            {debugInfo.googleStatus && <p>Google APIステータス: {debugInfo.googleStatus}</p>}
             <p>サンプル origin: {debugInfo.sampleOrigin ?? "（なし）"}</p>
             <p>サンプル dest: {debugInfo.sampleDest ?? "（なし）"}</p>
             {debugInfo.apiSample && debugInfo.apiSample.length > 0 && (

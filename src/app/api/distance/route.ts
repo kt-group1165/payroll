@@ -37,6 +37,7 @@ export async function POST(request: Request) {
   }
 
   // 未キャッシュ分をGoogle APIで取得（origin単位でバッチ）
+  let firstGoogleStatus = "";
   if (uncached.length > 0 && GOOGLE_API_KEY) {
     const byOrigin = new Map<string, string[]>();
     for (const pair of uncached) {
@@ -56,6 +57,7 @@ export async function POST(request: Request) {
         const res = await fetch(url);
         const data = await res.json();
 
+        if (!firstGoogleStatus) firstGoogleStatus = `${data.status} / msg: ${data.error_message ?? "none"}`;
         if (data.status !== "OK") continue;
         const row = data.rows[0];
         if (!row) continue;
@@ -95,7 +97,7 @@ export async function POST(request: Request) {
     destination: r.destination.slice(0, 50),
     dist: r.distance_meters,
   }));
-  return Response.json({ results, _debug: { pairsSent: uniquePairs.length, uncachedCount: uncached.length, resultsCount: results.length, sample: debugSample } });
+  return Response.json({ results, _debug: { pairsSent: uniquePairs.length, uncachedCount: uncached.length, resultsCount: results.length, apiKeySet: !!GOOGLE_API_KEY, apiKeyLen: GOOGLE_API_KEY.length, googleStatus: firstGoogleStatus, sample: debugSample } });
   } catch (e) {
     console.error("[distance API]", e);
     return Response.json({ error: String(e), results: [] }, { status: 500 });
