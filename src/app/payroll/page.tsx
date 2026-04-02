@@ -1054,7 +1054,7 @@ export default function PayrollPage() {
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
       "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
-      "保育手当","夜朝時間","夜朝手当","介護超過手当","合計(円)",
+      "育児手当","夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
       const s = p.settings;
@@ -1213,10 +1213,9 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">移動手当</th>
                         <th className="text-right px-3 py-3 font-medium">有給休暇手当</th>
                         <th className="text-right px-3 py-3 font-medium">調整手当</th>
-                        <th className="text-right px-3 py-3 font-medium">育児手当</th>
                         <th className="text-right px-3 py-3 font-medium">HRD研修</th>
                         <th className="text-right px-3 py-3 font-medium">会議費</th>
-                        <th className="text-right px-3 py-3 font-medium">保育手当</th>
+                        <th className="text-right px-3 py-3 font-medium">育児手当</th>
                         <th className="text-right px-3 py-3 font-medium">その他手当</th>
                         <th className="text-right px-3 py-3 font-medium">通信手当</th>
                         <th className="text-right px-3 py-3 font-medium">土日祝手当</th>
@@ -1281,7 +1280,6 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{emp.paid_leave_allowance > 0 ? yen(emp.paid_leave_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.meeting_fee > 0 ? yen(emp.meeting_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.childcare_allowance > 0 ? yen(emp.childcare_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
@@ -1306,7 +1304,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={39} className="px-8 py-3">
+                                <td colSpan={38} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -1456,7 +1454,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium">出張手当</th>
                         <th className="text-right px-3 py-3 font-medium">通勤手当</th>
-                        <th className="text-right px-3 py-3 font-medium">保育手当</th>
+                        <th className="text-right px-3 py-3 font-medium">育児手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
                       </tr>
