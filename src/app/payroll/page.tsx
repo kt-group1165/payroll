@@ -783,12 +783,17 @@ export default function PayrollPage() {
               const empOffice = officeByIdMap.get(empObj?.office_id ?? "");
               const rate = empOffice?.travel_allowance_rate ?? 0;
               let totalSec = 0;
+              let totalCommuteM = 0;
               for (const [date, visits] of dayMap) {
                 const day = calcDayRoute(date, address, visits, distMap);
-                if (day) totalSec += day.travel_time_sec;
+                if (day) {
+                  totalSec += day.travel_time_sec;
+                  totalCommuteM += day.commute_distance_m;
+                }
               }
               entry.travel_time_sec = totalSec;
               entry.travel_allowance = rate > 0 ? Math.round(totalSec / 3600 * rate) : 0;
+              entry.business_trip_fee = Math.round((totalCommuteM / 1000) * (empOffice?.travel_unit_price ?? 0));
             }
           }
         }
