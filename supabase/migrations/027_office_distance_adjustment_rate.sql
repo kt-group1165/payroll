@@ -1,0 +1,1 @@
+ALTER TABLE offices ADD COLUMN IF NOT EXISTS distance_adjustment_rate NUMERIC(5,1) NOT NULL DEFAULT 100;

@@ -106,7 +106,7 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number };
+type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -560,7 +560,7 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price"),
+        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
@@ -939,10 +939,12 @@ export default function PayrollPage() {
                   totalCommuteM += day.commute_distance_m;
                 }
               }
+              const distRate = (empOffice?.distance_adjustment_rate ?? 100) / 100;
+              const adjustedDistanceM = Math.round(totalCommuteM * distRate);
               entry.travel_time_sec = totalSec;
               entry.travel_allowance = rate > 0 ? Math.round(totalSec / 3600 * rate) : 0;
-              entry.commute_distance_m = totalCommuteM;
-              entry.business_trip_fee = Math.round((totalCommuteM / 1000) * (empOffice?.travel_unit_price ?? 0));
+              entry.commute_distance_m = adjustedDistanceM;
+              entry.business_trip_fee = Math.round((adjustedDistanceM / 1000) * (empOffice?.travel_unit_price ?? 0));
             }
           }
         }

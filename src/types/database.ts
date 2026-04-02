@@ -46,6 +46,7 @@ export interface Office {
   travel_allowance_rate: number;    // 移動手当単価（円/時）
   communication_fee_amount: number; // 固定通信費額（円）
   meeting_unit_price: number;       // 会議1単価（円/件）
+  distance_adjustment_rate: number; // 距離調整係数（%、例: 125 = 125%）
   company_id: string | null;
   created_at: string;
   updated_at: string;

@@ -58,6 +58,7 @@ export default function OfficesPage() {
     travel_allowance_rate: 0,
     communication_fee_amount: 0,
     meeting_unit_price: 0,
+    distance_adjustment_rate: 100,
     company_id: "",
   });
 
@@ -90,6 +91,7 @@ export default function OfficesPage() {
       travel_allowance_rate: 0,
       communication_fee_amount: 0,
       meeting_unit_price: 0,
+      distance_adjustment_rate: 100,
       company_id: "",
     });
     setEditingId(null);
@@ -116,6 +118,7 @@ export default function OfficesPage() {
           travel_allowance_rate: form.travel_allowance_rate,
           communication_fee_amount: form.communication_fee_amount,
           meeting_unit_price: form.meeting_unit_price,
+          distance_adjustment_rate: form.distance_adjustment_rate,
           company_id: form.company_id || null,
         })
         .eq("id", editingId);
@@ -128,6 +131,7 @@ export default function OfficesPage() {
       const { error } = await supabase.from("offices").insert({
         ...form,
         meeting_unit_price: form.meeting_unit_price,
+        distance_adjustment_rate: form.distance_adjustment_rate,
         company_id: form.company_id || null,
       });
       if (error) {
@@ -156,6 +160,7 @@ export default function OfficesPage() {
       travel_allowance_rate: office.travel_allowance_rate ?? 0,
       communication_fee_amount: office.communication_fee_amount ?? 0,
       meeting_unit_price: office.meeting_unit_price ?? 0,
+      distance_adjustment_rate: office.distance_adjustment_rate ?? 100,
       company_id: office.company_id ?? "",
     });
     setEditingId(office.id);
@@ -331,6 +336,17 @@ export default function OfficesPage() {
                 />
               </div>
               <div>
+                <Label>距離調整係数（%、例: 125 = 125%）</Label>
+                <Input
+                  type="number" min={1} step={1}
+                  value={form.distance_adjustment_rate || ""}
+                  placeholder="100"
+                  onChange={(e) =>
+                    setForm({ ...form, distance_adjustment_rate: parseFloat(e.target.value) || 100 })
+                  }
+                />
+              </div>
+              <div>
                 <Label>法人</Label>
                 <Select
                   value={form.company_id || "__none__"}
@@ -369,6 +385,7 @@ export default function OfficesPage() {
             <TableHead className="text-right">キャンセル単価</TableHead>
             <TableHead className="text-right">移動手当単価</TableHead>
             <TableHead className="text-right">会議1単価</TableHead>
+            <TableHead className="text-right">距離調整係数</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -412,6 +429,11 @@ export default function OfficesPage() {
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.meeting_unit_price ? `${office.meeting_unit_price}円/件` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.distance_adjustment_rate != null && office.distance_adjustment_rate !== 100
+                    ? `${office.distance_adjustment_rate}%`
+                    : "100%"}
                 </TableCell>
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>
