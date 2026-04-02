@@ -226,14 +226,36 @@ type MonthlyPayroll = {
 
 // ─── ユーティリティ ──────────────────────────────────────────
 
-/** year_month を YYYYMM 形式に正規化（"2025/12" → "202512", "2026/1" → "202601"） */
+/** year_month を YYYYMM 形式に正規化
+ *  対応フォーマット:
+ *    "2025/12" → "202512"
+ *    "2026/1"  → "202601"
+ *    "Dec-25"  → "202512"
+ *    "Jan-26"  → "202601"
+ */
+const MONTH_ABBR: Record<string, string> = {
+  Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06",
+  Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12",
+};
 function normalizeYM(ym: string): string {
   if (!ym) return ym;
+  // "YYYY/M" or "YYYY/MM"
   const slashIdx = ym.indexOf("/");
   if (slashIdx !== -1) {
     const y = ym.slice(0, slashIdx);
     const m = ym.slice(slashIdx + 1).padStart(2, "0");
     return y + m;
+  }
+  // "MMM-YY" (e.g. "Dec-25" → "202512")
+  const dashIdx = ym.indexOf("-");
+  if (dashIdx !== -1) {
+    const monthPart = ym.slice(0, dashIdx);
+    const yearPart  = ym.slice(dashIdx + 1);
+    const monthNum  = MONTH_ABBR[monthPart];
+    if (monthNum) {
+      const fullYear = "20" + yearPart.padStart(2, "0");
+      return fullYear + monthNum;
+    }
   }
   return ym;
 }
