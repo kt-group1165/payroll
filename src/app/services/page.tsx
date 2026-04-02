@@ -667,8 +667,23 @@ function RatesTab() {
     if (!file) return;
 
     const text = await file.text();
-    const lines = text.split("\n").map((l) => l.trim()).filter((l) => l);
-    const dataLines = lines.slice(1);
+
+    // 引用符付きCSVを正しくパース
+    const parseLine = (line: string): string[] => {
+      const result: string[] = [];
+      let cur = ""; let inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else { inQ = !inQ; } }
+        else if (ch === "," && !inQ) { result.push(cur.trim()); cur = ""; }
+        else { cur += ch; }
+      }
+      result.push(cur.trim());
+      return result;
+    };
+
+    const allLines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map((l) => l.trim()).filter((l) => l);
+    const dataLines = allLines.slice(1); // ヘッダー行をスキップ
     if (dataLines.length === 0) { toast.error("データ行がありません"); return; }
 
     const officeNameMap = new Map(offices.map((o) => [o.name, o.id]));
@@ -678,16 +693,17 @@ function RatesTab() {
     const errors: string[] = [];
 
     for (let i = 0; i < dataLines.length; i++) {
-      const cols = dataLines[i].split(",");
+      const cols = parseLine(dataLines[i]);
       if (cols.length < 3) { errors.push(`行${i + 2}: カラム数が不足`); continue; }
-      const officeName = cols[0].trim();
-      const catName = cols[1].trim();
-      const rate = parseInt(cols[2].trim(), 10);
+      const officeName = cols[0];
+      const catName = cols[1];
+      const rate = parseInt(cols[2], 10);
       const officeId = officeNameMap.get(officeName);
       const catId = categoryNameMap.get(catName);
       if (!officeId) { errors.push(`行${i + 2}: 事業所「${officeName}」が見つかりません`); continue; }
       if (!catId) { errors.push(`行${i + 2}: 類型「${catName}」が見つかりません`); continue; }
-      if (isNaN(rate) || rate <= 0) { errors.push(`行${i + 2}: 時給が不正です`); continue; }
+      if (isNaN(rate)) { errors.push(`行${i + 2}: 時給が数値ではありません`); continue; }
+      if (rate <= 0) continue; // 0円はスキップ（未設定扱い）
       upsertRows.push({ office_id: officeId, category_id: catId, hourly_rate: rate });
     }
 
