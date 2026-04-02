@@ -34,6 +34,11 @@ export function OfficeFormImporter() {
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
   const [existingMonths, setExistingMonths] = useState<{ month: string; count: number }[]>([]);
+  const [selectedProcessingMonth, setSelectedProcessingMonth] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
 
   const fetchExistingMonths = useCallback(async () => {
     const { data } = await supabase.from("office_form_records").select("processing_month");
@@ -87,10 +92,11 @@ export function OfficeFormImporter() {
 
   const handleImport = async () => {
     if (allData.length === 0) return;
+    if (!selectedProcessingMonth) { toast.error("処理月を選択してください"); return; }
     setIsImporting(true);
 
     try {
-      const processingMonth = allData[0]?.processing_month ?? "";
+      const processingMonth = selectedProcessingMonth.replace("-", "");
       const officeNumber    = allData[0]?.office_number ?? "";
 
       const { data: batch, error: batchError } = await supabase
@@ -118,7 +124,7 @@ export function OfficeFormImporter() {
           import_batch_id: batch.id,
           office_number: r.office_number,
           employee_number: r.employee_number,
-          processing_month: r.processing_month,
+          processing_month: processingMonth,
           record_type: r.record_type,
           item_name: r.item_name,
           item_date: r.item_date ?? null,
@@ -161,9 +167,8 @@ export function OfficeFormImporter() {
   };
 
   const totalErrors = results.reduce((sum, r) => sum + r.errors.length, 0);
-  const processingMonth = allData[0]?.processing_month;
-  const monthLabel = processingMonth
-    ? `${processingMonth.slice(0, 4)}年${parseInt(processingMonth.slice(4, 6), 10)}月`
+  const monthLabel = selectedProcessingMonth
+    ? `${selectedProcessingMonth.slice(0, 4)}年${parseInt(selectedProcessingMonth.slice(5, 7), 10)}月`
     : "";
 
   const preview = allData.slice(0, 100);
@@ -192,6 +197,17 @@ export function OfficeFormImporter() {
           </div>
         </div>
       )}
+
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium whitespace-nowrap">処理月</label>
+        <input
+          type="month"
+          className="border rounded px-3 py-1.5 text-sm bg-background"
+          value={selectedProcessingMonth}
+          onChange={(e) => setSelectedProcessingMonth(e.target.value)}
+        />
+        {monthLabel && <span className="text-sm text-muted-foreground">{monthLabel}分として登録します</span>}
+      </div>
 
       <FileDropzone
         onFilesSelected={handleFilesSelected}
