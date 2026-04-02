@@ -39,6 +39,8 @@ export default function DistancePage() {
   const [progress, setProgress] = useState("");
   const [results, setResults] = useState<EmployeeResult[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  type DebugInfo = { pairsSent: number; resultsGot: number; sampleOrigin?: string; sampleDest?: string; uncachedCount?: number; apiSample?: { origin: string; destination: string; dist: number }[] };
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   useEffect(() => {
     supabase.from("offices").select("id,name,office_number").order("name").then(({ data }) => {
@@ -131,6 +133,11 @@ export default function DistancePage() {
       }
 
       // 6. /api/distance でキャッシュ込み距離取得
+      setProgress(`距離を取得中... (${allPairs.length}ペア)`);
+      if (allPairs.length === 0) {
+        toast.error("距離計算できるデータがありません。利用者の住所が登録されているか確認してください。");
+        return;
+      }
       const res = await fetch("/api/distance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -142,12 +149,25 @@ export default function DistancePage() {
       }
       const json = await res.json();
       if (json.error) throw new Error(`距離APIエラー: ${json.error}`);
-      const { results: distResults } = json;
+      const distResults: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = json.results ?? [];
+      const _debug: { uncachedCount?: number; sample?: { origin: string; destination: string; dist: number }[] } | undefined = json._debug;
+
+      setDebugInfo({
+        pairsSent: allPairs.length,
+        resultsGot: distResults.length,
+        sampleOrigin: allPairs[0]?.origin?.slice(0, 60),
+        sampleDest: allPairs[0]?.destination?.slice(0, 60),
+        uncachedCount: _debug?.uncachedCount,
+        apiSample: _debug?.sample,
+      });
+
+      if (distResults.length === 0) {
+        toast.error(`Google APIから距離が取得できませんでした（${allPairs.length}ペアを送信）。Distance Matrix APIが有効か、APIキーの制限を確認してください。`);
+        return;
+      }
+      toast.info(`${distResults.length}/${allPairs.length}ペアの距離を取得しました`);
       const distMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
-        distResults.map((r: { origin: string; destination: string; distance_meters: number; duration_seconds: number }) => [
-          `${r.origin}|||${r.destination}`,
-          { distance_meters: r.distance_meters, duration_seconds: r.duration_seconds },
-        ])
+        distResults.map((r) => [`${r.origin}|||${r.destination}`, { distance_meters: r.distance_meters, duration_seconds: r.duration_seconds }])
       );
 
       // 7. 計算
@@ -214,6 +234,25 @@ export default function DistancePage() {
           </p>
         </CardContent>
       </Card>
+
+      {debugInfo && (
+        <Card className="mb-4 border-yellow-400">
+          <CardContent className="pt-4 text-xs font-mono space-y-1">
+            <p className="font-bold text-yellow-700">【診断情報】</p>
+            <p>送信ペア数: {debugInfo.pairsSent} / API取得数: {debugInfo.resultsGot} / うち未キャッシュ: {debugInfo.uncachedCount ?? "?"}</p>
+            <p>サンプル origin: {debugInfo.sampleOrigin ?? "（なし）"}</p>
+            <p>サンプル dest: {debugInfo.sampleDest ?? "（なし）"}</p>
+            {debugInfo.apiSample && debugInfo.apiSample.length > 0 && (
+              <div>
+                <p>APIサンプル結果:</p>
+                {debugInfo.apiSample.map((s, i) => (
+                  <p key={i} className="pl-2">{s.origin.slice(0, 30)}→{s.destination.slice(0, 30)} = {s.dist}m</p>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {results.length > 0 && (
         <div className="space-y-2">

@@ -89,7 +89,13 @@ export async function POST(request: Request) {
     }
   }
 
-  return Response.json({ results });
+  // デバッグ情報
+  const debugSample = results.slice(0, 2).map((r) => ({
+    origin: r.origin.slice(0, 50),
+    destination: r.destination.slice(0, 50),
+    dist: r.distance_meters,
+  }));
+  return Response.json({ results, _debug: { pairsSent: uniquePairs.length, uncachedCount: uncached.length, resultsCount: results.length, sample: debugSample } });
   } catch (e) {
     console.error("[distance API]", e);
     return Response.json({ error: String(e), results: [] }, { status: 500 });
