@@ -437,8 +437,16 @@ export default function EmployeesPage() {
         }
 
         // 「支払形態」「雇用形態」どちらの列名でも対応、列5のフォールバックも使用
-        // 「支払形態」「雇用形態」どちらの列名でも対応。値は「月給者」「時給者」「月給制」等
-        const employmentForm = get("支払形態") || get("雇用形態") || (r[5] ?? "").trim();
+        // 列名検索（支払形態・雇用形態）→ 値スキャン（月給者・月給制等） → 列5 の順で取得
+        const SALARY_PATTERNS = ["月給者","時給者","月給制","時給制","月給","時給"];
+        let employmentForm = get("支払形態") || get("雇用形態");
+        if (!employmentForm) {
+          for (const cell of r) {
+            const v = (cell ?? "").trim();
+            if (SALARY_PATTERNS.includes(v)) { employmentForm = v; break; }
+          }
+        }
+        if (!employmentForm) employmentForm = (r[5] ?? "").trim();
         const salaryType: SalaryType = employmentForm.includes("月給") ? "月給" : "時給";
         const jobType: JobType = JOB_TYPE_MAP[get("業種") || (r[24] ?? "").trim()] ?? "訪問介護";
         const address = get("住所1") || (r[13] ?? "").trim();
