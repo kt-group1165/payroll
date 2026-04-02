@@ -19,6 +19,8 @@ import type { MeisaiRow, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
+interface Office { id: string; office_number: string; name: string; }
+
 export function MeisaiImporter() {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<CsvParseResult<MeisaiRow>[]>([]);
@@ -32,6 +34,8 @@ export function MeisaiImporter() {
     d.setMonth(d.getMonth() - 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
+  const [offices, setOffices] = useState<Office[]>([]);
+  const [selectedOfficeId, setSelectedOfficeId] = useState("");
 
   const fetchExistingMonths = useCallback(async () => {
     const countMap = new Map<string, number>();
@@ -55,7 +59,14 @@ export function MeisaiImporter() {
     setExistingMonths(sorted);
   }, []);
 
-  useEffect(() => { fetchExistingMonths(); }, [fetchExistingMonths]);
+  useEffect(() => {
+    fetchExistingMonths();
+    supabase.from("offices").select("id,office_number,name").order("name").then(({ data }) => {
+      if (!data) return;
+      setOffices(data as Office[]);
+      if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
+    });
+  }, [fetchExistingMonths]);
 
   const handleClearMonth = async (month: string, count: number) => {
     const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
@@ -94,13 +105,14 @@ export function MeisaiImporter() {
 
   const handleImport = async () => {
     if (allData.length === 0) return;
+    if (!selectedOfficeId) { toast.error("事業所を選択してください"); return; }
     setIsImporting(true);
 
     try {
       // バッチ作成
       const processingMonth = selectedProcessingMonth.replace("-", "");
-      const officeNumber =
-        allData[0]?.事業所番号 ?? "";
+      const selectedOffice = offices.find((o) => o.id === selectedOfficeId)!;
+      const officeNumber = selectedOffice.office_number;
 
       const { data: batch, error: batchError } = await supabase
         .from("import_batches")
@@ -126,7 +138,7 @@ export function MeisaiImporter() {
         const chunk = allData.slice(i, i + chunkSize);
         const records = chunk.map((row) => ({
           import_batch_id: batch.id,
-          office_number: row.事業所番号,
+          office_number: officeNumber,
           office_name: row.事業者名,
           processing_month: processingMonth,
           employee_number: row.職員番号,
@@ -234,14 +246,29 @@ export function MeisaiImporter() {
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium whitespace-nowrap">取り込み対象月</label>
-        <input
-          type="month"
-          value={selectedProcessingMonth}
-          onChange={(e) => setSelectedProcessingMonth(e.target.value)}
-          className="border rounded px-2 py-1 text-sm"
-        />
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium whitespace-nowrap">事業所</label>
+          <select
+            className="border rounded px-2 py-1 text-sm bg-background"
+            value={selectedOfficeId}
+            onChange={(e) => setSelectedOfficeId(e.target.value)}
+          >
+            <option value="">選択してください</option>
+            {offices.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium whitespace-nowrap">取り込み対象月</label>
+          <input
+            type="month"
+            value={selectedProcessingMonth}
+            onChange={(e) => setSelectedProcessingMonth(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+          />
+        </div>
       </div>
 
       <FileDropzone

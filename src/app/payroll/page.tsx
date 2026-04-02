@@ -414,6 +414,8 @@ function countNoteKeyword(attDays: AttendanceRecord[], keyword: string): number 
 export default function PayrollPage() {
   const [months, setMonths] = useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("");
+  const [offices, setOffices] = useState<Office[]>([]);
+  const [selectedOfficeId, setSelectedOfficeId] = useState("");
   const [tab, setTab] = useState<"hourly" | "monthly">("monthly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -432,12 +434,17 @@ export default function PayrollPage() {
       setMonths(unique);
       if (unique.length > 0) setSelectedMonth(unique[0]);
     });
+    supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price").order("name").then(({ data }) => {
+      if (!data) return;
+      setOffices(data as Office[]);
+      if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
+    });
   }, []);
 
   // ─── 給与計算実行 ─────────────────────────────────────────────
 
   async function calculate() {
-    if (!selectedMonth) return;
+    if (!selectedMonth || !selectedOfficeId) return;
     setLoading(true); setError("");
     setHourlyResults([]); setMonthlyResults([]);
     setExpandedEmp(null); setExpandedMonthly(null);
@@ -452,6 +459,7 @@ export default function PayrollPage() {
       const adjustedMonths = (m: number) => Math.max(0, m + monthOffset);
 
       // service_records はサーバー側上限(1000件)を回避するため range でページング取得
+      const selectedOffice = offices.find((o) => o.id === selectedOfficeId)!;
       const allServiceRecords: ServiceRecord[] = [];
       {
         const pageSize = 1000;
@@ -461,6 +469,7 @@ export default function PayrollPage() {
             .from("service_records")
             .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
             .eq("processing_month", selectedMonth)
+            .eq("office_number", selectedOffice.office_number)
             .order("id")
             .range(from, from + pageSize - 1);
           if (!data || data.length === 0) break;
@@ -475,7 +484,7 @@ export default function PayrollPage() {
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price").neq("employment_status", "退職者"),
+        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
@@ -493,6 +502,7 @@ export default function PayrollPage() {
             .from("office_form_records")
             .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
             .eq("processing_month", selectedMonth)
+            .eq("office_number", selectedOffice.office_number)
             .order("id")
             .range(from, from + pageSize - 1);
           if (!data || data.length === 0) break;
@@ -824,6 +834,19 @@ export default function PayrollPage() {
         <CardContent className="pt-6">
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
+              <label className="text-sm font-medium whitespace-nowrap">事業所</label>
+              <select
+                className="border rounded px-3 py-1.5 text-sm bg-background"
+                value={selectedOfficeId}
+                onChange={(e) => setSelectedOfficeId(e.target.value)}
+              >
+                {offices.length === 0 && <option value="">（事業所なし）</option>}
+                {offices.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
               <label className="text-sm font-medium whitespace-nowrap">処理月</label>
               <select
                 className="border rounded px-3 py-1.5 text-sm bg-background"
@@ -836,7 +859,7 @@ export default function PayrollPage() {
                 ))}
               </select>
             </div>
-            <Button onClick={calculate} disabled={!selectedMonth || loading}>
+            <Button onClick={calculate} disabled={!selectedMonth || !selectedOfficeId || loading}>
               {loading ? "計算中…" : "給与計算を実行"}
             </Button>
           </div>
