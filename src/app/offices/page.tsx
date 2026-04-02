@@ -55,6 +55,7 @@ export default function OfficesPage() {
     commute_unit_price: 0,
     treatment_subsidy_amount: 0,
     cancel_unit_price: 0,
+    travel_allowance_rate: 0,
     company_id: "",
   });
 
@@ -84,6 +85,7 @@ export default function OfficesPage() {
       commute_unit_price: 0,
       treatment_subsidy_amount: 0,
       cancel_unit_price: 0,
+      travel_allowance_rate: 0,
       company_id: "",
     });
     setEditingId(null);
@@ -107,6 +109,7 @@ export default function OfficesPage() {
           commute_unit_price: form.commute_unit_price,
           treatment_subsidy_amount: form.treatment_subsidy_amount,
           cancel_unit_price: form.cancel_unit_price,
+          travel_allowance_rate: form.travel_allowance_rate,
           company_id: form.company_id || null,
         })
         .eq("id", editingId);
@@ -143,6 +146,7 @@ export default function OfficesPage() {
       commute_unit_price: office.commute_unit_price ?? 0,
       treatment_subsidy_amount: office.treatment_subsidy_amount ?? 0,
       cancel_unit_price: office.cancel_unit_price ?? 0,
+      travel_allowance_rate: office.travel_allowance_rate ?? 0,
       company_id: office.company_id ?? "",
     });
     setEditingId(office.id);
@@ -296,6 +300,17 @@ export default function OfficesPage() {
                 />
               </div>
               <div>
+                <Label>移動手当単価（円/時・訪問介護）</Label>
+                <Input
+                  type="number" min={0} step={0.01}
+                  value={form.travel_allowance_rate || ""}
+                  placeholder="0"
+                  onChange={(e) =>
+                    setForm({ ...form, travel_allowance_rate: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div>
                 <Label>法人</Label>
                 <Select
                   value={form.company_id || "__none__"}
@@ -332,6 +347,7 @@ export default function OfficesPage() {
             <TableHead className="text-right">通勤単価</TableHead>
             <TableHead className="text-right">処遇補助金</TableHead>
             <TableHead className="text-right">キャンセル単価</TableHead>
+            <TableHead className="text-right">移動手当単価</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -369,6 +385,9 @@ export default function OfficesPage() {
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.cancel_unit_price ? `${office.cancel_unit_price}円/件` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.travel_allowance_rate ? `${office.travel_allowance_rate}円/時` : "—"}
                 </TableCell>
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>

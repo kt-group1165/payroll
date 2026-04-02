@@ -5,6 +5,8 @@ import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
+import type { VisitForRoute } from "@/lib/distance-calculator";
 
 // ─── 実勤続月数の基準月 ─────────────────────────────────────
 // effective_service_months の初期データが何月時点の値かを設定する
@@ -56,6 +58,9 @@ type ServiceRecord = {
   service_code: string;
   office_number: string;
   accompanied_visit: string;
+  client_number: string;
+  dispatch_start_time: string;
+  dispatch_end_time: string;
 };
 
 type AttendanceRecord = {
@@ -98,13 +103,14 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number };
+type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
   id: string;
   employee_number: string;
   name: string;
+  address: string;
   role_type: string;
   salary_type: string;
   employment_status: string;
@@ -167,6 +173,8 @@ type HourlyPayroll = {
   paid_leave_allowance: number;
   cancel_count: number;
   cancel_allowance: number;
+  travel_time_sec: number;
+  travel_allowance: number;
   records: HourlyDetailRow[];
   totalMinutes: number;
   totalPay: number;
@@ -434,7 +442,7 @@ export default function PayrollPage() {
       setMonths(unique);
       if (unique.length > 0) setSelectedMonth(unique[0]);
     });
-    supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
@@ -467,7 +475,7 @@ export default function PayrollPage() {
         while (true) {
           const { data } = await supabase
             .from("service_records")
-            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit")
+            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
@@ -482,9 +490,9 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price"),
+        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("employees").select("id,employee_number,name,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
+        supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
           .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
@@ -653,6 +661,8 @@ export default function PayrollPage() {
           paid_leave_allowance: paidLeaveAllowance,
           cancel_count: cancelCount,
           cancel_allowance: cancelAllowance,
+          travel_time_sec: 0,
+          travel_allowance: 0,
           records: [],
           totalMinutes: 0,
           totalPay: 0,
@@ -673,6 +683,81 @@ export default function PayrollPage() {
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
+      }
+
+      // ── 移動手当計算（訪問介護・時給者） ──
+      {
+        const visitCareEmps = employees.filter(
+          (e) => e.salary_type === "時給" && e.job_type === "訪問介護" && e.address?.trim()
+        );
+        if (visitCareEmps.length > 0) {
+          const { data: clientData } = await supabase
+            .from("clients")
+            .select("client_number,address")
+            .eq("office_id", selectedOfficeId);
+          const clientMap = new Map(
+            (clientData ?? []).map((c: { client_number: string; address: string }) => [c.client_number, c.address])
+          );
+
+          const byEmpNum = new Map<string, { address: string; dayMap: Map<string, VisitForRoute[]> }>();
+          for (const emp of visitCareEmps) {
+            const normNum = normEmp(emp.employee_number);
+            const empRecs = recsByEmp.get(normNum) ?? [];
+            const dayMap = new Map<string, VisitForRoute[]>();
+            for (const rec of empRecs) {
+              const clientAddr = clientMap.get(rec.client_number);
+              if (!clientAddr?.trim()) continue;
+              if (!dayMap.has(rec.service_date)) dayMap.set(rec.service_date, []);
+              dayMap.get(rec.service_date)!.push({
+                client_number: rec.client_number,
+                client_address: clientAddr,
+                dispatch_start_time: rec.dispatch_start_time,
+                dispatch_end_time: rec.dispatch_end_time,
+              });
+            }
+            if (dayMap.size > 0) byEmpNum.set(normNum, { address: emp.address, dayMap });
+          }
+
+          const allPairs: { origin: string; destination: string }[] = [];
+          for (const { address, dayMap } of byEmpNum.values()) {
+            allPairs.push(...collectAddressPairs(address, dayMap));
+          }
+
+          if (allPairs.length > 0) {
+            const BATCH_SIZE = 50;
+            const distResultsArr: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = [];
+            for (let i = 0; i < allPairs.length; i += BATCH_SIZE) {
+              const batch = allPairs.slice(i, i + BATCH_SIZE);
+              const res = await fetch("/api/distance", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pairs: batch }),
+              });
+              if (res.ok) {
+                const json = await res.json();
+                distResultsArr.push(...(json.results ?? []));
+              }
+            }
+            const distMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
+              distResultsArr.map((r) => [`${r.origin}|||${r.destination}`, { distance_meters: r.distance_meters, duration_seconds: r.duration_seconds }])
+            );
+
+            for (const [normNum, { address, dayMap }] of byEmpNum) {
+              const entry = hourlyEmpMap.get(normNum);
+              if (!entry) continue;
+              const empObj = employees.find((e) => normEmp(e.employee_number) === normNum);
+              const empOffice = officeByIdMap.get(empObj?.office_id ?? "");
+              const rate = empOffice?.travel_allowance_rate ?? 0;
+              let totalSec = 0;
+              for (const [date, visits] of dayMap) {
+                const day = calcDayRoute(date, address, visits, distMap);
+                if (day) totalSec += day.travel_time_sec;
+              }
+              entry.travel_time_sec = totalSec;
+              entry.travel_allowance = rate > 0 ? Math.round(totalSec / 3600 * rate) : 0;
+            }
+          }
+        }
       }
 
       setHourlyResults(
@@ -745,7 +830,7 @@ export default function PayrollPage() {
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
-      "合計算定時間(分)","合計算定時間","実績給与(円)","勤続手当(円)","合計(円)",
+      "合計算定時間(分)","合計算定時間","実績給与(円)","勤続手当(円)","処遇補助金(円)","有給手当(円)","キャンセル手当(円)","移動時間","移動手当(円)","合計(円)",
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
@@ -753,12 +838,15 @@ export default function PayrollPage() {
         e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
         s.workHoursMin, s.recordCount, e.care_plan_count
       );
+      const total = e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance;
       rows.push([
         e.employee_number, e.employee_name, e.role_type,
         String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.halfLeave), String(s.specialLeave),
         formatWorkHours(s.workHoursMin),
         String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), String(s.hrdCount),
-        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay), String(tenure), String(e.totalPay + tenure),
+        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay), String(tenure),
+        String(e.treatment_subsidy), String(e.paid_leave_allowance), String(e.cancel_allowance),
+        e.travel_time_sec > 0 ? secToHm(e.travel_time_sec) : "0:00", String(e.travel_allowance), String(total),
       ]);
     }
     downloadCsv(`給与計算_${label}_時給者サマリー.csv`, rows);
@@ -819,7 +907,7 @@ export default function PayrollPage() {
       e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
       e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
     );
-    return s + e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance;
+    return s + e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance;
   }, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
   const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p, otSettings), 0);
@@ -927,6 +1015,8 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">処遇補助金</th>
                         <th className="text-right px-3 py-3 font-medium">有給手当</th>
                         <th className="text-right px-3 py-3 font-medium">キャンセル手当</th>
+                        <th className="text-right px-3 py-3 font-medium">移動時間</th>
+                        <th className="text-right px-3 py-3 font-medium">移動手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="text-center px-3 py-3 font-medium">注記</th>
                         <th className="px-3 py-3"></th>
@@ -939,7 +1029,7 @@ export default function PayrollPage() {
                           emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
                           sm.workHoursMin, sm.recordCount, emp.care_plan_count
                         );
-                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance;
+                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance;
                         return (
                           <>
                             <tr
@@ -974,6 +1064,8 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{emp.treatment_subsidy > 0 ? yen(emp.treatment_subsidy) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.paid_leave_allowance > 0 ? yen(emp.paid_leave_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.travel_time_sec > 0 ? secToHm(emp.travel_time_sec) : <span className="text-muted-foreground">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{emp.travel_allowance > 0 ? yen(emp.travel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
                                 {emp.unmappedCount > 0 && (
@@ -986,7 +1078,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={21} className="px-8 py-3">
+                                <td colSpan={23} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>

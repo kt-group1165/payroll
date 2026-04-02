@@ -43,6 +43,7 @@ export interface Office {
   commute_unit_price: number;      // 通勤手当単価（円/km）
   treatment_subsidy_amount: number; // 処遇改善補助金手当（社保加入者・月額）
   cancel_unit_price: number;        // キャンセル手当単価（円/件）
+  travel_allowance_rate: number;    // 移動手当単価（円/時）
   company_id: string | null;
   created_at: string;
   updated_at: string;
