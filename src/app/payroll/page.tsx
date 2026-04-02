@@ -176,6 +176,7 @@ type HourlyPayroll = {
   job_type: string;
   effective_service_months: number;
   care_plan_count: number;  // 居宅介護支援：担当要介護プラン相当件数（手動入力）
+  error_adjustment: number; // 過誤（手入力）：総支給額に加減算
   treatment_subsidy: number;
   paid_leave_allowance: number;
   cancel_count: number;
@@ -831,6 +832,7 @@ export default function PayrollPage() {
           job_type: info?.jobType ?? "",
           effective_service_months: info?.serviceMonths ?? 0,
           care_plan_count: 0,
+          error_adjustment: 0,
           treatment_subsidy: treatmentSubsidy,
           paid_leave_allowance: paidLeaveAllowance,
           cancel_count: cancelCount,
@@ -1196,33 +1198,43 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">ヘルパー日数</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">有給</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">半有給</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">特休</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">欠勤</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝同行時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">HRD研修時間</th>
-                        <th className="text-right px-3 py-3 font-medium">算定時間</th>
-                        <th className="text-right px-3 py-3 font-medium">本人給（パート）</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">内事務入浴</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">内初任者研修時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">内研修時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">実績時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">同行時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">内残業</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">内休日時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">入浴残業</th>
+                        <th className="text-right px-3 py-3 font-medium">集計項目小計</th>
+                        <th className="text-right px-3 py-3 font-medium">ドタキャン</th>
+                        <th className="text-right px-3 py-3 font-medium">特日</th>
+                        <th className="text-right px-3 py-3 font-medium">土日祝</th>
+                        <th className="text-right px-3 py-3 font-medium">初任者研修調整費</th>
+                        <th className="text-right px-3 py-3 font-medium">過誤(手入力)</th>
+                        <th className="text-right px-3 py-3 font-medium">初任者研修費</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当単価</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当</th>
                         <th className="text-right px-3 py-3 font-medium">資格手当</th>
                         <th className="text-right px-3 py-3 font-medium">処遇改善補助金手当</th>
                         <th className="text-right px-3 py-3 font-medium">報奨金</th>
-                        <th className="text-right px-3 py-3 font-medium">移動時間</th>
                         <th className="text-right px-3 py-3 font-medium">移動手当</th>
+                        <th className="text-right px-3 py-3 font-medium">訪問入浴</th>
                         <th className="text-right px-3 py-3 font-medium">有給休暇手当</th>
                         <th className="text-right px-3 py-3 font-medium">調整手当</th>
+                        <th className="text-right px-3 py-3 font-medium">育児手当</th>
                         <th className="text-right px-3 py-3 font-medium">HRD研修</th>
                         <th className="text-right px-3 py-3 font-medium">会議費</th>
-                        <th className="text-right px-3 py-3 font-medium">育児手当</th>
                         <th className="text-right px-3 py-3 font-medium">その他手当</th>
                         <th className="text-right px-3 py-3 font-medium">通信手当</th>
-                        <th className="text-right px-3 py-3 font-medium">土日祝手当</th>
-                        <th className="text-right px-3 py-3 font-medium">キャンセル手当</th>
                         <th className="text-right px-3 py-3 font-medium">残業</th>
                         <th className="text-right px-3 py-3 font-medium">休日</th>
                         <th className="text-right px-3 py-3 font-medium">残業総額</th>
+                        <th className="text-right px-3 py-3 font-medium">通勤距離</th>
                         <th className="text-right px-3 py-3 font-medium">通勤費</th>
                         <th className="text-right px-3 py-3 font-medium">出張距離</th>
                         <th className="text-right px-3 py-3 font-medium">出張費</th>
@@ -1238,7 +1250,7 @@ export default function PayrollPage() {
                           emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
                           sm.visitMinutesExcludingAccompanied, sm.recordCount, emp.care_plan_count
                         );
-                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.meeting_fee + emp.childcare_allowance + emp.commute_fee + emp.business_trip_fee;
+                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.meeting_fee + emp.childcare_allowance + emp.commute_fee + emp.business_trip_fee + emp.error_adjustment;
                         return (
                           <>
                             <tr
@@ -1256,14 +1268,33 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.workDays}</td>
                               <td className="px-3 py-2 text-right">{sm.helperDays}</td>
                               <td className="px-3 py-2 text-right">{sm.paidLeave || "—"}</td>
-                              <td className="px-3 py-2 text-right">{sm.halfLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
-                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? formatMinutes(sm.weekendHolidayMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{sm.weekendHolidayAccompaniedMinutes > 0 ? formatMinutes(sm.weekendHolidayAccompaniedMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">{sm.hrdMinutes > 0 ? formatMinutes(sm.hrdMinutes) : <span className="text-muted-foreground">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
-                              <td className="px-3 py-2 text-right">{yen(emp.totalPay)}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">{sm.visitMinutesExcludingAccompanied ? formatMinutes(sm.visitMinutesExcludingAccompanied) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{(sm.visitMinutes - sm.visitMinutesExcludingAccompanied) > 0 ? formatMinutes(sm.visitMinutes - sm.visitMinutesExcludingAccompanied) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">{emp.totalPay > 0 ? yen(emp.totalPay) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(Math.round(sm.weekendHolidayMinutes / 60 * 100)) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                                <Input
+                                  type="number"
+                                  value={emp.error_adjustment || ""}
+                                  placeholder="0"
+                                  onChange={(e) => updateHourly(emp.employee_number, { error_adjustment: parseFloat(e.target.value) || 0 })}
+                                  className="w-24 text-right h-6 px-2 text-xs"
+                                />
+                              </td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-green-700 text-xs">
                                 {computeTenureRate(emp.has_care_qualification, emp.effective_service_months, emp.job_type) > 0
                                   ? `${computeTenureRate(emp.has_care_qualification, emp.effective_service_months, emp.job_type)}円`
@@ -1275,22 +1306,21 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.treatment_subsidy > 0 ? yen(emp.treatment_subsidy) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.travel_time_sec > 0 ? secToHm(emp.travel_time_sec) : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.travel_allowance > 0 ? yen(emp.travel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.paid_leave_allowance > 0 ? yen(emp.paid_leave_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right">{emp.meeting_fee > 0 ? yen(emp.meeting_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.childcare_allowance > 0 ? yen(emp.childcare_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">{emp.meeting_fee > 0 ? yen(emp.meeting_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.communication_fee > 0 ? yen(emp.communication_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(Math.round(sm.weekendHolidayMinutes / 60 * 100)) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right">{emp.commute_fee > 0 ? yen(emp.commute_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-mono text-xs">{emp.commute_distance_m > 0 ? `${(emp.commute_distance_m / 1000).toFixed(1)} km` : <span className="text-muted-foreground">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{emp.commute_fee > 0 ? yen(emp.commute_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.business_trip_fee > 0 ? yen(emp.business_trip_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
@@ -1304,7 +1334,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={38} className="px-8 py-3">
+                                <td colSpan={48} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
