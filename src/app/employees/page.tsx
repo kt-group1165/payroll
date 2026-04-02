@@ -397,10 +397,19 @@ export default function EmployeesPage() {
       const rows = parseCsvText(text);
       if (rows.length < 2) { toast.error("データ行がありません"); return; }
 
-      const headers = rows[0].map((h) => h.trim());
-      const idx = (name: string) => headers.indexOf(name);
+      // 全角英数字→半角に正規化してからヘッダー比較
+      const toHalf = (s: string) =>
+        s.replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFF01 + 0x21)).trim();
+
+      const headers = rows[0].map(toHalf);
+      const idx = (name: string) => {
+        const i = headers.indexOf(name);
+        return i;
+      };
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
-      const filterOffice = filterOfficeId ? officeMap.get(filterOfficeId) : null;
+
+      // デバッグ: ヘッダー確認
+      console.log("[給与管理取込] headers:", headers.slice(0, 6), "rows:", rows.length - 1);
 
       const JOB_TYPE_MAP: Record<string, JobType> = {
         "ヘルパー": "訪問介護",
@@ -417,30 +426,37 @@ export default function EmployeesPage() {
       for (let i = 1; i < rows.length; i++) {
         const r = rows[i];
         const get = (name: string) => (r[idx(name)] ?? "").trim();
-        const empNum = get("社No");
-        const empName = get("氏名");
-        const officeNum = get("員番号");
+        // カラム名で取れない場合は位置で取得（フォールバック）
+        const empNum  = get("社No")   || (r[0]  ?? "").trim();
+        const empName = get("氏名")   || (r[1]  ?? "").trim();
+        const officeNum = get("員番号") || (r[21] ?? "").trim();
         if (!empNum || !empName) continue;
-        if (filterOffice && officeNum !== filterOffice.office_number) continue;
+        // 外部システムからの取り込みはページフィルターを無視する
 
         const errors: string[] = [];
         if (!officeByNumber.has(officeNum)) {
           errors.push(`員番号「${officeNum}」が未登録の事業所`);
         }
 
-        const employmentForm = get("雇用形態");
+        const employmentForm = get("雇用形態") || (r[5] ?? "").trim();
         const salaryType: SalaryType = employmentForm === "月給制" ? "月給" : "時給";
-        const jobType: JobType = JOB_TYPE_MAP[get("業種")] ?? "訪問介護";
+        const jobType: JobType = JOB_TYPE_MAP[get("業種") || (r[24] ?? "").trim()] ?? "訪問介護";
+        const address = get("住所1") || (r[13] ?? "").trim();
+        const employmentStatus = get("在職区分") || (r[4] ?? "").trim() || "在職者";
+        const hireDate = get("入社年月日") || (r[7] ?? "").trim();
+        const resignationDate = get("退職年月日") || (r[8] ?? "").trim();
+        const serviceMonths = parseInt(get("実勤続月数") || (r[9] ?? "0").trim() || "0", 10) || 0;
+        const transportType = get("移動形態") || (r[23] ?? "").trim() || "車";
 
         parsed.push({
           employee_number: empNum,
           name: empName,
-          address: get("住所1").trim(),
+          address,
           office_number: officeNum,
-          employment_status: get("在職区分") || "在職者",
-          hire_date: get("入社年月日"),
-          resignation_date: get("退職年月日"),
-          effective_service_months: parseInt(get("実勤続月数") || "0", 10) || 0,
+          employment_status: employmentStatus,
+          hire_date: hireDate,
+          resignation_date: resignationDate,
+          effective_service_months: serviceMonths,
           job_type: jobType,
           role_type: "パート",
           salary_type: salaryType,
@@ -450,7 +466,7 @@ export default function EmployeesPage() {
           hourly_rate_physical: null,
           hourly_rate_living: null,
           hourly_rate_visit: null,
-          transport_type: get("移動形態") || "車",
+          transport_type: transportType,
           has_care_qualification: false,
           social_insurance: false,
           paid_leave_unit_price: 0,
