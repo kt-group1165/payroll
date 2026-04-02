@@ -174,6 +174,7 @@ export default function EmployeesPage() {
   const [filterOfficeId, setFilterOfficeId] = useState<string>("");
 
   const importRef = useRef<HTMLInputElement>(null);
+  const salarySystemImportRef = useRef<HTMLInputElement>(null);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -380,6 +381,91 @@ export default function EmployeesPage() {
     reader.readAsText(file, "utf-8");
   }
 
+  // ─── 給与管理システムCSV取り込み ─────────────────────────────
+  // 列: 社No, 氏名, フリガナ, 性別, 在職区分, 雇用形態, 生年月日, 入社年月日,
+  //      退職年月日, 実勤続月数, 自社勤続月数, グループ勤続月数, スタッフ番号,
+  //      住所1, 住所1カナ, 住所2, 住所2カナ, 電話番号, 配信メールアドレス,
+  //      備考1, 備考2, 員番号, 会社名, 移動形態, 業種, 備考, 備考
+
+  function handleSalarySystemImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const buffer = ev.target?.result as ArrayBuffer;
+      const text = new TextDecoder("shift_jis").decode(buffer);
+      const rows = parseCsvText(text);
+      if (rows.length < 2) { toast.error("データ行がありません"); return; }
+
+      const headers = rows[0].map((h) => h.trim());
+      const idx = (name: string) => headers.indexOf(name);
+      const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const filterOffice = filterOfficeId ? officeMap.get(filterOfficeId) : null;
+
+      const JOB_TYPE_MAP: Record<string, JobType> = {
+        "ヘルパー": "訪問介護",
+        "訪問介護": "訪問介護",
+        "訪問看護": "訪問看護",
+        "訪問入浴": "訪問入浴",
+        "居宅介護支援": "居宅介護支援",
+        "福祉用具貸与": "福祉用具貸与",
+        "薬局": "薬局",
+        "本社": "本社",
+      };
+
+      const parsed: ImportRow[] = [];
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const get = (name: string) => (r[idx(name)] ?? "").trim();
+        const empNum = get("社No");
+        const empName = get("氏名");
+        const officeNum = get("員番号");
+        if (!empNum || !empName) continue;
+        if (filterOffice && officeNum !== filterOffice.office_number) continue;
+
+        const errors: string[] = [];
+        if (!officeByNumber.has(officeNum)) {
+          errors.push(`員番号「${officeNum}」が未登録の事業所`);
+        }
+
+        const employmentForm = get("雇用形態");
+        const salaryType: SalaryType = employmentForm === "月給制" ? "月給" : "時給";
+        const jobType: JobType = JOB_TYPE_MAP[get("業種")] ?? "訪問介護";
+
+        parsed.push({
+          employee_number: empNum,
+          name: empName,
+          address: get("住所1").trim(),
+          office_number: officeNum,
+          employment_status: get("在職区分") || "在職者",
+          hire_date: get("入社年月日"),
+          resignation_date: get("退職年月日"),
+          effective_service_months: parseInt(get("実勤続月数") || "0", 10) || 0,
+          job_type: jobType,
+          role_type: "パート",
+          salary_type: salaryType,
+          base_salary: null,
+          fixed_overtime_hours: null,
+          fixed_overtime_pay: null,
+          hourly_rate_physical: null,
+          hourly_rate_living: null,
+          hourly_rate_visit: null,
+          transport_type: get("移動形態") || "車",
+          has_care_qualification: false,
+          social_insurance: false,
+          paid_leave_unit_price: 0,
+          communication_fee_type: "none",
+          error: errors.length > 0 ? errors.join(" / ") : undefined,
+        });
+      }
+
+      setImportRows(parsed);
+      setImportDialogOpen(true);
+      if (salarySystemImportRef.current) salarySystemImportRef.current.value = "";
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
   async function handleImportConfirm() {
     const validRows = importRows.filter((r) => !r.error);
     if (validRows.length === 0) { toast.error("インポートできる行がありません"); return; }
@@ -478,6 +564,10 @@ export default function EmployeesPage() {
             📤 CSV取り込み
           </Button>
           <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
+          <Button variant="outline" onClick={() => salarySystemImportRef.current?.click()}>
+            🏢 給与管理システムから取り込み
+          </Button>
+          <input ref={salarySystemImportRef} type="file" accept=".csv" className="hidden" onChange={handleSalarySystemImportFile} />
 
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger render={<Button />}>新規登録</DialogTrigger>
