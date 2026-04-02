@@ -872,7 +872,7 @@ export default function PayrollPage() {
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
-      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","その他手当(円)","通信費(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
+      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","その他手当(円)","通信手当(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
@@ -1071,7 +1071,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">HRD研修</th>
                         <th className="text-right px-3 py-3 font-medium">会議費</th>
                         <th className="text-right px-3 py-3 font-medium">その他手当</th>
-                        <th className="text-right px-3 py-3 font-medium">通信費</th>
+                        <th className="text-right px-3 py-3 font-medium">通信手当</th>
                         <th className="text-right px-3 py-3 font-medium">土日祝手当</th>
                         <th className="text-right px-3 py-3 font-medium">キャンセル手当</th>
                         <th className="text-right px-3 py-3 font-medium">残業</th>
