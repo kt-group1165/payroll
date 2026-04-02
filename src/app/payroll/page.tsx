@@ -1016,7 +1016,7 @@ export default function PayrollPage() {
     const rows: string[][] = [[
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
-      "実績","同行","訪問時間","HRD",
+      "実績時間","同行時間","訪問時間","HRD",
       "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","保育手当(円)","その他手当(円)","通信手当(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
     ]];
     for (const e of hourlyResults) {
@@ -1030,7 +1030,7 @@ export default function PayrollPage() {
         e.employee_number, e.employee_name, e.role_type,
         String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.halfLeave), String(s.specialLeave),
         formatWorkHours(s.workHoursMin),
-        String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), formatMinutes(s.hrdMinutes),
+        formatMinutes(s.visitMinutesExcludingAccompanied), formatMinutes(s.visitMinutes - s.visitMinutesExcludingAccompanied), formatMinutes(s.visitMinutes), formatMinutes(s.hrdMinutes),
         String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay),
         String(computeTenureRate(e.has_care_qualification, e.effective_service_months, e.job_type)),
         String(tenure), "0", String(e.treatment_subsidy), "0",
@@ -1050,7 +1050,7 @@ export default function PayrollPage() {
     const rows: string[][] = [[
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
-      "実績","同行","訪問時間","HRD","出張距離(km)","出張手当","通勤距離(km)","通勤手当",
+      "実績時間","同行時間","訪問時間","HRD","出張距離(km)","出張手当","通勤距離(km)","通勤手当",
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
       "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
@@ -1063,7 +1063,7 @@ export default function PayrollPage() {
         p.employee_number, p.employee_name, p.role_type,
         String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.halfLeave), String(sm.specialLeave),
         formatWorkHours(sm.workHoursMin),
-        String(sm.recordCount), String(sm.accompaniedCount), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
+        formatMinutes(sm.visitMinutesExcludingAccompanied), formatMinutes(sm.visitMinutes - sm.visitMinutesExcludingAccompanied), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
         String(effectiveTravelKm(p)), String(travelFeeAmount(p)), String(sm.commuteKmTotal), String(commuteFeeAmount(p)),
         String(s?.base_personal_salary ?? 0),
         String(s?.skill_salary ?? 0),
@@ -1433,8 +1433,8 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">半有給</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">特休欠勤</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">実績</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">同行</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">実績時間</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">同行時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">訪問時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
                         <th className="text-right px-3 py-3 font-medium">出張距離</th>
@@ -1488,8 +1488,8 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.halfLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
-                              <td className="px-3 py-2 text-right">{sm.recordCount || "—"}</td>
-                              <td className="px-3 py-2 text-right">{sm.accompaniedCount || "—"}</td>
+                              <td className="px-3 py-2 text-right">{sm.visitMinutesExcludingAccompanied ? formatMinutes(sm.visitMinutesExcludingAccompanied) : "—"}</td>
+                              <td className="px-3 py-2 text-right">{(sm.visitMinutes - sm.visitMinutesExcludingAccompanied) > 0 ? formatMinutes(sm.visitMinutes - sm.visitMinutesExcludingAccompanied) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${effectiveTravelKm(p)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
