@@ -23,6 +23,15 @@ export type SalaryType = "月給" | "時給";
 
 export type ImportType = "meisai" | "attendance" | "office_form";
 
+export interface Company {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Office {
   id: string;
   office_number: string;
@@ -34,6 +43,7 @@ export interface Office {
   commute_unit_price: number;      // 通勤手当単価（円/km）
   treatment_subsidy_amount: number; // 処遇改善補助金手当（社保加入者・月額）
   cancel_unit_price: number;        // キャンセル手当単価（円/件）
+  company_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -188,6 +198,11 @@ export interface ImportBatch {
 export interface Database {
   public: {
     Tables: {
+      companies: {
+        Row: Company;
+        Insert: Omit<Company, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Company, "id" | "created_at" | "updated_at">>;
+      };
       offices: {
         Row: Office;
         Insert: Omit<Office, "id" | "created_at" | "updated_at">;

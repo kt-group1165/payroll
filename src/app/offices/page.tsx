@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
-import type { Office, OfficeType } from "@/types/database";
+import type { Office, OfficeType, Company } from "@/types/database";
 
 const OFFICE_TYPES: OfficeType[] = [
   "訪問介護",
@@ -42,6 +42,7 @@ const OFFICE_TYPES: OfficeType[] = [
 
 export default function OfficesPage() {
   const [offices, setOffices] = useState<Office[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -54,6 +55,7 @@ export default function OfficesPage() {
     commute_unit_price: 0,
     treatment_subsidy_amount: 0,
     cancel_unit_price: 0,
+    company_id: "",
   });
 
   const fetchOffices = useCallback(async () => {
@@ -66,6 +68,9 @@ export default function OfficesPage() {
 
   useEffect(() => {
     fetchOffices();
+    supabase.from("companies").select("*").order("name").then(({ data }) => {
+      if (data) setCompanies(data as Company[]);
+    });
   }, [fetchOffices]);
 
   const resetForm = () => {
@@ -79,6 +84,7 @@ export default function OfficesPage() {
       commute_unit_price: 0,
       treatment_subsidy_amount: 0,
       cancel_unit_price: 0,
+      company_id: "",
     });
     setEditingId(null);
   };
@@ -101,6 +107,7 @@ export default function OfficesPage() {
           commute_unit_price: form.commute_unit_price,
           treatment_subsidy_amount: form.treatment_subsidy_amount,
           cancel_unit_price: form.cancel_unit_price,
+          company_id: form.company_id || null,
         })
         .eq("id", editingId);
       if (error) {
@@ -109,7 +116,10 @@ export default function OfficesPage() {
       }
       toast.success("事業所を更新しました");
     } else {
-      const { error } = await supabase.from("offices").insert(form);
+      const { error } = await supabase.from("offices").insert({
+        ...form,
+        company_id: form.company_id || null,
+      });
       if (error) {
         toast.error(`登録エラー: ${error.message}`);
         return;
@@ -133,6 +143,7 @@ export default function OfficesPage() {
       commute_unit_price: office.commute_unit_price ?? 0,
       treatment_subsidy_amount: office.treatment_subsidy_amount ?? 0,
       cancel_unit_price: office.cancel_unit_price ?? 0,
+      company_id: office.company_id ?? "",
     });
     setEditingId(office.id);
     setIsOpen(true);
@@ -284,6 +295,23 @@ export default function OfficesPage() {
                   }
                 />
               </div>
+              <div>
+                <Label>法人</Label>
+                <Select
+                  value={form.company_id || "__none__"}
+                  onValueChange={(v) => setForm({ ...form, company_id: !v || v === "__none__" ? "" : v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="法人を選択" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">未設定</SelectItem>
+                    {companies.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Button onClick={handleSubmit} className="w-full">
                 {editingId ? "更新" : "登録"}
               </Button>
@@ -297,6 +325,7 @@ export default function OfficesPage() {
           <TableRow>
             <TableHead>事業所番号</TableHead>
             <TableHead>名称</TableHead>
+            <TableHead>法人</TableHead>
             <TableHead>種別</TableHead>
             <TableHead>週起算</TableHead>
             <TableHead className="text-right">出張単価</TableHead>
@@ -322,6 +351,11 @@ export default function OfficesPage() {
               <TableRow key={office.id}>
                 <TableCell>{office.office_number}</TableCell>
                 <TableCell>{office.name}</TableCell>
+                <TableCell className="text-sm">
+                  {office.company_id
+                    ? (companies.find((c) => c.id === office.company_id)?.name ?? "—")
+                    : "—"}
+                </TableCell>
                 <TableCell>{office.office_type}</TableCell>
                 <TableCell>{["日","月","火","水","木","金","土"][office.work_week_start ?? 0]}曜</TableCell>
                 <TableCell className="text-right text-sm">
