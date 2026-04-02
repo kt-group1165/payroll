@@ -515,7 +515,7 @@ export default function PayrollPage() {
     supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
-      if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
+      if (data.length > 0) setSelectedOfficeId((data as Office[])[0].id);
     });
   }, []);
 
