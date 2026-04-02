@@ -5,7 +5,7 @@ type DistResult = Pair & { distance_meters: number; duration_seconds: number };
 
 export async function POST(request: Request) {
   try {
-  const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY ?? "";
+  const GOOGLE_API_KEY = process.env.DISTANCE_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY ?? "";
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const { pairs }: { pairs: Pair[] } = await request.json();
