@@ -169,6 +169,7 @@ export default function EmployeesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [filterStatus, setFilterStatus] = useState<string>("在職者");
+  const [filterOfficeId, setFilterOfficeId] = useState<string>("");
 
   const importRef = useRef<HTMLInputElement>(null);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
@@ -275,9 +276,9 @@ export default function EmployeesPage() {
 
   const officeMap = new Map(offices.map((o) => [o.id, o]));
 
-  function handleExport() {
+  function handleExport(targets: Employee[]) {
     const rows: string[][] = [CSV_HEADERS.slice()];
-    for (const emp of employees) {
+    for (const emp of targets) {
       const office = officeMap.get(emp.office_id);
       rows.push([
         emp.employee_number,
@@ -303,8 +304,9 @@ export default function EmployeesPage() {
         emp.paid_leave_unit_price?.toString() ?? "0",
       ]);
     }
-    downloadCsv("職員一覧.csv", rows);
-    toast.success(`${employees.length}件をエクスポートしました`);
+    const officeName = filterOfficeId ? (officeMap.get(filterOfficeId)?.name ?? "") : "全事業所";
+    downloadCsv(`職員一覧_${officeName}.csv`, rows);
+    toast.success(`${targets.length}件をエクスポートしました`);
   }
 
   // ─── CSV インポート ───────────────────────────────────────────
@@ -321,6 +323,7 @@ export default function EmployeesPage() {
       const headers = rows[0].map((h) => h.trim());
       const idx = (name: string) => headers.indexOf(name);
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const filterOffice = filterOfficeId ? officeMap.get(filterOfficeId) : null;
 
       const parsed: ImportRow[] = [];
       for (let i = 1; i < rows.length; i++) {
@@ -330,6 +333,8 @@ export default function EmployeesPage() {
         const name = get("名前");
         const officeNum = get("事業所番号");
         if (!empNum || !name) continue;
+        // 事業所フィルターが指定されている場合、対象外の行をスキップ
+        if (filterOffice && officeNum !== filterOffice.office_number) continue;
 
         const errors: string[] = [];
         if (!officeByNumber.has(officeNum)) errors.push(`事業所番号「${officeNum}」が未登録`);
@@ -435,10 +440,10 @@ export default function EmployeesPage() {
     else { setSortKey(key); setSortAsc(true); }
   };
 
-  const filteredEmployees = (filterStatus === "全員"
-    ? employees
-    : employees.filter((e) => (e.employment_status ?? "在職者") === filterStatus)
-  ).slice().sort((a, b) => {
+  const filteredEmployees = employees
+    .filter((e) => filterStatus === "全員" || (e.employment_status ?? "在職者") === filterStatus)
+    .filter((e) => !filterOfficeId || e.office_id === filterOfficeId)
+    .slice().sort((a, b) => {
     const av = (a[sortKey] ?? "") as string | number;
     const bv = (b[sortKey] ?? "") as string | number;
     const cmp = typeof av === "number" && typeof bv === "number"
@@ -461,7 +466,7 @@ export default function EmployeesPage() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">職員一覧</h2>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExport} disabled={employees.length === 0}>
+          <Button variant="outline" onClick={() => handleExport(filteredEmployees)} disabled={filteredEmployees.length === 0}>
             📥 CSV出力
           </Button>
           <Button variant="outline" onClick={() => importRef.current?.click()}>
@@ -712,26 +717,38 @@ export default function EmployeesPage() {
         </div>
       </div>
 
-      {/* 在職区分フィルタ */}
-      <div className="flex gap-2 mb-4">
-        {["在職者", "休職者", "退職者", "全員"].map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilterStatus(s)}
-            className={`px-3 py-1 rounded-full text-sm transition-colors ${
-              filterStatus === s
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted hover:bg-muted/80"
-            }`}
-          >
-            {s}
-            <span className="ml-1 text-xs opacity-70">
-              {s === "全員"
-                ? employees.length
-                : employees.filter((e) => (e.employment_status ?? "在職者") === s).length}
-            </span>
-          </button>
-        ))}
+      {/* フィルタ */}
+      <div className="flex items-center gap-4 mb-4 flex-wrap">
+        <div className="flex gap-2">
+          {["在職者", "休職者", "退職者", "全員"].map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilterStatus(s)}
+              className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                filterStatus === s
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted hover:bg-muted/80"
+              }`}
+            >
+              {s}
+              <span className="ml-1 text-xs opacity-70">
+                {s === "全員"
+                  ? employees.length
+                  : employees.filter((e) => (e.employment_status ?? "在職者") === s).length}
+              </span>
+            </button>
+          ))}
+        </div>
+        <select
+          className="border rounded px-2 py-1 text-sm bg-background"
+          value={filterOfficeId}
+          onChange={(e) => setFilterOfficeId(e.target.value)}
+        >
+          <option value="">全事業所</option>
+          {offices.map((o) => (
+            <option key={o.id} value={o.id}>{o.name}</option>
+          ))}
+        </select>
       </div>
 
       {/* 職員テーブル */}
@@ -761,13 +778,14 @@ export default function EmployeesPage() {
                 </span>
               </TableHead>
             ))}
+            <TableHead>事業所</TableHead>
             <TableHead className="w-[100px]">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {filteredEmployees.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={9} className="text-center text-muted-foreground">
+              <TableCell colSpan={10} className="text-center text-muted-foreground">
                 {filterStatus === "全員" ? "職員が登録されていません" : `${filterStatus}の職員はいません`}
               </TableCell>
             </TableRow>
@@ -787,6 +805,9 @@ export default function EmployeesPage() {
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate">
                   {emp.address || "—"}
+                </TableCell>
+                <TableCell className="text-sm">
+                  {officeMap.get(emp.office_id)?.name ?? "—"}
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1">
