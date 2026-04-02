@@ -408,8 +408,6 @@ export default function EmployeesPage() {
       };
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
 
-      // デバッグ: ヘッダー確認
-      console.log("[給与管理取込] headers:", headers.slice(0, 6), "rows:", rows.length - 1);
 
       const JOB_TYPE_MAP: Record<string, JobType> = {
         "ヘルパー": "訪問介護",
@@ -439,9 +437,8 @@ export default function EmployeesPage() {
         }
 
         // 「支払形態」「雇用形態」どちらの列名でも対応、列5のフォールバックも使用
+        // 「支払形態」「雇用形態」どちらの列名でも対応。値は「月給者」「時給者」「月給制」等
         const employmentForm = get("支払形態") || get("雇用形態") || (r[5] ?? "").trim();
-        console.log("[給与管理取込] employmentForm raw:", JSON.stringify(employmentForm));
-        // 月給制・月給・月給型 等、「月給」が含まれれば月給とみなす
         const salaryType: SalaryType = employmentForm.includes("月給") ? "月給" : "時給";
         const jobType: JobType = JOB_TYPE_MAP[get("業種") || (r[24] ?? "").trim()] ?? "訪問介護";
         const address = get("住所1") || (r[13] ?? "").trim();
