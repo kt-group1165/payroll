@@ -246,15 +246,20 @@ function normalizeYM(ym: string): string {
     const m = ym.slice(slashIdx + 1).padStart(2, "0");
     return y + m;
   }
-  // "MMM-YY" (e.g. "Dec-25" → "202512")
+  // "MMM-YY" or "YY-MMM" (e.g. "Dec-25" or "25-Dec" → "202512")
   const dashIdx = ym.indexOf("-");
   if (dashIdx !== -1) {
-    const monthPart = ym.slice(0, dashIdx);
-    const yearPart  = ym.slice(dashIdx + 1);
-    const monthNum  = MONTH_ABBR[monthPart];
-    if (monthNum) {
-      const fullYear = "20" + yearPart.padStart(2, "0");
-      return fullYear + monthNum;
+    const left  = ym.slice(0, dashIdx);
+    const right = ym.slice(dashIdx + 1);
+    // Dec-25 形式
+    if (MONTH_ABBR[left]) {
+      const fullYear = "20" + right.padStart(2, "0");
+      return fullYear + MONTH_ABBR[left];
+    }
+    // 25-Dec 形式
+    if (MONTH_ABBR[right]) {
+      const fullYear = "20" + left.padStart(2, "0");
+      return fullYear + MONTH_ABBR[right];
     }
   }
   return ym;
