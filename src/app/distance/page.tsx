@@ -209,7 +209,7 @@ export default function DistancePage() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6">移動距離計算 <span className="text-xs text-muted-foreground font-normal">v3</span></h2>
+      <h2 className="text-2xl font-bold mb-6">移動距離計算 <span className="text-xs text-muted-foreground font-normal">v4</span></h2>
 
       <Card className="mb-6">
         <CardContent className="pt-6">
