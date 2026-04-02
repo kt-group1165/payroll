@@ -178,6 +178,7 @@ type HourlyPayroll = {
   travel_allowance: number;
   communication_fee: number;
   commute_fee: number;
+  commute_distance_m: number;
   business_trip_fee: number;
   records: HourlyDetailRow[];
   totalMinutes: number;
@@ -696,6 +697,7 @@ export default function PayrollPage() {
           travel_allowance: 0,
           communication_fee: communicationFee,
           commute_fee: commuteFee,
+          commute_distance_m: 0,
           business_trip_fee: businessTripFee,
           records: [],
           totalMinutes: 0,
@@ -793,6 +795,7 @@ export default function PayrollPage() {
               }
               entry.travel_time_sec = totalSec;
               entry.travel_allowance = rate > 0 ? Math.round(totalSec / 3600 * rate) : 0;
+              entry.commute_distance_m = totalCommuteM;
               entry.business_trip_fee = Math.round((totalCommuteM / 1000) * (empOffice?.travel_unit_price ?? 0));
             }
           }
@@ -869,7 +872,7 @@ export default function PayrollPage() {
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
-      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","その他手当(円)","通信費(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張費(円)","総支給額(円)",
+      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","その他手当(円)","通信費(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
@@ -891,7 +894,7 @@ export default function PayrollPage() {
         String(e.communication_fee),
         String(Math.round(e.summary.weekendHolidayMinutes / 60 * 100)),
         String(e.cancel_allowance), "0", "0", "0",
-        String(e.commute_fee), String(e.business_trip_fee), String(total),
+        String(e.commute_fee), `${(e.commute_distance_m / 1000).toFixed(1)}`, String(e.business_trip_fee), String(total),
       ]);
     }
     downloadCsv(`給与計算_${label}_時給者サマリー.csv`, rows);
@@ -1075,6 +1078,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">休日</th>
                         <th className="text-right px-3 py-3 font-medium">残業総額</th>
                         <th className="text-right px-3 py-3 font-medium">通勤費</th>
+                        <th className="text-right px-3 py-3 font-medium">出張距離</th>
                         <th className="text-right px-3 py-3 font-medium">出張費</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">総支給額</th>
                         <th className="text-center px-3 py-3 font-medium">注記</th>
@@ -1140,6 +1144,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.commute_fee > 0 ? yen(emp.commute_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.commute_distance_m > 0 ? `${(emp.commute_distance_m / 1000).toFixed(1)} km` : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.business_trip_fee > 0 ? yen(emp.business_trip_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
@@ -1153,7 +1158,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={37} className="px-8 py-3">
+                                <td colSpan={38} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -1239,6 +1244,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
                         <td></td><td></td><td></td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.commute_fee, 0))}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{`${(hourlyResults.reduce((s, e) => s + e.commute_distance_m, 0) / 1000).toFixed(1)} km`}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.business_trip_fee, 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
                         <td></td>
