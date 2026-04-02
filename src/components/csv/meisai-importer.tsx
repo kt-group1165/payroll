@@ -27,6 +27,11 @@ export function MeisaiImporter() {
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
   const [existingMonths, setExistingMonths] = useState<{ month: string; count: number }[]>([]);
+  const [selectedProcessingMonth, setSelectedProcessingMonth] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
 
   const fetchExistingMonths = useCallback(async () => {
     const countMap = new Map<string, number>();
@@ -93,8 +98,7 @@ export function MeisaiImporter() {
 
     try {
       // バッチ作成
-      const processingMonth =
-        allData[0]?.処理月 ?? "";
+      const processingMonth = selectedProcessingMonth.replace("-", "");
       const officeNumber =
         allData[0]?.事業所番号 ?? "";
 
@@ -124,7 +128,7 @@ export function MeisaiImporter() {
           import_batch_id: batch.id,
           office_number: row.事業所番号,
           office_name: row.事業者名,
-          processing_month: row.処理月,
+          processing_month: processingMonth,
           employee_number: row.職員番号,
           employee_name: row.職員名.replace(/　様$/, "").replace(/　$/, ""),
           period_start: row.開始日,
@@ -229,6 +233,16 @@ export function MeisaiImporter() {
           </div>
         </div>
       )}
+
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium whitespace-nowrap">取り込み対象月</label>
+        <input
+          type="month"
+          value={selectedProcessingMonth}
+          onChange={(e) => setSelectedProcessingMonth(e.target.value)}
+          className="border rounded px-2 py-1 text-sm"
+        />
+      </div>
 
       <FileDropzone
         onFilesSelected={handleFilesSelected}
