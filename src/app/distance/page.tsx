@@ -136,7 +136,13 @@ export default function DistancePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pairs: allPairs }),
       });
-      const { results: distResults } = await res.json();
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`距離APIエラー (${res.status}): ${text.slice(0, 200)}`);
+      }
+      const json = await res.json();
+      if (json.error) throw new Error(`距離APIエラー: ${json.error}`);
+      const { results: distResults } = json;
       const distMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
         distResults.map((r: { origin: string; destination: string; distance_meters: number; duration_seconds: number }) => [
           `${r.origin}|||${r.destination}`,

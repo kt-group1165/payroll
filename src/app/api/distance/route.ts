@@ -8,6 +8,7 @@ type Pair = { origin: string; destination: string };
 type DistResult = Pair & { distance_meters: number; duration_seconds: number };
 
 export async function POST(request: Request) {
+  try {
   const { pairs }: { pairs: Pair[] } = await request.json();
   if (!pairs || pairs.length === 0) return Response.json({ results: [] });
 
@@ -89,4 +90,8 @@ export async function POST(request: Request) {
   }
 
   return Response.json({ results });
+  } catch (e) {
+    console.error("[distance API]", e);
+    return Response.json({ error: String(e), results: [] }, { status: 500 });
+  }
 }
