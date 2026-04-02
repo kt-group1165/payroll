@@ -28,7 +28,7 @@ export function MeisaiImporter() {
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
-  const [existingMonths, setExistingMonths] = useState<{ month: string; count: number }[]>([]);
+  const [existingMonths, setExistingMonths] = useState<{ month: string; office_number: string; count: number }[]>([]);
   const [selectedProcessingMonth, setSelectedProcessingMonth] = useState<string>(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 1);
@@ -44,18 +44,22 @@ export function MeisaiImporter() {
     while (true) {
       const { data } = await supabase
         .from("service_records")
-        .select("processing_month")
+        .select("processing_month,office_number")
         .range(from, from + pageSize - 1);
       if (!data || data.length === 0) break;
-      for (const r of data as { processing_month: string }[]) {
-        countMap.set(r.processing_month, (countMap.get(r.processing_month) ?? 0) + 1);
+      for (const r of data as { processing_month: string; office_number: string }[]) {
+        const key = `${r.processing_month}__${r.office_number}`;
+        countMap.set(key, (countMap.get(key) ?? 0) + 1);
       }
       if (data.length < pageSize) break;
       from += pageSize;
     }
     const sorted = [...countMap.entries()]
-      .map(([month, count]) => ({ month, count }))
-      .sort((a, b) => b.month.localeCompare(a.month));
+      .map(([key, count]) => {
+        const [month, office_number] = key.split("__");
+        return { month, office_number, count };
+      })
+      .sort((a, b) => b.month.localeCompare(a.month) || a.office_number.localeCompare(b.office_number));
     setExistingMonths(sorted);
   }, []);
 
@@ -68,15 +72,17 @@ export function MeisaiImporter() {
     });
   }, [fetchExistingMonths]);
 
-  const handleClearMonth = async (month: string, count: number) => {
+  const handleClearMonth = async (month: string, office_number: string, count: number) => {
     const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
-    if (!confirm(`${label}のサービス実績データ（${count}件）を削除しますか？`)) return;
+    const officeName = offices.find((o) => o.office_number === office_number)?.name ?? office_number;
+    if (!confirm(`${officeName} ${label}のサービス実績データ（${count}件）を削除しますか？`)) return;
     const { error } = await supabase
       .from("service_records")
       .delete()
-      .eq("processing_month", month);
+      .eq("processing_month", month)
+      .eq("office_number", office_number);
     if (error) { toast.error(`削除エラー: ${error.message}`); return; }
-    toast.success(`${label}のデータを削除しました`);
+    toast.success(`${officeName} ${label}のデータを削除しました`);
     fetchExistingMonths();
   };
 
@@ -228,13 +234,14 @@ export function MeisaiImporter() {
         <div className="border rounded-md p-4 space-y-2">
           <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
           <div className="flex flex-wrap gap-2">
-            {existingMonths.map(({ month, count }) => {
+            {existingMonths.map(({ month, office_number, count }) => {
               const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+              const officeName = offices.find((o) => o.office_number === office_number)?.name ?? office_number;
               return (
-                <div key={month} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
-                  <span>{label}（{count.toLocaleString()}件）</span>
+                <div key={`${month}__${office_number}`} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
+                  <span>{officeName} {label}（{count.toLocaleString()}件）</span>
                   <button
-                    onClick={() => handleClearMonth(month, count)}
+                    onClick={() => handleClearMonth(month, office_number, count)}
                     className="text-destructive hover:text-destructive/80 ml-1 text-xs font-medium"
                   >
                     削除
