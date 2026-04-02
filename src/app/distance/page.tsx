@@ -37,6 +37,7 @@ export default function DistancePage() {
   const [selectedMonth, setSelectedMonth] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
+  const [progressDetail, setProgressDetail] = useState("");
   const [results, setResults] = useState<EmployeeResult[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   type DebugInfo = { pairsSent: number; resultsGot: number; sampleOrigin?: string; sampleDest?: string; uncachedCount?: number; apiKeySet?: boolean; apiKeyLen?: number; googleStatus?: string; apiSample?: { origin: string; destination: string; dist: number }[] };
@@ -132,37 +133,50 @@ export default function DistancePage() {
         allPairs.push(...collectAddressPairs(emp.address, dayMap));
       }
 
-      // 6. /api/distance でキャッシュ込み距離取得
-      setProgress(`距離を取得中... (${allPairs.length}ペア)`);
+      // 6. /api/distance でキャッシュ込み距離取得（50件ずつバッチ）
       if (allPairs.length === 0) {
         toast.error("距離計算できるデータがありません。利用者の住所が登録されているか確認してください。");
         return;
       }
-      const res = await fetch("/api/distance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pairs: allPairs }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`距離APIエラー (${res.status}): ${text.slice(0, 200)}`);
-      }
-      const json = await res.json();
-      if (json.error) throw new Error(`距離APIエラー: ${json.error}`);
-      const distResults: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = json.results ?? [];
-      const _debug: { uncachedCount?: number; apiKeySet?: boolean; apiKeyLen?: number; googleStatus?: string; sample?: { origin: string; destination: string; dist: number }[] } | undefined = json._debug;
+      const BATCH_SIZE = 50;
+      const distResults: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = [];
+      let lastDebug: DebugInfo | null = null;
 
-      setDebugInfo({
-        pairsSent: allPairs.length,
-        resultsGot: distResults.length,
-        sampleOrigin: allPairs[0]?.origin?.slice(0, 60),
-        sampleDest: allPairs[0]?.destination?.slice(0, 60),
-        uncachedCount: _debug?.uncachedCount,
-        apiKeySet: _debug?.apiKeySet,
-        apiKeyLen: _debug?.apiKeyLen,
-        googleStatus: _debug?.googleStatus,
-        apiSample: _debug?.sample,
-      });
+      for (let i = 0; i < allPairs.length; i += BATCH_SIZE) {
+        const batch = allPairs.slice(i, i + BATCH_SIZE);
+        const done = Math.min(i + BATCH_SIZE, allPairs.length);
+        setProgress(`距離を取得中...`);
+        setProgressDetail(`${done} / ${allPairs.length} ペア`);
+
+        const res = await fetch("/api/distance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pairs: batch }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`距離APIエラー (${res.status}): ${text.slice(0, 200)}`);
+        }
+        const json = await res.json();
+        if (json.error) throw new Error(`距離APIエラー: ${json.error}`);
+        distResults.push(...(json.results ?? []));
+
+        const _debug = json._debug;
+        lastDebug = {
+          pairsSent: allPairs.length,
+          resultsGot: distResults.length,
+          sampleOrigin: allPairs[0]?.origin?.slice(0, 60),
+          sampleDest: allPairs[0]?.destination?.slice(0, 60),
+          uncachedCount: _debug?.uncachedCount,
+          apiKeySet: _debug?.apiKeySet,
+          apiKeyLen: _debug?.apiKeyLen,
+          googleStatus: _debug?.googleStatus,
+          apiSample: _debug?.sample,
+        };
+      }
+
+      setDebugInfo(lastDebug);
+      setProgressDetail("");
 
       if (distResults.length === 0) {
         toast.error(`Google APIから距離が取得できませんでした（${allPairs.length}ペアを送信）。Distance Matrix APIが有効か、APIキーの制限を確認してください。`);
@@ -203,13 +217,13 @@ export default function DistancePage() {
     } catch (e) {
       toast.error(`エラー: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      setLoading(false); setProgress("");
+      setLoading(false); setProgress(""); setProgressDetail("");
     }
   }
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6">移動距離計算 <span className="text-xs text-muted-foreground font-normal">v4</span></h2>
+      <h2 className="text-2xl font-bold mb-6">移動距離計算 <span className="text-xs text-muted-foreground font-normal">v5</span></h2>
 
       <Card className="mb-6">
         <CardContent className="pt-6">
@@ -229,12 +243,20 @@ export default function DistancePage() {
               </select>
             </div>
             <Button onClick={calculate} disabled={!selectedOfficeId || !selectedMonth || loading}>
-              {loading ? progress || "計算中..." : "距離を計算"}
+              {loading ? "計算中..." : "距離を計算"}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            ※ 初回は住所ペアごとにGoogle APIを呼び出すため時間がかかります。2回目以降はキャッシュから取得されます。
-          </p>
+          {loading && (
+            <div className="mt-3 space-y-1">
+              <p className="text-sm font-medium text-primary">{progress || "処理中..."}</p>
+              {progressDetail && <p className="text-sm text-muted-foreground">{progressDetail}</p>}
+            </div>
+          )}
+          {!loading && (
+            <p className="text-xs text-muted-foreground mt-2">
+              ※ 初回は住所ペアごとにGoogle APIを呼び出すため時間がかかります。2回目以降はキャッシュから取得されます。
+            </p>
+          )}
         </CardContent>
       </Card>
 

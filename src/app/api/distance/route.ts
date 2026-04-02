@@ -15,21 +15,26 @@ export async function POST(request: Request) {
   const results: DistResult[] = [];
   const uncached: Pair[] = [];
 
-  // キャッシュ確認（バッチ取得）
+  // キャッシュ確認（originでまとめて取得してJSでマッチ）
   const uniquePairs = pairs.filter(
     (p, i, arr) => arr.findIndex((x) => x.origin === p.origin && x.destination === p.destination) === i
   );
+  const uniqueOrigins = [...new Set(uniquePairs.map((p) => p.origin))];
+  const { data: cachedRows } = await supabase
+    .from("distance_cache")
+    .select("origin_address,destination_address,distance_meters,duration_seconds")
+    .in("origin_address", uniqueOrigins);
+  const cacheMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
+    (cachedRows ?? []).map((r: { origin_address: string; destination_address: string; distance_meters: number; duration_seconds: number }) => [
+      `${r.origin_address}|||${r.destination_address}`,
+      { distance_meters: r.distance_meters, duration_seconds: r.duration_seconds },
+    ])
+  );
 
   for (const pair of uniquePairs) {
-    const { data } = await supabase
-      .from("distance_cache")
-      .select("distance_meters,duration_seconds")
-      .eq("origin_address", pair.origin)
-      .eq("destination_address", pair.destination)
-      .single();
-
-    if (data) {
-      results.push({ ...pair, distance_meters: data.distance_meters, duration_seconds: data.duration_seconds });
+    const cached = cacheMap.get(`${pair.origin}|||${pair.destination}`);
+    if (cached) {
+      results.push({ ...pair, ...cached });
     } else {
       uncached.push(pair);
     }
