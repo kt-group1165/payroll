@@ -647,6 +647,61 @@ function RatesTab() {
     fetchData();
   };
 
+  const handleExport = () => {
+    const header = "事業所名,類型,時給\n";
+    const rows = rates
+      .map((r) => `${r.offices?.name ?? ""},${r.service_categories?.name ?? ""},${r.hourly_rate}`)
+      .join("\n");
+    const bom = "\uFEFF";
+    const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "hourly_rates.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split("\n").map((l) => l.trim()).filter((l) => l);
+    const dataLines = lines.slice(1);
+    if (dataLines.length === 0) { toast.error("データ行がありません"); return; }
+
+    const officeNameMap = new Map(offices.map((o) => [o.name, o.id]));
+    const categoryNameMap = new Map(categories.map((c) => [c.name, c.id]));
+
+    const upsertRows: { office_id: string; category_id: string; hourly_rate: number }[] = [];
+    const errors: string[] = [];
+
+    for (let i = 0; i < dataLines.length; i++) {
+      const cols = dataLines[i].split(",");
+      if (cols.length < 3) { errors.push(`行${i + 2}: カラム数が不足`); continue; }
+      const officeName = cols[0].trim();
+      const catName = cols[1].trim();
+      const rate = parseInt(cols[2].trim(), 10);
+      const officeId = officeNameMap.get(officeName);
+      const catId = categoryNameMap.get(catName);
+      if (!officeId) { errors.push(`行${i + 2}: 事業所「${officeName}」が見つかりません`); continue; }
+      if (!catId) { errors.push(`行${i + 2}: 類型「${catName}」が見つかりません`); continue; }
+      if (isNaN(rate) || rate <= 0) { errors.push(`行${i + 2}: 時給が不正です`); continue; }
+      upsertRows.push({ office_id: officeId, category_id: catId, hourly_rate: rate });
+    }
+
+    if (errors.length > 0) { toast.error(errors.join("\n")); return; }
+
+    const { error } = await supabase
+      .from("category_hourly_rates")
+      .upsert(upsertRows, { onConflict: "office_id,category_id" });
+    if (error) { toast.error(`インポートエラー: ${error.message}`); return; }
+    toast.success(`${upsertRows.length}件をインポートしました`);
+    fetchData();
+    e.target.value = "";
+  };
+
   // 事業所ごとにグループ化
   const ratesByOffice = rates.reduce(
     (acc, r) => {
@@ -664,6 +719,18 @@ function RatesTab() {
         <p className="text-sm text-muted-foreground">
           事業所 × 類型ごとの時給を設定します
         </p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExport}>CSVエクスポート</Button>
+          <Button variant="outline" onClick={() => document.getElementById("rates-import")?.click()}>
+            CSVインポート
+          </Button>
+          <input
+            id="rates-import"
+            type="file"
+            accept=".csv"
+            onChange={handleImport}
+            className="hidden"
+          />
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger render={<Button />}>時給を追加</DialogTrigger>
           <DialogContent>
@@ -728,6 +795,7 @@ function RatesTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {Object.keys(ratesByOffice).length === 0 ? (
