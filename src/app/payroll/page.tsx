@@ -565,7 +565,7 @@ export default function PayrollPage() {
         supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
         supabase.from("attendance_records")
-          .select("employee_number,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
+          .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
           .eq("year", year).eq("month", month),
         supabase.from("overtime_settings").select("*"),
       ]);
@@ -826,7 +826,7 @@ export default function PayrollPage() {
         const meetingFee = computeMeetingFee(empNum, info?.officeId ?? "");
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
-          employee_name: firstRec?.employee_name ?? empNum,
+          employee_name: firstRec?.employee_name || (attByEmp.get(empNum)?.[0] as {employee_name?: string})?.employee_name || empNum,
           role_type: info?.role ?? "",
           has_care_qualification: info?.hasQual ?? false,
           job_type: info?.jobType ?? "",
