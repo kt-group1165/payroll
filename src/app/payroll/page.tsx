@@ -220,7 +220,6 @@ type MonthlyPayroll = {
   office_commute_unit_price: number; // 事業所の通勤単価
   business_trip_fee: number;
   childcare_allowance: number;
-  meeting_fee: number;
   yocho_hours: number;   // 夜朝時間（月次手動入力）
   summary: AttendanceSummary;
 };
@@ -434,7 +433,6 @@ function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSe
     commuteFeeAmount(p) +
     p.business_trip_fee +
     p.childcare_allowance +
-    p.meeting_fee +
     careOvertimePay(p) +
     yochoAllowance(p) +
     overtimeExcessPay(p, otSettings)
@@ -958,7 +956,6 @@ export default function PayrollPage() {
             office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
             childcare_allowance: computeChildcareAllowance(normEmp(e.employee_number), "月給"),
-            meeting_fee: computeMeetingFee(normEmp(e.employee_number), e.office_id),
             yocho_hours: 0,
             summary,
           };
@@ -1024,7 +1021,7 @@ export default function PayrollPage() {
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
       "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
-      "会議費","保育手当","夜朝時間","夜朝手当","介護超過手当","合計(円)",
+      "保育手当","夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
       const s = p.settings;
@@ -1050,7 +1047,6 @@ export default function PayrollPage() {
         String(p.bonus_paid ? (s?.bonus_amount ?? 0) : 0),
         String(travelFeeAmount(p)),
         String(p.business_trip_fee),
-        String(p.meeting_fee),
         String(p.childcare_allowance),
         String(p.yocho_hours),
         String(yochoAllowance(p)),
@@ -1427,7 +1423,6 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium">出張手当</th>
                         <th className="text-right px-3 py-3 font-medium">通勤手当</th>
-                        <th className="text-right px-3 py-3 font-medium">会議費</th>
                         <th className="text-right px-3 py-3 font-medium">保育手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
@@ -1508,7 +1503,6 @@ export default function PayrollPage() {
                               </td>
                               <td className="px-3 py-2 text-right">{travelFeeAmount(p) > 0 ? yen(travelFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{commuteFeeAmount(p) > 0 ? yen(commuteFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{p.meeting_fee > 0 ? yen(p.meeting_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{p.childcare_allowance > 0 ? yen(p.childcare_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
                               <td className="px-3 py-2 text-center text-muted-foreground text-xs">
@@ -1517,7 +1511,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={31} className="px-8 py-4">
+                                <td colSpan={30} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -1658,7 +1652,6 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + careOvertimePay(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + travelFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + commuteFeeAmount(p), 0))}</td>
-                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + p.meeting_fee, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + p.childcare_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
