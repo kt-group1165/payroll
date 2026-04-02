@@ -45,6 +45,7 @@ export interface Office {
   cancel_unit_price: number;        // キャンセル手当単価（円/件）
   travel_allowance_rate: number;    // 移動手当単価（円/時）
   communication_fee_amount: number; // 固定通信費額（円）
+  meeting_unit_price: number;       // 会議1単価（円/件）
   company_id: string | null;
   created_at: string;
   updated_at: string;

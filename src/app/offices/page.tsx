@@ -57,6 +57,7 @@ export default function OfficesPage() {
     cancel_unit_price: 0,
     travel_allowance_rate: 0,
     communication_fee_amount: 0,
+    meeting_unit_price: 0,
     company_id: "",
   });
 
@@ -88,6 +89,7 @@ export default function OfficesPage() {
       cancel_unit_price: 0,
       travel_allowance_rate: 0,
       communication_fee_amount: 0,
+      meeting_unit_price: 0,
       company_id: "",
     });
     setEditingId(null);
@@ -113,6 +115,7 @@ export default function OfficesPage() {
           cancel_unit_price: form.cancel_unit_price,
           travel_allowance_rate: form.travel_allowance_rate,
           communication_fee_amount: form.communication_fee_amount,
+          meeting_unit_price: form.meeting_unit_price,
           company_id: form.company_id || null,
         })
         .eq("id", editingId);
@@ -124,6 +127,7 @@ export default function OfficesPage() {
     } else {
       const { error } = await supabase.from("offices").insert({
         ...form,
+        meeting_unit_price: form.meeting_unit_price,
         company_id: form.company_id || null,
       });
       if (error) {
@@ -151,6 +155,7 @@ export default function OfficesPage() {
       cancel_unit_price: office.cancel_unit_price ?? 0,
       travel_allowance_rate: office.travel_allowance_rate ?? 0,
       communication_fee_amount: office.communication_fee_amount ?? 0,
+      meeting_unit_price: office.meeting_unit_price ?? 0,
       company_id: office.company_id ?? "",
     });
     setEditingId(office.id);
@@ -315,6 +320,17 @@ export default function OfficesPage() {
                 />
               </div>
               <div>
+                <Label>会議1単価（円/件）</Label>
+                <Input
+                  type="number" min={0}
+                  value={form.meeting_unit_price || ""}
+                  placeholder="0"
+                  onChange={(e) =>
+                    setForm({ ...form, meeting_unit_price: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div>
                 <Label>法人</Label>
                 <Select
                   value={form.company_id || "__none__"}
@@ -352,6 +368,7 @@ export default function OfficesPage() {
             <TableHead className="text-right">処遇補助金</TableHead>
             <TableHead className="text-right">キャンセル単価</TableHead>
             <TableHead className="text-right">移動手当単価</TableHead>
+            <TableHead className="text-right">会議1単価</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -392,6 +409,9 @@ export default function OfficesPage() {
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.travel_allowance_rate ? `${office.travel_allowance_rate}円/時` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.meeting_unit_price ? `${office.meeting_unit_price}円/件` : "—"}
                 </TableCell>
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>

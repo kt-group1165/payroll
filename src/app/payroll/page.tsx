@@ -99,11 +99,14 @@ type OfficeFormRecord = {
   numeric_value: number | null;
   start_time: string | null;
   end_time: string | null;
+  year_month: string | null;  // childcare: 何月分か (YYYYMM)
+  child_name: string | null;  // childcare: 子供の名前
+  amount: number | null;      // childcare: 支払い金額
 };
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number };
+type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -155,6 +158,8 @@ type AttendanceSummary = {
   accompaniedCount: number;
   visitMinutes: number;
   hrdCount: number;
+  hrdMinutes: number;
+  meetingCount: number;
   commuteKmTotal: number;
   businessKmTotal: number;
   weekendHolidayMinutes: number;
@@ -178,6 +183,8 @@ type HourlyPayroll = {
   travel_time_sec: number;
   travel_allowance: number;
   communication_fee: number;
+  meeting_fee: number;
+  childcare_allowance: number;
   commute_fee: number;
   commute_distance_m: number;
   business_trip_fee: number;
@@ -212,6 +219,7 @@ type MonthlyPayroll = {
   office_travel_unit_price: number;  // 事業所の出張単価
   office_commute_unit_price: number; // 事業所の通勤単価
   business_trip_fee: number;
+  childcare_allowance: number;
   yocho_hours: number;   // 夜朝時間（月次手動入力）
   summary: AttendanceSummary;
 };
@@ -412,6 +420,7 @@ function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSe
     travelFeeAmount(p) +
     commuteFeeAmount(p) +
     p.business_trip_fee +
+    p.childcare_allowance +
     careOvertimePay(p) +
     yochoAllowance(p) +
     overtimeExcessPay(p, otSettings)
@@ -463,7 +472,7 @@ export default function PayrollPage() {
       setMonths(unique);
       if (unique.length > 0) setSelectedMonth(unique[0]);
     });
-    supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
@@ -511,7 +520,7 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount"),
+        supabase.from("offices").select("id,office_number,name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         supabase.from("salary_settings").select("*"),
@@ -529,7 +538,7 @@ export default function PayrollPage() {
         while (true) {
           const { data } = await supabase
             .from("office_form_records")
-            .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time")
+            .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,year_month,child_name,amount")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
@@ -614,6 +623,15 @@ export default function PayrollPage() {
           s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
         const hrdCount     = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) =>
           s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+        const hrdMinutes   = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) => {
+          if (r.start_time && r.end_time) {
+            const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+            return s + Math.max(0, toMin(r.end_time) - toMin(r.start_time));
+          }
+          return s + Math.round((r.numeric_value ?? 0) * 60);
+        }, 0);
+        const meetingCount = ofRecs.filter((r) => r.item_name.includes("会議1")).reduce((s, r) =>
+          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
 
         const workHoursMin    = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
         // overtime_daily があれば使用（Format B）、なければ work_hours - 8h で計算（Format A）
@@ -637,7 +655,70 @@ export default function PayrollPage() {
           .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
           .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
+        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
+      }
+
+      // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
+      // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
+      const childcareRecs = ofRecords.filter((r) => r.record_type === "childcare");
+      // visitMinutesByEmpMonth: key = "empNum:YYYYMM", value = visitMinutesExcludingAccompanied
+      const visitMinutesByEmpMonth = new Map<string, number>();
+      // まず現在の処理月のデータをセット
+      for (const emp of employees) {
+        const normNum = normEmp(emp.employee_number);
+        const empRecs = recsByEmp.get(normNum) ?? [];
+        const visitMin = empRecs
+          .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
+          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+        visitMinutesByEmpMonth.set(`${normNum}:${selectedMonth}`, visitMin);
+      }
+      // 参照月が処理月と異なる場合は追加取得
+      const otherMonths = new Set(
+        childcareRecs.map((r) => r.year_month).filter((ym): ym is string => !!ym && ym !== selectedMonth)
+      );
+      for (const ym of otherMonths) {
+        const { data: ymData } = await supabase
+          .from("service_records")
+          .select("employee_number,calc_duration,accompanied_visit")
+          .eq("processing_month", ym)
+          .eq("office_number", selectedOffice.office_number);
+        if (ymData) {
+          const byEmpYm = new Map<string, number>();
+          for (const r of ymData as { employee_number: string; calc_duration: string; accompanied_visit: string }[]) {
+            const k = normEmp(r.employee_number);
+            if (!byEmpYm.has(k)) byEmpYm.set(k, 0);
+            if (!r.accompanied_visit || r.accompanied_visit.trim() === "") {
+              byEmpYm.set(k, (byEmpYm.get(k) ?? 0) + parseDurationMinutes(r.calc_duration));
+            }
+          }
+          for (const [empNum, min] of byEmpYm) {
+            visitMinutesByEmpMonth.set(`${empNum}:${ym}`, min);
+          }
+        }
+      }
+
+      /** 保育手当を計算する */
+      function computeChildcareAllowance(empNum: string, salaryType: string): number {
+        const recs = childcareRecs.filter((r) => normEmp(r.employee_number) === empNum);
+        if (recs.length === 0) return 0;
+        const uniqueChildren = new Set(recs.map((r) => r.child_name ?? "不明")).size;
+        const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
+        let total = 0;
+        for (const rec of recs) {
+          const amount = rec.amount ?? 0;
+          if (amount <= 0) continue;
+          const isKindergarten = rec.item_name.includes("幼稚園");
+          const baseRate = isKindergarten ? 0.2 : 0.4;
+          if (salaryType === "月給") {
+            total += Math.round(amount * baseRate);
+          } else {
+            const ym = rec.year_month ?? selectedMonth;
+            const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
+            const ratio = Math.min(visitMin / (120 * 60), 1.0);
+            total += Math.round(amount * baseRate * ratio);
+          }
+        }
+        return Math.min(total, ceiling);
       }
 
       // 時給者
@@ -683,6 +764,7 @@ export default function PayrollPage() {
         }
         const commuteFee = Math.round(empSummary.commuteKmTotal * (empOffice?.commute_unit_price ?? 0));
         const businessTripFee = Math.round(empSummary.businessKmTotal * (empOffice?.travel_unit_price ?? 0));
+        const meetingFee = Math.round(empSummary.meetingCount * (empOffice?.meeting_unit_price ?? 0));
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
           employee_name: firstRec?.employee_name ?? empNum,
@@ -698,6 +780,8 @@ export default function PayrollPage() {
           travel_time_sec: 0,
           travel_allowance: 0,
           communication_fee: communicationFee,
+          meeting_fee: meetingFee,
+          childcare_allowance: computeChildcareAllowance(empNum, "時給"),
           commute_fee: commuteFee,
           commute_distance_m: 0,
           business_trip_fee: businessTripFee,
@@ -846,6 +930,7 @@ export default function PayrollPage() {
             office_travel_unit_price: office?.travel_unit_price ?? 0,
             office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
+            childcare_allowance: computeChildcareAllowance(normEmp(e.employee_number), "月給"),
             yocho_hours: 0,
             summary,
           };
@@ -874,7 +959,7 @@ export default function PayrollPage() {
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績","同行","訪問時間","HRD",
-      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","その他手当(円)","通信手当(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
+      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","保育手当(円)","その他手当(円)","通信手当(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
@@ -882,17 +967,17 @@ export default function PayrollPage() {
         e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
         s.visitMinutesExcludingAccompanied, s.recordCount, e.care_plan_count
       );
-      const total = e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee;
+      const total = e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.commute_fee + e.business_trip_fee;
       rows.push([
         e.employee_number, e.employee_name, e.role_type,
         String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.halfLeave), String(s.specialLeave),
         formatWorkHours(s.workHoursMin),
-        String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), String(s.hrdCount),
+        String(s.recordCount), String(s.accompaniedCount), formatMinutes(s.visitMinutes), formatMinutes(s.hrdMinutes),
         String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay),
         String(computeTenureRate(e.has_care_qualification, e.effective_service_months, e.job_type)),
         String(tenure), "0", String(e.treatment_subsidy), "0",
         e.travel_time_sec > 0 ? secToHm(e.travel_time_sec) : "0:00", String(e.travel_allowance),
-        String(e.paid_leave_allowance), "0", "0", "0", "0", "0",
+        String(e.paid_leave_allowance), "0", "0", "0", String(e.meeting_fee), String(e.childcare_allowance), "0",
         String(e.communication_fee),
         String(Math.round(e.summary.weekendHolidayMinutes / 60 * 100)),
         String(e.cancel_allowance), "0", "0", "0",
@@ -911,7 +996,7 @@ export default function PayrollPage() {
       "本人給","職能給","役職手当","資格手当","勤続手当",
       "処遇改善手当","特定処遇改善手当","処遇改善補助金手当",
       "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
-      "夜朝時間","夜朝手当","介護超過手当","合計(円)",
+      "保育手当","夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
     for (const p of monthlyResults) {
       const s = p.settings;
@@ -937,6 +1022,7 @@ export default function PayrollPage() {
         String(p.bonus_paid ? (s?.bonus_amount ?? 0) : 0),
         String(travelFeeAmount(p)),
         String(p.business_trip_fee),
+        String(p.childcare_allowance),
         String(p.yocho_hours),
         String(yochoAllowance(p)),
         String(careOvertimePay(p)),
@@ -957,7 +1043,7 @@ export default function PayrollPage() {
       e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
       e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
     );
-    return s + e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee + e.commute_fee + e.business_trip_fee;
+    return s + e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.childcare_allowance + e.commute_fee + e.business_trip_fee;
   }, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
   const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p, otSettings), 0);
@@ -1057,7 +1143,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-blue-700">出勤時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝時間</th>
                         <th className="text-right px-3 py-3 font-medium text-blue-700">土日祝同行時間</th>
-                        <th className="text-right px-3 py-3 font-medium text-blue-700">HRD</th>
+                        <th className="text-right px-3 py-3 font-medium text-blue-700">HRD研修時間</th>
                         <th className="text-right px-3 py-3 font-medium">算定時間</th>
                         <th className="text-right px-3 py-3 font-medium">本人給（パート）</th>
                         <th className="text-right px-3 py-3 font-medium text-green-700">勤続手当単価</th>
@@ -1072,6 +1158,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">育児手当</th>
                         <th className="text-right px-3 py-3 font-medium">HRD研修</th>
                         <th className="text-right px-3 py-3 font-medium">会議費</th>
+                        <th className="text-right px-3 py-3 font-medium">保育手当</th>
                         <th className="text-right px-3 py-3 font-medium">その他手当</th>
                         <th className="text-right px-3 py-3 font-medium">通信手当</th>
                         <th className="text-right px-3 py-3 font-medium">土日祝手当</th>
@@ -1094,7 +1181,7 @@ export default function PayrollPage() {
                           emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
                           sm.visitMinutesExcludingAccompanied, sm.recordCount, emp.care_plan_count
                         );
-                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.commute_fee + emp.business_trip_fee;
+                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.meeting_fee + emp.childcare_allowance + emp.commute_fee + emp.business_trip_fee;
                         return (
                           <>
                             <tr
@@ -1117,7 +1204,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? formatMinutes(sm.weekendHolidayMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayAccompaniedMinutes > 0 ? formatMinutes(sm.weekendHolidayAccompaniedMinutes) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{sm.hrdMinutes > 0 ? formatMinutes(sm.hrdMinutes) : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
                               <td className="px-3 py-2 text-right">{yen(emp.totalPay)}</td>
                               <td className="px-3 py-2 text-right text-green-700 text-xs">
@@ -1137,7 +1224,8 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">{emp.meeting_fee > 0 ? yen(emp.meeting_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{emp.childcare_allowance > 0 ? yen(emp.childcare_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.communication_fee > 0 ? yen(emp.communication_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(Math.round(sm.weekendHolidayMinutes / 60 * 100)) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -1160,7 +1248,7 @@ export default function PayrollPage() {
                             </tr>
                             {expandedEmp === emp.employee_number && (
                               <tr key={`${emp.employee_number}-d`} className="bg-muted/10">
-                                <td colSpan={38} className="px-8 py-3">
+                                <td colSpan={39} className="px-8 py-3">
                                   {/* 居宅介護支援：プラン件数入力 */}
                                   {emp.job_type === "居宅介護支援" && emp.has_care_qualification && (
                                     <div className="flex items-center gap-2 mb-3 text-xs" onClick={(e) => e.stopPropagation()}>
@@ -1229,7 +1317,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{formatWorkHours(hourlyResults.reduce((s, e) => s + e.summary.workHoursMin, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.weekendHolidayAccompaniedMinutes, 0))}</td>
-                        <td className="px-3 py-2 text-right">{hourlyResults.reduce((s, e) => s + e.summary.hrdCount, 0) || "—"}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.hrdMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyGrandMinutes)}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.totalPay, 0))}</td>
                         <td></td>
@@ -1240,7 +1328,10 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right font-mono text-xs">{secToHm(hourlyResults.reduce((s, e) => s + e.travel_time_sec, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.travel_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.paid_leave_allowance, 0))}</td>
-                        <td></td><td></td><td></td><td></td><td></td>
+                        <td></td><td></td><td></td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.meeting_fee, 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.childcare_allowance, 0))}</td>
+                        <td></td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.communication_fee, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + Math.round(e.summary.weekendHolidayMinutes / 60 * 100), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
@@ -1307,6 +1398,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium text-orange-700">介護超過手当</th>
                         <th className="text-right px-3 py-3 font-medium">出張手当</th>
                         <th className="text-right px-3 py-3 font-medium">通勤手当</th>
+                        <th className="text-right px-3 py-3 font-medium">保育手当</th>
                         <th className="text-right px-3 py-3 font-medium font-bold">合計</th>
                         <th className="px-3 py-3"></th>
                       </tr>
@@ -1386,6 +1478,7 @@ export default function PayrollPage() {
                               </td>
                               <td className="px-3 py-2 text-right">{travelFeeAmount(p) > 0 ? yen(travelFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{commuteFeeAmount(p) > 0 ? yen(commuteFeeAmount(p)) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{p.childcare_allowance > 0 ? yen(p.childcare_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(total)}</td>
                               <td className="px-3 py-2 text-center text-muted-foreground text-xs">
                                 {isExpanded ? "▲" : "▼"}
@@ -1393,7 +1486,7 @@ export default function PayrollPage() {
                             </tr>
                             {isExpanded && (
                               <tr key={`${p.employee_id}-d`} className="bg-muted/10">
-                                <td colSpan={29} className="px-8 py-4">
+                                <td colSpan={30} className="px-8 py-4">
                                   <div className="grid md:grid-cols-2 gap-6 text-xs">
                                     {/* 左：支給内訳 */}
                                     <div>
@@ -1534,6 +1627,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + careOvertimePay(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + travelFeeAmount(p), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + commuteFeeAmount(p), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + p.childcare_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(monthlyGrandSum)}</td>
                         <td></td>
                       </tr>
