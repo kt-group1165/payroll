@@ -1155,6 +1155,8 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.treatment_subsidy, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.paid_leave_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{secToHm(hourlyResults.reduce((s, e) => s + e.travel_time_sec, 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.travel_allowance, 0))}</td>
                         <td className="px-3 py-2 text-right text-base">{yen(hourlyGrandTotal)}</td>
                         <td></td>
                         <td></td>
