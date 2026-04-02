@@ -99,7 +99,7 @@ export function calcDayRoute(
     if (!isHomeLeg && !gapExcluded) {
       travel_distance_m += dist.distance_meters;
       if (dist.duration_seconds > TRAVEL_TIME_THRESHOLD_SEC) {
-        travel_time_sec += dist.duration_seconds;
+        travel_time_sec += dist.duration_seconds - TRAVEL_TIME_THRESHOLD_SEC;
       }
     }
 
