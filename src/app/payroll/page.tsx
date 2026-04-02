@@ -159,6 +159,7 @@ type AttendanceSummary = {
   businessKmTotal: number;
   weekendHolidayMinutes: number;
   weekendHolidayAccompaniedMinutes: number;
+  visitMinutesExcludingAccompanied: number;
 };
 
 // 時給者
@@ -624,6 +625,9 @@ export default function PayrollPage() {
         const recordCount      = empRecs.length;
         const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
         const visitMinutes     = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+        const visitMinutesExcludingAccompanied = empRecs
+          .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
+          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
         const commuteKmTotal   = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
         const businessKmTotal  = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
         const weekendHolidayMinutes = empRecs
@@ -633,7 +637,7 @@ export default function PayrollPage() {
           .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
           .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, hrdCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
+        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
       }
 
       // 時給者
@@ -876,7 +880,7 @@ export default function PayrollPage() {
       const s = e.summary;
       const tenure = computeTenureAllowance(
         e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-        s.visitMinutes, s.recordCount, e.care_plan_count
+        s.visitMinutesExcludingAccompanied, s.recordCount, e.care_plan_count
       );
       const total = e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee;
       rows.push([
@@ -945,7 +949,7 @@ export default function PayrollPage() {
   const hourlyTenureTotal  = hourlyResults.reduce((s, e) => {
     return s + computeTenureAllowance(
       e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-      e.summary.visitMinutes, e.summary.recordCount, e.care_plan_count
+      e.summary.visitMinutesExcludingAccompanied, e.summary.recordCount, e.care_plan_count
     );
   }, 0);
   const hourlyGrandTotal   = hourlyResults.reduce((s, e) => {
@@ -1088,7 +1092,7 @@ export default function PayrollPage() {
                         const sm = emp.summary;
                         const tenure = computeTenureAllowance(
                           emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
-                          sm.visitMinutes, sm.recordCount, emp.care_plan_count
+                          sm.visitMinutesExcludingAccompanied, sm.recordCount, emp.care_plan_count
                         );
                         const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.commute_fee + emp.business_trip_fee;
                         return (
