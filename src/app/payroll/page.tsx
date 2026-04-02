@@ -718,11 +718,12 @@ export default function PayrollPage() {
           .filter((ym): ym is string => !!ym && ym !== selectedMonth)
       );
       for (const ym of otherMonths) {
-        const { data: ymData } = await supabase
+        const { data: ymData, error: ymErr } = await supabase
           .from("service_records")
           .select("employee_number,calc_duration,accompanied_visit")
           .eq("processing_month", ym)
           .eq("office_number", selectedOffice.office_number);
+        console.log(`[保育手当DEBUG] クロス月フェッチ ym=${ym} office=${selectedOffice.office_number} 件数=${ymData?.length ?? "ERROR"} error=${ymErr?.message ?? "none"}`);
         if (ymData) {
           const byEmpYm = new Map<string, number>();
           for (const r of ymData as { employee_number: string; calc_duration: string; accompanied_visit: string }[]) {
@@ -735,6 +736,7 @@ export default function PayrollPage() {
           for (const [en, min] of byEmpYm) {
             visitMinutesByEmpMonth.set(`${en}:${ym}`, min);
           }
+          console.log(`[保育手当DEBUG] クロス月マップ登録:`, Object.fromEntries([...byEmpYm].map(([k,v]) => [`${k}:${ym}`, v])));
         }
       }
 
@@ -758,6 +760,7 @@ export default function PayrollPage() {
             const ym = normalizeYM(rawYm);
             const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
             const ratio = Math.min(visitMin / (120 * 60), 1.0);
+            console.log(`[保育手当DEBUG] empNum=${empNum} rawYm=${rawYm} ym=${ym} visitMin=${visitMin} amount=${amount} baseRate=${baseRate} contribution=${Math.round(amount * baseRate * ratio)}`);
             total += Math.round(amount * baseRate * ratio);
           }
         }
