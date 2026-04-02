@@ -1318,9 +1318,9 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.commute_distance_m > 0 ? `${(emp.commute_distance_m / 1000).toFixed(1)} km` : <span className="text-muted-foreground">—</span>}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{sm.commuteKmTotal > 0 ? `${sm.commuteKmTotal} km` : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.commute_fee > 0 ? yen(emp.commute_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.commute_distance_m > 0 ? `${(emp.commute_distance_m / 1000).toFixed(1)} km` : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.business_trip_fee > 0 ? yen(emp.business_trip_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
@@ -1422,6 +1422,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + Math.round(e.summary.weekendHolidayMinutes / 60 * 100), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
                         <td></td><td></td><td></td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{`${hourlyResults.reduce((s, e) => s + e.summary.commuteKmTotal, 0)} km`}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.commute_fee, 0))}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{`${(hourlyResults.reduce((s, e) => s + e.commute_distance_m, 0) / 1000).toFixed(1)} km`}</td>
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.business_trip_fee, 0))}</td>
