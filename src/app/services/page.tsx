@@ -651,7 +651,7 @@ function RatesTab() {
   const handleExport = () => {
     const header = "事業所名,類型,時給\n";
     const rows = rates
-      .map((r) => `${r.offices?.short_name || r.offices?.name ?? ""},${r.service_categories?.name ?? ""},${r.hourly_rate}`)
+      .map((r) => `${(r.offices?.short_name || r.offices?.name) ?? ""},${r.service_categories?.name ?? ""},${r.hourly_rate}`)
       .join("\n");
     const bom = "\uFEFF";
     const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
@@ -725,7 +725,7 @@ function RatesTab() {
   // 事業所ごとにグループ化
   const ratesByOffice = rates.reduce(
     (acc, r) => {
-      const officeName = r.offices?.short_name || r.offices?.name ?? "不明";
+      const officeName = (r.offices?.short_name || r.offices?.name) ?? "不明";
       if (!acc[officeName]) acc[officeName] = [];
       acc[officeName].push(r);
       return acc;

@@ -106,7 +106,7 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
+type Office              = { id: string; office_number: string; name: string; short_name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -514,8 +514,8 @@ export default function PayrollPage() {
     });
     supabase.from("offices").select("id,office_number,name,short_name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
-      setOffices(data as Office[]);
-      if (data.length > 0) setSelectedOfficeId((data as Office[])[0].id);
+      setOffices(data as unknown as Office[]);
+      if (data.length > 0) setSelectedOfficeId((data as unknown as Office[])[0].id);
     });
   }, []);
 
