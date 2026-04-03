@@ -189,28 +189,48 @@ export function OfficeFormImporter() {
   return (
     <div className="space-y-4">
       {/* 取り込み済みデータ */}
-      {existingMonths.length > 0 && (
-        <div className="border rounded-md p-4 space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
-          <div className="flex flex-wrap gap-2">
-            {existingMonths.map(({ month, office_number, count }) => {
-              const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+      {existingMonths.length > 0 && (() => {
+        const grouped = new Map<string, { month: string; count: number }[]>();
+        for (const { month, office_number, count } of existingMonths) {
+          if (!grouped.has(office_number)) grouped.set(office_number, []);
+          grouped.get(office_number)!.push({ month, count });
+        }
+        const officeNums = [...grouped.keys()].sort((a, b) => {
+          const na = offices.find((o) => o.office_number === a)?.name ?? a;
+          const nb = offices.find((o) => o.office_number === b)?.name ?? b;
+          return na.localeCompare(nb, "ja");
+        });
+        return (
+          <div className="border rounded-md p-4 space-y-3">
+            <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
+            {officeNums.map((office_number) => {
               const officeName = offices.find((o) => o.office_number === office_number)?.name ?? office_number;
+              const months = grouped.get(office_number)!;
               return (
-                <div key={`${month}__${office_number}`} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
-                  <span>{officeName} {label}（{count.toLocaleString()}件）</span>
-                  <button
-                    onClick={() => handleClearMonth(month, office_number, count)}
-                    className="text-destructive hover:text-destructive/80 ml-1 text-xs font-medium"
-                  >
-                    削除
-                  </button>
+                <div key={office_number}>
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">{officeName}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {months.map(({ month, count }) => {
+                      const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+                      return (
+                        <div key={`${month}__${office_number}`} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
+                          <span>{label}（{count.toLocaleString()}件）</span>
+                          <button
+                            onClick={() => handleClearMonth(month, office_number, count)}
+                            className="text-destructive hover:text-destructive/80 ml-1 text-xs font-medium"
+                          >
+                            削除
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium whitespace-nowrap">処理月</label>
