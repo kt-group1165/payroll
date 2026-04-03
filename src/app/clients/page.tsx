@@ -183,7 +183,7 @@ export default function ClientsPage() {
                   <SelectContent>
                     {offices.map((o) => (
                       <SelectItem key={o.id} value={o.id}>
-                        {o.name}
+                        {o.short_name || o.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -207,7 +207,7 @@ export default function ClientsPage() {
           <SelectContent>
             <SelectItem value="__all__">すべて</SelectItem>
             {offices.map((o) => (
-              <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+              <SelectItem key={o.id} value={o.id}>{o.short_name || o.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>

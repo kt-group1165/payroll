@@ -26,7 +26,7 @@ const RECORD_TYPE_LABELS: Record<string, string> = {
   childcare: "育児手当",
 };
 
-type Office = { id: string; name: string; office_number: string };
+type Office = { id: string; name: string; short_name: string; office_number: string };
 
 export function OfficeFormImporter() {
   const [files, setFiles] = useState<File[]>([]);
@@ -62,13 +62,14 @@ export function OfficeFormImporter() {
 
   useEffect(() => {
     fetchExistingMonths();
-    supabase.from("offices").select("id,name,office_number").order("name")
+    supabase.from("offices").select("id,name,short_name,office_number").order("name")
       .then(({ data }) => { if (data) setOffices(data as Office[]); });
   }, [fetchExistingMonths]);
 
   const handleClearMonth = async (month: string, office_number: string, count: number) => {
     const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
-    const officeName = offices.find((o) => o.office_number === office_number)?.name ?? office_number;
+    const _o = offices.find((o) => o.office_number === office_number);
+    const officeName = (_o?.short_name || _o?.name) ?? office_number;
     if (!confirm(`${officeName} ${label}の事業所書式データ（${count}件）を削除しますか？`)) return;
     const { error } = await supabase
       .from("office_form_records")
@@ -196,15 +197,18 @@ export function OfficeFormImporter() {
           grouped.get(office_number)!.push({ month, count });
         }
         const officeNums = [...grouped.keys()].sort((a, b) => {
-          const na = offices.find((o) => o.office_number === a)?.name ?? a;
-          const nb = offices.find((o) => o.office_number === b)?.name ?? b;
+          const _oa = offices.find((o) => o.office_number === a);
+          const _ob = offices.find((o) => o.office_number === b);
+          const na = (_oa?.short_name || _oa?.name) ?? a;
+          const nb = (_ob?.short_name || _ob?.name) ?? b;
           return na.localeCompare(nb, "ja");
         });
         return (
           <div className="border rounded-md p-4 space-y-3">
             <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
             {officeNums.map((office_number) => {
-              const officeName = offices.find((o) => o.office_number === office_number)?.name ?? office_number;
+              const _oc = offices.find((o) => o.office_number === office_number);
+              const officeName = (_oc?.short_name || _oc?.name) ?? office_number;
               const months = grouped.get(office_number)!;
               return (
                 <div key={office_number}>

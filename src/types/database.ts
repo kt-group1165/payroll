@@ -36,6 +36,7 @@ export interface Office {
   id: string;
   office_number: string;
   name: string;
+  short_name: string;
   address: string;
   office_type: OfficeType;
   work_week_start: number;  // 0=日, 1=月, ..., 6=土

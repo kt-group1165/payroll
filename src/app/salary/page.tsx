@@ -549,8 +549,10 @@ export default function SalaryPage() {
     if (sortCol === "employee_number") { va = a.employee_number; vb = b.employee_number; }
     else if (sortCol === "name") { va = a.name; vb = b.name; }
     else if (sortCol === "office") {
-      va = officeMap.get(a.office_id ?? "")?.name ?? "";
-      vb = officeMap.get(b.office_id ?? "")?.name ?? "";
+      const _oa = officeMap.get(a.office_id ?? "");
+      const _ob = officeMap.get(b.office_id ?? "");
+      va = (_oa?.short_name || _oa?.name) ?? "";
+      vb = (_ob?.short_name || _ob?.name) ?? "";
     }
     else if (sortCol === "salary_type") { va = a.salary_type ?? ""; vb = b.salary_type ?? ""; }
     else if (sortCol === "total") {
@@ -612,7 +614,7 @@ export default function SalaryPage() {
               >
                 <option value="">すべて</option>
                 {offices.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
+                  <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
                 ))}
               </select>
               <span className="text-sm text-muted-foreground">{sorted.length}名</span>
@@ -676,7 +678,8 @@ export default function SalaryPage() {
                   const treatment = hasSetting
                     ? s!.treatment_improvement + s!.specific_treatment_improvement + s!.treatment_subsidy
                     : 0;
-                  const officeName = officeMap.get(emp.office_id ?? "")?.name ?? "—";
+                  const _oe = officeMap.get(emp.office_id ?? "");
+                  const officeName = (_oe?.short_name || _oe?.name) ?? "—";
                   return (
                     <tr
                       key={emp.id}
@@ -737,7 +740,7 @@ export default function SalaryPage() {
           <DialogHeader>
             <DialogTitle>
               給与設定 — {editEmp?.name}
-              {editOffice && <span className="text-sm font-normal text-muted-foreground ml-2">({editOffice.name})</span>}
+              {editOffice && <span className="text-sm font-normal text-muted-foreground ml-2">({editOffice.short_name || editOffice.name})</span>}
             </DialogTitle>
           </DialogHeader>
 

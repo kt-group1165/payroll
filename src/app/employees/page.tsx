@@ -305,7 +305,8 @@ export default function EmployeesPage() {
         emp.paid_leave_unit_price?.toString() ?? "0",
       ]);
     }
-    const officeName = filterOfficeId ? (officeMap.get(filterOfficeId)?.name ?? "") : "全事業所";
+    const _fo = officeMap.get(filterOfficeId);
+    const officeName = filterOfficeId ? ((_fo?.short_name || _fo?.name) ?? "") : "全事業所";
     downloadCsv(`職員一覧_${officeName}.csv`, rows);
     toast.success(`${targets.length}件をエクスポートしました`);
   }
@@ -634,7 +635,7 @@ export default function EmployeesPage() {
                   >
                     <option value="">事業所を選択</option>
                     {offices.map((o) => (
-                      <option key={o.id} value={o.id}>{o.name}</option>
+                      <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
                     ))}
                   </select>
                 </div>
@@ -845,7 +846,7 @@ export default function EmployeesPage() {
         >
           <option value="">全事業所</option>
           {offices.map((o) => (
-            <option key={o.id} value={o.id}>{o.name}</option>
+            <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
           ))}
         </select>
       </div>
@@ -906,7 +907,7 @@ export default function EmployeesPage() {
                   {emp.address || "—"}
                 </TableCell>
                 <TableCell className="text-sm">
-                  {officeMap.get(emp.office_id)?.name ?? "—"}
+                  {(() => { const _o = officeMap.get(emp.office_id); return (_o?.short_name || _o?.name) ?? "—"; })()}
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1">

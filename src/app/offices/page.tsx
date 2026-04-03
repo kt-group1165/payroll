@@ -48,6 +48,7 @@ export default function OfficesPage() {
   const [form, setForm] = useState({
     office_number: "",
     name: "",
+    short_name: "",
     address: "",
     office_type: "訪問介護" as OfficeType,
     work_week_start: 0,
@@ -81,6 +82,7 @@ export default function OfficesPage() {
     setForm({
       office_number: "",
       name: "",
+      short_name: "",
       address: "",
       office_type: "訪問介護",
       work_week_start: 0,
@@ -108,6 +110,7 @@ export default function OfficesPage() {
         .from("offices")
         .update({
           name: form.name,
+          short_name: form.short_name,
           address: form.address,
           office_type: form.office_type,
           work_week_start: form.work_week_start,
@@ -150,6 +153,7 @@ export default function OfficesPage() {
     setForm({
       office_number: office.office_number,
       name: office.name,
+      short_name: office.short_name ?? "",
       address: office.address,
       office_type: office.office_type,
       work_week_start: office.work_week_start ?? 0,
@@ -213,13 +217,23 @@ export default function OfficesPage() {
                 />
               </div>
               <div>
-                <Label>名称</Label>
+                <Label>正式名称</Label>
                 <Input
                   value={form.name}
                   onChange={(e) =>
                     setForm({ ...form, name: e.target.value })
                   }
-                  placeholder="例: リンクスヘルパー茂原"
+                  placeholder="例: リンクスヘルパーステーション茂原"
+                />
+              </div>
+              <div>
+                <Label>略称 <span className="text-xs text-muted-foreground font-normal">（システム内の表示名。未設定の場合は正式名称を使用）</span></Label>
+                <Input
+                  value={form.short_name}
+                  onChange={(e) =>
+                    setForm({ ...form, short_name: e.target.value })
+                  }
+                  placeholder="例: 茂原"
                 />
               </div>
               <div>
@@ -375,7 +389,8 @@ export default function OfficesPage() {
         <TableHeader>
           <TableRow>
             <TableHead>事業所番号</TableHead>
-            <TableHead>名称</TableHead>
+            <TableHead>正式名称</TableHead>
+            <TableHead>略称</TableHead>
             <TableHead>法人</TableHead>
             <TableHead>種別</TableHead>
             <TableHead>週起算</TableHead>
@@ -405,6 +420,7 @@ export default function OfficesPage() {
               <TableRow key={office.id}>
                 <TableCell>{office.office_number}</TableCell>
                 <TableCell>{office.name}</TableCell>
+                <TableCell className="font-medium">{office.short_name || "—"}</TableCell>
                 <TableCell className="text-sm">
                   {office.company_id
                     ? (companies.find((c) => c.id === office.company_id)?.name ?? "—")

@@ -13,7 +13,7 @@ import {
   type VisitForRoute, type DayRouteResult,
 } from "@/lib/distance-calculator";
 
-type Office = { id: string; name: string; office_number: string };
+type Office = { id: string; name: string; short_name: string; office_number: string };
 type Employee = { id: string; employee_number: string; name: string; address: string; office_id: string };
 type Client = { client_number: string; address: string };
 
@@ -44,7 +44,7 @@ export default function DistancePage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   useEffect(() => {
-    supabase.from("offices").select("id,name,office_number").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,name,short_name,office_number").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
@@ -232,7 +232,7 @@ export default function DistancePage() {
               <label className="text-sm font-medium whitespace-nowrap">事業所</label>
               <select className="border rounded px-3 py-1.5 text-sm bg-background" value={selectedOfficeId} onChange={(e) => setSelectedOfficeId(e.target.value)}>
                 <option value="">選択</option>
-                {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                {offices.map((o) => <option key={o.id} value={o.id}>{o.short_name || o.name}</option>)}
               </select>
             </div>
             <div className="flex items-center gap-2">
@@ -284,7 +284,7 @@ export default function DistancePage() {
       {results.length > 0 && (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground mb-2">
-            {formatProcessingMonth(selectedMonth)} / {offices.find((o) => o.id === selectedOfficeId)?.name} — {results.length}名
+            {formatProcessingMonth(selectedMonth)} / {(() => { const _o = offices.find((o) => o.id === selectedOfficeId); return _o?.short_name || _o?.name; })()} — {results.length}名
           </p>
           <Table>
             <TableHeader>

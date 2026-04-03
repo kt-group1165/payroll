@@ -55,13 +55,14 @@ interface CategoryHourlyRate {
   office_id: string;
   category_id: string;
   hourly_rate: number;
-  offices?: { name: string };
+  offices?: { name: string; short_name: string };
   service_categories?: { name: string };
 }
 
 interface Office {
   id: string;
   name: string;
+  short_name: string;
 }
 
 // ====================
@@ -580,10 +581,10 @@ function RatesTab() {
     const [rateRes, catRes, offRes] = await Promise.all([
       supabase
         .from("category_hourly_rates")
-        .select("*, offices(name), service_categories(name)")
+        .select("*, offices(name, short_name), service_categories(name)")
         .order("created_at"),
       supabase.from("service_categories").select("*").order("sort_order"),
-      supabase.from("offices").select("id, name").order("name"),
+      supabase.from("offices").select("id, name, short_name").order("name"),
     ]);
     if (rateRes.data) setRates(rateRes.data);
     if (catRes.data) setCategories(catRes.data);
@@ -650,7 +651,7 @@ function RatesTab() {
   const handleExport = () => {
     const header = "事業所名,類型,時給\n";
     const rows = rates
-      .map((r) => `${r.offices?.name ?? ""},${r.service_categories?.name ?? ""},${r.hourly_rate}`)
+      .map((r) => `${r.offices?.short_name || r.offices?.name ?? ""},${r.service_categories?.name ?? ""},${r.hourly_rate}`)
       .join("\n");
     const bom = "\uFEFF";
     const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
@@ -686,7 +687,10 @@ function RatesTab() {
     const dataLines = allLines.slice(1); // ヘッダー行をスキップ
     if (dataLines.length === 0) { toast.error("データ行がありません"); return; }
 
-    const officeNameMap = new Map(offices.map((o) => [o.name, o.id]));
+    const officeNameMap = new Map([
+      ...offices.map((o) => [o.name, o.id] as [string, string]),
+      ...offices.filter((o) => o.short_name).map((o) => [o.short_name, o.id] as [string, string]),
+    ]);
     const categoryNameMap = new Map(categories.map((c) => [c.name, c.id]));
 
     const upsertRows: { office_id: string; category_id: string; hourly_rate: number }[] = [];
@@ -721,7 +725,7 @@ function RatesTab() {
   // 事業所ごとにグループ化
   const ratesByOffice = rates.reduce(
     (acc, r) => {
-      const officeName = r.offices?.name ?? "不明";
+      const officeName = r.offices?.short_name || r.offices?.name ?? "不明";
       if (!acc[officeName]) acc[officeName] = [];
       acc[officeName].push(r);
       return acc;
@@ -768,7 +772,7 @@ function RatesTab() {
                   <SelectContent>
                     {offices.map((o) => (
                       <SelectItem key={o.id} value={o.id}>
-                        {o.name}
+                        {o.short_name || o.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
