@@ -259,7 +259,9 @@ export default function OfficesPage() {
       const { data: compData } = await supabase.from("companies").select("id,name");
       const cMap = new Map((compData ?? []).map((c) => [c.name, c.id]));
 
+      const ALLOWED_TYPES = new Set<string>(OFFICE_TYPES);
       const payload: Record<string, string | number | null>[] = [];
+      const errors: string[] = [];
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",");
         const officeNum = get(cols, headers, "事業所番号").trim();
@@ -269,12 +271,20 @@ export default function OfficesPage() {
         const companyName = get(cols, headers, "法人名").trim();
         const companyId = companyName ? (cMap.get(companyName) ?? null) : null;
 
+        // 種別は全角・半角スペース除去 + 許可リスト検証
+        const rawType = get(cols, headers, "種別").replace(/[\s\u3000]/g, "");
+        const officeType = rawType || "訪問介護";
+        if (!ALLOWED_TYPES.has(officeType)) {
+          errors.push(`行${i + 1}: 種別「${rawType}」は無効（許可: ${OFFICE_TYPES.join("/")}）`);
+          continue;
+        }
+
         payload.push({
           office_number: officeNum,
           name,
-          short_name: get(cols, headers, "略称"),
-          address: get(cols, headers, "住所"),
-          office_type: get(cols, headers, "種別") || "訪問介護",
+          short_name: get(cols, headers, "略称").trim(),
+          address: get(cols, headers, "住所").trim(),
+          office_type: officeType,
           work_week_start: parseInt(get(cols, headers, "週起算曜日") || "0", 10),
           travel_unit_price: parseFloat(get(cols, headers, "出張単価") || "0") || 0,
           commute_unit_price: parseFloat(get(cols, headers, "通勤単価") || "0") || 0,
@@ -288,6 +298,10 @@ export default function OfficesPage() {
         });
       }
 
+      if (errors.length > 0) {
+        toast.error(errors.slice(0, 5).join("\n"));
+        return;
+      }
       if (payload.length === 0) { toast.error("有効なデータがありません"); return; }
 
       const { error } = await supabase.from("offices").upsert(payload, { onConflict: "office_number" });
