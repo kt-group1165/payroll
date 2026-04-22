@@ -76,9 +76,11 @@ const emptyOvertimeSetting = (jobType: string): OvertimeSetting => ({
   include_special_bonus: false,
 });
 
-// CSV ヘッダー（社員番号・名前は参照用）
+// CSV ヘッダー（事業所番号・社員番号・名前は参照用）
+// 「事業所番号 × 社員番号」をキーに突合することで、同じ社員番号が別事業所で
+// 別人に採番されているケースでも正しく突合できる。
 const CSV_HEADERS = [
-  "社員番号", "名前",
+  "事業所番号", "社員番号", "名前",
   "本人給", "職能給", "役職手当", "資格手当", "勤続手当",
   "処遇改善手当", "特定処遇改善手当", "処遇改善補助金手当",
   "固定残業代", "特別報奨金",
@@ -400,9 +402,12 @@ export default function SalaryPage() {
       .filter((e) => !e.employment_status || e.employment_status === "在職者")
       .filter((e) => !filterOfficeId || e.office_id === filterOfficeId);
 
+    const officeByIdForExport = new Map(offices.map((o) => [o.id, o]));
     for (const emp of targets) {
       const s = settingsMap.get(emp.id) ?? emptySettings(emp.id);
+      const empOffice = officeByIdForExport.get(emp.office_id);
       rows.push([
+        empOffice?.office_number ?? "",
         emp.employee_number,
         emp.name,
         String(s.base_personal_salary),
@@ -443,23 +448,51 @@ export default function SalaryPage() {
 
       const headers = rows[0].map((h) => h.trim());
       const idx = (name: string) => headers.indexOf(name);
-      // 事業所フィルタが選択されていれば、その事業所の職員のみから突合する
-      // （同じ社員番号が別事業所で別人に採番されている衝突対策）
-      const candidateEmps = filterOfficeId
-        ? employees.filter((e) => e.office_id === filterOfficeId)
-        : employees;
-      const empByNum = new Map(candidateEmps.map((e) => [e.employee_number, e]));
+      // 事業所番号 × 社員番号 で職員を一意に特定（同じ社員番号が別事業所で別人に採番されている衝突対策）
+      const officeByNum = new Map(offices.map((o) => [o.office_number, o]));
+      const empByOfficeAndNum = new Map<string, Employee>();
+      for (const e of employees) {
+        const off = offices.find((o) => o.id === e.office_id);
+        if (off) empByOfficeAndNum.set(`${off.office_number}|${e.employee_number}`, e);
+      }
+      // 下位互換: 事業所番号が無いCSVでも動作するよう、社員番号のみのマップも保持
+      const empByNum = new Map(employees.map((e) => [e.employee_number, e]));
       const toInt = (s: string) => parseInt(s.trim(), 10) || 0;
+
+      const hasOfficeColumn = idx("事業所番号") >= 0;
 
       const parsed: ImportRow[] = [];
       for (let i = 1; i < rows.length; i++) {
         const r = rows[i];
         const get = (name: string) => (r[idx(name)] ?? "").trim();
         const empNum = get("社員番号");
+        const officeNum = get("事業所番号");
         const name = get("名前");
         if (!empNum) continue;
 
-        const emp = empByNum.get(empNum);
+        // 事業所番号が CSVにあれば office×番号 で突合、なければ従来通り番号のみ（事業所フィルタ適用）
+        let emp: Employee | undefined;
+        let err: string | undefined;
+        if (hasOfficeColumn) {
+          if (!officeNum) {
+            err = `事業所番号が空欄`;
+          } else if (!officeByNum.has(officeNum)) {
+            err = `事業所番号「${officeNum}」が未登録`;
+          } else {
+            emp = empByOfficeAndNum.get(`${officeNum}|${empNum}`);
+            if (!emp) err = `事業所「${officeNum}」に社員番号「${empNum}」が未登録`;
+          }
+        } else {
+          const candidateEmps = filterOfficeId
+            ? employees.filter((e) => e.office_id === filterOfficeId)
+            : employees;
+          const empByNumFiltered = filterOfficeId
+            ? new Map(candidateEmps.map((e) => [e.employee_number, e]))
+            : empByNum;
+          emp = empByNumFiltered.get(empNum);
+          if (!emp) err = `社員番号「${empNum}」が職員マスタに未登録`;
+        }
+
         parsed.push({
           employee_number: empNum,
           name: name || emp?.name || "",
@@ -482,7 +515,7 @@ export default function SalaryPage() {
             yocho_unit_price: toInt(get("夜朝手当単価(円/時間)")),
             note: get("備考"),
           },
-          error: emp ? undefined : `社員番号「${empNum}」が職員マスタに未登録`,
+          error: err,
         });
       }
 

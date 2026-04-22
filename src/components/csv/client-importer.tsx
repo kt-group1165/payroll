@@ -14,13 +14,12 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Office } from "@/types/database";
 
-type ImportRow = ParsedClient & { office_id: string | null; error?: string };
+type ImportRow = ParsedClient & { office_id: string | null; office_display: string; error?: string };
 
 export function ClientImporter() {
   const [results, setResults] = useState<ClientParseResult[]>([]);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
-  const [selectedOfficeId, setSelectedOfficeId] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
 
@@ -28,9 +27,21 @@ export function ClientImporter() {
     supabase.from("offices").select("*").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
-      if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
     });
   }, []);
+
+  // CSVの「担当事業所名称」を Office にマッチさせる（正式名・略称・正規化名で試行）
+  const resolveOfficeByName = useCallback((name: string): Office | null => {
+    const norm = (s: string) => (s ?? "").replace(/[\s\u3000]/g, "").toLowerCase();
+    const target = norm(name);
+    if (!target) return null;
+    return (
+      offices.find((o) => norm(o.name) === target) ??
+      offices.find((o) => o.short_name && norm(o.short_name) === target) ??
+      offices.find((o) => norm(o.name).includes(target) || target.includes(norm(o.name))) ??
+      null
+    );
+  }, [offices]);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
@@ -42,8 +53,16 @@ export function ClientImporter() {
       allData.push(...r.data);
     }
     setResults(allResults);
-    setImportRows(allData.map((d) => ({ ...d, office_id: selectedOfficeId || null })));
-  }, [selectedOfficeId]);
+    setImportRows(allData.map((d) => {
+      const off = resolveOfficeByName(d.office_name);
+      return {
+        ...d,
+        office_id: off?.id ?? null,
+        office_display: off ? (off.short_name || off.name) : d.office_name,
+        error: off ? undefined : `事業所「${d.office_name || "(空)"}」が未登録`,
+      };
+    }));
+  }, [resolveOfficeByName]);
 
   const handleClear = () => {
     setResults([]);
@@ -52,17 +71,22 @@ export function ClientImporter() {
   };
 
   const handleImport = async () => {
-    if (!selectedOfficeId) { toast.error("事業所を選択してください"); return; }
-    const valid = importRows.filter((r) => r.office_id);
+    const valid = importRows.filter((r) => r.office_id && !r.error);
     if (valid.length === 0) { toast.error("インポートできる行がありません"); return; }
     setIsImporting(true);
 
-    const payload = valid.map((r) => ({
-      client_number: r.client_number,
-      name: r.name,
-      address: r.address,
-      office_id: r.office_id!,
-    }));
+    // (client_number, office_id) で重複排除（最後の値が勝つ）
+    const dedupMap = new Map<string, { client_number: string; name: string; address: string; office_id: string }>();
+    for (const r of valid) {
+      const key = `${r.office_id}|${r.client_number}`;
+      dedupMap.set(key, {
+        client_number: r.client_number,
+        name: r.name,
+        address: r.address,
+        office_id: r.office_id!,
+      });
+    }
+    const payload = Array.from(dedupMap.values());
 
     const chunkSize = 500;
     let success = 0, fail = 0;
@@ -82,22 +106,15 @@ export function ClientImporter() {
 
   const totalErrors = results.reduce((s, r) => s + r.errors.length, 0);
   const preview = importRows.slice(0, 100);
+  const validCount = importRows.filter((r) => r.office_id && !r.error).length;
+  const unresolvedCount = importRows.length - validCount;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium whitespace-nowrap">事業所</label>
-        <select
-          className="border rounded px-2 py-1 text-sm bg-background"
-          value={selectedOfficeId}
-          onChange={(e) => { setSelectedOfficeId(e.target.value); setImportRows([]); setResults([]); }}
-        >
-          <option value="">選択してください</option>
-          {offices.map((o) => (
-            <option key={o.id} value={o.id}>{o.name}</option>
-          ))}
-        </select>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        CSVの「担当事業所名称」列から各行の事業所を自動判定して取り込みます。
+        複数事業所のデータが混在したCSVでも一括取り込み可能です。
+      </p>
 
       <FileDropzone
         onFilesSelected={handleFilesSelected}
@@ -129,10 +146,14 @@ export function ClientImporter() {
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
                   {importRows.length}件
-                  {!selectedOfficeId && <span className="text-yellow-600 ml-2">⚠ 事業所を選択してください</span>}
+                  {unresolvedCount > 0 && (
+                    <span className="text-yellow-600 ml-2">
+                      （{unresolvedCount}件は事業所未解決のためスキップ）
+                    </span>
+                  )}
                 </p>
-                <Button onClick={handleImport} disabled={isImporting || imported}>
-                  {isImporting ? "登録中..." : imported ? "登録済み" : "データベースに登録"}
+                <Button onClick={handleImport} disabled={isImporting || imported || validCount === 0}>
+                  {isImporting ? "登録中..." : imported ? "登録済み" : `データベースに登録（${validCount}件）`}
                 </Button>
               </div>
 
@@ -143,8 +164,8 @@ export function ClientImporter() {
                       <TableHead>利用者番号</TableHead>
                       <TableHead>氏名</TableHead>
                       <TableHead>住所</TableHead>
-                      <TableHead>担当事業所</TableHead>
-                      <TableHead>状態</TableHead>
+                      <TableHead>担当事業所（CSV値）</TableHead>
+                      <TableHead>解決先</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -155,10 +176,9 @@ export function ClientImporter() {
                         <TableCell className="text-xs">{r.address}</TableCell>
                         <TableCell className="text-xs">{r.office_name}</TableCell>
                         <TableCell className="text-xs">
-                          {selectedOfficeId
-                            ? <span className="text-green-700">OK</span>
-                            : <span className="text-yellow-700">事業所未選択</span>
-                          }
+                          {r.error
+                            ? <span className="text-yellow-700">⚠ {r.error}</span>
+                            : <span className="text-green-700">{r.office_display}</span>}
                         </TableCell>
                       </TableRow>
                     ))}
