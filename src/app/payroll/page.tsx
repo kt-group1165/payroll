@@ -589,7 +589,8 @@ export default function PayrollPage() {
         fetchAllSalarySettings(),
         supabase.from("attendance_records")
           .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
-          .eq("year", year).eq("month", month),
+          .eq("year", year).eq("month", month)
+          .eq("office_number", selectedOffice.office_number),
         supabase.from("overtime_settings").select("*"),
       ]);
 
@@ -820,7 +821,9 @@ export default function PayrollPage() {
 
       for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys()])) {
         const info    = roleMap.get(empNum);
-        if (info && info.salary === "月給") continue;
+        // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
+        if (!info) continue;
+        if (info.salary === "月給") continue;
         const empRecs = recsByEmp.get(empNum) ?? [];
         const firstRec = empRecs[0];
         const sal = info ? salMap.get(info.empId) : null;
