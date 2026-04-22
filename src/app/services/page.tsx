@@ -905,7 +905,7 @@ function RatesTab() {
                     alignItemWithTrigger={false}
                     className="max-h-[60vh] min-w-[360px]"
                   >
-                    {offices.map((o) => (
+                    {offices.filter((o) => o.office_type === "訪問介護").map((o) => (
                       <SelectItem key={o.id} value={o.id}>
                         {o.short_name || o.name}
                       </SelectItem>
