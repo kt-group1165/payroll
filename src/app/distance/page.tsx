@@ -49,12 +49,26 @@ export default function DistancePage() {
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
     });
-    supabase.from("service_records").select("processing_month").limit(100000).then(({ data }) => {
-      if (!data) return;
-      const unique = [...new Set(data.map((r: { processing_month: string }) => r.processing_month))].sort().reverse();
+    // service_recordsは1000件上限のためページング取得して重複排除
+    (async () => {
+      const uniqueSet = new Set<string>();
+      const pageSize = 1000;
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("service_records")
+          .select("processing_month")
+          .order("processing_month", { ascending: false })
+          .range(from, from + pageSize - 1);
+        if (!data || data.length === 0) break;
+        for (const r of data) uniqueSet.add((r as { processing_month: string }).processing_month);
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      const unique = [...uniqueSet].sort().reverse();
       setMonths(unique);
       if (unique.length > 0) setSelectedMonth(unique[0]);
-    });
+    })();
   }, []);
 
   async function calculate() {
