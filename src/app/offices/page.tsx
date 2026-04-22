@@ -260,6 +260,9 @@ export default function OfficesPage() {
       const cMap = new Map((compData ?? []).map((c) => [c.name, c.id]));
 
       const ALLOWED_TYPES = new Set<string>(OFFICE_TYPES);
+      const DAY_MAP: Record<string, number> = {
+        "日": 0, "月": 1, "火": 2, "水": 3, "木": 4, "金": 5, "土": 6,
+      };
       const payload: Record<string, string | number | null>[] = [];
       const errors: string[] = [];
       for (let i = 1; i < lines.length; i++) {
@@ -279,13 +282,29 @@ export default function OfficesPage() {
           continue;
         }
 
+        // 週起算曜日: 0-6の数値、または「日〜土」の漢字1文字に対応
+        const rawWeek = get(cols, headers, "週起算曜日").replace(/[\s\u3000曜日]/g, "");
+        let weekStart = 0;
+        if (rawWeek) {
+          if (DAY_MAP[rawWeek] !== undefined) {
+            weekStart = DAY_MAP[rawWeek];
+          } else {
+            const n = parseInt(rawWeek, 10);
+            if (isNaN(n) || n < 0 || n > 6) {
+              errors.push(`行${i + 1}: 週起算曜日「${rawWeek}」は無効（0-6 または 日〜土）`);
+              continue;
+            }
+            weekStart = n;
+          }
+        }
+
         payload.push({
           office_number: officeNum,
           name,
           short_name: get(cols, headers, "略称").trim(),
           address: get(cols, headers, "住所").trim(),
           office_type: officeType,
-          work_week_start: parseInt(get(cols, headers, "週起算曜日") || "0", 10),
+          work_week_start: weekStart,
           travel_unit_price: parseFloat(get(cols, headers, "出張単価") || "0") || 0,
           commute_unit_price: parseFloat(get(cols, headers, "通勤単価") || "0") || 0,
           treatment_subsidy_amount: parseFloat(get(cols, headers, "処遇補助金") || "0") || 0,
