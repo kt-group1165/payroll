@@ -263,7 +263,7 @@ export default function OfficesPage() {
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",");
         const officeNum = get(cols, headers, "事業所番号").trim();
-        const name = get(cols, headers, "名称").trim();
+        const name = (get(cols, headers, "正式名称") || get(cols, headers, "名称")).trim();
         if (!officeNum || !name) continue;
 
         const companyName = get(cols, headers, "法人名").trim();

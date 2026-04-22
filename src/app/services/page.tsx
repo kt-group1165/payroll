@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,47 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+
+// ─── CSVユーティリティ ────────────────────────────────────────
+
+function downloadCsv(filename: string, rows: string[][]): void {
+  const escape = (v: string) =>
+    v.includes(",") || v.includes('"') || v.includes("\n")
+      ? `"${v.replace(/"/g, '""')}"`
+      : v;
+  const csv = rows.map((r) => r.map(escape).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuote && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuote = !inQuote; }
+    } else if (ch === "," && !inQuote) {
+      result.push(current); current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function parseCsvText(text: string): string[][] {
+  const cleaned = text.replace(/^\uFEFF/, "");
+  return cleaned.split(/\r?\n/).filter((l) => l.trim() !== "").map(parseCsvLine);
+}
 
 interface ServiceCategory {
   id: string;
@@ -61,6 +102,7 @@ interface CategoryHourlyRate {
 
 interface Office {
   id: string;
+  office_number: string;
   name: string;
   short_name: string;
 }
@@ -570,25 +612,35 @@ function RatesTab() {
   const [rates, setRates] = useState<CategoryHourlyRate[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
+  const [mappings, setMappings] = useState<ServiceTypeMapping[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({
     office_id: "",
     category_id: "",
     hourly_rate: "",
   });
+  const importRef = useRef<HTMLInputElement>(null);
 
   const fetchData = useCallback(async () => {
-    const [rateRes, catRes, offRes] = await Promise.all([
+    const [rateRes, catRes, offRes, mapRes] = await Promise.all([
       supabase
         .from("category_hourly_rates")
         .select("*, offices(name, short_name), service_categories(name)")
         .order("created_at"),
       supabase.from("service_categories").select("*").order("sort_order"),
-      supabase.from("offices").select("id, name, short_name").order("name"),
+      supabase
+        .from("offices")
+        .select("id, office_number, name, short_name")
+        .order("name"),
+      supabase
+        .from("service_type_mappings")
+        .select("*, service_categories(name)")
+        .order("service_code"),
     ]);
     if (rateRes.data) setRates(rateRes.data);
     if (catRes.data) setCategories(catRes.data);
     if (offRes.data) setOffices(offRes.data);
+    if (mapRes.data) setMappings(mapRes.data);
   }, []);
 
   useEffect(() => {
@@ -648,78 +700,146 @@ function RatesTab() {
     fetchData();
   };
 
+  // 事業所番号＋サービスコード単位でCSV出力
   const handleExport = () => {
-    const header = "事業所名,類型,時給\n";
-    const rows = rates
-      .map((r) => `${(r.offices?.short_name || r.offices?.name) ?? ""},${r.service_categories?.name ?? ""},${r.hourly_rate}`)
-      .join("\n");
-    const bom = "\uFEFF";
-    const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "hourly_rates.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    const rateByKey = new Map<string, number>();
+    for (const r of rates) {
+      rateByKey.set(`${r.office_id}|${r.category_id}`, r.hourly_rate);
+    }
+    const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
+    const sortedOffices = offices.slice().sort((a, b) =>
+      a.office_number.localeCompare(b.office_number)
+    );
+    const sortedMappings = mappings.slice().sort((a, b) =>
+      a.service_code.localeCompare(b.service_code)
+    );
+
+    const rows: string[][] = [
+      ["事業所番号", "事業所名", "サービスコード", "サービス名", "類型", "時給"],
+    ];
+    for (const office of sortedOffices) {
+      for (const m of sortedMappings) {
+        const rate = rateByKey.get(`${office.id}|${m.category_id}`);
+        rows.push([
+          office.office_number,
+          office.short_name || office.name,
+          m.service_code,
+          m.service_name,
+          categoryMap.get(m.category_id) ?? "",
+          rate != null ? rate.toString() : "",
+        ]);
+      }
+    }
+    downloadCsv("時給設定.csv", rows);
+    toast.success(`${rows.length - 1}件をエクスポートしました`);
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // UTF-8/Shift-JIS両対応、事業所番号＋サービスコードをキーにupsert
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const text = await file.text();
-
-    // 引用符付きCSVを正しくパース
-    const parseLine = (line: string): string[] => {
-      const result: string[] = [];
-      let cur = ""; let inQ = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else { inQ = !inQ; } }
-        else if (ch === "," && !inQ) { result.push(cur.trim()); cur = ""; }
-        else { cur += ch; }
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const buf = ev.target?.result as ArrayBuffer;
+      const bytes = new Uint8Array(buf);
+      const isUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+      const enc = isUtf8Bom
+        ? "utf-8"
+        : (() => {
+            const tryUtf8 = new TextDecoder("utf-8").decode(buf);
+            return tryUtf8.includes("事業所番号") ? "utf-8" : "shift_jis";
+          })();
+      const text = new TextDecoder(enc).decode(buf);
+      const parsed = parseCsvText(text);
+      if (parsed.length < 2) {
+        toast.error("データ行がありません");
+        if (importRef.current) importRef.current.value = "";
+        return;
       }
-      result.push(cur.trim());
-      return result;
+
+      const headers = parsed[0].map((h) => h.trim());
+      const idx = (name: string) => headers.indexOf(name);
+      const officeNumIdx = idx("事業所番号");
+      const serviceCodeIdx = idx("サービスコード");
+      const rateIdx = idx("時給");
+      if (officeNumIdx < 0 || serviceCodeIdx < 0 || rateIdx < 0) {
+        toast.error("ヘッダーに「事業所番号」「サービスコード」「時給」が必要です");
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+
+      const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const mappingByCode = new Map(mappings.map((m) => [m.service_code, m]));
+
+      // (office_id, category_id)で重複排除（最後の値が勝つ）
+      const upsertMap = new Map<
+        string,
+        { office_id: string; category_id: string; hourly_rate: number }
+      >();
+      const errors: string[] = [];
+
+      for (let i = 1; i < parsed.length; i++) {
+        const r = parsed[i];
+        const officeNum = (r[officeNumIdx] ?? "").trim();
+        const code = (r[serviceCodeIdx] ?? "").trim();
+        const rateStr = (r[rateIdx] ?? "").trim();
+        if (!officeNum || !code) continue;
+        if (!rateStr) continue; // 時給が空欄の行は未設定としてスキップ
+
+        const office = officeByNumber.get(officeNum);
+        if (!office) {
+          errors.push(`行${i + 1}: 事業所番号「${officeNum}」が未登録`);
+          continue;
+        }
+        const mapping = mappingByCode.get(code);
+        if (!mapping) {
+          errors.push(`行${i + 1}: サービスコード「${code}」のマッピング未登録`);
+          continue;
+        }
+        const rate = parseInt(rateStr, 10);
+        if (isNaN(rate)) {
+          errors.push(`行${i + 1}: 時給「${rateStr}」が数値ではありません`);
+          continue;
+        }
+        if (rate <= 0) continue;
+
+        upsertMap.set(`${office.id}|${mapping.category_id}`, {
+          office_id: office.id,
+          category_id: mapping.category_id,
+          hourly_rate: rate,
+        });
+      }
+
+      if (errors.length > 0) {
+        toast.error(errors.slice(0, 5).join("\n"));
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+
+      const upsertRows = Array.from(upsertMap.values());
+      if (upsertRows.length === 0) {
+        toast.error("取り込むデータがありません");
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+      if (!confirm(`${upsertRows.length}件を取り込みますか？（既存設定は上書き）`)) {
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+
+      const { error } = await supabase
+        .from("category_hourly_rates")
+        .upsert(upsertRows, { onConflict: "office_id,category_id" });
+      if (error) {
+        toast.error(`インポートエラー: ${error.message}`);
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+      toast.success(`${upsertRows.length}件をインポートしました`);
+      fetchData();
+      if (importRef.current) importRef.current.value = "";
     };
-
-    const allLines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map((l) => l.trim()).filter((l) => l);
-    const dataLines = allLines.slice(1); // ヘッダー行をスキップ
-    if (dataLines.length === 0) { toast.error("データ行がありません"); return; }
-
-    const officeNameMap = new Map([
-      ...offices.map((o) => [o.name, o.id] as [string, string]),
-      ...offices.filter((o) => o.short_name).map((o) => [o.short_name, o.id] as [string, string]),
-    ]);
-    const categoryNameMap = new Map(categories.map((c) => [c.name, c.id]));
-
-    const upsertRows: { office_id: string; category_id: string; hourly_rate: number }[] = [];
-    const errors: string[] = [];
-
-    for (let i = 0; i < dataLines.length; i++) {
-      const cols = parseLine(dataLines[i]);
-      if (cols.length < 3) { errors.push(`行${i + 2}: カラム数が不足`); continue; }
-      const officeName = cols[0];
-      const catName = cols[1];
-      const rate = parseInt(cols[2], 10);
-      const officeId = officeNameMap.get(officeName);
-      const catId = categoryNameMap.get(catName);
-      if (!officeId) { errors.push(`行${i + 2}: 事業所「${officeName}」が見つかりません`); continue; }
-      if (!catId) { errors.push(`行${i + 2}: 類型「${catName}」が見つかりません`); continue; }
-      if (isNaN(rate)) { errors.push(`行${i + 2}: 時給が数値ではありません`); continue; }
-      if (rate <= 0) continue; // 0円はスキップ（未設定扱い）
-      upsertRows.push({ office_id: officeId, category_id: catId, hourly_rate: rate });
-    }
-
-    if (errors.length > 0) { toast.error(errors.join("\n")); return; }
-
-    const { error } = await supabase
-      .from("category_hourly_rates")
-      .upsert(upsertRows, { onConflict: "office_id,category_id" });
-    if (error) { toast.error(`インポートエラー: ${error.message}`); return; }
-    toast.success(`${upsertRows.length}件をインポートしました`);
-    fetchData();
-    e.target.value = "";
+    reader.readAsArrayBuffer(file);
   };
 
   // 事業所ごとにグループ化
@@ -740,12 +860,12 @@ function RatesTab() {
           事業所 × 類型ごとの時給を設定します
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExport}>CSVエクスポート</Button>
-          <Button variant="outline" onClick={() => document.getElementById("rates-import")?.click()}>
-            CSVインポート
+          <Button variant="outline" onClick={handleExport}>📥 CSV出力</Button>
+          <Button variant="outline" onClick={() => importRef.current?.click()}>
+            📤 CSV取り込み
           </Button>
           <input
-            id="rates-import"
+            ref={importRef}
             type="file"
             accept=".csv"
             onChange={handleImport}
