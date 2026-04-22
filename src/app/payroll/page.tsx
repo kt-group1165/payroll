@@ -506,26 +506,20 @@ export default function PayrollPage() {
   const [otSettings, setOtSettings] = useState<Map<string, OvertimeSetting>>(new Map());
 
   useEffect(() => {
-    // service_recordsは1000件上限のためページング取得してDISTINCT化
-    (async () => {
-      const uniqueSet = new Set<string>();
-      const pageSize = 1000;
-      let from = 0;
-      while (true) {
-        const { data } = await supabase
-          .from("service_records")
-          .select("processing_month")
-          .order("processing_month", { ascending: false })
-          .range(from, from + pageSize - 1);
-        if (!data || data.length === 0) break;
-        for (const r of data) uniqueSet.add((r as { processing_month: string }).processing_month);
-        if (data.length < pageSize) break;
-        from += pageSize;
-      }
-      const unique = [...uniqueSet].sort().reverse();
-      setMonths(unique);
-      if (unique.length > 0) setSelectedMonth(unique[0]);
-    })();
+    // service_records実データのある月を import_batches 経由で取得（高速）
+    supabase
+      .from("import_batches")
+      .select("processing_month,record_count,import_type,status")
+      .eq("import_type", "meisai")
+      .eq("status", "completed")
+      .gt("record_count", 0)
+      .order("processing_month", { ascending: false })
+      .then(({ data }) => {
+        if (!data) return;
+        const unique = [...new Set((data as { processing_month: string }[]).map((r) => r.processing_month))];
+        setMonths(unique);
+        if (unique.length > 0) setSelectedMonth(unique[0]);
+      });
     supabase.from("offices").select("id,office_number,name,short_name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as unknown as Office[]);
