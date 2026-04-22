@@ -29,7 +29,13 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Client, Office } from "@/types/database";
-import { GoogleMapPicker } from "@/components/google-map-picker";
+import dynamic from "next/dynamic";
+
+// クライアント側でのみロード（Google Maps JS APIはwindowが必要）
+const GoogleMapPicker = dynamic(
+  () => import("@/components/google-map-picker").then((m) => m.GoogleMapPicker),
+  { ssr: false, loading: () => <div className="h-[300px] rounded-md border bg-muted animate-pulse" /> }
+);
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
