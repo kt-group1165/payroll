@@ -179,12 +179,24 @@ export default function EmployeesPage() {
   const [importing, setImporting] = useState(false);
 
   const fetchData = useCallback(async () => {
-    const [empRes, offRes] = await Promise.all([
-      supabase.from("employees").select("*").order("employee_number"),
-      supabase.from("offices").select("*").order("name"),
-    ]);
-    if (empRes.data) setEmployees(empRes.data as Employee[]);
-    if (offRes.data) setOffices(offRes.data as Office[]);
+    // employeesは1000件を超える可能性があるためページング取得
+    const pageSize = 1000;
+    const allEmployees: Employee[] = [];
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("employees")
+        .select("*")
+        .order("employee_number")
+        .range(from, from + pageSize - 1);
+      if (!data || data.length === 0) break;
+      allEmployees.push(...(data as Employee[]));
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    const { data: offData } = await supabase.from("offices").select("*").order("name");
+    setEmployees(allEmployees);
+    if (offData) setOffices(offData as Office[]);
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);

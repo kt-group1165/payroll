@@ -324,15 +324,32 @@ export default function SalaryPage() {
   const [savingOvertime, setSavingOvertime] = useState(false);
 
   const fetchAll = useCallback(async () => {
-    const [empRes, offRes, salRes, otRes] = await Promise.all([
-      supabase.from("employees").select("*").order("employee_number"),
+    // employees/salary_settingsは1000件を超える可能性があるためページング取得
+    const pageSize = 1000;
+    async function fetchAllPages<T>(table: string, select = "*", orderCol?: string): Promise<T[]> {
+      const all: T[] = [];
+      let from = 0;
+      while (true) {
+        let q = supabase.from(table).select(select).range(from, from + pageSize - 1);
+        if (orderCol) q = q.order(orderCol);
+        const { data } = await q;
+        if (!data || data.length === 0) break;
+        all.push(...(data as unknown as T[]));
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      return all;
+    }
+
+    const [emps, offRes, sals, otRes] = await Promise.all([
+      fetchAllPages<Employee>("employees", "*", "employee_number"),
       supabase.from("offices").select("*"),
-      supabase.from("salary_settings").select("*"),
+      fetchAllPages<SalarySettings>("salary_settings"),
       supabase.from("overtime_settings").select("*"),
     ]);
-    if (empRes.data) setEmployees(empRes.data as Employee[]);
+    setEmployees(emps);
     if (offRes.data) setOffices(offRes.data as Office[]);
-    if (salRes.data) setAllSettings(salRes.data as SalarySettings[]);
+    setAllSettings(sals);
     if (otRes.data) {
       const map = new Map<string, OvertimeSetting>();
       for (const r of otRes.data as OvertimeSetting[]) map.set(r.job_type, r);

@@ -231,7 +231,24 @@ export default function AttendancePage() {
     setLoading(true);
     setExpandedEmp(null);
 
-    const [attRes, empRes, offRes] = await Promise.all([
+    // employeesは1000件を超えるためページング取得
+    const fetchAllEmployees = async () => {
+      const all: Employee[] = [];
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("employees")
+          .select("employee_number,name,role_type,salary_type")
+          .range(from, from + 999);
+        if (!data || data.length === 0) break;
+        all.push(...(data as Employee[]));
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+      return all;
+    };
+
+    const [attRes, emps, offRes] = await Promise.all([
       supabase
         .from("attendance_records")
         .select("*")
@@ -239,12 +256,12 @@ export default function AttendancePage() {
         .eq("month", selectedMonth)
         .order("employee_number")
         .order("day"),
-      supabase.from("employees").select("employee_number,name,role_type,salary_type"),
+      fetchAllEmployees(),
       supabase.from("offices").select("office_number,name,work_week_start"),
     ]);
 
     const records   = (attRes.data ?? []) as AttendanceRecord[];
-    const empMap    = new Map(((empRes.data ?? []) as Employee[]).map(e => [e.employee_number, e]));
+    const empMap    = new Map(emps.map(e => [e.employee_number, e]));
     const officeMap = new Map(((offRes.data ?? []) as Office[]).map(o => [o.office_number, o]));
 
     // 週起算曜日（最初に見つかった事業所の設定を使用）

@@ -506,12 +506,26 @@ export default function PayrollPage() {
   const [otSettings, setOtSettings] = useState<Map<string, OvertimeSetting>>(new Map());
 
   useEffect(() => {
-    supabase.from("service_records").select("processing_month").limit(100000).then(({ data }) => {
-      if (!data) return;
-      const unique = [...new Set(data.map((r: { processing_month: string }) => r.processing_month))].sort().reverse();
+    // service_recordsは1000件上限のためページング取得してDISTINCT化
+    (async () => {
+      const uniqueSet = new Set<string>();
+      const pageSize = 1000;
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("service_records")
+          .select("processing_month")
+          .order("processing_month", { ascending: false })
+          .range(from, from + pageSize - 1);
+        if (!data || data.length === 0) break;
+        for (const r of data) uniqueSet.add((r as { processing_month: string }).processing_month);
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      const unique = [...uniqueSet].sort().reverse();
       setMonths(unique);
       if (unique.length > 0) setSelectedMonth(unique[0]);
-    });
+    })();
     supabase.from("offices").select("id,office_number,name,short_name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as unknown as Office[]);
@@ -557,13 +571,28 @@ export default function PayrollPage() {
         }
       }
 
+      // salary_settingsは将来1000件を超え得るためページング取得
+      const fetchAllSalarySettings = async (): Promise<{ data: SalarySettings[] }> => {
+        const all: SalarySettings[] = [];
+        let sFrom = 0;
+        while (true) {
+          const { data } = await supabase
+            .from("salary_settings").select("*").range(sFrom, sFrom + 999);
+          if (!data || data.length === 0) break;
+          all.push(...(data as SalarySettings[]));
+          if (data.length < 1000) break;
+          sFrom += 1000;
+        }
+        return { data: all };
+      };
+
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
         supabase.from("offices").select("id,office_number,name,short_name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
-        supabase.from("salary_settings").select("*"),
+        fetchAllSalarySettings(),
         supabase.from("attendance_records")
           .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
           .eq("year", year).eq("month", month),

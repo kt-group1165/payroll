@@ -44,12 +44,22 @@ export function OfficeFormImporter() {
   });
 
   const fetchExistingMonths = useCallback(async () => {
-    const { data } = await supabase.from("office_form_records").select("processing_month,office_number");
-    if (!data) return;
+    // office_form_recordsは毎月増えていくため1000件上限対応のページング取得
     const countMap = new Map<string, number>();
-    for (const r of data as { processing_month: string; office_number: string }[]) {
-      const key = `${r.processing_month}__${r.office_number}`;
-      countMap.set(key, (countMap.get(key) ?? 0) + 1);
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("office_form_records")
+        .select("processing_month,office_number")
+        .range(from, from + pageSize - 1);
+      if (!data || data.length === 0) break;
+      for (const r of data as { processing_month: string; office_number: string }[]) {
+        const key = `${r.processing_month}__${r.office_number}`;
+        countMap.set(key, (countMap.get(key) ?? 0) + 1);
+      }
+      if (data.length < pageSize) break;
+      from += pageSize;
     }
     const sorted = [...countMap.entries()]
       .map(([key, count]) => {
