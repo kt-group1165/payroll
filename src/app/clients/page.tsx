@@ -44,12 +44,24 @@ export default function ClientsPage() {
   });
 
   const fetchData = useCallback(async () => {
-    const [cliRes, offRes] = await Promise.all([
-      supabase.from("clients").select("*").order("client_number"),
-      supabase.from("offices").select("*").order("name"),
-    ]);
-    if (cliRes.data) setClients(cliRes.data as Client[]);
-    if (offRes.data) setOffices(offRes.data as Office[]);
+    // clientsは1000件を超える可能性があるためページング取得
+    const pageSize = 1000;
+    const allClients: Client[] = [];
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("clients")
+        .select("*")
+        .order("client_number")
+        .range(from, from + pageSize - 1);
+      if (!data || data.length === 0) break;
+      allClients.push(...(data as Client[]));
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    const { data: offData } = await supabase.from("offices").select("*").order("name");
+    setClients(allClients);
+    if (offData) setOffices(offData as Office[]);
   }, []);
 
   useEffect(() => {
