@@ -1212,6 +1212,69 @@ export default function PayrollPage() {
                   <CardContent><p className="text-2xl font-bold">{yen(hourlyGrandTotal)}</p></CardContent></Card>
               </div>
 
+              {/* 時給未設定により0円になっている実績の集計 */}
+              {(() => {
+                type Agg = { count: number; minutes: number; reason: "未マッピング" | "時給未設定" };
+                const agg = new Map<string, Agg>();
+                for (const emp of hourlyResults) {
+                  for (const d of emp.records) {
+                    if (d.hourly_rate !== null) continue;
+                    const reason = d.category_name === "未マッピング" ? "未マッピング" : "時給未設定";
+                    const key = `${d.service_code}|${d.category_name}|${reason}`;
+                    const cur = agg.get(key) ?? { count: 0, minutes: 0, reason };
+                    cur.count += 1;
+                    cur.minutes += d.minutes;
+                    agg.set(key, cur);
+                  }
+                }
+                if (agg.size === 0) return null;
+                const rows = [...agg.entries()]
+                  .map(([k, v]) => {
+                    const [service_code, category_name] = k.split("|");
+                    return { service_code, category_name, ...v };
+                  })
+                  .sort((a, b) => b.minutes - a.minutes);
+                const totalCount = rows.reduce((s, r) => s + r.count, 0);
+                const totalMinutes = rows.reduce((s, r) => s + r.minutes, 0);
+                return (
+                  <Card className="mb-4 border-yellow-300 bg-yellow-50/50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm text-yellow-900">
+                        ⚠ 時給未設定により0円になっている実績: {totalCount}件 / {formatMinutes(totalMinutes)}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-yellow-200 bg-yellow-100/50">
+                            <th className="text-left px-3 py-1.5 font-medium">サービスコード</th>
+                            <th className="text-left px-3 py-1.5 font-medium">類型</th>
+                            <th className="text-left px-3 py-1.5 font-medium">原因</th>
+                            <th className="text-right px-3 py-1.5 font-medium">件数</th>
+                            <th className="text-right px-3 py-1.5 font-medium">時間合計</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r, i) => (
+                            <tr key={i} className="border-b border-yellow-100">
+                              <td className="px-3 py-1 font-mono">{r.service_code}</td>
+                              <td className="px-3 py-1">{r.category_name}</td>
+                              <td className="px-3 py-1">
+                                <span className={r.reason === "未マッピング" ? "text-orange-700" : "text-red-700"}>
+                                  {r.reason === "未マッピング" ? "サービスコード→類型のマッピング未登録" : "事業所×類型の時給未設定"}
+                                </span>
+                              </td>
+                              <td className="px-3 py-1 text-right">{r.count}件</td>
+                              <td className="px-3 py-1 text-right">{formatMinutes(r.minutes)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
                   <CardTitle>{formatProcessingMonth(selectedMonth)} 時給者 給与計算結果</CardTitle>
