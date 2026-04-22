@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,11 +37,14 @@ const GoogleMapPicker = dynamic(
   { ssr: false, loading: () => <div className="h-[300px] rounded-md border bg-muted animate-pulse" /> }
 );
 
+const PAGE_SIZE = 100;
+
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
   const [filterOfficeId, setFilterOfficeId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -272,6 +275,54 @@ export default function ClientsPage() {
       </div>
 
       {/* 事業所フィルター + 検索 */}
+      <ClientListView
+        clients={clients}
+        offices={offices}
+        filterOfficeId={filterOfficeId}
+        setFilterOfficeId={(v) => { setFilterOfficeId(v); setPage(1); }}
+        searchQuery={searchQuery}
+        setSearchQuery={(v) => { setSearchQuery(v); setPage(1); }}
+        page={page}
+        setPage={setPage}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+      />
+    </div>
+  );
+}
+
+// ─── 一覧（useMemoで重いフィルタ・ページングを分離）──────────
+function ClientListView({
+  clients, offices, filterOfficeId, setFilterOfficeId,
+  searchQuery, setSearchQuery, page, setPage, onEdit, onDelete,
+}: {
+  clients: Client[];
+  offices: Office[];
+  filterOfficeId: string;
+  setFilterOfficeId: (v: string) => void;
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
+  page: number;
+  setPage: (n: number) => void;
+  onEdit: (c: Client) => void;
+  onDelete: (id: string) => void;
+}) {
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return clients
+      .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
+      .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
+  }, [clients, filterOfficeId, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, totalPages);
+  const pageRows = useMemo(
+    () => filtered.slice((clampedPage - 1) * PAGE_SIZE, clampedPage * PAGE_SIZE),
+    [filtered, clampedPage]
+  );
+
+  return (
+    <>
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <label className="text-sm font-medium whitespace-nowrap">事業所</label>
         <Select value={filterOfficeId || "__all__"} onValueChange={(v) => setFilterOfficeId(v === "__all__" ? "" : (v ?? ""))}>
@@ -292,15 +343,7 @@ export default function ClientsPage() {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-64"
         />
-        <span className="text-sm text-muted-foreground">
-          {(() => {
-            const q = searchQuery.trim().toLowerCase();
-            const matches = clients
-              .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
-              .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
-            return `${matches.length}名`;
-          })()}
-        </span>
+        <span className="text-sm text-muted-foreground">{filtered.length}名</span>
       </div>
 
       <Table>
@@ -313,34 +356,45 @@ export default function ClientsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {(() => {
-            const q = searchQuery.trim().toLowerCase();
-            const filtered = clients
-              .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
-              .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
-            if (filtered.length === 0) return (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  {clients.length === 0 ? "利用者が登録されていません" : "該当する利用者がいません"}
-                </TableCell>
-              </TableRow>
-            );
-            return filtered.map((client) => (
+          {pageRows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={4} className="text-center text-muted-foreground">
+                {clients.length === 0 ? "利用者が登録されていません" : "該当する利用者がいません"}
+              </TableCell>
+            </TableRow>
+          ) : (
+            pageRows.map((client) => (
               <TableRow key={client.id}>
                 <TableCell>{client.client_number}</TableCell>
                 <TableCell>{client.name}</TableCell>
                 <TableCell>{client.address || "-"}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    <Button variant="ghost" size="sm" onClick={() => handleEdit(client)}>編集</Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(client.id)}>削除</Button>
+                    <Button variant="ghost" size="sm" onClick={() => onEdit(client)}>編集</Button>
+                    <Button variant="ghost" size="sm" onClick={() => onDelete(client.id)}>削除</Button>
                   </div>
                 </TableCell>
               </TableRow>
-            ));
-          })()}
+            ))
+          )}
         </TableBody>
       </Table>
-    </div>
+
+      {/* ページネーション */}
+      {filtered.length > PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-2 mt-4">
+          <Button variant="outline" size="sm" onClick={() => setPage(1)} disabled={clampedPage === 1}>«</Button>
+          <Button variant="outline" size="sm" onClick={() => setPage(Math.max(1, clampedPage - 1))} disabled={clampedPage === 1}>‹</Button>
+          <span className="text-sm text-muted-foreground min-w-[120px] text-center">
+            {clampedPage} / {totalPages} ページ
+            <span className="ml-2 text-xs">
+              ({((clampedPage - 1) * PAGE_SIZE + 1)}〜{Math.min(clampedPage * PAGE_SIZE, filtered.length)}件目)
+            </span>
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setPage(Math.min(totalPages, clampedPage + 1))} disabled={clampedPage === totalPages}>›</Button>
+          <Button variant="outline" size="sm" onClick={() => setPage(totalPages)} disabled={clampedPage === totalPages}>»</Button>
+        </div>
+      )}
+    </>
   );
 }
