@@ -350,9 +350,22 @@ export default function OfficesPage() {
       }
       if (payload.length === 0) { toast.error("有効なデータがありません"); return; }
 
-      const { error } = await supabase.from("offices").upsert(payload, { onConflict: "office_number" });
+      // 事業所番号で重複排除（後勝ち）— UPSERT時の「cannot affect row a second time」対策
+      const dedupMap = new Map<string, typeof payload[number]>();
+      const duplicates = new Set<string>();
+      for (const p of payload) {
+        const key = p.office_number as string;
+        if (dedupMap.has(key)) duplicates.add(key);
+        dedupMap.set(key, p);
+      }
+      const deduped = Array.from(dedupMap.values());
+      if (duplicates.size > 0) {
+        toast.warning(`事業所番号重複${duplicates.size}件を後勝ちで統合（例: ${[...duplicates].slice(0, 3).join(", ")}）`);
+      }
+
+      const { error } = await supabase.from("offices").upsert(deduped, { onConflict: "office_number" });
       if (error) { toast.error(`取り込みエラー: ${error.message}`); return; }
-      toast.success(`${payload.length}件を取り込みました`);
+      toast.success(`${deduped.length}件を取り込みました`);
       fetchOffices();
     };
     reader.readAsArrayBuffer(file);
