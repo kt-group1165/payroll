@@ -374,15 +374,14 @@ export default function SalaryPage() {
   // ─── CSV エクスポート（全員分） ────────────────────────────
 
   function handleExport() {
-    const empMap = new Map(employees.map((e) => [e.id, e]));
     const settingsMap = new Map(allSettings.map((s) => [s.employee_id, s]));
 
     const rows: string[][] = [CSV_HEADERS.slice()];
 
-    // 在職者のみ出力（退職者は除く）
-    const targets = employees.filter(
-      (e) => !e.employment_status || e.employment_status === "在職者"
-    );
+    // 在職者のみ出力（退職者は除く）+ 事業所フィルタ反映
+    const targets = employees
+      .filter((e) => !e.employment_status || e.employment_status === "在職者")
+      .filter((e) => !filterOfficeId || e.office_id === filterOfficeId);
 
     for (const emp of targets) {
       const s = settingsMap.get(emp.id) ?? emptySettings(emp.id);
@@ -408,7 +407,9 @@ export default function SalaryPage() {
       ]);
     }
 
-    downloadCsv("給与設定.csv", rows);
+    const _fo = offices.find((o) => o.id === filterOfficeId);
+    const officeLabel = filterOfficeId ? ((_fo?.short_name || _fo?.name) ?? "") : "全事業所";
+    downloadCsv(`給与設定_${officeLabel}.csv`, rows);
     toast.success(`${targets.length}件をエクスポートしました`);
   }
 
