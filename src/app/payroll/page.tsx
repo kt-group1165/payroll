@@ -901,10 +901,16 @@ export default function PayrollPage() {
         if (visitCareEmps.length > 0) {
           const { data: clientData } = await supabase
             .from("clients")
-            .select("client_number,address")
+            .select("client_number,address,map_latitude,map_longitude")
             .eq("office_id", selectedOfficeId);
+          // マップ用座標が設定されていればそちらを優先（"lat,lng" 文字列としてDistance Matrix APIに渡せる）
           const clientMap = new Map(
-            (clientData ?? []).map((c: { client_number: string; address: string }) => [c.client_number, c.address])
+            (clientData ?? []).map((c: { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }) => {
+              const addr = (c.map_latitude != null && c.map_longitude != null)
+                ? `${c.map_latitude},${c.map_longitude}`
+                : c.address;
+              return [c.client_number, addr];
+            })
           );
 
           const byEmpNum = new Map<string, { address: string; dayMap: Map<string, VisitForRoute[]> }>();

@@ -29,11 +29,13 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Client, Office } from "@/types/database";
+import { GoogleMapPicker } from "@/components/google-map-picker";
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
   const [filterOfficeId, setFilterOfficeId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -41,6 +43,9 @@ export default function ClientsPage() {
     name: "",
     address: "",
     office_id: "",
+    map_latitude: null as number | null,
+    map_longitude: null as number | null,
+    map_note: "",
   });
 
   const fetchData = useCallback(async () => {
@@ -69,7 +74,7 @@ export default function ClientsPage() {
   }, [fetchData]);
 
   const resetForm = () => {
-    setForm({ client_number: "", name: "", address: "", office_id: "" });
+    setForm({ client_number: "", name: "", address: "", office_id: "", map_latitude: null, map_longitude: null, map_note: "" });
     setEditingId(null);
   };
 
@@ -86,6 +91,9 @@ export default function ClientsPage() {
           name: form.name,
           address: form.address,
           office_id: form.office_id,
+          map_latitude: form.map_latitude,
+          map_longitude: form.map_longitude,
+          map_note: form.map_note || null,
         })
         .eq("id", editingId);
       if (error) {
@@ -94,7 +102,15 @@ export default function ClientsPage() {
       }
       toast.success("利用者情報を更新しました");
     } else {
-      const { error } = await supabase.from("clients").insert(form);
+      const { error } = await supabase.from("clients").insert({
+        client_number: form.client_number,
+        name: form.name,
+        address: form.address,
+        office_id: form.office_id,
+        map_latitude: form.map_latitude,
+        map_longitude: form.map_longitude,
+        map_note: form.map_note || null,
+      });
       if (error) {
         toast.error(`登録エラー: ${error.message}`);
         return;
@@ -113,6 +129,9 @@ export default function ClientsPage() {
       name: client.name,
       address: client.address,
       office_id: client.office_id,
+      map_latitude: client.map_latitude,
+      map_longitude: client.map_longitude,
+      map_note: client.map_note ?? "",
     });
     setEditingId(client.id);
     setIsOpen(true);
@@ -145,7 +164,7 @@ export default function ClientsPage() {
           >
             新規登録
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingId ? "利用者を編集" : "利用者を登録"}
@@ -178,7 +197,7 @@ export default function ClientsPage() {
                   onChange={(e) =>
                     setForm({ ...form, address: e.target.value })
                   }
-                  placeholder="Google Maps APIでの移動時間算出に使用"
+                  placeholder="通常の住所（請求書等に使用）"
                 />
               </div>
               <div>
@@ -201,6 +220,43 @@ export default function ClientsPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* マップ用位置（任意） */}
+              <div className="pt-2 border-t">
+                <div className="flex items-center justify-between mb-1">
+                  <Label className="text-sm">マップ用位置（任意）</Label>
+                  {(form.map_latitude !== null || form.map_longitude !== null) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setForm({ ...form, map_latitude: null, map_longitude: null, map_note: "" })}
+                    >
+                      クリア
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  通常の住所とは別の場所（施設入所中など）の位置を指定する場合に設定。距離計算はここで指定した座標を優先します。
+                </p>
+                <Input
+                  value={form.map_note}
+                  onChange={(e) => setForm({ ...form, map_note: e.target.value })}
+                  placeholder="メモ（例: 御宿町の特養○○ 101号室）"
+                  className="mb-2"
+                />
+                <GoogleMapPicker
+                  latitude={form.map_latitude}
+                  longitude={form.map_longitude}
+                  fallbackAddress={form.address}
+                  onChange={(lat, lng) => setForm({ ...form, map_latitude: lat, map_longitude: lng })}
+                />
+                {form.map_latitude !== null && form.map_longitude !== null && (
+                  <p className="text-xs text-muted-foreground mt-1 font-mono">
+                    緯度: {form.map_latitude.toFixed(6)} / 経度: {form.map_longitude.toFixed(6)}
+                  </p>
+                )}
+              </div>
+
               <Button onClick={handleSubmit} className="w-full">
                 {editingId ? "更新" : "登録"}
               </Button>
@@ -209,8 +265,8 @@ export default function ClientsPage() {
         </Dialog>
       </div>
 
-      {/* 事業所フィルター */}
-      <div className="flex items-center gap-2 mb-4">
+      {/* 事業所フィルター + 検索 */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
         <label className="text-sm font-medium whitespace-nowrap">事業所</label>
         <Select value={filterOfficeId || "__all__"} onValueChange={(v) => setFilterOfficeId(v === "__all__" ? "" : (v ?? ""))}>
           <SelectTrigger className="w-48">
@@ -223,10 +279,21 @@ export default function ClientsPage() {
             ))}
           </SelectContent>
         </Select>
+        <Input
+          type="search"
+          placeholder="利用者番号 or 名前で検索"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-64"
+        />
         <span className="text-sm text-muted-foreground">
-          {filterOfficeId
-            ? `${clients.filter(c => c.office_id === filterOfficeId).length}名`
-            : `${clients.length}名`}
+          {(() => {
+            const q = searchQuery.trim().toLowerCase();
+            const matches = clients
+              .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
+              .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
+            return `${matches.length}名`;
+          })()}
         </span>
       </div>
 
@@ -241,13 +308,14 @@ export default function ClientsPage() {
         </TableHeader>
         <TableBody>
           {(() => {
-            const filtered = filterOfficeId
-              ? clients.filter(c => c.office_id === filterOfficeId)
-              : clients;
+            const q = searchQuery.trim().toLowerCase();
+            const filtered = clients
+              .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
+              .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
             if (filtered.length === 0) return (
               <TableRow>
                 <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  利用者が登録されていません
+                  {clients.length === 0 ? "利用者が登録されていません" : "該当する利用者がいません"}
                 </TableCell>
               </TableRow>
             );

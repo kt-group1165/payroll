@@ -89,6 +89,12 @@ export interface Client {
   name: string;
   address: string;
   office_id: string;
+  /** マップ用緯度（設定時はこの座標で距離計算） */
+  map_latitude: number | null;
+  /** マップ用経度 */
+  map_longitude: number | null;
+  /** マップ位置のメモ */
+  map_note: string | null;
   created_at: string;
   updated_at: string;
 }
