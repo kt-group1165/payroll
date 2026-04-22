@@ -244,16 +244,38 @@ export default function OfficesPage() {
       const buf = ev.target?.result as ArrayBuffer;
       const bytes = new Uint8Array(buf);
       const isUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
-      const text = new TextDecoder(isUtf8Bom ? "utf-8" : "shift-jis").decode(buf);
-      const lines = text.split(/\r?\n/).filter((l) => l.trim());
-      if (lines.length < 2) { toast.error("データ行がありません"); return; }
+      const text = new TextDecoder(isUtf8Bom ? "utf-8" : "shift-jis").decode(buf).replace(/^\uFEFF/, "");
+
+      // 引用符付きカンマに対応するCSV行パーサ
+      const parseCsvLine = (line: string): string[] => {
+        const out: string[] = [];
+        let cur = ""; let inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+            else { inQ = !inQ; }
+          } else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
+          else { cur += ch; }
+        }
+        out.push(cur);
+        return out;
+      };
+
+      // 全角数字・全角マイナス・全角ピリオドを半角化
+      const toHalfNum = (s: string) =>
+        s.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+         .replace(/[．。]/g, ".").replace(/[ー−―]/g, "-").trim();
+
+      const rows = text.split(/\r?\n/).filter((l) => l.trim()).map(parseCsvLine);
+      if (rows.length < 2) { toast.error("データ行がありません"); return; }
 
       const get = (row: string[], headers: string[], name: string) => {
         const idx = headers.indexOf(name);
-        return idx >= 0 ? (row[idx]?.replace(/^"|"$/g, "") ?? "") : "";
+        return idx >= 0 ? (row[idx] ?? "") : "";
       };
 
-      const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim());
+      const headers = rows[0].map((h) => h.trim());
 
       // 最新の法人情報を取得してマップ構築
       const { data: compData } = await supabase.from("companies").select("id,name");
@@ -265,8 +287,13 @@ export default function OfficesPage() {
       };
       const payload: Record<string, string | number | null>[] = [];
       const errors: string[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",");
+      const numOr = (s: string, fallback: number) => {
+        const n = parseFloat(toHalfNum(s));
+        return isNaN(n) ? fallback : n;
+      };
+
+      for (let i = 1; i < rows.length; i++) {
+        const cols = rows[i];
         const officeNum = get(cols, headers, "事業所番号").trim();
         const name = (get(cols, headers, "正式名称") || get(cols, headers, "名称")).trim();
         if (!officeNum || !name) continue;
@@ -282,14 +309,14 @@ export default function OfficesPage() {
           continue;
         }
 
-        // 週起算曜日: 0-6の数値、または「日〜土」の漢字1文字に対応
+        // 週起算曜日: 0-6の数値、または「日〜土」の漢字に対応。全角数字も可
         const rawWeek = get(cols, headers, "週起算曜日").replace(/[\s\u3000曜日]/g, "");
         let weekStart = 0;
         if (rawWeek) {
           if (DAY_MAP[rawWeek] !== undefined) {
             weekStart = DAY_MAP[rawWeek];
           } else {
-            const n = parseInt(rawWeek, 10);
+            const n = parseInt(toHalfNum(rawWeek), 10);
             if (isNaN(n) || n < 0 || n > 6) {
               errors.push(`行${i + 1}: 週起算曜日「${rawWeek}」は無効（0-6 または 日〜土）`);
               continue;
@@ -305,14 +332,14 @@ export default function OfficesPage() {
           address: get(cols, headers, "住所").trim(),
           office_type: officeType,
           work_week_start: weekStart,
-          travel_unit_price: parseFloat(get(cols, headers, "出張単価") || "0") || 0,
-          commute_unit_price: parseFloat(get(cols, headers, "通勤単価") || "0") || 0,
-          treatment_subsidy_amount: parseFloat(get(cols, headers, "処遇補助金") || "0") || 0,
-          cancel_unit_price: parseFloat(get(cols, headers, "キャンセル単価") || "0") || 0,
-          travel_allowance_rate: parseFloat(get(cols, headers, "移動手当単価") || "0") || 0,
-          communication_fee_amount: parseFloat(get(cols, headers, "通信費") || "0") || 0,
-          meeting_unit_price: parseFloat(get(cols, headers, "会議1単価") || "0") || 0,
-          distance_adjustment_rate: parseFloat(get(cols, headers, "距離調整係数") || "100") || 100,
+          travel_unit_price: numOr(get(cols, headers, "出張単価"), 0),
+          commute_unit_price: numOr(get(cols, headers, "通勤単価"), 0),
+          treatment_subsidy_amount: numOr(get(cols, headers, "処遇補助金"), 0),
+          cancel_unit_price: numOr(get(cols, headers, "キャンセル単価"), 0),
+          travel_allowance_rate: numOr(get(cols, headers, "移動手当単価"), 0),
+          communication_fee_amount: numOr(get(cols, headers, "通信費"), 0),
+          meeting_unit_price: numOr(get(cols, headers, "会議1単価"), 0),
+          distance_adjustment_rate: numOr(get(cols, headers, "距離調整係数"), 100),
           company_id: companyId,
         });
       }
