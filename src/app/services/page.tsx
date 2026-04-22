@@ -105,6 +105,7 @@ interface Office {
   office_number: string;
   name: string;
   short_name: string;
+  office_type: string;
 }
 
 // ====================
@@ -630,7 +631,7 @@ function RatesTab() {
       supabase.from("service_categories").select("*").order("sort_order"),
       supabase
         .from("offices")
-        .select("id, office_number, name, short_name")
+        .select("id, office_number, name, short_name, office_type")
         .order("name"),
       supabase
         .from("service_type_mappings")
@@ -701,15 +702,19 @@ function RatesTab() {
   };
 
   // 事業所番号＋サービスコード単位でCSV出力
+  // 対象: 訪問介護事業所 + 既に時給が1件以上設定されている事業所
   const handleExport = () => {
     const rateByKey = new Map<string, number>();
+    const officesWithRates = new Set<string>();
     for (const r of rates) {
       rateByKey.set(`${r.office_id}|${r.category_id}`, r.hourly_rate);
+      officesWithRates.add(r.office_id);
     }
     const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
-    const sortedOffices = offices.slice().sort((a, b) =>
-      a.office_number.localeCompare(b.office_number)
-    );
+    const targetOffices = offices
+      .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id))
+      .slice()
+      .sort((a, b) => a.office_number.localeCompare(b.office_number));
     const sortedMappings = mappings.slice().sort((a, b) =>
       a.service_code.localeCompare(b.service_code)
     );
@@ -717,7 +722,7 @@ function RatesTab() {
     const rows: string[][] = [
       ["事業所番号", "事業所名", "サービスコード", "サービス名", "類型", "時給"],
     ];
-    for (const office of sortedOffices) {
+    for (const office of targetOffices) {
       for (const m of sortedMappings) {
         const rate = rateByKey.get(`${office.id}|${m.category_id}`);
         rows.push([
@@ -731,7 +736,7 @@ function RatesTab() {
       }
     }
     downloadCsv("時給設定.csv", rows);
-    toast.success(`${rows.length - 1}件をエクスポートしました`);
+    toast.success(`${targetOffices.length}事業所 × ${sortedMappings.length}サービス = ${rows.length - 1}件をエクスポートしました`);
   };
 
   // UTF-8/Shift-JIS両対応、事業所番号＋サービスコードをキーにupsert
