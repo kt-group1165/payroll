@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,9 +40,30 @@ const OFFICE_TYPES: OfficeType[] = [
   "本社",
 ];
 
+const CSV_HEADERS = [
+  "事業所番号", "正式名称", "略称", "住所", "種別", "週起算曜日",
+  "出張単価", "通勤単価", "処遇補助金", "キャンセル単価",
+  "移動手当単価", "通信費", "会議1単価", "距離調整係数", "法人名",
+] as const;
+
+function downloadCsv(filename: string, rows: string[][]): void {
+  const escape = (v: string) =>
+    v.includes(",") || v.includes('"') || v.includes("\n")
+      ? `"${v.replace(/"/g, '""')}"`
+      : v;
+  const csv = rows.map((r) => r.map(escape).join(",")).join("\r\n");
+  const bom = "\uFEFF";
+  const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function OfficesPage() {
   const [offices, setOffices] = useState<Office[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const importRef = useRef<HTMLInputElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -182,16 +203,125 @@ export default function OfficesPage() {
     fetchOffices();
   };
 
+  // ─── CSV エクスポート ─────────────────────────────────────────
+
+  const companyMap = new Map(companies.map((c) => [c.id, c.name]));
+
+  function handleExport() {
+    const rows: string[][] = [CSV_HEADERS.slice()];
+    for (const o of offices) {
+      rows.push([
+        o.office_number,
+        o.name,
+        o.short_name ?? "",
+        o.address,
+        o.office_type,
+        String(o.work_week_start ?? 0),
+        String(o.travel_unit_price ?? 0),
+        String(o.commute_unit_price ?? 0),
+        String(o.treatment_subsidy_amount ?? 0),
+        String(o.cancel_unit_price ?? 0),
+        String(o.travel_allowance_rate ?? 0),
+        String(o.communication_fee_amount ?? 0),
+        String(o.meeting_unit_price ?? 0),
+        String(o.distance_adjustment_rate ?? 100),
+        o.company_id ? (companyMap.get(o.company_id) ?? "") : "",
+      ]);
+    }
+    downloadCsv("事業所一覧.csv", rows);
+    toast.success(`${offices.length}件をエクスポートしました`);
+  }
+
+  // ─── CSV インポート ───────────────────────────────────────────
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const buf = ev.target?.result as ArrayBuffer;
+      const bytes = new Uint8Array(buf);
+      const isUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+      const text = new TextDecoder(isUtf8Bom ? "utf-8" : "shift-jis").decode(buf);
+      const lines = text.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) { toast.error("データ行がありません"); return; }
+
+      const get = (row: string[], headers: string[], name: string) => {
+        const idx = headers.indexOf(name);
+        return idx >= 0 ? (row[idx]?.replace(/^"|"$/g, "") ?? "") : "";
+      };
+
+      const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim());
+
+      // 最新の法人情報を取得してマップ構築
+      const { data: compData } = await supabase.from("companies").select("id,name");
+      const cMap = new Map((compData ?? []).map((c) => [c.name, c.id]));
+
+      const payload: Record<string, string | number | null>[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",");
+        const officeNum = get(cols, headers, "事業所番号").trim();
+        const name = get(cols, headers, "名称").trim();
+        if (!officeNum || !name) continue;
+
+        const companyName = get(cols, headers, "法人名").trim();
+        const companyId = companyName ? (cMap.get(companyName) ?? null) : null;
+
+        payload.push({
+          office_number: officeNum,
+          name,
+          short_name: get(cols, headers, "略称"),
+          address: get(cols, headers, "住所"),
+          office_type: get(cols, headers, "種別") || "訪問介護",
+          work_week_start: parseInt(get(cols, headers, "週起算曜日") || "0", 10),
+          travel_unit_price: parseFloat(get(cols, headers, "出張単価") || "0") || 0,
+          commute_unit_price: parseFloat(get(cols, headers, "通勤単価") || "0") || 0,
+          treatment_subsidy_amount: parseFloat(get(cols, headers, "処遇補助金") || "0") || 0,
+          cancel_unit_price: parseFloat(get(cols, headers, "キャンセル単価") || "0") || 0,
+          travel_allowance_rate: parseFloat(get(cols, headers, "移動手当単価") || "0") || 0,
+          communication_fee_amount: parseFloat(get(cols, headers, "通信費") || "0") || 0,
+          meeting_unit_price: parseFloat(get(cols, headers, "会議1単価") || "0") || 0,
+          distance_adjustment_rate: parseFloat(get(cols, headers, "距離調整係数") || "100") || 100,
+          company_id: companyId,
+        });
+      }
+
+      if (payload.length === 0) { toast.error("有効なデータがありません"); return; }
+
+      const { error } = await supabase.from("offices").upsert(payload, { onConflict: "office_number" });
+      if (error) { toast.error(`取り込みエラー: ${error.message}`); return; }
+      toast.success(`${payload.length}件を取り込みました`);
+      fetchOffices();
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
   return (
     <div>
+      <input
+        ref={importRef}
+        type="file"
+        accept=".csv"
+        className="hidden"
+        onChange={handleImportFile}
+      />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">事業所一覧</h2>
-        <Dialog
-          open={isOpen}
-          onOpenChange={(open) => {
-            setIsOpen(open);
-            if (!open) resetForm();
-          }}
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExport} disabled={offices.length === 0}>
+            📥 CSV出力
+          </Button>
+          <Button variant="outline" onClick={() => importRef.current?.click()}>
+            📤 CSV取り込み
+          </Button>
+          <Dialog
+            open={isOpen}
+            onOpenChange={(open) => {
+              setIsOpen(open);
+              if (!open) resetForm();
+            }}
         >
           <DialogTrigger
             render={<Button />}
@@ -382,7 +512,8 @@ export default function OfficesPage() {
               </Button>
             </div>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </div>
 
       <Table>
