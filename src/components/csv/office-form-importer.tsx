@@ -199,49 +199,77 @@ export function OfficeFormImporter() {
 
   return (
     <div className="space-y-4">
-      {/* 取り込み済みデータ */}
+      {/* 取り込み済みデータ（事業所 × 月 の行列表示） */}
       {existingMonths.length > 0 && (() => {
-        const grouped = new Map<string, { month: string; count: number }[]>();
+        const byOfficeMonth = new Map<string, number>();
+        const officeSet = new Set<string>();
+        const monthSet = new Set<string>();
         for (const { month, office_number, count } of existingMonths) {
-          if (!grouped.has(office_number)) grouped.set(office_number, []);
-          grouped.get(office_number)!.push({ month, count });
+          byOfficeMonth.set(`${office_number}|${month}`, count);
+          officeSet.add(office_number);
+          monthSet.add(month);
         }
-        const officeNums = [...grouped.keys()].sort((a, b) => {
+        const monthList = [...monthSet].sort().reverse();
+        const officeList = [...officeSet].sort((a, b) => {
           const _oa = offices.find((o) => o.office_number === a);
           const _ob = offices.find((o) => o.office_number === b);
-          const na = (_oa?.short_name || _oa?.name) ?? a;
-          const nb = (_ob?.short_name || _ob?.name) ?? b;
-          return na.localeCompare(nb, "ja");
+          return ((_oa?.short_name || _oa?.name) ?? a).localeCompare((_ob?.short_name || _ob?.name) ?? b, "ja");
         });
+        const fmtMonth = (m: string) => `${m.slice(0, 4)}/${m.slice(4, 6)}`;
+        const grandTotal = [...byOfficeMonth.values()].reduce((s, n) => s + n, 0);
+
         return (
-          <div className="border rounded-md p-4 space-y-3">
-            <p className="text-sm font-medium text-muted-foreground">取り込み済みデータ</p>
-            {officeNums.map((office_number) => {
-              const _oc = offices.find((o) => o.office_number === office_number);
-              const officeName = (_oc?.short_name || _oc?.name) ?? office_number;
-              const months = grouped.get(office_number)!;
-              return (
-                <div key={office_number}>
-                  <p className="text-xs font-semibold text-muted-foreground mb-1">{officeName}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {months.map(({ month, count }) => {
-                      const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
-                      return (
-                        <div key={`${month}__${office_number}`} className="flex items-center gap-1 border rounded px-2 py-1 text-sm">
-                          <span>{label}（{count.toLocaleString()}件）</span>
-                          <button
-                            onClick={() => handleClearMonth(month, office_number, count)}
-                            className="text-destructive hover:text-destructive/80 ml-1 text-xs font-medium"
-                          >
-                            削除
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="border rounded-md overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 flex items-center justify-between">
+              <span className="text-sm font-medium">取り込み済みデータ</span>
+              <span className="text-xs text-muted-foreground">
+                {officeList.length}事業所 × {monthList.length}ヶ月・総{grandTotal.toLocaleString()}件
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/20 border-b">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 font-medium sticky left-0 bg-muted/20 z-10 min-w-[180px]">事業所</th>
+                    {monthList.map((m) => (
+                      <th key={m} className="text-right px-3 py-1.5 font-medium whitespace-nowrap">{fmtMonth(m)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {officeList.map((office_number) => {
+                    const _oc = offices.find((o) => o.office_number === office_number);
+                    const officeName = (_oc?.short_name || _oc?.name) ?? office_number;
+                    return (
+                      <tr key={office_number} className="border-b last:border-b-0 hover:bg-muted/10">
+                        <td className="px-3 py-1.5 sticky left-0 bg-background">{officeName}</td>
+                        {monthList.map((m) => {
+                          const count = byOfficeMonth.get(`${office_number}|${m}`);
+                          return (
+                            <td key={m} className="px-3 py-1.5 text-right whitespace-nowrap">
+                              {count == null ? (
+                                <span className="text-muted-foreground/40">—</span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="font-mono">{count.toLocaleString()}</span>
+                                  <button
+                                    onClick={() => handleClearMonth(m, office_number, count)}
+                                    className="text-destructive hover:text-destructive/80 text-[10px] ml-0.5"
+                                    title="この月のデータを削除"
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
       })()}
