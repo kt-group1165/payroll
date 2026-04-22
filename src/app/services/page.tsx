@@ -886,10 +886,13 @@ function RatesTab() {
                     setForm({ ...form, office_id: v ?? "" })
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="事業所を選択" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    className="max-h-[60vh] min-w-[360px]"
+                  >
                     {offices.map((o) => (
                       <SelectItem key={o.id} value={o.id}>
                         {o.short_name || o.name}
