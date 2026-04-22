@@ -443,7 +443,12 @@ export default function SalaryPage() {
 
       const headers = rows[0].map((h) => h.trim());
       const idx = (name: string) => headers.indexOf(name);
-      const empByNum = new Map(employees.map((e) => [e.employee_number, e]));
+      // 事業所フィルタが選択されていれば、その事業所の職員のみから突合する
+      // （同じ社員番号が別事業所で別人に採番されている衝突対策）
+      const candidateEmps = filterOfficeId
+        ? employees.filter((e) => e.office_id === filterOfficeId)
+        : employees;
+      const empByNum = new Map(candidateEmps.map((e) => [e.employee_number, e]));
       const toInt = (s: string) => parseInt(s.trim(), 10) || 0;
 
       const parsed: ImportRow[] = [];
