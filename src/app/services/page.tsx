@@ -414,9 +414,21 @@ function MappingsTab() {
       return;
     }
 
+    // サービスコード重複を排除（最後の値を採用）+ 重複件数を通知
+    const dedupMap = new Map<string, typeof newMappings[number]>();
+    const duplicateCodes = new Set<string>();
+    for (const m of newMappings) {
+      if (dedupMap.has(m.service_code)) duplicateCodes.add(m.service_code);
+      dedupMap.set(m.service_code, m);
+    }
+    const dedupedMappings = Array.from(dedupMap.values());
+    const dupMsg = duplicateCodes.size > 0
+      ? `\nサービスコード重複${duplicateCodes.size}件は後勝ちで統合（例: ${[...duplicateCodes].slice(0, 3).join(", ")}）`
+      : "";
+
     if (
       !confirm(
-        `既存のマッピングを全て削除して、${newMappings.length}件で上書きしますか？`
+        `既存のマッピングを全て削除して、${dedupedMappings.length}件で上書きしますか？${dupMsg}`
       )
     )
       return;
@@ -429,12 +441,12 @@ function MappingsTab() {
 
     const { error } = await supabase
       .from("service_type_mappings")
-      .insert(newMappings);
+      .insert(dedupedMappings);
     if (error) {
       toast.error(`インポートエラー: ${error.message}`);
       return;
     }
-    toast.success(`${newMappings.length}件のマッピングをインポートしました`);
+    toast.success(`${dedupedMappings.length}件のマッピングをインポートしました`);
     fetchData();
     // inputをリセット
     e.target.value = "";
