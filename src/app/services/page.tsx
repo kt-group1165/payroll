@@ -713,7 +713,7 @@ function RatesTab() {
     fetchData();
   };
 
-  // 事業所番号＋サービスコード単位でCSV出力
+  // 事業所 × 類型 単位でCSV出力（UIと同じ粒度・DB保存と同じ粒度）
   // 対象: 訪問介護事業所 + 既に時給が1件以上設定されている事業所
   const handleExport = () => {
     const rateByKey = new Map<string, number>();
@@ -722,36 +722,31 @@ function RatesTab() {
       rateByKey.set(`${r.office_id}|${r.category_id}`, r.hourly_rate);
       officesWithRates.add(r.office_id);
     }
-    const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
     const targetOffices = offices
       .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id))
       .slice()
       .sort((a, b) => a.office_number.localeCompare(b.office_number));
-    const sortedMappings = mappings.slice().sort((a, b) =>
-      a.service_code.localeCompare(b.service_code)
-    );
+    const sortedCategories = categories.slice().sort((a, b) => a.sort_order - b.sort_order);
 
     const rows: string[][] = [
-      ["事業所番号", "事業所名", "サービスコード", "サービス名", "類型", "時給"],
+      ["事業所番号", "事業所名", "類型", "時給"],
     ];
     for (const office of targetOffices) {
-      for (const m of sortedMappings) {
-        const rate = rateByKey.get(`${office.id}|${m.category_id}`);
+      for (const c of sortedCategories) {
+        const rate = rateByKey.get(`${office.id}|${c.id}`);
         rows.push([
           office.office_number,
           office.short_name || office.name,
-          m.service_code,
-          m.service_name,
-          categoryMap.get(m.category_id) ?? "",
+          c.name,
           rate != null ? rate.toString() : "",
         ]);
       }
     }
     downloadCsv("時給設定.csv", rows);
-    toast.success(`${targetOffices.length}事業所 × ${sortedMappings.length}サービス = ${rows.length - 1}件をエクスポートしました`);
+    toast.success(`${targetOffices.length}事業所 × ${sortedCategories.length}類型 = ${rows.length - 1}件をエクスポートしました`);
   };
 
-  // UTF-8/Shift-JIS両対応、事業所番号＋サービスコードをキーにupsert
+  // UTF-8/Shift-JIS両対応、事業所番号＋類型名をキーに(office_id, category_id)へ変換してupsert
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -777,16 +772,16 @@ function RatesTab() {
       const headers = parsed[0].map((h) => h.trim());
       const idx = (name: string) => headers.indexOf(name);
       const officeNumIdx = idx("事業所番号");
-      const serviceCodeIdx = idx("サービスコード");
+      const categoryIdx = idx("類型");
       const rateIdx = idx("時給");
-      if (officeNumIdx < 0 || serviceCodeIdx < 0 || rateIdx < 0) {
-        toast.error("ヘッダーに「事業所番号」「サービスコード」「時給」が必要です");
+      if (officeNumIdx < 0 || categoryIdx < 0 || rateIdx < 0) {
+        toast.error("ヘッダーに「事業所番号」「類型」「時給」が必要です");
         if (importRef.current) importRef.current.value = "";
         return;
       }
 
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
-      const mappingByCode = new Map(mappings.map((m) => [m.service_code, m]));
+      const categoryByName = new Map(categories.map((c) => [c.name, c]));
 
       // (office_id, category_id)で重複排除（最後の値が勝つ）
       const upsertMap = new Map<
@@ -798,9 +793,9 @@ function RatesTab() {
       for (let i = 1; i < parsed.length; i++) {
         const r = parsed[i];
         const officeNum = (r[officeNumIdx] ?? "").trim();
-        const code = (r[serviceCodeIdx] ?? "").trim();
+        const catName = (r[categoryIdx] ?? "").trim();
         const rateStr = (r[rateIdx] ?? "").trim();
-        if (!officeNum || !code) continue;
+        if (!officeNum || !catName) continue;
         if (!rateStr) continue; // 時給が空欄の行は未設定としてスキップ
 
         const office = officeByNumber.get(officeNum);
@@ -808,9 +803,9 @@ function RatesTab() {
           errors.push(`行${i + 1}: 事業所番号「${officeNum}」が未登録`);
           continue;
         }
-        const mapping = mappingByCode.get(code);
-        if (!mapping) {
-          errors.push(`行${i + 1}: サービスコード「${code}」のマッピング未登録`);
+        const cat = categoryByName.get(catName);
+        if (!cat) {
+          errors.push(`行${i + 1}: 類型「${catName}」が未登録`);
           continue;
         }
         const rate = parseInt(rateStr, 10);
@@ -820,9 +815,9 @@ function RatesTab() {
         }
         if (rate <= 0) continue;
 
-        upsertMap.set(`${office.id}|${mapping.category_id}`, {
+        upsertMap.set(`${office.id}|${cat.id}`, {
           office_id: office.id,
-          category_id: mapping.category_id,
+          category_id: cat.id,
           hourly_rate: rate,
         });
       }
