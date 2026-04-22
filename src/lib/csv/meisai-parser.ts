@@ -27,10 +27,11 @@ const CORE_HEADERS = [
   "時間帯",
   "サービス型",
   "金額",
-  "交通費",
 ] as const;
 
+// CSVによって有無が異なるヘッダ（欠損時は空文字として扱う）
 const OPTIONAL_HEADERS = [
+  "交通費",
   "電話代",
   "調整費",
   "会議費",
