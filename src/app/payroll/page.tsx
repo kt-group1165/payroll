@@ -106,7 +106,7 @@ type OfficeFormRecord = {
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
-type Office              = { id: string; office_number: string; name: string; short_name: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
+type Office              = { id: string; office_number: string; name: string; short_name: string; office_type: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -308,6 +308,12 @@ function formatWorkHours(min: number): string {
 
 const yen = (n: number) => n.toLocaleString("ja-JP") + "円";
 
+/** km値を小数点2位まで切り上げ表示。浮動小数点誤差を先に除去する */
+function formatKm(km: number): string {
+  const clean = Math.round(km * 1e8) / 1e8;
+  return (Math.ceil(clean * 100) / 100).toFixed(2);
+}
+
 function formatProcessingMonth(m: string): string {
   if (!m || m.length < 6) return m;
   return `${m.slice(0, 4)}年${parseInt(m.slice(4, 6), 10)}月`;
@@ -494,6 +500,7 @@ export default function PayrollPage() {
   const [selectedMonth, setSelectedMonth] = useState("");
   const [offices, setOffices] = useState<Office[]>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState("");
+  const [selectedOfficeType, setSelectedOfficeType] = useState<string>("訪問介護");
   const [tab, setTab] = useState<"hourly" | "monthly">("monthly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -520,10 +527,13 @@ export default function PayrollPage() {
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
-    supabase.from("offices").select("id,office_number,name,short_name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as unknown as Office[]);
-      if (data.length > 0) setSelectedOfficeId((data as unknown as Office[])[0].id);
+      // 訪問介護の最初の事業所を初期選択
+      const firstVisitCare = (data as unknown as Office[]).find((o) => o.office_type === "訪問介護");
+      if (firstVisitCare) setSelectedOfficeId(firstVisitCare.id);
+      else if (data.length > 0) setSelectedOfficeId((data as unknown as Office[])[0].id);
     });
   }, []);
 
@@ -583,7 +593,7 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("service_type_mappings").select("service_code,category_id"),
         supabase.from("service_categories").select("id,name"),
-        supabase.from("offices").select("id,office_number,name,short_name,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
+        supabase.from("offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
         supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         fetchAllSalarySettings(),
@@ -1149,7 +1159,39 @@ export default function PayrollPage() {
       <h2 className="text-2xl font-bold mb-6">給与計算</h2>
 
       <Card className="mb-6">
-        <CardContent className="pt-6">
+        <CardContent className="pt-6 space-y-3">
+          {/* 種別タブ: 事業所をoffice_typeで絞り込む */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-sm font-medium whitespace-nowrap">種別</label>
+            {(() => {
+              // 実際に登録されている office_type だけ表示
+              const availableTypes = [...new Set(offices.map((o) => o.office_type).filter(Boolean))]
+                .sort((a, b) => a.localeCompare(b, "ja"));
+              if (availableTypes.length === 0) return <span className="text-xs text-muted-foreground">（事業所なし）</span>;
+              return availableTypes.map((t) => {
+                const count = offices.filter((o) => o.office_type === t).length;
+                const active = selectedOfficeType === t;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      setSelectedOfficeType(t);
+                      // 種別に該当する最初の事業所を選択
+                      const first = offices.find((o) => o.office_type === t);
+                      if (first) setSelectedOfficeId(first.id);
+                    }}
+                    className={`px-3 py-1 rounded-full text-sm transition-colors ${
+                      active ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+                    }`}
+                  >
+                    {t}
+                    <span className="ml-1 text-xs opacity-70">{count}</span>
+                  </button>
+                );
+              });
+            })()}
+          </div>
+
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium whitespace-nowrap">事業所</label>
@@ -1158,10 +1200,13 @@ export default function PayrollPage() {
                 value={selectedOfficeId}
                 onChange={(e) => setSelectedOfficeId(e.target.value)}
               >
-                {offices.length === 0 && <option value="">（事業所なし）</option>}
-                {offices.map((o) => (
-                  <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
-                ))}
+                {(() => {
+                  const filtered = offices.filter((o) => o.office_type === selectedOfficeType);
+                  if (filtered.length === 0) return <option value="">（該当事業所なし）</option>;
+                  return filtered.map((o) => (
+                    <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
+                  ));
+                })()}
               </select>
             </div>
             <div className="flex items-center gap-2">
@@ -1415,9 +1460,9 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">{sm.commuteKmTotal > 0 ? `${sm.commuteKmTotal} km` : <span className="text-muted-foreground">—</span>}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{sm.commuteKmTotal > 0 ? `${formatKm(sm.commuteKmTotal)} km` : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.commute_fee > 0 ? yen(emp.commute_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.commute_distance_m > 0 ? `${(emp.commute_distance_m / 1000).toFixed(1)} km` : <span className="text-muted-foreground">—</span>}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{emp.commute_distance_m > 0 ? `${formatKm(emp.commute_distance_m / 1000)} km` : <span className="text-muted-foreground">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.business_trip_fee > 0 ? yen(emp.business_trip_fee) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right font-bold">{yen(grandTotal)}</td>
                               <td className="px-3 py-2 text-center">
@@ -1561,11 +1606,11 @@ export default function PayrollPage() {
                         {/* 残業・休日・残業総額 */}
                         <td></td><td></td><td></td>
                         {/* 通勤距離 */}
-                        <td className="px-3 py-2 text-right font-mono text-xs">{`${hourlyResults.reduce((s, e) => s + e.summary.commuteKmTotal, 0)} km`}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{`${formatKm(hourlyResults.reduce((s, e) => s + e.summary.commuteKmTotal, 0))} km`}</td>
                         {/* 通勤費 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.commute_fee, 0))}</td>
                         {/* 出張距離 */}
-                        <td className="px-3 py-2 text-right font-mono text-xs">{`${(hourlyResults.reduce((s, e) => s + e.commute_distance_m, 0) / 1000).toFixed(1)} km`}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{`${formatKm(hourlyResults.reduce((s, e) => s + e.commute_distance_m, 0) / 1000)} km`}</td>
                         {/* 出張費 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.business_trip_fee, 0))}</td>
                         {/* 総支給額 */}
@@ -1666,8 +1711,8 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{(sm.visitMinutes - sm.visitMinutesExcludingAccompanied) > 0 ? formatMinutes(sm.visitMinutes - sm.visitMinutesExcludingAccompanied) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
-                              <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${effectiveTravelKm(p)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{sm.commuteKmTotal > 0 ? `${sm.commuteKmTotal}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${formatKm(effectiveTravelKm(p))}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{sm.commuteKmTotal > 0 ? `${formatKm(sm.commuteKmTotal)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.base_personal_salary > 0 ? yen(s.base_personal_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.skill_salary > 0 ? yen(s.skill_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.position_allowance > 0 ? yen(s.position_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -1840,8 +1885,8 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.accompaniedCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{formatMinutes(monthlyResults.reduce((s, p) => s + p.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.hrdCount, 0) || "—"}</td>
-                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0) > 0 ? `${monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0)}km` : "—"}</td>
-                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0) > 0 ? `${monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0)}km` : "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0) > 0 ? `${formatKm(monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0))}km` : "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0) > 0 ? `${formatKm(monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0))}km` : "—"}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.base_personal_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.skill_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.position_allowance ?? 0), 0))}</td>
