@@ -47,12 +47,59 @@ export function BillingImporter() {
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(false);
   const [offices, setOffices] = useState<OfficeLite[]>([]);
+  // 取り込み済みデータの集計: key=`${segment}|${office_number}|${billing_month}` → {amount, unit, daily}
+  const [existingMatrix, setExistingMatrix] = useState<Map<string, { amount: number; unit: number; daily: number }>>(new Map());
+
+  const fetchExistingMatrix = useCallback(async () => {
+    const m = new Map<string, { amount: number; unit: number; daily: number }>();
+    const ensure = (k: string) => { if (!m.has(k)) m.set(k, { amount: 0, unit: 0, daily: 0 }); return m.get(k)!; };
+    const pageSize = 1000;
+    const scan = async (table: string, field: "amount" | "unit" | "daily") => {
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from(table)
+          .select("segment, office_number, billing_month")
+          .range(from, from + pageSize - 1);
+        if (!data || data.length === 0) break;
+        for (const r of data as { segment: string; office_number: string | null; billing_month: string }[]) {
+          if (!r.office_number || !r.billing_month) continue;
+          const key = `${r.segment}|${r.office_number}|${r.billing_month}`;
+          ensure(key)[field]++;
+        }
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+    };
+    await scan("billing_amount_items", "amount");
+    await scan("billing_unit_items", "unit");
+    await scan("billing_daily_items", "daily");
+    setExistingMatrix(m);
+  }, []);
 
   useEffect(() => {
     supabase.from("offices").select("id, office_number, name, short_name").then(({ data }) => {
       if (data) setOffices(data as OfficeLite[]);
     });
-  }, []);
+    fetchExistingMatrix();
+  }, [fetchExistingMatrix]);
+
+  const handleClearScope = async (segment: string, office_number: string, billing_month: string, counts: { amount: number; unit: number; daily: number }) => {
+    const off = offices.find((o) => o.office_number === office_number);
+    const officeName = (off?.short_name || off?.name) ?? office_number;
+    const label = `${billing_month.slice(0, 4)}年${parseInt(billing_month.slice(4, 6), 10)}月`;
+    const total = counts.amount + counts.unit + counts.daily;
+    if (!confirm(`${officeName} ${label} の${segment}データ（金額${counts.amount}件 / 単位${counts.unit}件 / 利用日${counts.daily}件、計${total}件）を削除しますか？`)) return;
+    const where = { segment, office_number, billing_month };
+    const q = (table: string) => supabase.from(table).delete().match(where);
+    const [r1, r2, r3] = await Promise.all([q("billing_amount_items"), q("billing_unit_items"), q("billing_daily_items")]);
+    if (r1.error || r2.error || r3.error) {
+      toast.error(`削除エラー: ${(r1.error || r2.error || r3.error)!.message}`);
+      return;
+    }
+    toast.success(`${officeName} ${label}(${segment}) を削除しました`);
+    fetchExistingMatrix();
+  };
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
@@ -153,6 +200,7 @@ export function BillingImporter() {
       toast.success(`金額${allAmount.length}件 / 単位${allUnit.length}件 / 利用日${allDaily.length}件を取り込みました`);
       setImported(true);
       setResults([]);
+      fetchExistingMatrix();
     } catch (e) {
       toast.error(`取り込みエラー: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -177,6 +225,84 @@ export function BillingImporter() {
         <br />
         同一(事業所×月)の既存データは削除されてから再挿入されます（重複防止）。
       </p>
+
+      {/* 取り込み済みデータの行列表示 */}
+      {existingMatrix.size > 0 && (() => {
+        const offSet = new Set<string>();
+        const monthSet = new Set<string>();
+        const segSet = new Set<string>();
+        for (const k of existingMatrix.keys()) {
+          const [seg, off, mm] = k.split("|");
+          segSet.add(seg); offSet.add(off); monthSet.add(mm);
+        }
+        const segments = [...segSet].sort();
+        const monthList = [...monthSet].sort().reverse();
+        const officeList = [...offSet].sort((a, b) => {
+          const oa = offices.find((o) => o.office_number === a);
+          const ob = offices.find((o) => o.office_number === b);
+          return ((oa?.short_name || oa?.name) ?? a).localeCompare((ob?.short_name || ob?.name) ?? b, "ja");
+        });
+        const fmtMonth = (m: string) => `${m.slice(0, 4)}/${m.slice(4, 6)}`;
+
+        return (
+          <div className="space-y-3">
+            {segments.map((seg) => (
+              <div key={seg} className="border rounded-md overflow-hidden">
+                <div className="px-3 py-2 bg-muted/40 flex items-center justify-between">
+                  <span className="text-sm font-medium">取り込み済みデータ — {seg}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/20 border-b">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 font-medium sticky left-0 bg-muted/20 z-10 min-w-[180px]">事業所</th>
+                        {monthList.map((m) => (
+                          <th key={m} className="text-right px-3 py-1.5 font-medium whitespace-nowrap">{fmtMonth(m)}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {officeList.map((officeNum) => {
+                        const off = offices.find((o) => o.office_number === officeNum);
+                        const officeName = (off?.short_name || off?.name) ?? officeNum;
+                        // このsegmentでこの事業所に1件でもあるか確認
+                        const hasAny = monthList.some((m) => existingMatrix.has(`${seg}|${officeNum}|${m}`));
+                        if (!hasAny) return null;
+                        return (
+                          <tr key={officeNum} className="border-b last:border-b-0 hover:bg-muted/10">
+                            <td className="px-3 py-1.5 sticky left-0 bg-background">{officeName}</td>
+                            {monthList.map((m) => {
+                              const c = existingMatrix.get(`${seg}|${officeNum}|${m}`);
+                              return (
+                                <td key={m} className="px-3 py-1.5 text-right whitespace-nowrap">
+                                  {!c ? (
+                                    <span className="text-muted-foreground/40">—</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1" title={`金額${c.amount}件 / 単位${c.unit}件 / 利用日${c.daily}件`}>
+                                      <span className="font-mono">{(c.amount + c.unit + c.daily).toLocaleString()}</span>
+                                      <button
+                                        onClick={() => handleClearScope(seg, officeNum, m, c)}
+                                        className="text-destructive hover:text-destructive/80 text-[10px] ml-0.5"
+                                        title="この月のデータを削除"
+                                      >
+                                        ✕
+                                      </button>
+                                    </span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       <FileDropzone
         onFilesSelected={handleFilesSelected}
