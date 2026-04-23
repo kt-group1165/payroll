@@ -13,6 +13,15 @@ import {
   type BillingFileType,
   type BillingAmountItem, type BillingUnitItem, type BillingDailyItem,
 } from "@/lib/csv/billing-parser";
+
+const BILLING_TYPE_LABELS: Record<BillingFileType, string> = {
+  "01_介護_金額": "金額（介護）",
+  "01_障害_金額": "金額（障害）",
+  "02_介護_単位": "単位数（介護）",
+  "02_障害_単位": "単位数（障害）",
+  "03_介護_利用日": "利用日（介護）",
+  "03_障害_利用日": "利用日（障害）",
+};
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
@@ -101,48 +110,77 @@ export function BillingImporter() {
     fetchExistingMatrix();
   };
 
+  // 単一ファイルを指定タイプで解析する共通関数
+  const parseByType = useCallback(async (f: File, type: BillingFileType) => {
+    let amountRows: BillingAmountItem[] = [];
+    let unitRows: BillingUnitItem[] = [];
+    let dailyRows: BillingDailyItem[] = [];
+    if (type === "01_介護_金額") ({ data: amountRows } = await parse01KaigoAmount(f));
+    else if (type === "01_障害_金額") ({ data: amountRows } = await parse01ShogaiAmount(f));
+    else if (type === "02_介護_単位") ({ data: unitRows } = await parse02KaigoUnit(f));
+    else if (type === "02_障害_単位") ({ data: unitRows } = await parse02ShogaiUnit(f));
+    else if (type === "03_介護_利用日") ({ data: dailyRows } = await parse03KaigoDaily(f));
+    else if (type === "03_障害_利用日") ({ data: dailyRows } = await parse03ShogaiDaily(f));
+
+    // 事業所番号が空の行は office_name（障害は事業者名）から引き当てる
+    const unresolvedSet = new Set<string>();
+    const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
+      if (r.office_number) return;
+      const name = r.office_name ?? "";
+      const num = resolveOfficeNumber(name, offices);
+      if (num) r.office_number = num;
+      else if (name) unresolvedSet.add(name);
+    };
+    for (const r of amountRows) resolveRow(r);
+    for (const r of unitRows)   resolveRow(r as unknown as { office_number: string; office_name?: string });
+    for (const r of dailyRows)  resolveRow(r as unknown as { office_number: string; office_name?: string });
+    return { amountRows, unitRows, dailyRows, unresolvedOffices: [...unresolvedSet] };
+  }, [offices]);
+
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
     const newResults: FileResult[] = [];
     for (const f of files) {
-      const type = detectBillingFileType(f.name);
+      // 内容（ヘッダ列名）から自動判定、ダメならファイル名から
+      const type = await detectBillingFileType(f);
       let amountRows: BillingAmountItem[] = [];
       let unitRows: BillingUnitItem[] = [];
       let dailyRows: BillingDailyItem[] = [];
       const errors: string[] = [];
-      const unresolvedOffices: string[] = [];
+      let unresolvedOffices: string[] = [];
       if (!type) {
-        errors.push("ファイル名から種別が判定できません（01_介護_金額.CSV 形式で命名してください）");
+        errors.push("種別を判別できませんでした。下のプルダウンで手動選択してください");
       } else {
         try {
-          if (type === "01_介護_金額") ({ data: amountRows } = await parse01KaigoAmount(f));
-          else if (type === "01_障害_金額") ({ data: amountRows } = await parse01ShogaiAmount(f));
-          else if (type === "02_介護_単位") ({ data: unitRows } = await parse02KaigoUnit(f));
-          else if (type === "02_障害_単位") ({ data: unitRows } = await parse02ShogaiUnit(f));
-          else if (type === "03_介護_利用日") ({ data: dailyRows } = await parse03KaigoDaily(f));
-          else if (type === "03_障害_利用日") ({ data: dailyRows } = await parse03ShogaiDaily(f));
+          const parsed = await parseByType(f, type);
+          amountRows = parsed.amountRows;
+          unitRows = parsed.unitRows;
+          dailyRows = parsed.dailyRows;
+          unresolvedOffices = parsed.unresolvedOffices;
         } catch (e) {
           errors.push(`パースエラー: ${e instanceof Error ? e.message : String(e)}`);
         }
-
-        // 事業所番号が空の行は、office_name（障害は事業者名）から引き当てる
-        const unresolvedSet = new Set<string>();
-        const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
-          if (r.office_number) return;
-          const name = r.office_name ?? "";
-          const num = resolveOfficeNumber(name, offices);
-          if (num) r.office_number = num;
-          else if (name) unresolvedSet.add(name);
-        };
-        for (const r of amountRows) resolveRow(r);
-        for (const r of unitRows)   resolveRow(r as unknown as { office_number: string; office_name?: string });
-        for (const r of dailyRows)  resolveRow(r as unknown as { office_number: string; office_name?: string });
-        unresolvedOffices.push(...unresolvedSet);
       }
       newResults.push({ file: f, type, amountRows, unitRows, dailyRows, errors, unresolvedOffices });
     }
     setResults((prev) => [...prev, ...newResults]);
-  }, [offices]);
+  }, [parseByType]);
+
+  // 手動で種別を変更した際の再解析
+  const updateFileType = useCallback(async (index: number, newType: BillingFileType) => {
+    const target = results[index];
+    if (!target) return;
+    try {
+      const parsed = await parseByType(target.file, newType);
+      setResults((prev) => prev.map((r, i) => i === index
+        ? { ...r, type: newType, errors: [], ...parsed }
+        : r));
+    } catch (e) {
+      setResults((prev) => prev.map((r, i) => i === index
+        ? { ...r, type: newType, amountRows: [], unitRows: [], dailyRows: [], errors: [`パースエラー: ${e instanceof Error ? e.message : String(e)}`], unresolvedOffices: [] }
+        : r));
+    }
+  }, [parseByType, results]);
 
   const handleClear = () => {
     setResults([]);
@@ -312,16 +350,37 @@ export function BillingImporter() {
 
       {results.length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="border rounded-md divide-y">
             {results.map((r, i) => (
-              <Badge key={i} variant={r.errors.length > 0 ? "destructive" : "secondary"}>
-                {r.file.name} ({r.type ?? "不明"})
-                {r.amountRows.length > 0 && <> / 金額{r.amountRows.length}件</>}
-                {r.unitRows.length > 0 && <> / 単位{r.unitRows.length}件</>}
-                {r.dailyRows.length > 0 && <> / 利用日{r.dailyRows.length}件</>}
-              </Badge>
+              <div key={i} className={`px-3 py-2 flex items-center gap-3 flex-wrap text-sm ${r.errors.length > 0 ? "bg-red-50" : ""}`}>
+                <span className="font-mono text-xs truncate max-w-[280px]" title={r.file.name}>{r.file.name}</span>
+                <select
+                  className="border rounded px-2 py-1 text-xs bg-background"
+                  value={r.type ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value as BillingFileType | "";
+                    if (v) updateFileType(i, v);
+                  }}
+                >
+                  <option value="" disabled>種別を選択</option>
+                  {(Object.keys(BILLING_TYPE_LABELS) as BillingFileType[]).map((k) => (
+                    <option key={k} value={k}>{BILLING_TYPE_LABELS[k]}</option>
+                  ))}
+                </select>
+                <span className="text-xs text-muted-foreground">
+                  {r.amountRows.length > 0 && <>金額{r.amountRows.length}件 </>}
+                  {r.unitRows.length > 0 && <>単位{r.unitRows.length}件 </>}
+                  {r.dailyRows.length > 0 && <>利用日{r.dailyRows.length}件 </>}
+                  {r.amountRows.length + r.unitRows.length + r.dailyRows.length === 0 && <>—</>}
+                </span>
+                {r.errors.length > 0 && (
+                  <span className="text-xs text-red-700">{r.errors.join(" / ")}</span>
+                )}
+              </div>
             ))}
-            <Button variant="ghost" size="sm" onClick={handleClear}>クリア</Button>
+            <div className="px-3 py-2 bg-muted/20 flex justify-end">
+              <Button variant="ghost" size="sm" onClick={handleClear}>全てクリア</Button>
+            </div>
           </div>
 
           {totalErrors > 0 && (

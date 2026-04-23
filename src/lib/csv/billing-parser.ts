@@ -61,13 +61,11 @@ export type BillingDailyItem = {
 // ─── 汎用ユーティリティ ──────────────────────────────
 
 /**
- * ファイル名から種別を判別
- * 例: "01_介護_金額_.CSV" → "01_介護_金額"
+ * ファイル名から種別を判別（副次的な手段）
  */
-export function detectBillingFileType(filename: string): BillingFileType | null {
+export function detectBillingFileTypeByFilename(filename: string): BillingFileType | null {
   const lower = filename.toLowerCase();
-  const hasCSV = lower.endsWith(".csv");
-  if (!hasCSV) return null;
+  if (!lower.endsWith(".csv")) return null;
   if (filename.includes("01_介護_金額")) return "01_介護_金額";
   if (filename.includes("01_障害_金額")) return "01_障害_金額";
   if (filename.includes("02_介護_単位")) return "02_介護_単位";
@@ -75,6 +73,47 @@ export function detectBillingFileType(filename: string): BillingFileType | null 
   if (filename.includes("03_介護_利用日")) return "03_介護_利用日";
   if (filename.includes("03_障害_利用日")) return "03_障害_利用日";
   return null;
+}
+
+/**
+ * CSVのヘッダ列名から種別を判別する（主判定手段）
+ * 特徴的な列の組み合わせで一意に判別できる。
+ */
+export function detectBillingFileTypeByHeader(header: string[]): BillingFileType | null {
+  const h = new Set(header.map((s) => s.replace(/^"|"$/g, "").trim()));
+  const has = (...keys: string[]) => keys.every((k) => h.has(k));
+
+  // 最も特徴的なものから先に判定
+  // 03_障害: 1日〜31日 + "利用日数" + "入院日数"（介護の03にはこれらが揃わない）
+  if (has("利用者番号", "1日", "31日", "利用日数", "入院日数")) return "03_障害_利用日";
+  // 03_介護: 1日〜31日 + "合計・回数" + "事業所番号"
+  if (has("事業所番号", "1日", "31日", "合計・回数")) return "03_介護_利用日";
+  // 02_障害: サービス提供年月 + サービスコード + 受給者証番号
+  if (has("利用者番号", "サービス提供年月", "サービスコード", "単位数")) return "02_障害_単位";
+  // 02_介護: 介護サービス費内訳 + 単位/点/円 + 事業所番号
+  if (has("事業所番号", "介護サービス費内訳", "単位数")) return "02_介護_単位";
+  // 01_障害: 内部ID + 請求期間 + 事業者名 + 請求・入金
+  if (has("内部ID", "請求期間", "事業者名", "利用料項目")) return "01_障害_金額";
+  // 01_介護: 事業所番号 + 請求年月 + 利用料項目 + 金額
+  if (has("事業所番号", "請求年月", "利用料項目", "金額")) return "01_介護_金額";
+  return null;
+}
+
+/**
+ * ファイル内容から種別を判別（ヘッダを読んで判定）。
+ * 見つからなければファイル名から判定にフォールバック。
+ */
+export async function detectBillingFileType(file: File): Promise<BillingFileType | null> {
+  try {
+    const rows = await readCsvFile(file);
+    if (rows.length > 0) {
+      const byHeader = detectBillingFileTypeByHeader(rows[0]);
+      if (byHeader) return byHeader;
+    }
+  } catch {
+    // 読めなければファイル名判定
+  }
+  return detectBillingFileTypeByFilename(file.name);
 }
 
 /**
