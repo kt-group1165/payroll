@@ -19,7 +19,7 @@ import type { MeisaiRow, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
-interface Office { id: string; office_number: string; name: string; short_name: string; }
+interface Office { id: string; office_number: string; name: string; short_name: string; office_type: string; }
 
 export function MeisaiImporter() {
   const [files, setFiles] = useState<File[]>([]);
@@ -36,6 +36,7 @@ export function MeisaiImporter() {
   });
   const [offices, setOffices] = useState<Office[]>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState("");
+  const [selectedOfficeType, setSelectedOfficeType] = useState<string>("訪問介護");
 
   const fetchExistingMonths = useCallback(async () => {
     const countMap = new Map<string, number>();
@@ -65,7 +66,7 @@ export function MeisaiImporter() {
 
   useEffect(() => {
     fetchExistingMonths();
-    supabase.from("offices").select("id,office_number,name,short_name").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,office_number,name,short_name,office_type").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
@@ -305,6 +306,32 @@ export function MeisaiImporter() {
         );
       })()}
 
+      {/* 種別タブ → 事業所プルダウンの2段階選択 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="text-sm font-medium whitespace-nowrap">種別</label>
+        {(() => {
+          const availableTypes = [...new Set(offices.map((o) => o.office_type).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
+          if (availableTypes.length === 0) return <span className="text-xs text-muted-foreground">（事業所なし）</span>;
+          return availableTypes.map((t) => {
+            const count = offices.filter((o) => o.office_type === t).length;
+            const active = selectedOfficeType === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  setSelectedOfficeType(t);
+                  setSelectedOfficeId("");
+                }}
+                className={`px-3 py-1 rounded-full text-sm transition-colors ${active ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"}`}
+              >
+                {t}<span className="ml-1 text-xs opacity-70">{count}</span>
+              </button>
+            );
+          });
+        })()}
+      </div>
+
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium whitespace-nowrap">事業所</label>
@@ -314,9 +341,11 @@ export function MeisaiImporter() {
             onChange={(e) => setSelectedOfficeId(e.target.value)}
           >
             <option value="">選択してください</option>
-            {offices.map((o) => (
-              <option key={o.id} value={o.id}>{o.name}</option>
-            ))}
+            {offices
+              .filter((o) => o.office_type === selectedOfficeType)
+              .map((o) => (
+                <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
+              ))}
           </select>
         </div>
         <div className="flex items-center gap-2">
