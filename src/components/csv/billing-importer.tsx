@@ -37,16 +37,48 @@ type FileResult = {
   unresolvedOffices: string[]; // 事業所名が引き当てられなかった事業者名のリスト
 };
 
-/** 事業者名から office_number を引き当てる（括弧内の補足を除去、部分一致、略称一致も許容） */
+/**
+ * 事業者名から office_number を引き当てる
+ * 表記揺れ対策:
+ *  - 全角英数/カナ ↔ 半角
+ *  - 括弧内の補足（居宅介護）等を除去
+ *  - 「ステーション」の有無
+ *  - スペース無視
+ */
+function normalizeOfficeName(raw: string): string {
+  if (!raw) return "";
+  let s = raw.normalize("NFKC"); // 全角英数/カナ・半角カナの揺れ解消
+  // 各種括弧内を除去: (), （）, 【】, 〔〕, 「」, 『』, 〈〉, 《》
+  s = s.replace(/[（(][^）)]*[）)]/g, "");
+  s = s.replace(/[【〔「『〈《][^】〕」』〉》]*[】〕」』〉》]/g, "");
+  // 長音記号・ハイフン系を削除（ー, -, ‐, —, ━, 〜 等）
+  s = s.replace(/[ー\-‐–—━]/g, "");
+  // 空白除去
+  s = s.replace(/[\s\u3000]/g, "");
+  // 「ステーション」の有無ゆらぎ
+  s = s.replace(/ステーション/g, "");
+  // 大文字小文字ゆらぎ
+  s = s.toLowerCase();
+  return s;
+}
+
 function resolveOfficeNumber(rawName: string, offices: OfficeLite[]): string | null {
-  const clean = (s: string) => (s ?? "").replace(/（.*?）/g, "").replace(/[\s\u3000]/g, "").toLowerCase();
-  const target = clean(rawName);
+  const target = normalizeOfficeName(rawName);
   if (!target) return null;
-  const eq = offices.find((o) => clean(o.name) === target || clean(o.short_name) === target);
+  // 完全一致
+  const eq = offices.find((o) => normalizeOfficeName(o.name) === target || normalizeOfficeName(o.short_name ?? "") === target);
   if (eq) return eq.office_number;
-  const inc = offices.find((o) => clean(o.name).includes(target) || target.includes(clean(o.name)));
+  // 含む関係
+  const inc = offices.find((o) => {
+    const on = normalizeOfficeName(o.name);
+    return on && (on.includes(target) || target.includes(on));
+  });
   if (inc) return inc.office_number;
-  const sh = offices.find((o) => o.short_name && (target.includes(clean(o.short_name)) || clean(o.short_name).includes(target)));
+  // 略称での含む関係
+  const sh = offices.find((o) => {
+    const sn = normalizeOfficeName(o.short_name ?? "");
+    return sn && (sn.includes(target) || target.includes(sn));
+  });
   if (sh) return sh.office_number;
   return null;
 }
