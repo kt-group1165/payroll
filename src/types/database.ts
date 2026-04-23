@@ -28,6 +28,14 @@ export interface Company {
   name: string;
   address: string;
   phone: string;
+  /** 請求書差出人情報 */
+  zipcode: string | null;
+  formal_name: string | null;
+  registration_number: string | null;
+  tel: string | null;
+  seal_image_url: string | null;
+  invoice_greeting: string | null;
+  inquiry_tel: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,8 +103,34 @@ export interface Client {
   map_longitude: number | null;
   /** マップ位置のメモ */
   map_note: string | null;
+  /** 支払方法: 'withdrawal' | 'transfer' | 'cash' | 'other' */
+  payment_method: string | null;
+  /** 振替・支払予定日（1〜31） */
+  withdrawal_day: number | null;
+  /** 口座情報（口座引落時） */
+  bank_name: string | null;
+  bank_branch: string | null;
+  bank_account_type: string | null;
+  bank_account_number: string | null;
+  bank_account_holder: string | null;
+  /** 請求書に押印画像を載せるか */
+  seal_required: boolean | null;
+  /** 居宅介護支援事業者名 */
+  care_plan_provider: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface Payment {
+  id: string;
+  company_id: string;
+  client_number: string;
+  billing_month: string; // YYYYMM
+  amount: number;
+  paid_at: string;
+  method: string | null;
+  note: string | null;
+  created_at: string;
 }
 
 export interface ServiceRecord {
