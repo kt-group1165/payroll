@@ -42,7 +42,9 @@ export interface Company {
 
 export interface Office {
   id: string;
-  office_number: string;
+  office_number: string;                       // 介護保険の事業所番号（主キー扱い）
+  /** 同一事業所の障害福祉事業所番号（別採番）。請求CSV取り込み時の突合に使用 */
+  shogai_office_number: string | null;
   name: string;
   short_name: string;
   address: string;

@@ -25,7 +25,7 @@ const BILLING_TYPE_LABELS: Record<BillingFileType, string> = {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
-type OfficeLite = { id: string; office_number: string; name: string; short_name: string };
+type OfficeLite = { id: string; office_number: string; shogai_office_number: string | null; name: string; short_name: string };
 
 type FileResult = {
   file: File;
@@ -34,7 +34,13 @@ type FileResult = {
   unitRows: BillingUnitItem[];
   dailyRows: BillingDailyItem[];
   errors: string[];
-  unresolvedOffices: string[]; // 事業所名が引き当てられなかった事業者名のリスト
+};
+
+/** 未解決の事業者参照（名前 or 障害番号）*/
+type UnresolvedRef = {
+  kind: "name" | "number";
+  value: string;                  // 事業者名 or 障害事業所番号（CSVに入っていた値）
+  pickedOfficeId: string | null;  // ユーザーが選んだ事業所id。未選択はnull
 };
 
 /**
@@ -60,6 +66,14 @@ function normalizeOfficeName(raw: string): string {
   // 大文字小文字ゆらぎ
   s = s.toLowerCase();
   return s;
+}
+
+/** 事業所番号（介護 or 障害）から事業所を引き当て */
+function resolveOfficeByNumber(num: string, offices: OfficeLite[]): OfficeLite | null {
+  if (!num) return null;
+  return offices.find((o) => o.office_number === num)
+      ?? offices.find((o) => o.shogai_office_number && o.shogai_office_number === num)
+      ?? null;
 }
 
 function resolveOfficeNumber(rawName: string, offices: OfficeLite[]): string | null {
@@ -88,8 +102,9 @@ export function BillingImporter() {
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(false);
   const [offices, setOffices] = useState<OfficeLite[]>([]);
-  // 取り込み済みデータの集計: key=`${segment}|${office_number}|${billing_month}` → {amount, unit, daily}
   const [existingMatrix, setExistingMatrix] = useState<Map<string, { amount: number; unit: number; daily: number }>>(new Map());
+  // 未解決の事業者参照（名前 or 障害番号）。ユーザーが事業所を選ぶと office_number に解決される。
+  const [unresolvedRefs, setUnresolvedRefs] = useState<UnresolvedRef[]>([]);
 
   const fetchExistingMatrix = useCallback(async () => {
     const m = new Map<string, { amount: number; unit: number; daily: number }>();
@@ -119,7 +134,7 @@ export function BillingImporter() {
   }, []);
 
   useEffect(() => {
-    supabase.from("offices").select("id, office_number, name, short_name").then(({ data }) => {
+    supabase.from("offices").select("id, office_number, shogai_office_number, name, short_name").then(({ data }) => {
       if (data) setOffices(data as OfficeLite[]);
     });
     fetchExistingMatrix();
@@ -143,6 +158,8 @@ export function BillingImporter() {
   };
 
   // 単一ファイルを指定タイプで解析する共通関数
+  // 各行のoffice_numberを、介護番号／障害番号／事業者名 の順で解決し、介護番号に正規化する。
+  // 解決できなかったものは (kind: "number" | "name", value) として返す。
   const parseByType = useCallback(async (f: File, type: BillingFileType) => {
     let amountRows: BillingAmountItem[] = [];
     let unitRows: BillingUnitItem[] = [];
@@ -154,32 +171,56 @@ export function BillingImporter() {
     else if (type === "03_介護_利用日") ({ data: dailyRows } = await parse03KaigoDaily(f));
     else if (type === "03_障害_利用日") ({ data: dailyRows } = await parse03ShogaiDaily(f));
 
-    // 事業所番号が空の行は office_name（障害は事業者名）から引き当てる
-    const unresolvedSet = new Set<string>();
+    const unresolvedNums = new Set<string>();
+    const unresolvedNames = new Set<string>();
+
     const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
-      if (r.office_number) return;
+      // 1) 番号ベース: 介護番号 or 障害番号
+      if (r.office_number) {
+        const off = resolveOfficeByNumber(r.office_number, offices);
+        if (off) { r.office_number = off.office_number; return; }
+        unresolvedNums.add(r.office_number);
+        return;
+      }
+      // 2) 事業者名ベース
       const name = r.office_name ?? "";
+      if (!name) return;
       const num = resolveOfficeNumber(name, offices);
-      if (num) r.office_number = num;
-      else if (name) unresolvedSet.add(name);
+      if (num) { r.office_number = num; return; }
+      unresolvedNames.add(name);
     };
     for (const r of amountRows) resolveRow(r);
     for (const r of unitRows)   resolveRow(r as unknown as { office_number: string; office_name?: string });
     for (const r of dailyRows)  resolveRow(r as unknown as { office_number: string; office_name?: string });
-    return { amountRows, unitRows, dailyRows, unresolvedOffices: [...unresolvedSet] };
+    return { amountRows, unitRows, dailyRows, unresolvedNums: [...unresolvedNums], unresolvedNames: [...unresolvedNames] };
   }, [offices]);
+
+  const mergeUnresolved = (nums: string[], names: string[]) => {
+    setUnresolvedRefs((prev) => {
+      const existing = new Map(prev.map((r) => [`${r.kind}:${r.value}`, r]));
+      for (const n of nums) {
+        const k = `number:${n}`;
+        if (!existing.has(k)) existing.set(k, { kind: "number", value: n, pickedOfficeId: null });
+      }
+      for (const n of names) {
+        const k = `name:${n}`;
+        if (!existing.has(k)) existing.set(k, { kind: "name", value: n, pickedOfficeId: null });
+      }
+      return [...existing.values()];
+    });
+  };
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
     const newResults: FileResult[] = [];
+    const newUnresolvedNums: string[] = [];
+    const newUnresolvedNames: string[] = [];
     for (const f of files) {
-      // 内容（ヘッダ列名）から自動判定、ダメならファイル名から
       const type = await detectBillingFileType(f);
       let amountRows: BillingAmountItem[] = [];
       let unitRows: BillingUnitItem[] = [];
       let dailyRows: BillingDailyItem[] = [];
       const errors: string[] = [];
-      let unresolvedOffices: string[] = [];
       if (!type) {
         errors.push("種別を判別できませんでした。下のプルダウンで手動選択してください");
       } else {
@@ -188,14 +229,16 @@ export function BillingImporter() {
           amountRows = parsed.amountRows;
           unitRows = parsed.unitRows;
           dailyRows = parsed.dailyRows;
-          unresolvedOffices = parsed.unresolvedOffices;
+          newUnresolvedNums.push(...parsed.unresolvedNums);
+          newUnresolvedNames.push(...parsed.unresolvedNames);
         } catch (e) {
           errors.push(`パースエラー: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      newResults.push({ file: f, type, amountRows, unitRows, dailyRows, errors, unresolvedOffices });
+      newResults.push({ file: f, type, amountRows, unitRows, dailyRows, errors });
     }
     setResults((prev) => [...prev, ...newResults]);
+    mergeUnresolved(newUnresolvedNums, newUnresolvedNames);
   }, [parseByType]);
 
   // 手動で種別を変更した際の再解析
@@ -205,37 +248,89 @@ export function BillingImporter() {
     try {
       const parsed = await parseByType(target.file, newType);
       setResults((prev) => prev.map((r, i) => i === index
-        ? { ...r, type: newType, errors: [], ...parsed }
+        ? { ...r, type: newType, errors: [], amountRows: parsed.amountRows, unitRows: parsed.unitRows, dailyRows: parsed.dailyRows }
         : r));
+      mergeUnresolved(parsed.unresolvedNums, parsed.unresolvedNames);
     } catch (e) {
       setResults((prev) => prev.map((r, i) => i === index
-        ? { ...r, type: newType, amountRows: [], unitRows: [], dailyRows: [], errors: [`パースエラー: ${e instanceof Error ? e.message : String(e)}`], unresolvedOffices: [] }
+        ? { ...r, type: newType, amountRows: [], unitRows: [], dailyRows: [], errors: [`パースエラー: ${e instanceof Error ? e.message : String(e)}`] }
         : r));
     }
   }, [parseByType, results]);
 
   const handleClear = () => {
     setResults([]);
+    setUnresolvedRefs([]);
     setImported(false);
   };
 
   const handleImport = async () => {
+    // 未選択の未解決参照があれば警告（無視して進める選択肢も残す）
+    const pendingRefs = unresolvedRefs.filter((r) => !r.pickedOfficeId);
+    if (pendingRefs.length > 0) {
+      if (!confirm(`未解決の事業者が${pendingRefs.length}件あります。該当行は office_number が空のまま登録されます（集計で表示されません）。このまま取り込みますか？`)) return;
+    }
+
+    // 未解決マッピングを適用: office_number を選択した事業所の介護番号に書き換え
+    const numberMap = new Map<string, string>();   // CSV内の障害番号 → 介護番号
+    const nameMap   = new Map<string, string>();   // CSV内の事業者名 → 介護番号
+    const shogaiUpdates: { officeId: string; shogaiNum: string }[] = [];
+    for (const ref of unresolvedRefs) {
+      if (!ref.pickedOfficeId) continue;
+      const off = offices.find((o) => o.id === ref.pickedOfficeId);
+      if (!off) continue;
+      if (ref.kind === "number") {
+        numberMap.set(ref.value, off.office_number);
+        // 同じ事業所の shogai_office_number にこの障害番号を永続化
+        if (off.shogai_office_number !== ref.value) {
+          shogaiUpdates.push({ officeId: off.id, shogaiNum: ref.value });
+        }
+      } else {
+        nameMap.set(ref.value, off.office_number);
+      }
+    }
+    const applyMap = <T extends { office_number: string; office_name?: string }>(rows: T[]) => {
+      for (const r of rows) {
+        if (!r.office_number && r.office_name && nameMap.has(r.office_name)) {
+          r.office_number = nameMap.get(r.office_name)!;
+        } else if (r.office_number && numberMap.has(r.office_number)) {
+          r.office_number = numberMap.get(r.office_number)!;
+        }
+      }
+    };
+    for (const r of results) {
+      applyMap(r.amountRows);
+      applyMap(r.unitRows as unknown as { office_number: string; office_name?: string }[]);
+      applyMap(r.dailyRows as unknown as { office_number: string; office_name?: string }[]);
+    }
+
     const totalAmount = results.reduce((s, r) => s + r.amountRows.length, 0);
     const totalUnit = results.reduce((s, r) => s + r.unitRows.length, 0);
     const totalDaily = results.reduce((s, r) => s + r.dailyRows.length, 0);
     if (totalAmount + totalUnit + totalDaily === 0) { toast.error("取り込むデータがありません"); return; }
-    if (!confirm(`金額${totalAmount}件 / 単位${totalUnit}件 / 利用日${totalDaily}件を取り込みますか？\n（同じ事業所×月×利用者の既存データは削除してから挿入します）`)) return;
+    if (pendingRefs.length === 0 && !confirm(`金額${totalAmount}件 / 単位${totalUnit}件 / 利用日${totalDaily}件を取り込みますか？\n（同じ事業所×月×利用者の既存データは削除してから挿入します）`)) return;
 
     setImporting(true);
     try {
+      // 障害番号の永続化（offices.shogai_office_number 更新）
+      for (const u of shogaiUpdates) {
+        const { error } = await supabase.from("offices").update({ shogai_office_number: u.shogaiNum }).eq("id", u.officeId);
+        if (error) console.error("shogai_office_number 更新エラー", error);
+      }
+      if (shogaiUpdates.length > 0) {
+        // 最新のofficesを再取得（以降の取り込みで同じ番号が自動解決されるように）
+        const { data: refreshed } = await supabase.from("offices").select("id, office_number, shogai_office_number, name, short_name");
+        if (refreshed) setOffices(refreshed as OfficeLite[]);
+      }
+
       // 事業所×月 ごとに既存データを削除してから再挿入（重複防止）
-      // 対象: 各ファイルに含まれる (office_number, billing_month, segment) のユニーク組み合わせ
       type ScopeKey = { office_number: string; billing_month: string; segment: "介護" | "障害" };
       const scopes = new Set<string>();
       const scopeList: ScopeKey[] = [];
       const push = (s: ScopeKey) => {
+        if (!s.office_number || !s.billing_month) return;
         const k = `${s.segment}|${s.office_number}|${s.billing_month}`;
-        if (!scopes.has(k) && s.billing_month) { scopes.add(k); scopeList.push(s); }
+        if (!scopes.has(k)) { scopes.add(k); scopeList.push(s); }
       };
       for (const r of results) {
         for (const a of r.amountRows) push({ segment: a.segment, office_number: a.office_number, billing_month: a.billing_month });
@@ -270,6 +365,7 @@ export function BillingImporter() {
       toast.success(`金額${allAmount.length}件 / 単位${allUnit.length}件 / 利用日${allDaily.length}件を取り込みました`);
       setImported(true);
       setResults([]);
+      setUnresolvedRefs([]);
       fetchExistingMatrix();
     } catch (e) {
       toast.error(`取り込みエラー: ${e instanceof Error ? e.message : String(e)}`);
@@ -425,21 +521,57 @@ export function BillingImporter() {
             </Alert>
           )}
 
-          {/* 障害CSVなどに事業所番号がないケース: 事業者名で引き当てできなかったものを警告 */}
-          {(() => {
-            const unresolved = [...new Set(results.flatMap((r) => r.unresolvedOffices))];
-            if (unresolved.length === 0) return null;
-            return (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  以下の事業者名から事業所が引き当てられませんでした。事業所一覧で該当する事業所の「正式名称」を確認するか、略称・名称の表記を合わせてください。該当行は office_number が空のまま登録されるので、/billing で金額が集計されません。
-                  <ul className="mt-2 list-disc ml-5 text-xs">
-                    {unresolved.map((n, i) => <li key={i}>{n}</li>)}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            );
-          })()}
+          {/* 未解決の事業者参照: 該当の事業所を選択してもらう */}
+          {unresolvedRefs.length > 0 && (
+            <div className="border border-yellow-300 rounded-md bg-yellow-50 p-3 space-y-2">
+              <p className="text-sm font-medium text-yellow-900">
+                ⚠ CSV内の以下の事業者を、どの事業所と紐付けるか選択してください
+              </p>
+              <p className="text-xs text-yellow-800">
+                ・<b>事業所番号</b>（障害番号など）を選択すると、その番号が事業所の「障害福祉事業所番号」に自動登録されます。次回以降は自動で解決されます。<br />
+                ・<b>事業者名</b>は今回の取り込みのみに適用されます。恒久的に自動解決したい場合は /offices で正式名称・略称を合わせてください。
+              </p>
+              <table className="w-full text-xs">
+                <thead className="bg-yellow-100/60">
+                  <tr>
+                    <th className="text-left px-2 py-1 font-medium">種別</th>
+                    <th className="text-left px-2 py-1 font-medium">CSVの値</th>
+                    <th className="text-left px-2 py-1 font-medium">紐付け先の事業所</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unresolvedRefs.map((ref, i) => (
+                    <tr key={i} className="border-t border-yellow-200">
+                      <td className="px-2 py-1">
+                        {ref.kind === "number" ? <span className="text-purple-700">障害番号</span> : <span className="text-blue-700">事業者名</span>}
+                      </td>
+                      <td className="px-2 py-1 font-mono">{ref.value}</td>
+                      <td className="px-2 py-1">
+                        <select
+                          className="border rounded px-2 py-0.5 text-xs bg-background min-w-[280px]"
+                          value={ref.pickedOfficeId ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value || null;
+                            setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, pickedOfficeId: v } : x));
+                          }}
+                        >
+                          <option value="">（選択してください）</option>
+                          {offices
+                            .slice()
+                            .sort((a, b) => ((a.short_name || a.name) ?? "").localeCompare((b.short_name || b.name) ?? "", "ja"))
+                            .map((o) => (
+                              <option key={o.id} value={o.id}>
+                                {o.short_name || o.name}（{o.office_number}{o.shogai_office_number ? ` / 障害:${o.shogai_office_number}` : ""}）
+                              </option>
+                            ))}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <Button onClick={handleImport} disabled={importing || imported}>
             {importing ? "取り込み中…" : imported ? "登録済み" : "データベースに登録"}

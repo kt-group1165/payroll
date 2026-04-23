@@ -68,6 +68,7 @@ export default function OfficesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     office_number: "",
+    shogai_office_number: "",
     name: "",
     short_name: "",
     address: "",
@@ -102,6 +103,7 @@ export default function OfficesPage() {
   const resetForm = () => {
     setForm({
       office_number: "",
+      shogai_office_number: "",
       name: "",
       short_name: "",
       address: "",
@@ -134,6 +136,7 @@ export default function OfficesPage() {
           short_name: form.short_name,
           address: form.address,
           office_type: form.office_type,
+          shogai_office_number: form.shogai_office_number || null,
           work_week_start: form.work_week_start,
           travel_unit_price: form.travel_unit_price,
           commute_unit_price: form.commute_unit_price,
@@ -173,6 +176,7 @@ export default function OfficesPage() {
   const handleEdit = (office: Office) => {
     setForm({
       office_number: office.office_number,
+      shogai_office_number: office.shogai_office_number ?? "",
       name: office.name,
       short_name: office.short_name ?? "",
       address: office.address,
@@ -409,7 +413,7 @@ export default function OfficesPage() {
             </DialogHeader>
             <div className="space-y-4">
               <div>
-                <Label>事業所番号</Label>
+                <Label>事業所番号（介護保険）</Label>
                 <Input
                   value={form.office_number}
                   onChange={(e) =>
@@ -417,6 +421,16 @@ export default function OfficesPage() {
                   }
                   disabled={!!editingId}
                   placeholder="例: 1271500942"
+                />
+              </div>
+              <div>
+                <Label>障害福祉事業所番号 <span className="text-xs text-muted-foreground font-normal">（任意、請求CSV取り込み時の紐付けに使用）</span></Label>
+                <Input
+                  value={form.shogai_office_number}
+                  onChange={(e) =>
+                    setForm({ ...form, shogai_office_number: e.target.value })
+                  }
+                  placeholder="例: 1221910277"
                 />
               </div>
               <div>
