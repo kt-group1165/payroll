@@ -11,31 +11,28 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import type { Company, Client, Payment } from "@/types/database";
-import { categorizeBySegment, type BillingSegment } from "@/lib/billing/segment";
 
-type ServiceRecordLite = {
-  id: string;
-  client_number: string;
-  processing_month: string;
-  service_category: string | null;
-  amount: number | null;
-  total: number | null;
+type AmountRow = {
+  segment: "介護" | "障害";
   office_number: string;
+  client_number: string;
+  client_name: string;
+  billing_month: string;
+  service_item: string;
+  amount: number;
 };
 
 type OfficeLite = { id: string; office_number: string; name: string; short_name: string; company_id: string | null };
 
+type BillingSegment = "介護" | "障害" | "自費";
+
 type ClientRow = {
   client_number: string;
   client_name: string;
-  /** 法人ごとの当月請求額（介護＋障害＋自費の合計） */
   current_total: number;
   by_segment: Record<BillingSegment, number>;
-  /** 繰越残高（前月以前の未払い） */
   carryover: number;
-  /** 当月までに入金された額（billing_month=currentMonthの分） */
   paid_current: number;
-  /** 最終残額 */
   balance: number;
 };
 
@@ -51,12 +48,11 @@ export default function BillingPage() {
   const [offices, setOffices] = useState<OfficeLite[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState(""); // YYYYMM
+  const [selectedMonth, setSelectedMonth] = useState("");
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [rows, setRows] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 初期データ取得
   useEffect(() => {
     (async () => {
       const [coRes, offRes] = await Promise.all([
@@ -67,7 +63,6 @@ export default function BillingPage() {
       if (offRes.data) setOffices(offRes.data as OfficeLite[]);
       if (coRes.data && coRes.data.length > 0) setSelectedCompanyId((coRes.data as Company[])[0].id);
 
-      // 利用者（ページング）
       const allClients: Client[] = [];
       let from = 0;
       while (true) {
@@ -79,132 +74,117 @@ export default function BillingPage() {
       }
       setClients(allClients);
 
-      // 処理月一覧
-      const { data: batches } = await supabase
-        .from("import_batches")
-        .select("processing_month")
-        .eq("import_type", "meisai")
-        .eq("status", "completed")
-        .gt("record_count", 0)
-        .order("processing_month", { ascending: false });
-      const months = [...new Set((batches ?? []).map((b) => (b as { processing_month: string }).processing_month))];
+      // billing_amount_items から請求月の候補を取得
+      const monthsSet = new Set<string>();
+      from = 0;
+      while (true) {
+        const { data } = await supabase.from("billing_amount_items").select("billing_month").range(from, from + 999);
+        if (!data || data.length === 0) break;
+        for (const r of data) monthsSet.add((r as { billing_month: string }).billing_month);
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+      const months = [...monthsSet].sort().reverse();
       setAvailableMonths(months);
       if (months.length > 0) setSelectedMonth(months[0]);
     })();
   }, []);
 
-  // 集計
   const computeRows = useCallback(async () => {
     if (!selectedCompanyId || !selectedMonth) return;
     setLoading(true);
     try {
       const companyOffices = offices.filter((o) => o.company_id === selectedCompanyId).map((o) => o.office_number);
       const companyOfficeIds = new Set(offices.filter((o) => o.company_id === selectedCompanyId).map((o) => o.id));
-      if (companyOffices.length === 0) {
-        setRows([]);
-        return;
-      }
-      // 当月 service_records をページングで取得
-      const currentRecords: ServiceRecordLite[] = [];
+      if (companyOffices.length === 0) { setRows([]); return; }
+
+      // 当月分
+      const currentRows: AmountRow[] = [];
       let fromIdx = 0;
       while (true) {
         const { data } = await supabase
-          .from("service_records")
-          .select("id, client_number, processing_month, service_category, amount, total, office_number")
-          .eq("processing_month", selectedMonth)
+          .from("billing_amount_items")
+          .select("segment, office_number, client_number, client_name, billing_month, service_item, amount")
+          .eq("billing_month", selectedMonth)
           .in("office_number", companyOffices)
           .range(fromIdx, fromIdx + 999);
         if (!data || data.length === 0) break;
-        currentRecords.push(...(data as ServiceRecordLite[]));
+        currentRows.push(...(data as AmountRow[]));
         if (data.length < 1000) break;
         fromIdx += 1000;
       }
 
-      // 前月以前の全 service_records（過去分の請求額）— ページング
-      const pastRecords: ServiceRecordLite[] = [];
+      // 前月以前
+      const pastRows: AmountRow[] = [];
       fromIdx = 0;
       while (true) {
         const { data } = await supabase
-          .from("service_records")
-          .select("id, client_number, processing_month, service_category, amount, total, office_number")
-          .lt("processing_month", selectedMonth)
+          .from("billing_amount_items")
+          .select("segment, office_number, client_number, client_name, billing_month, service_item, amount")
+          .lt("billing_month", selectedMonth)
           .in("office_number", companyOffices)
           .range(fromIdx, fromIdx + 999);
         if (!data || data.length === 0) break;
-        pastRecords.push(...(data as ServiceRecordLite[]));
+        pastRows.push(...(data as AmountRow[]));
         if (data.length < 1000) break;
         fromIdx += 1000;
       }
 
-      // 入金記録（法人全体）
+      // 入金
       const { data: payData } = await supabase
-        .from("payments")
-        .select("*")
-        .eq("company_id", selectedCompanyId);
+        .from("payments").select("*").eq("company_id", selectedCompanyId);
       const payments = (payData ?? []) as Payment[];
 
-      // 利用者ごと集計（法人内の service_records に現れる利用者のみ対象）
-      const clientMap = new Map<string, { name: string; numbers: Set<string> }>();
+      // 利用者マスタ
       const companyClients = clients.filter((c) => companyOfficeIds.has(c.office_id));
       const clientByNumber = new Map<string, Client>();
       for (const c of companyClients) clientByNumber.set(c.client_number, c);
 
-      const allRecords = [...currentRecords, ...pastRecords];
-      for (const r of allRecords) {
+      // 利用者集計
+      const clientMap = new Map<string, { name: string }>();
+      for (const r of [...currentRows, ...pastRows]) {
         if (!clientMap.has(r.client_number)) {
           const info = clientByNumber.get(r.client_number);
-          clientMap.set(r.client_number, { name: info?.name ?? r.client_number, numbers: new Set() });
+          clientMap.set(r.client_number, { name: info?.name ?? r.client_name ?? r.client_number });
         }
       }
 
-      // 当月
-      const byClientCurrent = new Map<string, { total: number; bySeg: Record<BillingSegment, number> }>();
-      for (const r of currentRecords) {
-        const seg = categorizeBySegment(r.service_category);
-        const amt = r.total ?? r.amount ?? 0;
-        if (!byClientCurrent.has(r.client_number)) {
-          byClientCurrent.set(r.client_number, { total: 0, bySeg: { 介護: 0, 障害: 0, 自費: 0 } });
-        }
-        const o = byClientCurrent.get(r.client_number)!;
-        o.total += amt;
-        o.bySeg[seg] += amt;
+      const byCurrent = new Map<string, { total: number; bySeg: Record<BillingSegment, number> }>();
+      for (const r of currentRows) {
+        const seg: BillingSegment = r.segment === "介護" ? "介護" : "障害";
+        if (!byCurrent.has(r.client_number)) byCurrent.set(r.client_number, { total: 0, bySeg: { 介護: 0, 障害: 0, 自費: 0 } });
+        const o = byCurrent.get(r.client_number)!;
+        o.total += r.amount ?? 0;
+        o.bySeg[seg] += r.amount ?? 0;
       }
+      const byPast = new Map<string, number>();
+      for (const r of pastRows) byPast.set(r.client_number, (byPast.get(r.client_number) ?? 0) + (r.amount ?? 0));
 
-      // 過去月の請求合計（利用者ごと）
-      const byClientPast = new Map<string, number>();
-      for (const r of pastRecords) {
-        const amt = r.total ?? r.amount ?? 0;
-        byClientPast.set(r.client_number, (byClientPast.get(r.client_number) ?? 0) + amt);
-      }
-
-      // 過去全入金
-      const byClientPastPaid = new Map<string, number>();
-      const byClientCurrentPaid = new Map<string, number>();
+      const pastPaidByClient = new Map<string, number>();
+      const curPaidByClient = new Map<string, number>();
       for (const p of payments) {
         if (p.billing_month < selectedMonth) {
-          byClientPastPaid.set(p.client_number, (byClientPastPaid.get(p.client_number) ?? 0) + p.amount);
+          pastPaidByClient.set(p.client_number, (pastPaidByClient.get(p.client_number) ?? 0) + p.amount);
         } else if (p.billing_month === selectedMonth) {
-          byClientCurrentPaid.set(p.client_number, (byClientCurrentPaid.get(p.client_number) ?? 0) + p.amount);
+          curPaidByClient.set(p.client_number, (curPaidByClient.get(p.client_number) ?? 0) + p.amount);
         }
       }
 
-      // 表示行
       const result: ClientRow[] = [];
       for (const [cn, { name }] of clientMap) {
-        const cur = byClientCurrent.get(cn) ?? { total: 0, bySeg: { 介護: 0, 障害: 0, 自費: 0 } };
-        const pastBilled = byClientPast.get(cn) ?? 0;
-        const pastPaid = byClientPastPaid.get(cn) ?? 0;
-        const carryover = pastBilled - pastPaid;
-        const paidCurrent = byClientCurrentPaid.get(cn) ?? 0;
-        const balance = cur.total + Math.max(0, carryover) - paidCurrent;
-        // 当月請求がゼロかつ繰越も残もゼロなら表示対象外
+        const cur = byCurrent.get(cn) ?? { total: 0, bySeg: { 介護: 0, 障害: 0, 自費: 0 } };
+        const pastBilled = byPast.get(cn) ?? 0;
+        const pastPaid = pastPaidByClient.get(cn) ?? 0;
+        const carryover = Math.max(0, pastBilled - pastPaid);
+        const paidCurrent = curPaidByClient.get(cn) ?? 0;
+        const balance = cur.total + carryover - paidCurrent;
         if (cur.total === 0 && carryover === 0 && paidCurrent === 0) continue;
         result.push({
           client_number: cn,
           client_name: name,
           current_total: cur.total,
           by_segment: cur.bySeg,
-          carryover: Math.max(0, carryover),
+          carryover,
           paid_current: paidCurrent,
           balance,
         });
@@ -233,7 +213,10 @@ export default function BillingPage() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-4">請求管理</h2>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 className="text-2xl font-bold">請求管理</h2>
+        <Link href="/billing/import" className="text-sm underline text-blue-600">📁 請求CSV取り込み</Link>
+      </div>
 
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <div>
@@ -267,7 +250,6 @@ export default function BillingPage() {
         </Button>
       </div>
 
-      {/* サマリ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <SummaryCard label="当月請求額" value={totals.current} />
         <SummaryCard label="繰越残高" value={totals.carryover} />
@@ -284,7 +266,6 @@ export default function BillingPage() {
                 <th className="text-left px-3 py-2 font-medium">氏名</th>
                 <th className="text-right px-3 py-2 font-medium">介護</th>
                 <th className="text-right px-3 py-2 font-medium">障害</th>
-                <th className="text-right px-3 py-2 font-medium">自費</th>
                 <th className="text-right px-3 py-2 font-medium">当月計</th>
                 <th className="text-right px-3 py-2 font-medium">繰越</th>
                 <th className="text-right px-3 py-2 font-medium">入金</th>
@@ -294,8 +275,8 @@ export default function BillingPage() {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-muted-foreground py-6">
-                  {loading ? "集計中…" : "対象データがありません"}
+                <tr><td colSpan={9} className="text-center text-muted-foreground py-6">
+                  {loading ? "集計中…" : availableMonths.length === 0 ? "請求データが未取り込みです。" : "対象データがありません"}
                 </td></tr>
               ) : (
                 rows.map((r) => (
@@ -304,7 +285,6 @@ export default function BillingPage() {
                     <td className="px-3 py-1.5">{r.client_name}</td>
                     <td className="px-3 py-1.5 text-right">{r.by_segment.介護 ? yen(r.by_segment.介護) : "—"}</td>
                     <td className="px-3 py-1.5 text-right">{r.by_segment.障害 ? yen(r.by_segment.障害) : "—"}</td>
-                    <td className="px-3 py-1.5 text-right">{r.by_segment.自費 ? yen(r.by_segment.自費) : "—"}</td>
                     <td className="px-3 py-1.5 text-right font-medium">{yen(r.current_total)}</td>
                     <td className="px-3 py-1.5 text-right">{r.carryover > 0 ? yen(r.carryover) : "—"}</td>
                     <td className="px-3 py-1.5 text-right text-green-700">{r.paid_current > 0 ? yen(r.paid_current) : "—"}</td>

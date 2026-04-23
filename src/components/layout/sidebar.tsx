@@ -41,7 +41,8 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "請求管理",
     items: [
-      { href: "/billing", label: "請求管理", icon: "🧾" },
+      { href: "/billing",        label: "請求管理",   icon: "🧾" },
+      { href: "/billing/import", label: "請求CSV取り込み", icon: "📁" },
     ],
   },
 ];
