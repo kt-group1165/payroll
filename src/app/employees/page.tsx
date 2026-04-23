@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -170,7 +171,29 @@ export default function EmployeesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [filterStatus, setFilterStatus] = useState<string>("在職者");
-  const [filterOfficeId, setFilterOfficeId] = useState<string>("");
+  const [filterOfficeId, setFilterOfficeIdRaw] = useState<string>("");
+
+  // URL が /office/[officeNumber]/... の場合、事業所をロック（選択不可）
+  const pathname = usePathname();
+  const lockedOfficeNumber = useMemo(() => {
+    const m = pathname?.match(/^\/office\/([^/]+)\//);
+    return m?.[1] ?? null;
+  }, [pathname]);
+  const lockedOfficeId = useMemo(() => {
+    if (!lockedOfficeNumber) return null;
+    return offices.find((o) => o.office_number === lockedOfficeNumber)?.id ?? null;
+  }, [lockedOfficeNumber, offices]);
+
+  // ロック中は常にロック対象のoffice_idを強制。それ以外は通常動作
+  useEffect(() => {
+    if (lockedOfficeId !== null && filterOfficeId !== lockedOfficeId) {
+      setFilterOfficeIdRaw(lockedOfficeId);
+    }
+  }, [lockedOfficeId, filterOfficeId]);
+  const setFilterOfficeId = (v: string) => {
+    if (lockedOfficeId) return; // ロック中は変更不可
+    setFilterOfficeIdRaw(v);
+  };
 
   const importRef = useRef<HTMLInputElement>(null);
   const salarySystemImportRef = useRef<HTMLInputElement>(null);
@@ -201,7 +224,10 @@ export default function EmployeesPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const resetForm = () => { setForm(defaultForm); setEditingId(null); };
+  const resetForm = () => {
+    setForm({ ...defaultForm, office_id: lockedOfficeId ?? "" });
+    setEditingId(null);
+  };
 
   // ─── 登録・更新 ─────────────────────────────────────────────
 
@@ -644,6 +670,7 @@ export default function EmployeesPage() {
                     className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                     value={form.office_id}
                     onChange={(e) => setForm({ ...form, office_id: e.target.value })}
+                    disabled={!!lockedOfficeId}
                   >
                     <option value="">事業所を選択</option>
                     {offices.map((o) => (
@@ -851,16 +878,25 @@ export default function EmployeesPage() {
             </button>
           ))}
         </div>
-        <select
-          className="border rounded px-2 py-1 text-sm bg-background"
-          value={filterOfficeId}
-          onChange={(e) => setFilterOfficeId(e.target.value)}
-        >
-          <option value="">全事業所</option>
-          {offices.map((o) => (
-            <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
-          ))}
-        </select>
+        {lockedOfficeId ? (
+          <span className="inline-flex items-center gap-2 rounded-full bg-blue-100 text-blue-800 px-3 py-1 text-sm">
+            🏢 {(() => {
+              const o = offices.find((x) => x.id === lockedOfficeId);
+              return o ? (o.short_name || o.name) : lockedOfficeNumber;
+            })()}
+          </span>
+        ) : (
+          <select
+            className="border rounded px-2 py-1 text-sm bg-background"
+            value={filterOfficeId}
+            onChange={(e) => setFilterOfficeId(e.target.value)}
+          >
+            <option value="">全事業所</option>
+            {offices.map((o) => (
+              <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* 職員テーブル */}

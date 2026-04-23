@@ -261,7 +261,7 @@ function YenInput({
   return (
     <div className="grid grid-cols-[1fr_160px] items-center gap-3">
       <div>
-        <p className="text-sm font-medium">{label}</p>
+        <p className="text-sm font-medium whitespace-nowrap">{label}</p>
         {sublabel && <p className="text-xs text-muted-foreground">{sublabel}</p>}
       </div>
       <div className="relative">
@@ -792,7 +792,7 @@ export default function SalaryPage() {
 
       {/* ── 給与設定編集ダイアログ ──────────────────────────── */}
       <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setSelectedId(""); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               給与設定 — {editEmp?.name}

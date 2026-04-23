@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,9 +43,30 @@ const PAGE_SIZE = 100;
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
-  const [filterOfficeId, setFilterOfficeId] = useState("");
+  const [filterOfficeId, setFilterOfficeIdRaw] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
+
+  // URL が /office/[officeNumber]/... の場合、事業所をロック
+  const pathname = usePathname();
+  const lockedOfficeNumber = useMemo(() => {
+    const m = pathname?.match(/^\/office\/([^/]+)\//);
+    return m?.[1] ?? null;
+  }, [pathname]);
+  const lockedOfficeId = useMemo(() => {
+    if (!lockedOfficeNumber) return null;
+    return offices.find((o) => o.office_number === lockedOfficeNumber)?.id ?? null;
+  }, [lockedOfficeNumber, offices]);
+
+  useEffect(() => {
+    if (lockedOfficeId && filterOfficeId !== lockedOfficeId) {
+      setFilterOfficeIdRaw(lockedOfficeId);
+    }
+  }, [lockedOfficeId, filterOfficeId]);
+  const setFilterOfficeId = (v: string) => {
+    if (lockedOfficeId) return;
+    setFilterOfficeIdRaw(v);
+  };
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -83,7 +105,7 @@ export default function ClientsPage() {
   }, [fetchData]);
 
   const resetForm = () => {
-    setForm({ client_number: "", name: "", address: "", office_id: "", map_latitude: null, map_longitude: null, map_note: "" });
+    setForm({ client_number: "", name: "", address: "", office_id: lockedOfficeId ?? "", map_latitude: null, map_longitude: null, map_note: "" });
     setEditingId(null);
   };
 
@@ -216,6 +238,7 @@ export default function ClientsPage() {
                   onValueChange={(v) =>
                     setForm({ ...form, office_id: v ?? "" })
                   }
+                  disabled={!!lockedOfficeId}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="事業所を選択" />
@@ -286,6 +309,7 @@ export default function ClientsPage() {
         setPage={setPage}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        lockedOfficeId={lockedOfficeId}
       />
     </div>
   );
@@ -295,6 +319,7 @@ export default function ClientsPage() {
 function ClientListView({
   clients, offices, filterOfficeId, setFilterOfficeId,
   searchQuery, setSearchQuery, page, setPage, onEdit, onDelete,
+  lockedOfficeId,
 }: {
   clients: Client[];
   offices: Office[];
@@ -306,6 +331,7 @@ function ClientListView({
   setPage: (n: number) => void;
   onEdit: (c: Client) => void;
   onDelete: (id: string) => void;
+  lockedOfficeId: string | null;
 }) {
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -325,17 +351,26 @@ function ClientListView({
     <>
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <label className="text-sm font-medium whitespace-nowrap">事業所</label>
-        <Select value={filterOfficeId || "__all__"} onValueChange={(v) => setFilterOfficeId(v === "__all__" ? "" : (v ?? ""))}>
-          <SelectTrigger className="w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">すべて</SelectItem>
-            {offices.map((o) => (
-              <SelectItem key={o.id} value={o.id}>{o.short_name || o.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {lockedOfficeId ? (
+          <span className="inline-flex items-center gap-2 rounded-full bg-blue-100 text-blue-800 px-3 py-1 text-sm">
+            🏢 {(() => {
+              const o = offices.find((x) => x.id === lockedOfficeId);
+              return o ? (o.short_name || o.name) : "—";
+            })()}
+          </span>
+        ) : (
+          <Select value={filterOfficeId || "__all__"} onValueChange={(v) => setFilterOfficeId(v === "__all__" ? "" : (v ?? ""))}>
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">すべて</SelectItem>
+              {offices.map((o) => (
+                <SelectItem key={o.id} value={o.id}>{o.short_name || o.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Input
           type="search"
           placeholder="利用者番号 or 名前で検索"
