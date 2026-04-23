@@ -16,6 +16,7 @@ const navItems = [
   { href: "/clients", label: "利用者一覧", icon: "📋" },
   { href: "/services", label: "サービスマスタ", icon: "📑" },
   { href: "/payroll", label: "給与計算", icon: "💰" },
+  { href: "/payroll-summary", label: "総括表", icon: "📊" },
 ];
 
 export function Sidebar() {

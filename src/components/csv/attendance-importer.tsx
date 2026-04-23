@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -19,6 +19,8 @@ import type { ParsedAttendance, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
+interface Office { id: string; office_number: string; name: string; short_name: string; }
+
 export function AttendanceImporter() {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<
@@ -28,6 +30,59 @@ export function AttendanceImporter() {
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
+  const [offices, setOffices] = useState<Office[]>([]);
+  // (年月文字列 YYYYMM, 事業所番号) → 件数
+  const [existingCounts, setExistingCounts] = useState<{ month: string; office_number: string; count: number }[]>([]);
+
+  const fetchExistingCounts = useCallback(async () => {
+    const counts = new Map<string, number>();
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("attendance_records")
+        .select("year, month, office_number")
+        .range(from, from + pageSize - 1);
+      if (!data || data.length === 0) break;
+      for (const r of data as { year: number; month: number; office_number: string }[]) {
+        const ym = `${r.year}${String(r.month).padStart(2, "0")}`;
+        const key = `${ym}|${r.office_number}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setExistingCounts(
+      [...counts.entries()].map(([k, count]) => {
+        const [month, office_number] = k.split("|");
+        return { month, office_number, count };
+      })
+    );
+  }, []);
+
+  useEffect(() => {
+    fetchExistingCounts();
+    supabase.from("offices").select("id, office_number, name, short_name").order("name").then(({ data }) => {
+      if (data) setOffices(data as Office[]);
+    });
+  }, [fetchExistingCounts]);
+
+  const handleClearMonth = async (month: string, office_number: string, count: number) => {
+    const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
+    const _o = offices.find((o) => o.office_number === office_number);
+    const officeName = (_o?.short_name || _o?.name) ?? office_number;
+    if (!confirm(`${officeName} ${label}の出勤簿データ（${count}件）を削除しますか？`)) return;
+    const year = parseInt(month.slice(0, 4), 10);
+    const m = parseInt(month.slice(4, 6), 10);
+    const { error } = await supabase
+      .from("attendance_records")
+      .delete()
+      .eq("year", year).eq("month", m)
+      .eq("office_number", office_number);
+    if (error) { toast.error(`削除エラー: ${error.message}`); return; }
+    toast.success(`${officeName} ${label} の出勤簿データを削除しました`);
+    fetchExistingCounts();
+  };
 
   const handleFilesSelected = async (newFiles: File[]) => {
     const csvFiles = [...files, ...newFiles];
@@ -177,6 +232,11 @@ export function AttendanceImporter() {
       toast.success(
         `${allData.length}名分（${totalRows}日分）の出勤簿を登録しました`
       );
+      // 一覧更新＆ファイルクリア（重複取り込み防止）
+      fetchExistingCounts();
+      setFiles([]);
+      setResults([]);
+      setAllData([]);
     } catch (e) {
       toast.error(
         `エラー: ${e instanceof Error ? e.message : String(e)}`
@@ -193,6 +253,80 @@ export function AttendanceImporter() {
 
   return (
     <div className="space-y-4">
+      {/* 取り込み済みデータ（事業所 × 月 の行列） */}
+      {existingCounts.length > 0 && (() => {
+        const byOfficeMonth = new Map<string, number>();
+        const officeSet = new Set<string>();
+        const monthSet = new Set<string>();
+        for (const { month, office_number, count } of existingCounts) {
+          byOfficeMonth.set(`${office_number}|${month}`, count);
+          officeSet.add(office_number);
+          monthSet.add(month);
+        }
+        const monthList = [...monthSet].sort().reverse();
+        const officeList = [...officeSet].sort((a, b) => {
+          const _oa = offices.find((o) => o.office_number === a);
+          const _ob = offices.find((o) => o.office_number === b);
+          return ((_oa?.short_name || _oa?.name) ?? a).localeCompare((_ob?.short_name || _ob?.name) ?? b, "ja");
+        });
+        const fmtMonth = (m: string) => `${m.slice(0, 4)}/${m.slice(4, 6)}`;
+        const grandTotal = [...byOfficeMonth.values()].reduce((s, n) => s + n, 0);
+        return (
+          <div className="border rounded-md overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 flex items-center justify-between">
+              <span className="text-sm font-medium">取り込み済みデータ</span>
+              <span className="text-xs text-muted-foreground">
+                {officeList.length}事業所 × {monthList.length}ヶ月・総{grandTotal.toLocaleString()}件
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/20 border-b">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 font-medium sticky left-0 bg-muted/20 z-10 min-w-[180px]">事業所</th>
+                    {monthList.map((m) => (
+                      <th key={m} className="text-right px-3 py-1.5 font-medium whitespace-nowrap">{fmtMonth(m)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {officeList.map((office_number) => {
+                    const _o = offices.find((o) => o.office_number === office_number);
+                    const officeName = (_o?.short_name || _o?.name) ?? office_number;
+                    return (
+                      <tr key={office_number} className="border-b last:border-b-0 hover:bg-muted/10">
+                        <td className="px-3 py-1.5 sticky left-0 bg-background">{officeName}</td>
+                        {monthList.map((m) => {
+                          const count = byOfficeMonth.get(`${office_number}|${m}`);
+                          return (
+                            <td key={m} className="px-3 py-1.5 text-right whitespace-nowrap">
+                              {count == null ? (
+                                <span className="text-muted-foreground/40">—</span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="font-mono">{count.toLocaleString()}</span>
+                                  <button
+                                    onClick={() => handleClearMonth(m, office_number, count)}
+                                    className="text-destructive hover:text-destructive/80 text-[10px] ml-0.5"
+                                    title="この月のデータを削除"
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
       <FileDropzone
         onFilesSelected={handleFilesSelected}
         label="出勤簿CSVファイルをドロップ"

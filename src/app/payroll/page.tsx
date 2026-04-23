@@ -992,16 +992,14 @@ export default function PayrollPage() {
         }
       }
 
-      setHourlyResults(
-        [...hourlyEmpMap.values()].sort((a, b) => a.employee_name.localeCompare(b.employee_name, "ja"))
-      );
+      const hourlySorted = [...hourlyEmpMap.values()].sort((a, b) => a.employee_name.localeCompare(b.employee_name, "ja"));
+      setHourlyResults(hourlySorted);
 
       // 月給者
       const monthlyEmps = employees.filter(
         (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者")
       );
-      setMonthlyResults(
-        monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
+      const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
           const sal = salMap.get(e.id) ?? null;
           // 勤続手当を自動計算してsettingsをオーバーライド
           const computedTenure = computeTenureAllowance(
@@ -1038,8 +1036,32 @@ export default function PayrollPage() {
             yocho_hours: 0,
             summary,
           };
-        })
-      );
+        });
+      setMonthlyResults(monthlySorted);
+
+      // 総括表用に計算結果を localStorage へ保存（直近の結果を読み返せるように）
+      try {
+        const key = `payroll-summary:${selectedOffice.office_number}:${selectedMonth}`;
+        const payload = {
+          office_id: selectedOfficeId,
+          office_number: selectedOffice.office_number,
+          office_name: selectedOffice.short_name || selectedOffice.name,
+          processing_month: selectedMonth,
+          calculated_at: new Date().toISOString(),
+          hourly: hourlySorted,
+          monthly: monthlySorted,
+          overtime_settings: [...otMap.values()],
+        };
+        localStorage.setItem(key, JSON.stringify(payload));
+        // インデックス（どの組み合わせが保存されているか）
+        const indexKey = "payroll-summary:index";
+        const existingIndex = JSON.parse(localStorage.getItem(indexKey) ?? "[]") as { key: string; office_number: string; office_name: string; processing_month: string; calculated_at: string }[];
+        const filtered = existingIndex.filter((x) => x.key !== key);
+        filtered.push({ key, office_number: selectedOffice.office_number, office_name: selectedOffice.short_name || selectedOffice.name, processing_month: selectedMonth, calculated_at: payload.calculated_at });
+        localStorage.setItem(indexKey, JSON.stringify(filtered));
+      } catch {
+        // localStorage 書き込みは失敗しても給与計算自体は続行
+      }
     } catch (e) {
       setError(`計算エラー: ${e instanceof Error ? e.message : String(e)}`);
     } finally {

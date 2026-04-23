@@ -218,6 +218,12 @@ export function MeisaiImporter() {
       setImported(true);
       toast.success(`${allData.length}件のサービス実績を登録しました`);
       fetchExistingMonths();
+      // 取り込み済みファイルを「これから取り込むデータ」一覧から除外
+      // （次に別事業所のCSVを取り込む時に重複する事故を防止）
+      setFiles([]);
+      setResults([]);
+      setAllData([]);
+      setSelectedOfficeId("");
     } catch (e) {
       toast.error(
         `エラー: ${e instanceof Error ? e.message : String(e)}`
