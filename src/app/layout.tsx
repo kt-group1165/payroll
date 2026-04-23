@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Noto_Sans_JP } from "next/font/google";
-import { Sidebar } from "@/components/layout/sidebar";
+import { RootShell } from "@/components/layout/root-shell";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
@@ -23,10 +23,7 @@ export default function RootLayout({
   return (
     <html lang="ja" className={`${notoSansJP.variable} h-full antialiased`}>
       <body className="h-full flex">
-        <Sidebar />
-        <main className="flex-1 overflow-auto">
-          <div className="p-6">{children}</div>
-        </main>
+        <RootShell>{children}</RootShell>
         <Toaster />
       </body>
     </html>
