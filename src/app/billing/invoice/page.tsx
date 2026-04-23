@@ -93,15 +93,19 @@ function InvoicePrintInner() {
   useEffect(() => {
     if (!companyId || !month || !clientNumber) return;
     (async () => {
-      const [coRes, cliRes, offRes] = await Promise.all([
+      const [coRes, offRes, cliListRes] = await Promise.all([
         supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
-        supabase.from("clients").select("*").eq("client_number", clientNumber).maybeSingle(),
         supabase.from("offices").select("id, office_number, name, short_name, company_id").eq("company_id", companyId),
+        // 同じclient_numberが別事業所で別人に採番されているケースがあるので、
+        // 選択中の法人に属する事業所の利用者だけを対象にする
+        supabase.from("clients").select("*").eq("client_number", clientNumber),
       ]);
-      if (coRes.data)  setCompany(coRes.data as Company);
-      if (cliRes.data) setClient(cliRes.data as Client);
+      if (coRes.data) setCompany(coRes.data as Company);
       const offList = (offRes.data ?? []) as OfficeLite[];
       setOffices(offList);
+      const officeIds = new Set(offList.map((o) => o.id));
+      const matched = ((cliListRes.data ?? []) as Client[]).find((c) => officeIds.has(c.office_id));
+      if (matched) setClient(matched);
 
       const companyOffices = offList.map((o) => o.office_number);
       if (companyOffices.length === 0) return;
