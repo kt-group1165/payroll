@@ -77,6 +77,16 @@ export default function ClientsPage() {
     map_latitude: null as number | null,
     map_longitude: null as number | null,
     map_note: "",
+    // 請求情報
+    payment_method: "withdrawal",
+    withdrawal_day: "" as string,
+    bank_name: "",
+    bank_branch: "",
+    bank_account_type: "普通",
+    bank_account_number: "",
+    bank_account_holder: "",
+    seal_required: false,
+    care_plan_provider: "",
   });
 
   const fetchData = useCallback(async () => {
@@ -105,7 +115,14 @@ export default function ClientsPage() {
   }, [fetchData]);
 
   const resetForm = () => {
-    setForm({ client_number: "", name: "", address: "", office_id: lockedOfficeId ?? "", map_latitude: null, map_longitude: null, map_note: "" });
+    setForm({
+      client_number: "", name: "", address: "", office_id: lockedOfficeId ?? "",
+      map_latitude: null, map_longitude: null, map_note: "",
+      payment_method: "withdrawal", withdrawal_day: "",
+      bank_name: "", bank_branch: "", bank_account_type: "普通",
+      bank_account_number: "", bank_account_holder: "",
+      seal_required: false, care_plan_provider: "",
+    });
     setEditingId(null);
   };
 
@@ -114,6 +131,18 @@ export default function ClientsPage() {
       toast.error("利用者番号、名前、事業所は必須です");
       return;
     }
+
+    const billingPayload = {
+      payment_method: form.payment_method,
+      withdrawal_day: form.withdrawal_day ? parseInt(form.withdrawal_day, 10) : null,
+      bank_name: form.bank_name || null,
+      bank_branch: form.bank_branch || null,
+      bank_account_type: form.bank_account_type || null,
+      bank_account_number: form.bank_account_number || null,
+      bank_account_holder: form.bank_account_holder || null,
+      seal_required: form.seal_required,
+      care_plan_provider: form.care_plan_provider || null,
+    };
 
     if (editingId) {
       const { error } = await supabase
@@ -125,6 +154,7 @@ export default function ClientsPage() {
           map_latitude: form.map_latitude,
           map_longitude: form.map_longitude,
           map_note: form.map_note || null,
+          ...billingPayload,
         })
         .eq("id", editingId);
       if (error) {
@@ -141,6 +171,7 @@ export default function ClientsPage() {
         map_latitude: form.map_latitude,
         map_longitude: form.map_longitude,
         map_note: form.map_note || null,
+        ...billingPayload,
       });
       if (error) {
         toast.error(`登録エラー: ${error.message}`);
@@ -163,6 +194,15 @@ export default function ClientsPage() {
       map_latitude: client.map_latitude,
       map_longitude: client.map_longitude,
       map_note: client.map_note ?? "",
+      payment_method: client.payment_method ?? "withdrawal",
+      withdrawal_day: client.withdrawal_day != null ? String(client.withdrawal_day) : "",
+      bank_name: client.bank_name ?? "",
+      bank_branch: client.bank_branch ?? "",
+      bank_account_type: client.bank_account_type ?? "普通",
+      bank_account_number: client.bank_account_number ?? "",
+      bank_account_holder: client.bank_account_holder ?? "",
+      seal_required: client.seal_required ?? false,
+      care_plan_provider: client.care_plan_provider ?? "",
     });
     setEditingId(client.id);
     setIsOpen(true);
@@ -287,6 +327,91 @@ export default function ClientsPage() {
                     緯度: {form.map_latitude.toFixed(6)} / 経度: {form.map_longitude.toFixed(6)}
                   </p>
                 )}
+              </div>
+
+              {/* 請求情報（任意） */}
+              <div className="pt-2 border-t">
+                <Label className="text-sm">請求情報</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  請求書の作成・入金管理に使用します。
+                </p>
+
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <Label className="text-xs">支払方法</Label>
+                    <select
+                      className="w-full border rounded px-2 py-1.5 text-sm bg-background"
+                      value={form.payment_method}
+                      onChange={(e) => setForm({ ...form, payment_method: e.target.value })}
+                    >
+                      <option value="withdrawal">口座引落</option>
+                      <option value="transfer">振込</option>
+                      <option value="cash">集金</option>
+                      <option value="other">その他</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">振替/支払日</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={form.withdrawal_day}
+                      onChange={(e) => setForm({ ...form, withdrawal_day: e.target.value })}
+                      placeholder="27 (1〜31日)"
+                    />
+                  </div>
+                </div>
+
+                {form.payment_method === "withdrawal" && (
+                  <div className="space-y-2 mb-3 bg-muted/20 p-3 rounded">
+                    <p className="text-xs text-muted-foreground">口座情報</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} placeholder="金融機関（例: 千葉銀行）" />
+                      <Input value={form.bank_branch} onChange={(e) => setForm({ ...form, bank_branch: e.target.value })} placeholder="支店名（例: 姉ケ崎）" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <select
+                        className="border rounded px-2 py-1.5 text-sm bg-background"
+                        value={form.bank_account_type}
+                        onChange={(e) => setForm({ ...form, bank_account_type: e.target.value })}
+                      >
+                        <option value="普通">普通</option>
+                        <option value="当座">当座</option>
+                      </select>
+                      <Input
+                        className="col-span-2"
+                        value={form.bank_account_number}
+                        onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })}
+                        placeholder="口座番号"
+                      />
+                    </div>
+                    <Input
+                      value={form.bank_account_holder}
+                      onChange={(e) => setForm({ ...form, bank_account_holder: e.target.value })}
+                      placeholder="口座名義人（カナ）"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <div>
+                    <Label className="text-xs">居宅介護支援事業者名（任意）</Label>
+                    <Input
+                      value={form.care_plan_provider}
+                      onChange={(e) => setForm({ ...form, care_plan_provider: e.target.value })}
+                      placeholder="請求書に表記"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.seal_required}
+                      onChange={(e) => setForm({ ...form, seal_required: e.target.checked })}
+                    />
+                    <span>請求書に押印を表示する（既定はOFF＝押印省略）</span>
+                  </label>
+                </div>
               </div>
 
               <Button onClick={handleSubmit} className="w-full">
