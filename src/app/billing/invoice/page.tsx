@@ -54,8 +54,8 @@ type OfficeLite = {
   company_id: string | null;
 };
 
-function fmtMonth(m: string) {
-  return `${m.slice(0, 4)}年${parseInt(m.slice(4, 6), 10)}月`;
+function fmtMonthLabel(m: string) {
+  return `${parseInt(m.slice(4, 6), 10)}月`;
 }
 function yen(n: number) {
   return n.toLocaleString("ja-JP");
@@ -85,10 +85,10 @@ function InvoicePrintInner() {
   const [client, setClient] = useState<Client | null>(null);
   const [offices, setOffices] = useState<OfficeLite[]>([]);
   const [amounts, setAmounts] = useState<AmountItem[]>([]);
-  const [units, setUnits]     = useState<UnitItem[]>([]);
+  const [units, setUnits] = useState<UnitItem[]>([]);
   const [dailies, setDailies] = useState<DailyItem[]>([]);
   const [pastBilled, setPastBilled] = useState<number>(0);
-  const [pastPaid,   setPastPaid]   = useState<number>(0);
+  const [pastPaid, setPastPaid] = useState<number>(0);
 
   useEffect(() => {
     if (!companyId || !month || !clientNumber) return;
@@ -96,8 +96,6 @@ function InvoicePrintInner() {
       const [coRes, offRes, cliListRes] = await Promise.all([
         supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
         supabase.from("offices").select("id, office_number, name, short_name, company_id").eq("company_id", companyId),
-        // 同じclient_numberが別事業所で別人に採番されているケースがあるので、
-        // 選択中の法人に属する事業所の利用者だけを対象にする
         supabase.from("clients").select("*").eq("client_number", clientNumber),
       ]);
       if (coRes.data) setCompany(coRes.data as Company);
@@ -130,7 +128,6 @@ function InvoicePrintInner() {
       setUnits(await fetchAll<UnitItem>("billing_unit_items"));
       setDailies(await fetchAll<DailyItem>("billing_daily_items"));
 
-      // 繰越: 過去月の請求合計と過去入金の差
       const pastAmounts: AmountItem[] = [];
       let from = 0;
       while (true) {
@@ -157,7 +154,6 @@ function InvoicePrintInner() {
   }, [companyId, month, clientNumber]);
 
   // 事業所 × 区分 でグルーピング
-  type GroupKey = string; // `${office_number}|${segment}`
   type Group = {
     office: OfficeLite | undefined;
     officeName: string;
@@ -167,7 +163,7 @@ function InvoicePrintInner() {
     dailies: DailyItem[];
   };
   const groups = useMemo((): Group[] => {
-    const m = new Map<GroupKey, Group>();
+    const m = new Map<string, Group>();
     const get = (officeNum: string, seg: BillingSegment) => {
       const key = `${officeNum}|${seg}`;
       if (!m.has(key)) {
@@ -182,7 +178,7 @@ function InvoicePrintInner() {
       return m.get(key)!;
     };
     for (const a of amounts) get(a.office_number, a.segment as BillingSegment).amounts.push(a);
-    for (const u of units)   get(u.office_number, u.segment as BillingSegment).units.push(u);
+    for (const u of units) get(u.office_number, u.segment as BillingSegment).units.push(u);
     for (const d of dailies) get(d.office_number, d.segment as BillingSegment).dailies.push(d);
     const arr = [...m.values()];
     const segOrder: Record<BillingSegment, number> = { 介護: 0, 障害: 1, 自費: 2 };
@@ -199,11 +195,11 @@ function InvoicePrintInner() {
     [amounts]
   );
   const carryover = Math.max(0, pastBilled - pastPaid);
-  const totalDue  = currentTotal + carryover;
+  const totalDue = currentTotal + carryover;
 
-  // 引落金額内訳: 事業所×区分ごとの当月小計行
+  // 引落金額内訳: 事業所×区分×月
   type BreakdownRow = { officeName: string; segment: BillingSegment; monthLabel: string; amount: number };
-  const breakdownRows: BreakdownRow[] = useMemo(() => {
+  const breakdownRows = useMemo((): BreakdownRow[] => {
     const m = new Map<string, BreakdownRow>();
     for (const a of amounts) {
       const off = offices.find((o) => o.office_number === a.office_number);
@@ -213,7 +209,7 @@ function InvoicePrintInner() {
         m.set(key, {
           officeName,
           segment: a.segment as BillingSegment,
-          monthLabel: `${parseInt(a.billing_month.slice(4, 6), 10)}月`,
+          monthLabel: fmtMonthLabel(a.billing_month),
           amount: 0,
         });
       }
@@ -222,8 +218,10 @@ function InvoicePrintInner() {
     return [...m.values()].sort((x, y) => x.officeName.localeCompare(y.officeName, "ja"));
   }, [amounts, offices]);
 
-  // 各区分が請求書に含まれるか（右上チェック表示用）
-  const hasSegment = (seg: BillingSegment) => amounts.some((a) => a.segment === seg) || units.some((u) => u.segment === seg) || dailies.some((d) => d.segment === seg);
+  const hasSegment = (seg: BillingSegment) =>
+    amounts.some((a) => a.segment === seg) ||
+    units.some((u) => u.segment === seg) ||
+    dailies.some((d) => d.segment === seg);
 
   if (!companyId || !month || !clientNumber) {
     return <p className="p-6 text-sm text-muted-foreground">パラメータ不足（?company=&month=&client=）</p>;
@@ -240,7 +238,7 @@ function InvoicePrintInner() {
     <div className="invoice-root print:bg-white">
       <style jsx global>{`
         @media print {
-          @page { size: A4; margin: 10mm; }
+          @page { size: A4; margin: 8mm; }
           body { background: white !important; }
           .no-print { display: none !important; }
           aside { display: none !important; }
@@ -250,7 +248,6 @@ function InvoicePrintInner() {
         }
       `}</style>
 
-      {/* 操作バー（印刷時非表示） */}
       <div className="no-print mb-4 flex gap-2">
         <button
           onClick={() => window.print()}
@@ -258,147 +255,148 @@ function InvoicePrintInner() {
         >
           🖨️ 印刷
         </button>
-        <button
-          onClick={() => window.close()}
-          className="border rounded px-4 py-2 text-sm hover:bg-muted"
-        >
-          閉じる
-        </button>
+        <button onClick={() => window.close()} className="border rounded px-4 py-2 text-sm hover:bg-muted">閉じる</button>
       </div>
 
-      <div className="invoice-sheet max-w-[210mm] mx-auto bg-white border p-6 text-[11px] leading-5">
-        {/* 右上: 発行日 + 区分チェック + ご請求書在中 */}
-        <div className="flex justify-between items-start mb-1">
-          <span className="text-[10px] border border-black px-2 py-0.5">ご請求書・領収書在中</span>
-          <div className="flex items-center gap-2 text-[10px]">
-            <span>{issueDate}</span>
-            <span className="inline-flex items-center gap-1 border px-1 py-0.5">
-              <span>{hasSegment("介護") ? "☑" : "☐"}介護</span>
-              <span>{hasSegment("障害") ? "☑" : "☐"}障害</span>
-              <span>{hasSegment("自費") ? "☑" : "☐"}自費</span>
-            </span>
+      <div className="invoice-sheet max-w-[210mm] mx-auto bg-white border p-4 text-[10px] leading-[14px]">
+        {/* ─── 上部ヘッダ: 3列レイアウト（左: 宛名, 中央: 在中マーク, 右: 発行日+区分+差出人） ─── */}
+        <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-start mb-2">
+          {/* 左: タイトル + 宛名 */}
+          <div>
+            <div className="inline-block border border-black px-3 py-0.5 text-lg font-bold">
+              ご利用料金のご案内
+            </div>
+            <div className="mt-3">
+              {client?.address && <p>〒 {client.address}</p>}
+              <p className="text-base font-bold mt-0.5">{client?.name ?? "—"}　様　<span className="text-[9px] font-normal">({clientNumber})</span></p>
+            </div>
           </div>
-        </div>
 
-        <h1 className="text-xl font-bold text-center mb-3">ご利用料金のご案内</h1>
-
-        {/* 宛名 + 差出人 */}
-        <div className="flex justify-between items-start mb-3 gap-4">
-          <div className="flex-1">
-            {client?.address && <p className="text-[10px]">〒 {client.address}</p>}
-            <p className="text-base font-bold mt-1">{client?.name ?? "—"}　様</p>
-            <p className="text-[10px] text-muted-foreground">({clientNumber})</p>
+          {/* 中央: ご請求書・領収書在中 */}
+          <div className="self-center">
+            <div className="border border-black px-3 py-1 text-[11px] whitespace-nowrap">
+              ご請求書・領収書在中
+            </div>
           </div>
-          <div className="text-[10px] text-right">
-            {company?.zipcode && <p>〒{company.zipcode}</p>}
-            {company?.address && <p>{company.address}</p>}
-            <p className="font-medium text-xs">{company?.formal_name || company?.name}</p>
-            {company?.registration_number && <p>登録番号：{company.registration_number}</p>}
-            {company?.tel && <p>TEL：{company.tel}</p>}
-            <div className="mt-1 h-12 flex items-center justify-end">
-              {sealOn && company?.seal_image_url ? (
-                <img src={company.seal_image_url} alt="印" className="h-12 w-12 object-contain" />
-              ) : (
-                <span className="text-[10px] text-muted-foreground">※押印は省略させていただきます。</span>
-              )}
+
+          {/* 右: 発行日 + 区分 + 差出人 */}
+          <div className="text-right">
+            <div className="flex items-start justify-end gap-2 mb-1">
+              <span>{issueDate}</span>
+              <div className="border border-black px-1 py-0.5 text-[9px] inline-flex flex-col items-start gap-0.5 leading-[12px]">
+                <span>{hasSegment("介護") ? "☑" : "☐"}介護</span>
+                <span>{hasSegment("障害") ? "☑" : "☐"}障害</span>
+                <span>{hasSegment("自費") ? "☑" : "☐"}事業所書式(自費)</span>
+              </div>
+            </div>
+            <div className="text-[10px] leading-[13px]">
+              {company?.zipcode && <p>〒{company.zipcode}</p>}
+              {company?.address && <p>{company.address}</p>}
+              <p className="font-medium text-[11px] mt-0.5">{company?.formal_name || company?.name}</p>
+              {company?.registration_number && <p>登録番号：{company.registration_number}</p>}
+              {company?.tel && <p>TEL：{company.tel}</p>}
             </div>
           </div>
         </div>
 
-        {/* 挨拶文 */}
-        <p className="text-[10px] whitespace-pre-wrap mb-3">
-          {company?.invoice_greeting ?? "拝啓　毎々格別のお引立に預かり厚く御礼申し上げます。\nさて、ご利用分の請求書をお送りさせていただきましたので、ご査収の程よろしくお願いいたします。また、下記振替日にご指定口座より自動振替となりますので、お手数ですが前日までにお口座にご入金をお願いいたします。\n敬具"}
-        </p>
+        {/* ─── 挨拶文 + 押印 ─── */}
+        <div className="grid grid-cols-[1fr_auto] gap-4 items-start mb-2">
+          <p className="text-[10px] whitespace-pre-wrap">
+            {company?.invoice_greeting ?? "拝啓　毎々格別のお引立に預かり厚く御礼申し上げます。\nさて、ご利用分の請求書をお送りさせていただきましたので、ご査収の程よろしくお願いいたします。また、下記振替日にご指定口座より自動振替となりますので、お手数ですが前日までにお口座にご入金をお願いいたします。　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　敬具"}
+          </p>
+          <div className="text-right min-w-[140px]">
+            {sealOn && company?.seal_image_url ? (
+              <img src={company.seal_image_url} alt="印" className="h-16 w-16 object-contain ml-auto" />
+            ) : (
+              <span className="text-[10px]">※押印は省略させていただきます。</span>
+            )}
+          </div>
+        </div>
 
-        {/* 振替情報 */}
+        {/* ─── 振替情報テーブル（全幅） ─── */}
         {client?.payment_method === "withdrawal" && (
-          <table className="w-full border-collapse mb-3 text-[10px]">
+          <table className="w-full border-collapse mb-2 text-[10px]">
             <thead>
-              <tr className="border-y">
-                <th className="border-r px-1 py-1 font-medium bg-muted/20 w-20">振替日</th>
-                <th className="border-r px-1 py-1 font-medium bg-muted/20 w-24">金融機関</th>
-                <th className="border-r px-1 py-1 font-medium bg-muted/20 w-16">支店名</th>
-                <th className="border-r px-1 py-1 font-medium bg-muted/20">種目・口座番号</th>
-                <th className="border-r px-1 py-1 font-medium bg-muted/20">口座名義人</th>
-                <th className="px-1 py-1 font-medium bg-muted/20 w-28">お引落予定金額</th>
+              <tr>
+                <th className="border border-black px-1 py-0.5 bg-muted/20 w-20">振替日</th>
+                <th className="border border-black px-1 py-0.5 bg-muted/20 w-24">金融機関</th>
+                <th className="border border-black px-1 py-0.5 bg-muted/20 w-16">支店名</th>
+                <th className="border border-black px-1 py-0.5 bg-muted/20">種目・口座番号</th>
+                <th className="border border-black px-1 py-0.5 bg-muted/20">口座名義人</th>
+                <th className="border border-black px-1 py-0.5 bg-muted/20 w-28">お引落予定金額</th>
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b">
-                <td className="border-r px-1 py-1 text-center">{withdrawalDue || "—"}</td>
-                <td className="border-r px-1 py-1 text-center">{client.bank_name ?? "—"}</td>
-                <td className="border-r px-1 py-1 text-center">{client.bank_branch ?? "—"}</td>
-                <td className="border-r px-1 py-1 text-center">{client.bank_account_type ?? ""} {client.bank_account_number ?? ""}</td>
-                <td className="border-r px-1 py-1 text-center">{client.bank_account_holder ?? "—"}</td>
-                <td className="px-1 py-1 text-right font-bold">￥{yen(totalDue)}</td>
+              <tr>
+                <td className="border border-black px-1 py-1 text-center">{withdrawalDue || "—"}</td>
+                <td className="border border-black px-1 py-1 text-center">{client.bank_name ?? "—"}</td>
+                <td className="border border-black px-1 py-1 text-center">{client.bank_branch ?? "—"}</td>
+                <td className="border border-black px-1 py-1 text-center">{client.bank_account_type ?? ""} {client.bank_account_number ?? ""}</td>
+                <td className="border border-black px-1 py-1 text-center">{client.bank_account_holder ?? "—"}</td>
+                <td className="border border-black px-1 py-1 text-right font-bold">￥{yen(totalDue)}</td>
               </tr>
             </tbody>
           </table>
         )}
 
-        {/* 引落金額内訳 + 過誤・相殺の注記エリア（右） */}
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <div className="border rounded">
-            <div className="bg-muted/20 px-2 py-0.5 text-[10px] font-medium">引落金額内訳</div>
-            <div className="px-2 py-1 text-[10px] space-y-0.5">
-              {breakdownRows.map((r, i) => (
-                <p key={i}>
-                  {client?.name ?? "—"}様　{r.officeName}　{r.monthLabel}利用【{r.segment}】　{yen(r.amount)}円
-                </p>
-              ))}
-              {carryover > 0 && (
-                <p className="text-red-700">{client?.name ?? "—"}様　前月までの未払い分　{yen(carryover)}円</p>
-              )}
-              <p className="font-bold border-t pt-0.5 mt-0.5">お引落予定金額　￥{yen(totalDue)}</p>
-            </div>
-          </div>
-          {/* 過誤・相殺の注記欄（運用で記入） */}
-          <div className="border rounded">
-            <div className="bg-muted/20 px-2 py-0.5 text-[10px] font-medium">過誤・相殺等の注記</div>
-            <div className="px-2 py-1 text-[10px] text-muted-foreground min-h-[40px]">
-              {/* 過誤/相殺残額が発生した場合にこの欄に文言を入れる想定
-                  例: "○○様 ○月利用 追加ご請求分 〇〇円"
-                      "○○様 ○月利用 誤請求分 相殺額 ▲100円" */}
-            </div>
-          </div>
-        </div>
+        {/* ─── 引落金額内訳 + 過誤・相殺注記（2カラム） ─── */}
+        <table className="w-full border-collapse mb-3 text-[10px]">
+          <tbody>
+            <tr>
+              <td className="border border-black align-top w-1/2 p-1">
+                <p className="font-medium mb-1">引落金額内訳</p>
+                {breakdownRows.map((r, i) => (
+                  <p key={i} className="text-[10px]">
+                    {client?.name ?? "—"}様　{r.officeName}　{r.monthLabel}利用【{r.segment}】　{yen(r.amount)}円
+                  </p>
+                ))}
+              </td>
+              <td className="border border-black align-top w-1/2 p-1">
+                {/* 過誤・相殺注記エリア（運用で記入） */}
+                {carryover > 0 && (
+                  <p className="text-red-700">
+                    {client?.name ?? "—"}様　前月までの未払い分　{yen(carryover)}円
+                  </p>
+                )}
+              </td>
+            </tr>
+          </tbody>
+        </table>
 
-        {/* 各事業所×区分のセクション */}
+        {/* ─── 各事業所×区分のセクション ─── */}
         {groups.map((g, gi) => (
-          <InvoiceGroup key={gi} group={g} client={client} companyInquiryTel={company?.inquiry_tel ?? null} />
+          <InvoiceGroup key={gi} group={g} client={client} companyInquiryTel={company?.inquiry_tel ?? null} companyFormalName={company?.formal_name ?? null} />
         ))}
 
-        {/* 合計欄 */}
-        <div className="border-t-2 border-black pt-2 flex justify-end text-[11px]">
-          <div className="w-72">
-            <div className="flex justify-between py-0.5">
-              <span>当月ご利用料金合計</span>
-              <span>{yen(currentTotal)}円</span>
-            </div>
-            {carryover > 0 && (
-              <div className="flex justify-between py-0.5 text-red-700">
-                <span>前月までの繰越残高</span>
-                <span>{yen(carryover)}円</span>
-              </div>
-            )}
-            <div className="flex justify-between py-1 border-t font-bold text-sm">
-              <span>ご請求金額</span>
-              <span>￥{yen(totalDue)}</span>
+        {/* ─── カレンダー（全セクションをまとめて末尾に3列配置） ─── */}
+        {groups.some((g) => g.dailies.length > 0) && (
+          <div className="mt-3">
+            <p className="text-[10px] text-blue-700 text-center mb-1">カレンダーの表示</p>
+            <div className="grid grid-cols-3 gap-2">
+              {(["介護", "障害", "自費"] as BillingSegment[]).map((seg) => {
+                const segGroups = groups.filter((g) => g.segment === seg && g.dailies.length > 0);
+                if (segGroups.length === 0) return <div key={seg} />;
+                return segGroups.map((g, i) => (
+                  <MiniCalendar
+                    key={`${seg}-${i}`}
+                    title={g.officeName}
+                    segment={seg}
+                    billingMonth={month}
+                    dailies={g.dailies}
+                  />
+                ));
+              })}
             </div>
           </div>
-        </div>
-
-        {company?.inquiry_tel && (
-          <p className="text-[10px] text-muted-foreground mt-4 text-center">お問い合わせ先　{company.inquiry_tel}</p>
         )}
       </div>
     </div>
   );
 }
 
-// ─── 事業所 × 区分 のセクション ────────────────────────
+// ─── セクション（事業所 × 区分） ────────────────────────
 
-function InvoiceGroup({ group, client, companyInquiryTel }: {
+function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
   group: {
     office: OfficeLite | undefined;
     officeName: string;
@@ -409,27 +407,24 @@ function InvoiceGroup({ group, client, companyInquiryTel }: {
   };
   client: Client | null;
   companyInquiryTel: string | null;
+  companyFormalName: string | null;
 }) {
-  const { officeName, segment, amounts, units, dailies, office } = group;
+  const { officeName, segment, amounts, units } = group;
   const periodStart = amounts[0]?.period_start ?? null;
-  const periodEnd   = amounts[0]?.period_end ?? null;
+  const periodEnd = amounts[0]?.period_end ?? null;
   const periodLabel = periodStart && periodEnd
-    ? `期間：${fmtDate(periodStart)}〜${fmtDate(periodEnd)}`
+    ? `${fmtDate(periodStart)}〜${fmtDate(periodEnd)}`
     : amounts[0]?.billing_month
-      ? `期間：${amounts[0].billing_month.slice(0,4)}年${parseInt(amounts[0].billing_month.slice(4,6),10)}月`
+      ? `${amounts[0].billing_month.slice(0, 4)}年${parseInt(amounts[0].billing_month.slice(4, 6), 10)}月`
       : "";
 
-  // 単位数テーブル（介護のみ。障害も出せるが主に介護で使用）
-  const unitSubtotal = units.reduce((s, u) => s + (u.unit_count ?? 0) * (u.repetition ?? 1), 0);
+  const unitSubtotal = units.reduce(
+    (s, u) => s + ((u.unit_count ?? 0) * (u.repetition ?? 1)),
+    0
+  );
 
-  // 金額内訳: service_item ごとに集計（同じ利用料項目が複数行の場合は合算）
-  type AmountGrouped = {
-    service_item: string;
-    unit_price: number | null;
-    quantity: number | null;
-    amount: number;
-  };
-  const amountGroups: AmountGrouped[] = useMemoGroup(() => {
+  type AmountGrouped = { service_item: string; unit_price: number | null; quantity: number | null; amount: number };
+  const amountGroups: AmountGrouped[] = useMemo(() => {
     const map = new Map<string, AmountGrouped>();
     for (const a of amounts) {
       const key = a.service_item || "(不明)";
@@ -439,188 +434,218 @@ function InvoiceGroup({ group, client, companyInquiryTel }: {
       g.amount += a.amount ?? 0;
     }
     return [...map.values()];
-  }, amounts);
+  }, [amounts]);
 
   const amountSubtotal = amounts.reduce((s, a) => s + (a.amount ?? 0), 0);
-
-  // ミニ表: 医療費控除 / 減免額 / 軽減額 / 消費税
   const miniTable = {
     medical_deduction: amounts.reduce((s, a) => s + (a.medical_deduction ?? 0), 0),
-    reduction:         amounts.reduce((s, a) => s + (a.reduction_amount ?? 0), 0),
-    mitigation:        0, // 軽減額（専用列なし、減免と統合でも可）
-    tax:               amounts.reduce((s, a) => s + (a.tax_amount ?? 0), 0),
+    reduction: amounts.reduce((s, a) => s + (a.reduction_amount ?? 0), 0),
+    mitigation: 0,
+    tax: amounts.reduce((s, a) => s + (a.tax_amount ?? 0), 0),
   };
-  const showMini = miniTable.medical_deduction > 0 || miniTable.reduction > 0 || miniTable.tax > 0;
 
-  // カレンダー: day × service_name でマトリクス化
-  const calendar = useMemoGroup(() => {
-    if (dailies.length === 0) return null;
-    const svcSet = new Set<string>();
-    const cellMap = new Map<string, number>(); // key: `${day}|${svc}` → qty
-    for (const d of dailies) {
-      const svc = d.service_name || "(未設定)";
-      svcSet.add(svc);
-      const k = `${d.day}|${svc}`;
-      cellMap.set(k, (cellMap.get(k) ?? 0) + d.quantity);
-    }
-    const services = [...svcSet].sort();
-    return { services, cellMap };
-  }, dailies);
+  if (amounts.length === 0 && units.length === 0) return null;
 
-  if (amounts.length === 0 && units.length === 0 && dailies.length === 0) return null;
+  const isSelfPay = segment === "自費";
+  const sectionBg = isSelfPay ? "bg-muted/10" : "";
 
   return (
-    <section className="mb-4 border-t pt-2">
-      <p className="text-[10px] font-semibold mb-1">
-        {companyInquiryTel && <span className="mr-2">お問い合わせ先 {companyInquiryTel}</span>}
-        {officeName}　<span className="font-normal">【{segment}】</span>
-        　【ご利用内訳　{client?.name ?? ""}様　{periodLabel}】
-        {client?.care_plan_provider && <span className="ml-2 text-muted-foreground">居宅介護支援事業者名：{client.care_plan_provider}</span>}
+    <section className={`mb-3 ${sectionBg}`}>
+      {/* お問い合わせ先 (黄色ハイライト) */}
+      {companyInquiryTel && (
+        <p className="bg-yellow-200/70 text-[10px] px-1 font-medium">お問い合わせ先 {companyInquiryTel}</p>
+      )}
+
+      {/* セクション見出し */}
+      <p className="text-[10px] mb-1 mt-0.5">
+        <span className="font-semibold">{officeName}</span>
+        <span className="mx-1 text-red-700">{companyFormalName ?? ""}</span>
+        【ご利用内訳　{client?.name ?? ""}様　期間：{periodLabel}】
+        {client?.care_plan_provider && <span className="ml-2">居宅介護支援事業者名：{client.care_plan_provider}</span>}
       </p>
 
-      {/* 単位数テーブル（主に介護）*/}
+      {/* 単位数テーブル */}
       {units.length > 0 && (
         <table className="w-full border-collapse text-[10px] mb-1">
           <thead>
-            <tr className="bg-muted/20 border-y">
-              <th className="border-r px-1 py-0.5 text-left">内訳</th>
-              <th className="border-r px-1 py-0.5 text-left w-24">備考</th>
-              <th className="border-r px-1 py-0.5 text-center w-10">控除</th>
-              <th className="border-r px-1 py-0.5 text-right w-16">単位数</th>
-              <th className="border-r px-1 py-0.5 text-right w-12">回数</th>
-              <th className="px-1 py-0.5 text-right w-20">単位</th>
+            <tr>
+              <th className="border border-black px-1 py-0.5 text-left">内訳</th>
+              <th className="border border-black px-1 py-0.5 text-left w-28">備考</th>
+              <th className="border border-black px-1 py-0.5 text-center w-10">控除</th>
+              <th className="border border-black px-1 py-0.5 text-right w-16">単位数</th>
+              <th className="border border-black px-1 py-0.5 text-right w-12">回数</th>
+              <th className="border border-black px-1 py-0.5 text-right w-20">単位</th>
             </tr>
           </thead>
           <tbody>
             {units.map((u) => (
-              <tr key={u.id} className="border-b">
-                <td className="border-r px-1 py-0.5">{u.service_name}</td>
-                <td className="border-r px-1 py-0.5 text-muted-foreground"></td>
-                <td className="border-r px-1 py-0.5 text-center">＊</td>
-                <td className="border-r px-1 py-0.5 text-right">{u.unit_count != null ? yen(u.unit_count) : ""}</td>
-                <td className="border-r px-1 py-0.5 text-right">{u.repetition ?? ""}</td>
-                <td className="px-1 py-0.5 text-right">
+              <tr key={u.id}>
+                <td className="border border-black px-1 py-0.5">{u.service_name}</td>
+                <td className="border border-black px-1 py-0.5"></td>
+                <td className="border border-black px-1 py-0.5 text-center">＊</td>
+                <td className="border border-black px-1 py-0.5 text-right">{u.unit_count != null ? yen(u.unit_count) : ""}</td>
+                <td className="border border-black px-1 py-0.5 text-right">{u.repetition ?? ""}</td>
+                <td className="border border-black px-1 py-0.5 text-right">
                   {u.unit_count != null && u.repetition != null
                     ? `${yen(u.unit_count * u.repetition)}単位`
                     : u.unit_count != null ? `${yen(u.unit_count)}単位` : ""}
                 </td>
               </tr>
             ))}
-            <tr className="font-bold bg-muted/10">
-              <td colSpan={5} className="border-r px-1 py-0.5 text-right">合計単位数</td>
-              <td className="px-1 py-0.5 text-right">{yen(unitSubtotal)}単位</td>
+            <tr>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5 text-right font-medium">合計単位数</td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5 text-right">{yen(unitSubtotal)}単位</td>
             </tr>
           </tbody>
         </table>
       )}
 
-      {/* 金額内訳テーブル */}
+      {/* 金額テーブル */}
       {amountGroups.length > 0 && (
         <table className="w-full border-collapse text-[10px] mb-1">
           <thead>
-            <tr className="bg-muted/20 border-y">
-              <th className="border-r px-1 py-0.5 text-left">内訳</th>
-              <th className="border-r px-1 py-0.5 text-left w-24">備考</th>
-              <th className="border-r px-1 py-0.5 text-center w-10">控除</th>
-              <th className="border-r px-1 py-0.5 text-right w-16">単価</th>
-              <th className="border-r px-1 py-0.5 text-right w-12">時間</th>
-              <th className="border-r px-1 py-0.5 text-right w-12">回数</th>
-              <th className="px-1 py-0.5 text-right w-20">金額</th>
+            <tr>
+              <th className="border border-black px-1 py-0.5 text-left">内訳</th>
+              <th className="border border-black px-1 py-0.5 text-left w-28">備考</th>
+              <th className="border border-black px-1 py-0.5 text-center w-10">控除</th>
+              <th className="border border-black px-1 py-0.5 text-right w-16">単価</th>
+              <th className="border border-black px-1 py-0.5 text-right w-12">時間</th>
+              <th className="border border-black px-1 py-0.5 text-right w-12">回数</th>
+              <th className="border border-black px-1 py-0.5 text-right w-20">金額</th>
             </tr>
           </thead>
           <tbody>
             {amountGroups.map((a, i) => (
-              <tr key={i} className="border-b">
-                <td className="border-r px-1 py-0.5">{a.service_item}</td>
-                <td className="border-r px-1 py-0.5 text-muted-foreground"></td>
-                <td className="border-r px-1 py-0.5 text-center">＊</td>
-                <td className="border-r px-1 py-0.5 text-right">{a.unit_price != null ? yen(a.unit_price) : ""}</td>
-                <td className="border-r px-1 py-0.5 text-right"></td>
-                <td className="border-r px-1 py-0.5 text-right">{a.quantity != null && a.quantity > 0 ? yen(a.quantity) : ""}</td>
-                <td className="px-1 py-0.5 text-right">{yen(a.amount)}</td>
+              <tr key={i}>
+                <td className="border border-black px-1 py-0.5">{a.service_item}</td>
+                <td className="border border-black px-1 py-0.5"></td>
+                <td className="border border-black px-1 py-0.5 text-center">＊</td>
+                <td className="border border-black px-1 py-0.5 text-right">{a.unit_price != null ? yen(a.unit_price) : ""}</td>
+                <td className="border border-black px-1 py-0.5 text-right"></td>
+                <td className="border border-black px-1 py-0.5 text-right">{a.quantity != null && a.quantity > 0 ? yen(a.quantity) : ""}</td>
+                <td className="border border-black px-1 py-0.5 text-right">{yen(a.amount)}</td>
               </tr>
             ))}
-            <tr className="font-bold bg-muted/10">
-              <td colSpan={6} className="border-r px-1 py-0.5 text-right">利用者負担額 本人</td>
-              <td className="px-1 py-0.5 text-right">{yen(amountSubtotal)}</td>
+            {/* 利用者負担 本人 行 */}
+            <tr>
+              <td className="border border-black px-1 py-0.5 font-medium">利用者負担　本人</td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5"></td>
+              <td className="border border-black px-1 py-0.5 text-right font-medium">{isSelfPay ? "自費負担額" : "利用者負担額"}</td>
+              <td className="border border-black px-1 py-0.5 text-right font-bold">¥{yen(amountSubtotal)}</td>
             </tr>
           </tbody>
         </table>
       )}
 
-      {/* ミニ表: 医療費控除（介護）/ 上限金額（障害）/ 減免額 / 軽減額 / 内消費税 */}
-      {showMini && (
-        <table className="w-full border-collapse text-[10px] mb-2">
-          <thead>
-            <tr className="bg-muted/20 border-y">
-              <th className="border-r px-1 py-0.5 text-center w-1/4">
-                {segment === "障害" ? "上限金額" : "医療費控除対象額"}
-              </th>
-              <th className="border-r px-1 py-0.5 text-center w-1/4">減免額</th>
-              <th className="border-r px-1 py-0.5 text-center w-1/4">軽減額</th>
-              <th className="px-1 py-0.5 text-center w-1/4">内消費税</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b">
-              <td className="border-r px-1 py-0.5 text-right">{yen(miniTable.medical_deduction)}円</td>
-              <td className="border-r px-1 py-0.5 text-right">{yen(miniTable.reduction)}円</td>
-              <td className="border-r px-1 py-0.5 text-right">{yen(miniTable.mitigation)}円</td>
-              <td className="px-1 py-0.5 text-right">{yen(miniTable.tax)}円</td>
-            </tr>
-          </tbody>
-        </table>
-      )}
+      {/* 4マスのミニ表（右寄せ、小さめ） */}
+      <div className="flex justify-start gap-2 mt-1 mb-1">
+        {!isSelfPay && (
+          <MiniBox label={segment === "障害" ? "上限金額" : "医療費控除対象額"} value={miniTable.medical_deduction} />
+        )}
+        <MiniBox label="減免額" value={miniTable.reduction} />
+        <MiniBox label="軽減額" value={miniTable.mitigation} />
+        <MiniBox label={segment === "自費" ? "消費税" : "消費税→内消費税"} value={miniTable.tax} />
+      </div>
 
-      {/* 自費セクション専用: 利用者負担額 / 自費負担額 の分離表記 */}
-      {segment === "自費" && amounts.length > 0 && (
-        <div className="flex justify-end mb-2 text-[10px]">
-          <div className="w-60 border">
-            <div className="flex justify-between px-2 py-0.5 border-b">
-              <span>利用者負担額</span>
-              <span>¥0</span>
-            </div>
-            <div className="flex justify-between px-2 py-0.5 font-bold bg-muted/10">
-              <span>自費負担額</span>
-              <span>{yen(amountSubtotal)}円</span>
-            </div>
-          </div>
+      {/* 自費セクション: 利用者負担額 / 自費負担額 */}
+      {isSelfPay && (
+        <div className="flex justify-end mt-1 mb-1">
+          <table className="border-collapse text-[10px]">
+            <tbody>
+              <tr>
+                <td className="border border-black px-2 py-0.5 w-32">利用者負担額</td>
+                <td className="border border-black px-2 py-0.5 text-right w-24">¥0</td>
+              </tr>
+              <tr>
+                <td className="border border-black px-2 py-0.5 w-32 font-medium">自費負担額</td>
+                <td className="border border-black px-2 py-0.5 text-right font-bold w-24">¥{yen(amountSubtotal)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {/* カレンダー */}
-      {calendar && (
-        <table className="w-full border-collapse text-[9px] mb-2">
-          <thead>
-            <tr className="bg-muted/20 border-y">
-              <th className="border-r px-1 py-0.5 text-left w-32">サービス内容</th>
-              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                <th key={d} className="border-r px-0 py-0.5 text-center">{d}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {calendar.services.map((svc) => (
-              <tr key={svc} className="border-b">
-                <td className="border-r px-1 py-0.5 truncate">{svc}</td>
-                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
-                  const q = calendar.cellMap.get(`${d}|${svc}`);
-                  return (
-                    <td key={d} className="border-r px-0 py-0.5 text-center font-mono">
-                      {q ? (Number.isInteger(q) ? q : q.toFixed(1)) : ""}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
       )}
     </section>
   );
 }
 
-// React hook が使えるように useMemo のラッパー
-function useMemoGroup<T>(factory: () => T, deps: unknown): T {
-  return useMemo(factory, [deps]); // eslint-disable-line react-hooks/exhaustive-deps
+function MiniBox({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="text-[9px] leading-[12px]">
+      <div className="border border-black px-1 text-center bg-muted/20 whitespace-nowrap">{label}</div>
+      <div className="border border-black border-t-0 px-1 py-0.5 text-right min-w-[70px]">¥{yen(value)}</div>
+    </div>
+  );
+}
+
+function MiniCalendar({ title, segment, billingMonth, dailies }: {
+  title: string;
+  segment: BillingSegment;
+  billingMonth: string;
+  dailies: DailyItem[];
+}) {
+  const year = parseInt(billingMonth.slice(0, 4), 10);
+  const month = parseInt(billingMonth.slice(4, 6), 10);
+  const firstDay = new Date(year, month - 1, 1).getDay(); // 0=日
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const usedDays = new Set(dailies.map((d) => d.day));
+
+  const weeks: (number | null)[][] = [];
+  let cur: (number | null)[] = new Array(firstDay).fill(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    cur.push(d);
+    if (cur.length === 7) {
+      weeks.push(cur);
+      cur = [];
+    }
+  }
+  if (cur.length > 0) {
+    while (cur.length < 7) cur.push(null);
+    weeks.push(cur);
+  }
+
+  const segColor =
+    segment === "介護" ? "border-orange-400" :
+    segment === "障害" ? "border-purple-400" :
+    "border-green-400";
+
+  return (
+    <div className={`border-2 ${segColor} text-[8px]`}>
+      <div className="bg-muted/30 px-1 py-0.5 text-center font-medium">{title}</div>
+      <div className="text-center font-bold text-[9px]">ご利用日</div>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            {["日", "月", "火", "水", "木", "金", "土"].map((w, i) => (
+              <th key={w} className={`px-0 py-0.5 text-center ${i === 0 ? "text-red-600" : i === 6 ? "text-blue-600" : ""}`}>
+                {w}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {weeks.map((week, wi) => (
+            <tr key={wi}>
+              {week.map((d, di) => (
+                <td key={di} className="px-0 py-0.5 text-center">
+                  {d == null ? "" : usedDays.has(d)
+                    ? <span className={`inline-block rounded-full border ${di === 0 ? "border-red-600 text-red-600" : di === 6 ? "border-blue-600 text-blue-600" : "border-black"} w-4 h-4 leading-[14px]`}>{d}</span>
+                    : <span className="text-muted-foreground">{d}</span>}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-[8px] text-center text-muted-foreground pt-0.5">
+        {segment}
+      </p>
+    </div>
+  );
 }
