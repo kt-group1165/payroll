@@ -197,6 +197,30 @@ function InvoicePrintInner() {
   const carryover = Math.max(0, pastBilled - pastPaid);
   const totalDue  = currentTotal + carryover;
 
+  // 引落金額内訳: 事業所×区分ごとの当月小計行
+  type BreakdownRow = { officeName: string; segment: BillingSegment; monthLabel: string; amount: number };
+  const breakdownRows: BreakdownRow[] = useMemo(() => {
+    const m = new Map<string, BreakdownRow>();
+    for (const a of amounts) {
+      const off = offices.find((o) => o.office_number === a.office_number);
+      const officeName = (off?.short_name || off?.name) ?? a.office_number;
+      const key = `${a.office_number}|${a.segment}|${a.billing_month}`;
+      if (!m.has(key)) {
+        m.set(key, {
+          officeName,
+          segment: a.segment as BillingSegment,
+          monthLabel: `${parseInt(a.billing_month.slice(4, 6), 10)}月`,
+          amount: 0,
+        });
+      }
+      m.get(key)!.amount += a.amount ?? 0;
+    }
+    return [...m.values()].sort((x, y) => x.officeName.localeCompare(y.officeName, "ja"));
+  }, [amounts, offices]);
+
+  // 各区分が請求書に含まれるか（右上チェック表示用）
+  const hasSegment = (seg: BillingSegment) => amounts.some((a) => a.segment === seg) || units.some((u) => u.segment === seg) || dailies.some((d) => d.segment === seg);
+
   if (!companyId || !month || !clientNumber) {
     return <p className="p-6 text-sm text-muted-foreground">パラメータ不足（?company=&month=&client=）</p>;
   }
@@ -239,10 +263,17 @@ function InvoicePrintInner() {
       </div>
 
       <div className="invoice-sheet max-w-[210mm] mx-auto bg-white border p-6 text-[11px] leading-5">
-        {/* 右上: 発行日 + ご請求書在中 */}
-        <div className="flex justify-end items-start gap-3 mb-1">
+        {/* 右上: 発行日 + 区分チェック + ご請求書在中 */}
+        <div className="flex justify-between items-start mb-1">
           <span className="text-[10px] border border-black px-2 py-0.5">ご請求書・領収書在中</span>
-          <span className="text-xs">{issueDate}</span>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span>{issueDate}</span>
+            <span className="inline-flex items-center gap-1 border px-1 py-0.5">
+              <span>{hasSegment("介護") ? "☑" : "☐"}介護</span>
+              <span>{hasSegment("障害") ? "☑" : "☐"}障害</span>
+              <span>{hasSegment("自費") ? "☑" : "☐"}自費</span>
+            </span>
+          </div>
         </div>
 
         <h1 className="text-xl font-bold text-center mb-3">ご利用料金のご案内</h1>
@@ -306,20 +337,24 @@ function InvoicePrintInner() {
           <div className="border rounded">
             <div className="bg-muted/20 px-2 py-0.5 text-[10px] font-medium">引落金額内訳</div>
             <div className="px-2 py-1 text-[10px] space-y-0.5">
-              {currentTotal > 0 && (
-                <p>{client?.name ?? "—"}様　{fmtMonth(month)}利用　{yen(currentTotal)}円</p>
-              )}
+              {breakdownRows.map((r, i) => (
+                <p key={i}>
+                  {client?.name ?? "—"}様　{r.officeName}　{r.monthLabel}利用【{r.segment}】　{yen(r.amount)}円
+                </p>
+              ))}
               {carryover > 0 && (
                 <p className="text-red-700">{client?.name ?? "—"}様　前月までの未払い分　{yen(carryover)}円</p>
               )}
               <p className="font-bold border-t pt-0.5 mt-0.5">お引落予定金額　￥{yen(totalDue)}</p>
             </div>
           </div>
-          {/* 過誤・相殺の注記欄（空のまま。運用でメモがあれば別途。） */}
+          {/* 過誤・相殺の注記欄（運用で記入） */}
           <div className="border rounded">
-            <div className="bg-muted/20 px-2 py-0.5 text-[10px] font-medium">過誤・相殺等</div>
+            <div className="bg-muted/20 px-2 py-0.5 text-[10px] font-medium">過誤・相殺等の注記</div>
             <div className="px-2 py-1 text-[10px] text-muted-foreground min-h-[40px]">
-              {/* 過誤・相殺発生時の文言はここに表示 */}
+              {/* 過誤/相殺残額が発生した場合にこの欄に文言を入れる想定
+                  例: "○○様 ○月利用 追加ご請求分 〇〇円"
+                      "○○様 ○月利用 誤請求分 相殺額 ▲100円" */}
             </div>
           </div>
         </div>
@@ -449,7 +484,7 @@ function InvoiceGroup({ group, client, companyInquiryTel }: {
               <th className="border-r px-1 py-0.5 text-center w-10">控除</th>
               <th className="border-r px-1 py-0.5 text-right w-16">単位数</th>
               <th className="border-r px-1 py-0.5 text-right w-12">回数</th>
-              <th className="px-1 py-0.5 text-right w-16">単位</th>
+              <th className="px-1 py-0.5 text-right w-20">単位</th>
             </tr>
           </thead>
           <tbody>
@@ -462,14 +497,14 @@ function InvoiceGroup({ group, client, companyInquiryTel }: {
                 <td className="border-r px-1 py-0.5 text-right">{u.repetition ?? ""}</td>
                 <td className="px-1 py-0.5 text-right">
                   {u.unit_count != null && u.repetition != null
-                    ? yen(u.unit_count * u.repetition)
-                    : u.unit_count != null ? yen(u.unit_count) : ""}
+                    ? `${yen(u.unit_count * u.repetition)}単位`
+                    : u.unit_count != null ? `${yen(u.unit_count)}単位` : ""}
                 </td>
               </tr>
             ))}
             <tr className="font-bold bg-muted/10">
               <td colSpan={5} className="border-r px-1 py-0.5 text-right">合計単位数</td>
-              <td className="px-1 py-0.5 text-right">{yen(unitSubtotal)}</td>
+              <td className="px-1 py-0.5 text-right">{yen(unitSubtotal)}単位</td>
             </tr>
           </tbody>
         </table>
@@ -509,12 +544,14 @@ function InvoiceGroup({ group, client, companyInquiryTel }: {
         </table>
       )}
 
-      {/* ミニ表: 医療費控除 / 減免額 / 軽減額 / 消費税 */}
+      {/* ミニ表: 医療費控除（介護）/ 上限金額（障害）/ 減免額 / 軽減額 / 内消費税 */}
       {showMini && (
         <table className="w-full border-collapse text-[10px] mb-2">
           <thead>
             <tr className="bg-muted/20 border-y">
-              <th className="border-r px-1 py-0.5 text-center w-1/4">医療費控除対象額</th>
+              <th className="border-r px-1 py-0.5 text-center w-1/4">
+                {segment === "障害" ? "上限金額" : "医療費控除対象額"}
+              </th>
               <th className="border-r px-1 py-0.5 text-center w-1/4">減免額</th>
               <th className="border-r px-1 py-0.5 text-center w-1/4">軽減額</th>
               <th className="px-1 py-0.5 text-center w-1/4">内消費税</th>
@@ -529,6 +566,22 @@ function InvoiceGroup({ group, client, companyInquiryTel }: {
             </tr>
           </tbody>
         </table>
+      )}
+
+      {/* 自費セクション専用: 利用者負担額 / 自費負担額 の分離表記 */}
+      {segment === "自費" && amounts.length > 0 && (
+        <div className="flex justify-end mb-2 text-[10px]">
+          <div className="w-60 border">
+            <div className="flex justify-between px-2 py-0.5 border-b">
+              <span>利用者負担額</span>
+              <span>¥0</span>
+            </div>
+            <div className="flex justify-between px-2 py-0.5 font-bold bg-muted/10">
+              <span>自費負担額</span>
+              <span>{yen(amountSubtotal)}円</span>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* カレンダー */}
