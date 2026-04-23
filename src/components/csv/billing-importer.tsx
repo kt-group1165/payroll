@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,6 +16,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
+type OfficeLite = { id: string; office_number: string; name: string; short_name: string };
+
 type FileResult = {
   file: File;
   type: BillingFileType | null;
@@ -23,12 +25,34 @@ type FileResult = {
   unitRows: BillingUnitItem[];
   dailyRows: BillingDailyItem[];
   errors: string[];
+  unresolvedOffices: string[]; // 事業所名が引き当てられなかった事業者名のリスト
 };
+
+/** 事業者名から office_number を引き当てる（括弧内の補足を除去、部分一致、略称一致も許容） */
+function resolveOfficeNumber(rawName: string, offices: OfficeLite[]): string | null {
+  const clean = (s: string) => (s ?? "").replace(/（.*?）/g, "").replace(/[\s\u3000]/g, "").toLowerCase();
+  const target = clean(rawName);
+  if (!target) return null;
+  const eq = offices.find((o) => clean(o.name) === target || clean(o.short_name) === target);
+  if (eq) return eq.office_number;
+  const inc = offices.find((o) => clean(o.name).includes(target) || target.includes(clean(o.name)));
+  if (inc) return inc.office_number;
+  const sh = offices.find((o) => o.short_name && (target.includes(clean(o.short_name)) || clean(o.short_name).includes(target)));
+  if (sh) return sh.office_number;
+  return null;
+}
 
 export function BillingImporter() {
   const [results, setResults] = useState<FileResult[]>([]);
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(false);
+  const [offices, setOffices] = useState<OfficeLite[]>([]);
+
+  useEffect(() => {
+    supabase.from("offices").select("id, office_number, name, short_name").then(({ data }) => {
+      if (data) setOffices(data as OfficeLite[]);
+    });
+  }, []);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
@@ -39,6 +63,7 @@ export function BillingImporter() {
       let unitRows: BillingUnitItem[] = [];
       let dailyRows: BillingDailyItem[] = [];
       const errors: string[] = [];
+      const unresolvedOffices: string[] = [];
       if (!type) {
         errors.push("ファイル名から種別が判定できません（01_介護_金額.CSV 形式で命名してください）");
       } else {
@@ -52,11 +77,25 @@ export function BillingImporter() {
         } catch (e) {
           errors.push(`パースエラー: ${e instanceof Error ? e.message : String(e)}`);
         }
+
+        // 事業所番号が空の行は、office_name（障害は事業者名）から引き当てる
+        const unresolvedSet = new Set<string>();
+        const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
+          if (r.office_number) return;
+          const name = r.office_name ?? "";
+          const num = resolveOfficeNumber(name, offices);
+          if (num) r.office_number = num;
+          else if (name) unresolvedSet.add(name);
+        };
+        for (const r of amountRows) resolveRow(r);
+        for (const r of unitRows)   resolveRow(r as unknown as { office_number: string; office_name?: string });
+        for (const r of dailyRows)  resolveRow(r as unknown as { office_number: string; office_name?: string });
+        unresolvedOffices.push(...unresolvedSet);
       }
-      newResults.push({ file: f, type, amountRows, unitRows, dailyRows, errors });
+      newResults.push({ file: f, type, amountRows, unitRows, dailyRows, errors, unresolvedOffices });
     }
     setResults((prev) => [...prev, ...newResults]);
-  }, []);
+  }, [offices]);
 
   const handleClear = () => {
     setResults([]);
@@ -168,6 +207,22 @@ export function BillingImporter() {
               </AlertDescription>
             </Alert>
           )}
+
+          {/* 障害CSVなどに事業所番号がないケース: 事業者名で引き当てできなかったものを警告 */}
+          {(() => {
+            const unresolved = [...new Set(results.flatMap((r) => r.unresolvedOffices))];
+            if (unresolved.length === 0) return null;
+            return (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  以下の事業者名から事業所が引き当てられませんでした。事業所一覧で該当する事業所の「正式名称」を確認するか、略称・名称の表記を合わせてください。該当行は office_number が空のまま登録されるので、/billing で金額が集計されません。
+                  <ul className="mt-2 list-disc ml-5 text-xs">
+                    {unresolved.map((n, i) => <li key={i}>{n}</li>)}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            );
+          })()}
 
           <Button onClick={handleImport} disabled={importing || imported}>
             {importing ? "取り込み中…" : imported ? "登録済み" : "データベースに登録"}
