@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,45 @@ const GoogleMapPicker = dynamic(
 );
 
 const PAGE_SIZE = 100;
+
+// ─── CSV ユーティリティ ─────────────────────────────────
+const CSV_HEADERS = [
+  "内部ID", "利用者番号", "氏名", "住所", "事業所番号", "担当事業所",
+  "支払方法", "振替日",
+  "金融機関", "支店名", "口座種目", "口座番号", "口座名義人カナ",
+  "押印", "居宅介護支援事業者",
+  "マップ緯度", "マップ経度", "マップメモ",
+] as const;
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const escape = (v: string) =>
+    v.includes(",") || v.includes('"') || v.includes("\n")
+      ? `"${v.replace(/"/g, '""')}"`
+      : v;
+  const csv = rows.map((r) => r.map(escape).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function parseCsvLine(line: string): string[] {
+  const res: string[] = [];
+  let cur = ""; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else { inQ = !inQ; } }
+    else if (ch === "," && !inQ) { res.push(cur); cur = ""; }
+    else { cur += ch; }
+  }
+  res.push(cur);
+  return res;
+}
+function parseCsvText(text: string): string[][] {
+  return text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim()).map(parseCsvLine);
+}
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -219,10 +258,178 @@ export default function ClientsPage() {
     fetchData();
   };
 
+  // ─── CSV 出力 ─────────────────────────────────────────
+  const importRef = useRef<HTMLInputElement>(null);
+
+  const handleExport = () => {
+    const officeById = new Map(offices.map((o) => [o.id, o]));
+    // フィルタ反映: 事業所フィルタ・検索条件を適用
+    const q = searchQuery.trim().toLowerCase();
+    const targets = clients
+      .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
+      .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
+
+    const rows: string[][] = [CSV_HEADERS.slice()];
+    for (const c of targets) {
+      const off = officeById.get(c.office_id);
+      rows.push([
+        String(c.master_id ?? ""),
+        c.client_number,
+        c.name,
+        c.address ?? "",
+        off?.office_number ?? "",
+        (off?.short_name || off?.name) ?? "",
+        c.payment_method ?? "",
+        c.withdrawal_day != null ? String(c.withdrawal_day) : "",
+        c.bank_name ?? "",
+        c.bank_branch ?? "",
+        c.bank_account_type ?? "",
+        c.bank_account_number ?? "",
+        c.bank_account_holder ?? "",
+        c.seal_required ? "1" : "0",
+        c.care_plan_provider ?? "",
+        c.map_latitude != null ? String(c.map_latitude) : "",
+        c.map_longitude != null ? String(c.map_longitude) : "",
+        c.map_note ?? "",
+      ]);
+    }
+    const _fo = offices.find((o) => o.id === filterOfficeId);
+    const label = filterOfficeId ? ((_fo?.short_name || _fo?.name) ?? "") : "全事業所";
+    downloadCsv(`利用者一覧_${label}.csv`, rows);
+    toast.success(`${targets.length}件をエクスポートしました`);
+  };
+
+  // ─── CSV 取り込み ───────────────────────────────────────
+  // 内部ID（master_id）をキー:
+  //   一致する master_id → UPDATE（上書き）
+  //   空欄                → INSERT（新規、master_idは採番される）
+  //   存在しない master_id → エラー
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const buf = ev.target?.result as ArrayBuffer;
+      const bytes = new Uint8Array(buf);
+      const isUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+      const enc = isUtf8Bom
+        ? "utf-8"
+        : (() => {
+            const tryUtf8 = new TextDecoder("utf-8").decode(buf);
+            return tryUtf8.includes("利用者番号") ? "utf-8" : "shift_jis";
+          })();
+      const text = new TextDecoder(enc).decode(buf);
+      const rows = parseCsvText(text);
+      if (rows.length < 2) { toast.error("データ行がありません"); return; }
+
+      const headers = rows[0].map((h) => h.trim());
+      const idx = (name: string) => headers.indexOf(name);
+      const needs = ["利用者番号", "氏名", "事業所番号"];
+      for (const n of needs) if (idx(n) < 0) { toast.error(`ヘッダーに「${n}」が必要です`); return; }
+
+      const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const existingMasterIds = new Set(clients.map((c) => c.master_id));
+
+      const toUpdate: { master_id: number; patch: Record<string, unknown> }[] = [];
+      const toInsert: Record<string, unknown>[] = [];
+      const errors: string[] = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const get = (name: string) => (r[idx(name)] ?? "").trim();
+        const rawMasterId = get("内部ID");
+        const clientNumber = get("利用者番号");
+        const name = get("氏名");
+        const officeNumber = get("事業所番号");
+        if (!clientNumber || !name) continue;
+
+        const off = officeByNumber.get(officeNumber);
+        if (!off) { errors.push(`行${i + 1}: 事業所番号「${officeNumber}」が未登録`); continue; }
+
+        const payload: Record<string, unknown> = {
+          client_number: clientNumber,
+          name,
+          address: get("住所"),
+          office_id: off.id,
+          payment_method: get("支払方法") || "withdrawal",
+          withdrawal_day: get("振替日") ? parseInt(get("振替日"), 10) || null : null,
+          bank_name: get("金融機関") || null,
+          bank_branch: get("支店名") || null,
+          bank_account_type: get("口座種目") || null,
+          bank_account_number: get("口座番号") || null,
+          bank_account_holder: get("口座名義人カナ") || null,
+          seal_required: get("押印") === "1",
+          care_plan_provider: get("居宅介護支援事業者") || null,
+          map_latitude: get("マップ緯度") ? parseFloat(get("マップ緯度")) : null,
+          map_longitude: get("マップ経度") ? parseFloat(get("マップ経度")) : null,
+          map_note: get("マップメモ") || null,
+        };
+
+        if (rawMasterId === "") {
+          // 新規
+          toInsert.push(payload);
+        } else {
+          const mid = parseInt(rawMasterId, 10);
+          if (isNaN(mid)) { errors.push(`行${i + 1}: 内部ID「${rawMasterId}」は数値ではありません`); continue; }
+          if (!existingMasterIds.has(mid)) {
+            errors.push(`行${i + 1}: 内部ID「${mid}」は存在しません（もともとなかった内部IDが入っています）`);
+            continue;
+          }
+          toUpdate.push({ master_id: mid, patch: payload });
+        }
+      }
+
+      if (errors.length > 0) {
+        toast.error(errors.slice(0, 10).join("\n"));
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+      if (toUpdate.length === 0 && toInsert.length === 0) {
+        toast.error("取り込むデータがありません");
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+      if (!confirm(`更新${toUpdate.length}件 / 新規${toInsert.length}件 を取り込みますか？`)) {
+        if (importRef.current) importRef.current.value = "";
+        return;
+      }
+
+      let ok = 0; let fail = 0;
+      // 更新は個別（バッチupdateはmaster_id違いの複数行を1クエリでできない）
+      for (const u of toUpdate) {
+        const { error } = await supabase.from("clients").update(u.patch).eq("master_id", u.master_id);
+        if (error) { console.error(error); fail++; } else ok++;
+      }
+      // 新規はまとめてinsert
+      if (toInsert.length > 0) {
+        const chunkSize = 500;
+        for (let i = 0; i < toInsert.length; i += chunkSize) {
+          const { error } = await supabase.from("clients").insert(toInsert.slice(i, i + chunkSize));
+          if (error) { console.error(error); fail += Math.min(chunkSize, toInsert.length - i); }
+          else ok += Math.min(chunkSize, toInsert.length - i);
+        }
+      }
+
+      if (fail === 0) toast.success(`${ok}件を取り込みました`);
+      else toast.warning(`${ok}件成功 / ${fail}件失敗（詳細はコンソール）`);
+      fetchData();
+      if (importRef.current) importRef.current.value = "";
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-bold">利用者一覧</h2>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={handleExport} disabled={clients.length === 0}>
+            📥 CSV出力
+          </Button>
+          <Button variant="outline" onClick={() => importRef.current?.click()}>
+            📤 CSV取り込み
+          </Button>
+          <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
         <Dialog
           open={isOpen}
           onOpenChange={(open) => {
@@ -420,6 +627,7 @@ export default function ClientsPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* 事業所フィルター + 検索 */}

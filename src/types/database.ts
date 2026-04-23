@@ -93,6 +93,8 @@ export interface Employee {
 
 export interface Client {
   id: string;
+  /** グループ全体で一意の利用者マスタID（1始まり連番） */
+  master_id: number;
   client_number: string;
   name: string;
   address: string;
