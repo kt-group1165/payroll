@@ -55,7 +55,7 @@ export function Sidebar() {
       <div className="p-4 border-b">
         <h1 className="text-lg font-bold">
           給与計算システム
-          <span className="text-xs font-normal text-muted-foreground ml-1">V42</span>
+          <span className="text-xs font-normal text-muted-foreground ml-1">V45</span>
         </h1>
       </div>
       <nav className="flex-1 p-2 overflow-y-auto">
