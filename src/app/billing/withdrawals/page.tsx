@@ -228,12 +228,77 @@ export default function WithdrawalsImportPage() {
     return list.sort().reverse();
   }, []);
 
+  const handleDownloadSample = () => {
+    // 請求対象の利用者からサンプルを抽出 (先頭5件程度を不可扱いで生成)
+    const sample: string[][] = [
+      ["利用者番号", "利用者氏名", "請求額", "不可理由コード", "不可理由"],
+    ];
+    const picks = invoicedRows.slice(0, Math.min(5, invoicedRows.length));
+    const reasons = [
+      ["01", "残高不足"],
+      ["02", "口座解約"],
+      ["03", "依頼書なし"],
+      ["04", "預金者による引落中止"],
+      ["99", "その他"],
+    ];
+    picks.forEach((r, i) => {
+      const [code, reason] = reasons[i % reasons.length];
+      sample.push([
+        r.client_number,
+        r.client_name ?? "",
+        String(r.invoiced_amount ?? r.amount),
+        code,
+        reason,
+      ]);
+    });
+    if (picks.length === 0) {
+      // 対象月のデータがなければダミーを入れる
+      sample.push(["1234567890", "山田 太郎", "12340", "01", "残高不足"]);
+      sample.push(["2345678901", "佐藤 花子", "8500", "02", "口座解約"]);
+    }
+    const csv = sample.map((r) => r.map((c) => {
+      const needsQuote = c.includes(",") || c.includes('"') || c.includes("\n");
+      const esc = c.replace(/"/g, '""');
+      return needsQuote ? `"${esc}"` : esc;
+    }).join(",")).join("\r\n");
+    // BOM 付き UTF-8 で出力（Excel で開けるように）
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const monthTag = billingMonth || "sample";
+    a.download = `引落不可_${monthTag}_サンプル.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-3">引落結果取り込み</h2>
       <p className="text-sm text-muted-foreground mb-4">
         銀行から来た「引落不可CSV」を取り込むと、対象月の請求のうち不可リストにある行は <b>overdue</b>、無い行は <b>paid</b> に自動遷移します。
       </p>
+
+      {/* サンプルCSV */}
+      <div className="border rounded-md p-3 mb-4 bg-muted/30">
+        <p className="text-sm font-semibold mb-1">📋 CSV様式（サンプル）</p>
+        <p className="text-xs text-muted-foreground mb-2">
+          下記のような CSV を想定しています。列順は任意で、<b>利用者番号</b>の列さえあれば取り込み可能。文字コードは UTF-8 / Shift-JIS どちらでもOK。
+        </p>
+        <div className="bg-background border rounded p-2 text-[11px] font-mono overflow-x-auto whitespace-pre mb-2">
+{`利用者番号,利用者氏名,請求額,不可理由コード,不可理由
+1234567890,山田 太郎,12340,01,残高不足
+2345678901,佐藤 花子,8500,02,口座解約
+3456789012,鈴木 次郎,5000,01,残高不足`}
+        </div>
+        <Button variant="outline" size="sm" onClick={handleDownloadSample}>
+          📥 サンプルCSVダウンロード
+        </Button>
+        <p className="text-[10px] text-muted-foreground mt-2">
+          ※ ダウンロードされるサンプルは、上で選択した対象月・法人の invoiced 行を元に生成します（対象行が無ければダミーデータ）。<br />
+          ※ 実運用では、銀行から届いた不可リストCSVをそのまま使ってください。不要な列があっても構いません（利用者番号列を選択するだけ）。
+        </p>
+      </div>
 
       {/* 対象選択 */}
       <div className="border rounded-md p-3 mb-4 space-y-2">
