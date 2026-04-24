@@ -938,7 +938,7 @@ export function BillingImporter() {
                         <tr key={i} className="border-t border-yellow-200 align-top">
                           <td className="px-2 py-1 whitespace-nowrap">
                             {ref.kind === "number" ? (
-                              <span className="text-purple-700">障害番号</span>
+                              <span className="text-purple-700">事業所番号</span>
                             ) : (
                               <span className="text-blue-700">事業者名</span>
                             )}

@@ -315,9 +315,12 @@ export async function parse02KaigoUnit(file: File): Promise<{ data: BillingUnitI
       toInt(get("合計単位数")) ??
       toInt(get("サービス単位数")) ??
       unitPointYenNum;
+    const officeNameKaigo =
+      get("事業所名") || get("施設名") || get("事業所名称") || get("事業者名") || "";
     data.push({
       segment: "介護",
       office_number: get("事業所番号"),
+      office_name: officeNameKaigo || undefined,
       client_number: clientNumber,
       client_name: get("利用者名"),
       billing_month: normalizeBillingMonth(get("請求年月") || get("処理年月")),
@@ -405,6 +408,8 @@ export async function parse03KaigoDaily(file: File): Promise<{ data: BillingDail
     if (!clientNumber) continue;
     const billingMonth = normalizeBillingMonth(get("提供年月") || get("処理年月"));
     const serviceName = get("サービス内容");
+    const officeNameKaigo =
+      get("事業所名") || get("施設名") || get("事業所名称") || get("事業者名") || "";
     for (let d = 1; d <= 31; d++) {
       const qStr = get(`${d}日`);
       if (!qStr) continue;
@@ -413,6 +418,7 @@ export async function parse03KaigoDaily(file: File): Promise<{ data: BillingDail
       data.push({
         segment: "介護",
         office_number: get("事業所番号"),
+        office_name: officeNameKaigo || undefined,
         client_number: clientNumber,
         client_name: get("利用者名"),
         billing_month: billingMonth,
