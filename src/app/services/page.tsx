@@ -474,7 +474,12 @@ function MappingsTab() {
                 }}
               >
                 <SelectTrigger className="w-[200px]">
-                  <SelectValue placeholder="類型を選択" />
+                  <SelectValue placeholder="類型を選択">
+                    {(v: string) => {
+                      const c = categories.find((x) => x.id === v);
+                      return c ? c.name : "類型を選択";
+                    }}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {categories.map((c) => (
@@ -551,7 +556,12 @@ function MappingsTab() {
                     }
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="類型を選択" />
+                      <SelectValue placeholder="類型を選択">
+                        {(v: string) => {
+                          const c = categories.find((x) => x.id === v);
+                          return c ? c.name : "類型を選択";
+                        }}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {categories.map((c) => (
@@ -899,7 +909,12 @@ function RatesTab() {
                   }
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="事業所を選択" />
+                    <SelectValue placeholder="事業所を選択">
+                      {(v: string) => {
+                        const o = offices.find((x) => x.id === v);
+                        return o ? (o.short_name || o.name) : "事業所を選択";
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent
                     alignItemWithTrigger={false}
@@ -922,7 +937,12 @@ function RatesTab() {
                   }
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="類型を選択" />
+                    <SelectValue placeholder="類型を選択">
+                      {(v: string) => {
+                        const c = categories.find((x) => x.id === v);
+                        return c ? c.name : "類型を選択";
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {categories.map((c) => (

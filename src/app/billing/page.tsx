@@ -384,7 +384,7 @@ export default function BillingPage() {
                     const isFirst = idx === 0;
                     const spanRows = group.rows.length;
                     return (
-                      <tr key={`${group.client_number}-${idx}`} className="hover:bg-muted/10">
+                      <tr key={`${group.client_number}-${idx}`} className="hover:bg-muted/10 align-top">
                         {isFirst && (
                           <>
                             <td rowSpan={spanRows} className="sticky left-0 bg-background z-10 border px-2 py-1 font-mono text-[10px]">
@@ -445,6 +445,47 @@ export default function BillingPage() {
                 )
               )}
             </tbody>
+            {/* ─── 合計行 ─── */}
+            {groupedRows.length > 0 && (() => {
+              // 売掛金残額は「利用者単位」で重複しないように合算
+              const uniqueOutstanding = new Map<string, number>();
+              for (const r of displayRows) {
+                if (!uniqueOutstanding.has(r.client_number)) {
+                  uniqueOutstanding.set(r.client_number, r.outstanding);
+                }
+              }
+              const outstandingSum = [...uniqueOutstanding.values()].reduce((s, v) => s + v, 0);
+              const monthSums: Record<string, number> = {};
+              for (const m of monthColumns) {
+                monthSums[m] = displayRows.reduce((s, r) => s + (r.monthlyAmounts[m] ?? 0), 0);
+              }
+              return (
+                <tfoot className="bg-muted/40 sticky bottom-0 z-20 font-bold">
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="sticky left-0 bg-muted/40 z-30 border px-2 py-1 text-right"
+                    >
+                      合計
+                    </td>
+                    {monthColumns.map((m) => (
+                      <td key={m} className="border px-2 py-1 text-right font-mono">
+                        {monthSums[m] > 0 ? yen(monthSums[m]) : ""}
+                      </td>
+                    ))}
+                    <td className="border px-2 py-1 text-muted-foreground/40">—</td>
+                    <td className="border px-2 py-1 text-muted-foreground/40">—</td>
+                    <td className="border px-2 py-1 text-muted-foreground/40">—</td>
+                    <td className="border px-2 py-1 text-muted-foreground/40">—</td>
+                    <td className="border px-2 py-1 text-muted-foreground/40">—</td>
+                    <td className="border px-2 py-1 text-muted-foreground/40">—</td>
+                    <td className={`border px-2 py-1 text-right font-mono ${outstandingSum > 0 ? "text-red-700" : "text-muted-foreground"}`}>
+                      {outstandingSum > 0 ? yen(outstandingSum) : "0"}
+                    </td>
+                  </tr>
+                </tfoot>
+              );
+            })()}
           </table>
         </div>
       </div>

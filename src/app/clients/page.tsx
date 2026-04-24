@@ -442,108 +442,121 @@ export default function ClientsPage() {
           >
             新規登録
           </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingId ? "利用者を編集" : "利用者を登録"}
               </DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>利用者番号</Label>
-                <Input
-                  value={form.client_number}
-                  onChange={(e) =>
-                    setForm({ ...form, client_number: e.target.value })
-                  }
-                  disabled={!!editingId}
-                />
-              </div>
-              <div>
-                <Label>名前</Label>
-                <Input
-                  value={form.name}
-                  onChange={(e) =>
-                    setForm({ ...form, name: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <Label>住所</Label>
-                <Input
-                  value={form.address}
-                  onChange={(e) =>
-                    setForm({ ...form, address: e.target.value })
-                  }
-                  placeholder="通常の住所（請求書等に使用）"
-                />
-              </div>
-              <div>
-                <Label>所属事業所</Label>
-                <Select
-                  value={form.office_id}
-                  onValueChange={(v) =>
-                    setForm({ ...form, office_id: v ?? "" })
-                  }
-                  disabled={!!lockedOfficeId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="事業所を選択" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {offices.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.short_name || o.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* 左: 基本情報・マップ / 右: 請求情報 の2カラム */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* ── 左カラム ─────────────────── */}
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>利用者番号</Label>
+                    <Input
+                      value={form.client_number}
+                      onChange={(e) =>
+                        setForm({ ...form, client_number: e.target.value })
+                      }
+                      disabled={!!editingId}
+                    />
+                  </div>
+                  <div>
+                    <Label>名前</Label>
+                    <Input
+                      value={form.name}
+                      onChange={(e) =>
+                        setForm({ ...form, name: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>住所</Label>
+                  <Input
+                    value={form.address}
+                    onChange={(e) =>
+                      setForm({ ...form, address: e.target.value })
+                    }
+                    placeholder="通常の住所（請求書等に使用）"
+                  />
+                </div>
+                <div>
+                  <Label>所属事業所</Label>
+                  <Select
+                    value={form.office_id}
+                    onValueChange={(v) =>
+                      setForm({ ...form, office_id: v ?? "" })
+                    }
+                    disabled={!!lockedOfficeId}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="事業所を選択">
+                        {(v: string) => {
+                          const o = offices.find((x) => x.id === v);
+                          return o ? (o.short_name || o.name) : "事業所を選択";
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {offices.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.short_name || o.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* マップ用位置（任意） */}
-              <div className="pt-2 border-t">
-                <div className="flex items-center justify-between mb-1">
-                  <Label className="text-sm">マップ用位置（任意）</Label>
-                  {(form.map_latitude !== null || form.map_longitude !== null) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setForm({ ...form, map_latitude: null, map_longitude: null, map_note: "" })}
-                    >
-                      クリア
-                    </Button>
+                {/* マップ用位置（任意） */}
+                <div className="pt-2 border-t">
+                  <div className="flex items-center justify-between mb-1">
+                    <Label className="text-sm">マップ用位置（任意）</Label>
+                    {(form.map_latitude !== null || form.map_longitude !== null) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setForm({ ...form, map_latitude: null, map_longitude: null, map_note: "" })}
+                      >
+                        クリア
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    通常の住所とは別の場所（施設入所中など）の位置を指定する場合に設定。距離計算はここで指定した座標を優先します。
+                  </p>
+                  <Input
+                    value={form.map_note}
+                    onChange={(e) => setForm({ ...form, map_note: e.target.value })}
+                    placeholder="メモ（例: 御宿町の特養○○ 101号室）"
+                    className="mb-2"
+                  />
+                  <GoogleMapPicker
+                    latitude={form.map_latitude}
+                    longitude={form.map_longitude}
+                    fallbackAddress={form.address}
+                    onChange={(lat, lng) => setForm({ ...form, map_latitude: lat, map_longitude: lng })}
+                  />
+                  {form.map_latitude !== null && form.map_longitude !== null && (
+                    <p className="text-xs text-muted-foreground mt-1 font-mono">
+                      緯度: {form.map_latitude.toFixed(6)} / 経度: {form.map_longitude.toFixed(6)}
+                    </p>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground mb-2">
-                  通常の住所とは別の場所（施設入所中など）の位置を指定する場合に設定。距離計算はここで指定した座標を優先します。
-                </p>
-                <Input
-                  value={form.map_note}
-                  onChange={(e) => setForm({ ...form, map_note: e.target.value })}
-                  placeholder="メモ（例: 御宿町の特養○○ 101号室）"
-                  className="mb-2"
-                />
-                <GoogleMapPicker
-                  latitude={form.map_latitude}
-                  longitude={form.map_longitude}
-                  fallbackAddress={form.address}
-                  onChange={(lat, lng) => setForm({ ...form, map_latitude: lat, map_longitude: lng })}
-                />
-                {form.map_latitude !== null && form.map_longitude !== null && (
-                  <p className="text-xs text-muted-foreground mt-1 font-mono">
-                    緯度: {form.map_latitude.toFixed(6)} / 経度: {form.map_longitude.toFixed(6)}
-                  </p>
-                )}
               </div>
 
-              {/* 請求情報（任意） */}
-              <div className="pt-2 border-t">
-                <Label className="text-sm">請求情報</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  請求書の作成・入金管理に使用します。
-                </p>
+              {/* ── 右カラム: 請求情報 ─────────────── */}
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-sm">請求情報</Label>
+                  <p className="text-xs text-muted-foreground">
+                    請求書の作成・入金管理に使用します。
+                  </p>
+                </div>
 
-                <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs">支払方法</Label>
                     <select
@@ -571,7 +584,7 @@ export default function ClientsPage() {
                 </div>
 
                 {form.payment_method === "withdrawal" && (
-                  <div className="space-y-2 mb-3 bg-muted/20 p-3 rounded">
+                  <div className="space-y-2 bg-muted/20 p-3 rounded">
                     <p className="text-xs text-muted-foreground">口座情報</p>
                     <div className="grid grid-cols-2 gap-2">
                       <Input value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} placeholder="金融機関（例: 千葉銀行）" />
@@ -601,30 +614,28 @@ export default function ClientsPage() {
                   </div>
                 )}
 
-                <div className="space-y-2">
-                  <div>
-                    <Label className="text-xs">居宅介護支援事業者名（任意）</Label>
-                    <Input
-                      value={form.care_plan_provider}
-                      onChange={(e) => setForm({ ...form, care_plan_provider: e.target.value })}
-                      placeholder="請求書に表記"
-                    />
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      checked={form.seal_required}
-                      onChange={(e) => setForm({ ...form, seal_required: e.target.checked })}
-                    />
-                    <span>請求書に押印を表示する（既定はOFF＝押印省略）</span>
-                  </label>
+                <div>
+                  <Label className="text-xs">居宅介護支援事業者名（任意）</Label>
+                  <Input
+                    value={form.care_plan_provider}
+                    onChange={(e) => setForm({ ...form, care_plan_provider: e.target.value })}
+                    placeholder="請求書に表記"
+                  />
                 </div>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.seal_required}
+                    onChange={(e) => setForm({ ...form, seal_required: e.target.checked })}
+                  />
+                  <span>請求書に押印を表示する（既定はOFF＝押印省略）</span>
+                </label>
               </div>
-
-              <Button onClick={handleSubmit} className="w-full">
-                {editingId ? "更新" : "登録"}
-              </Button>
             </div>
+
+            <Button onClick={handleSubmit} className="w-full mt-4">
+              {editingId ? "更新" : "登録"}
+            </Button>
           </DialogContent>
         </Dialog>
         </div>
@@ -694,7 +705,13 @@ function ClientListView({
         ) : (
           <Select value={filterOfficeId || "__all__"} onValueChange={(v) => setFilterOfficeId(v === "__all__" ? "" : (v ?? ""))}>
             <SelectTrigger className="w-48">
-              <SelectValue />
+              <SelectValue>
+                {(v: string) => {
+                  if (!v || v === "__all__") return "すべて";
+                  const o = offices.find((x) => x.id === v);
+                  return o ? (o.short_name || o.name) : "すべて";
+                }}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">すべて</SelectItem>
@@ -719,6 +736,7 @@ function ClientListView({
           <TableRow>
             <TableHead>利用者番号</TableHead>
             <TableHead>名前</TableHead>
+            <TableHead>事業所</TableHead>
             <TableHead>住所</TableHead>
             <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
@@ -726,24 +744,30 @@ function ClientListView({
         <TableBody>
           {pageRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4} className="text-center text-muted-foreground">
+              <TableCell colSpan={5} className="text-center text-muted-foreground">
                 {clients.length === 0 ? "利用者が登録されていません" : "該当する利用者がいません"}
               </TableCell>
             </TableRow>
           ) : (
-            pageRows.map((client) => (
-              <TableRow key={client.id}>
-                <TableCell>{client.client_number}</TableCell>
-                <TableCell>{client.name}</TableCell>
-                <TableCell>{client.address || "-"}</TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="sm" onClick={() => onEdit(client)}>編集</Button>
-                    <Button variant="ghost" size="sm" onClick={() => onDelete(client.id)}>削除</Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))
+            pageRows.map((client) => {
+              const office = offices.find((o) => o.id === client.office_id);
+              return (
+                <TableRow key={client.id}>
+                  <TableCell>{client.client_number}</TableCell>
+                  <TableCell>{client.name}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {office ? (office.short_name || office.name) : "—"}
+                  </TableCell>
+                  <TableCell>{client.address || "-"}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => onEdit(client)}>編集</Button>
+                      <Button variant="ghost" size="sm" onClick={() => onDelete(client.id)}>削除</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })
           )}
         </TableBody>
       </Table>

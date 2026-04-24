@@ -491,7 +491,13 @@ export default function OfficesPage() {
                   }
                 >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue>
+                      {(v: string) => {
+                        const days = ["日", "月", "火", "水", "木", "金", "土"];
+                        const i = parseInt(v ?? "0", 10);
+                        return Number.isFinite(i) && days[i] ? `${days[i]}曜日` : "";
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {["日", "月", "火", "水", "木", "金", "土"].map((d, i) => (
@@ -584,7 +590,13 @@ export default function OfficesPage() {
                   onValueChange={(v) => setForm({ ...form, company_id: !v || v === "__none__" ? "" : v })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="法人を選択" />
+                    <SelectValue placeholder="法人を選択">
+                      {(v: string) => {
+                        if (!v || v === "__none__") return "未設定";
+                        const c = companies.find((x) => x.id === v);
+                        return c ? c.name : "法人を選択";
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">未設定</SelectItem>
