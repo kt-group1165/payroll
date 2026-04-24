@@ -418,10 +418,9 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
       ? `${amounts[0].billing_month.slice(0, 4)}年${parseInt(amounts[0].billing_month.slice(4, 6), 10)}月`
       : "";
 
-  const unitSubtotal = units.reduce(
-    (s, u) => s + ((u.unit_count ?? 0) * (u.repetition ?? 1)),
-    0
-  );
+  // 02_単位CSV の「単位数」は既に 1回あたり×回数 の総計が入っているため、
+  // ここでは掛け算せずそのまま合計する。
+  const unitSubtotal = units.reduce((s, u) => s + (u.unit_count ?? 0), 0);
 
   type AmountGrouped = { service_item: string; unit_price: number | null; quantity: number | null; amount: number };
   const amountGroups: AmountGrouped[] = useMemo(() => {
@@ -478,20 +477,25 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
             </tr>
           </thead>
           <tbody>
-            {units.map((u) => (
-              <tr key={u.id}>
-                <td className="border border-black px-1 py-0.5">{u.service_name}</td>
-                <td className="border border-black px-1 py-0.5"></td>
-                <td className="border border-black px-1 py-0.5 text-center">＊</td>
-                <td className="border border-black px-1 py-0.5 text-right">{u.unit_count != null ? yen(u.unit_count) : ""}</td>
-                <td className="border border-black px-1 py-0.5 text-right">{u.repetition ?? ""}</td>
-                <td className="border border-black px-1 py-0.5 text-right">
-                  {u.unit_count != null && u.repetition != null
-                    ? `${yen(u.unit_count * u.repetition)}単位`
-                    : u.unit_count != null ? `${yen(u.unit_count)}単位` : ""}
-                </td>
-              </tr>
-            ))}
+            {units.map((u) => {
+              // CSVの「単位数」は総計なので、1回あたりは 単位数/回数 で算出
+              const reps = u.repetition && u.repetition > 0 ? u.repetition : 1;
+              const perVisit = u.unit_count != null ? u.unit_count / reps : null;
+              return (
+                <tr key={u.id}>
+                  <td className="border border-black px-1 py-0.5">{u.service_name || "—"}</td>
+                  <td className="border border-black px-1 py-0.5"></td>
+                  <td className="border border-black px-1 py-0.5 text-center">＊</td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {perVisit != null ? yen(Math.round(perVisit)) : ""}
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">{u.repetition ?? ""}</td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {u.unit_count != null ? `${yen(u.unit_count)}単位` : ""}
+                  </td>
+                </tr>
+              );
+            })}
             <tr>
               <td className="border border-black px-1 py-0.5"></td>
               <td className="border border-black px-1 py-0.5"></td>

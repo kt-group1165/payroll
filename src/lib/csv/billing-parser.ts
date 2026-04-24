@@ -294,14 +294,23 @@ export async function parse02KaigoUnit(file: File): Promise<{ data: BillingUnitI
     const rawObj: Record<string, string> = {};
     for (const k of Object.keys(idxOnce)) rawObj[k] = get(k);
 
+    // サービス内容の列名は環境によって揺らぎがあるのでフォールバック
+    const serviceName =
+      get("介護サービス費内訳") ||
+      get("サービス内容") ||
+      get("サービス名称") ||
+      get("サービス名") ||
+      get("内訳") ||
+      get("介護サービス内訳") ||
+      "";
     data.push({
       segment: "介護",
       office_number: get("事業所番号"),
       client_number: clientNumber,
       client_name: get("利用者名"),
       billing_month: normalizeBillingMonth(get("請求年月") || get("処理年月")),
-      service_name: get("介護サービス費内訳") || "",
-      service_code: null,
+      service_name: serviceName,
+      service_code: get("サービスコード") || null,
       unit_count: toNum(get("単位数")),
       unit_type: get("単位/点/円") || null,
       repetition: toNum(get("回数")),

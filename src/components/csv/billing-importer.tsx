@@ -51,11 +51,18 @@ type OfficeAlias = {
  * 未解決の事業者参照。
  * kind=number の場合、nameHint に CSV で同時に現れた事業者名を保持しておき、
  * 紐付け確定時に (番号 + 名前) 組で alias として永続化する。
+ *
+ * CSV側の名前が空の時 (nameHint === ""):
+ *   - 異なるファイルで同じ番号が来た場合に分離するため、sourceFileName でも区別
+ *   - UI上で manualName を手入力可能にして、それを alias として永続化できるようにする
+ *   - manualName も空のままなら、今回の取り込み限りで適用、alias には保存しない
  */
 type UnresolvedRef = {
   kind: "name" | "number";
   value: string;                  // 事業者名 or 障害事業所番号（CSVに入っていた値）
-  nameHint?: string;              // 番号と同時にCSVで出た事業者名（alias 登録用、任意）
+  nameHint?: string;              // 番号と同時にCSVで出た事業者名（空文字の場合あり）
+  sourceFileName?: string;        // CSVが名前空だった時、どのファイルから来たかを記録（UI表示＆スコープ限定用）
+  manualName?: string;            // ユーザーが UI で手入力した名前。空のままなら alias 保存しない
   pickedOfficeId: string | null;  // ユーザーが選んだ事業所id。未選択はnull
 };
 
@@ -245,8 +252,10 @@ export function BillingImporter() {
     else if (type === "03_障害_利用日") ({ data: dailyRows } = await parse03ShogaiDaily(f));
 
     // 未解決の (番号, 名前) ペア・(名前のみ) を重複排除しつつ記録
-    // 番号のキー: `${number}||${name ?? ""}` 別々の名前ヒントで同じ番号が来たら個別の未解決扱い
-    const unresolvedNumPairs = new Map<string, { value: string; nameHint?: string }>();
+    // 番号のキー:
+    //   - nameHint あり: `${number}||${name}` （同じ番号でも名前が違えば別扱い）
+    //   - nameHint 空:   `${number}||__empty__||${fileName}` （同じ番号でも別ファイルから来たら別扱い）
+    const unresolvedNumPairs = new Map<string, { value: string; nameHint?: string; sourceFileName?: string }>();
     const unresolvedNames = new Set<string>();
 
     const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
@@ -260,10 +269,16 @@ export function BillingImporter() {
         // 2) エイリアス: (番号, 名前) ペアで引く
         const byAlias = resolveOfficeByAlias(numStr, nameStr, aliases, offices);
         if (byAlias) { r.office_number = byAlias.office_number; return; }
-        // 3) 未解決（名前ヒントつき）
-        const key = `${numStr}||${nameStr}`;
+        // 3) 未解決
+        const key = nameStr
+          ? `${numStr}||${nameStr}`
+          : `${numStr}||__empty__||${f.name}`;
         if (!unresolvedNumPairs.has(key)) {
-          unresolvedNumPairs.set(key, { value: numStr, nameHint: nameStr || undefined });
+          unresolvedNumPairs.set(key, {
+            value: numStr,
+            nameHint: nameStr || undefined,
+            sourceFileName: nameStr ? undefined : f.name,
+          });
         }
         return;
       }
@@ -290,15 +305,28 @@ export function BillingImporter() {
   }, [offices, aliases]);
 
   const mergeUnresolved = (
-    numPairs: { value: string; nameHint?: string }[],
+    numPairs: { value: string; nameHint?: string; sourceFileName?: string }[],
     names: string[],
   ) => {
     setUnresolvedRefs((prev) => {
-      // 重複判定キーは (kind, value, nameHint) の組。同じ番号でも名前ヒントが違えば別エントリ。
-      const keyOf = (r: UnresolvedRef) => `${r.kind}:${r.value}::${r.nameHint ?? ""}`;
+      // 重複判定キー:
+      //   - kind=number で nameHint あり: (kind, value, nameHint)
+      //   - kind=number で nameHint 空:   (kind, value, __empty__, sourceFileName) ← ファイル別に分離
+      //   - kind=name: (kind, value)
+      const keyOf = (r: UnresolvedRef) => {
+        if (r.kind === "name") return `name:${r.value}`;
+        if (r.nameHint) return `number:${r.value}::${r.nameHint}`;
+        return `number:${r.value}::__empty__::${r.sourceFileName ?? ""}`;
+      };
       const existing = new Map(prev.map((r) => [keyOf(r), r]));
       for (const p of numPairs) {
-        const ref: UnresolvedRef = { kind: "number", value: p.value, nameHint: p.nameHint, pickedOfficeId: null };
+        const ref: UnresolvedRef = {
+          kind: "number",
+          value: p.value,
+          nameHint: p.nameHint,
+          sourceFileName: p.sourceFileName,
+          pickedOfficeId: null,
+        };
         const k = keyOf(ref);
         if (!existing.has(k)) existing.set(k, ref);
       }
@@ -372,11 +400,14 @@ export function BillingImporter() {
       if (!confirm(`未解決の事業者が${pendingRefs.length}件あります。該当行は office_number が空のまま登録されます（集計で表示されません）。このまま取り込みますか？`)) return;
     }
 
-    // 未解決マッピングを適用: (番号, 事業者名) ペアごとに office_number を書き換え
-    // キーは `${number}||${nameHint}` で照合（同じ番号でも名前ヒントが違えば別事業所にルーティング可）
-    const pairMap = new Map<string, string>();     // `${numNorm}||${nameNorm}` → office_number
-    const numberOnlyMap = new Map<string, string>(); // nameHint なしで紐付けられた番号
-    const nameMap = new Map<string, string>();     // nameNorm → office_number
+    // ── 未解決参照から alias 永続化 & マッピング情報を組み立てる ──
+    // 「nameHint も manualName も空」の場合:
+    //   - alias 永続化しない（次回以降も未解決として出る。ファイル名では永続識別できないため）
+    //   - ただし今回の取り込みには反映するため、sourceFileName でスコープ限定の per-file map を使う
+    type PerFileRef = { numNorm: string; officeNumber: string };
+    const pairMap = new Map<string, string>();           // `${numNorm}||${nameNorm}` → office_number (クロスファイル適用)
+    const nameMap = new Map<string, string>();           // nameNorm → office_number (クロスファイル)
+    const perFileNumberRefs = new Map<string, PerFileRef[]>();  // fileName → [{ numNorm, officeNumber }]
     const shogaiUpdates: { officeId: string; shogaiNum: string }[] = [];
     const newAliases: {
       office_id: string;
@@ -393,22 +424,29 @@ export function BillingImporter() {
       if (!off) continue;
       if (ref.kind === "number") {
         const numNorm = ref.value.trim().toLowerCase();
-        const nameNorm = ref.nameHint ? normalizeOfficeName(ref.nameHint) : "";
+        // 名前の優先順位: 手入力 > CSVの nameHint > なし
+        const effectiveName = (ref.manualName ?? "").trim() || ref.nameHint || "";
+        const nameNorm = effectiveName ? normalizeOfficeName(effectiveName) : "";
+
         if (nameNorm) {
+          // 名前あり → クロスファイルで適用 + alias 永続化
           pairMap.set(`${numNorm}||${nameNorm}`, off.office_number);
+          newAliases.push({
+            office_id: off.id,
+            kind: "shogai_number",
+            value_raw: ref.value,
+            value_norm: numNorm,
+            value_name_raw: effectiveName,
+            value_name_norm: nameNorm,
+          });
         } else {
-          numberOnlyMap.set(numNorm, off.office_number);
+          // 名前なし → 当該ファイルの行にだけ適用、alias は保存しない
+          const file = ref.sourceFileName ?? "";
+          const arr = perFileNumberRefs.get(file) ?? [];
+          arr.push({ numNorm, officeNumber: off.office_number });
+          perFileNumberRefs.set(file, arr);
         }
-        // エイリアス永続化
-        newAliases.push({
-          office_id: off.id,
-          kind: "shogai_number",
-          value_raw: ref.value,
-          value_norm: numNorm,
-          value_name_raw: ref.nameHint ?? "",
-          value_name_norm: nameNorm,
-        });
-        // 後方互換: offices.shogai_office_number も更新（/offices 編集画面での表示用）
+        // 後方互換: offices.shogai_office_number も更新
         if (off.shogai_office_number !== ref.value) {
           shogaiUpdates.push({ officeId: off.id, shogaiNum: ref.value });
         }
@@ -426,30 +464,35 @@ export function BillingImporter() {
       }
     }
 
-    const applyMap = <T extends { office_number: string; office_name?: string }>(rows: T[]) => {
+    // ── 各ファイルごとにマッピングを適用 ──
+    const applyMapForFile = <T extends { office_number: string; office_name?: string }>(
+      rows: T[],
+      fileName: string,
+    ) => {
+      const fileRefs = perFileNumberRefs.get(fileName) ?? [];
       for (const r of rows) {
         const numStr = (r.office_number ?? "").trim().toLowerCase();
         const nameStr = r.office_name ? normalizeOfficeName(r.office_name) : "";
-        // 既に正しい介護番号なら何もしない
         if (!numStr && !nameStr) continue;
-        // 1) (番号, 名前) ペア
+        // 1) (番号, 名前) ペア（クロスファイル）
         if (numStr && nameStr && pairMap.has(`${numStr}||${nameStr}`)) {
           r.office_number = pairMap.get(`${numStr}||${nameStr}`)!; continue;
         }
-        // 2) 番号のみ
-        if (numStr && numberOnlyMap.has(numStr)) {
-          r.office_number = numberOnlyMap.get(numStr)!; continue;
+        // 2) このファイル限定の (番号のみ) マッピング
+        if (numStr) {
+          const hit = fileRefs.find((x) => x.numNorm === numStr);
+          if (hit) { r.office_number = hit.officeNumber; continue; }
         }
-        // 3) 名前のみ
+        // 3) 名前のみ（クロスファイル）
         if (!numStr && nameStr && nameMap.has(nameStr)) {
           r.office_number = nameMap.get(nameStr)!; continue;
         }
       }
     };
     for (const r of results) {
-      applyMap(r.amountRows);
-      applyMap(r.unitRows);
-      applyMap(r.dailyRows);
+      applyMapForFile(r.amountRows, r.file.name);
+      applyMapForFile(r.unitRows, r.file.name);
+      applyMapForFile(r.dailyRows, r.file.name);
     }
 
     const totalAmount = results.reduce((s, r) => s + r.amountRows.length, 0);
@@ -700,28 +743,48 @@ export function BillingImporter() {
               </p>
               <p className="text-xs text-yellow-800">
                 ・<b>事業所番号</b>＋<b>事業者名</b>の組で記憶されるため、同じ番号が別事業所のCSVで出てきても誤紐付けされません。次回以降は自動で解決されます。<br />
-                ・<b>事業者名</b>のみの場合も、次回以降は自動解決されます。/offices で正式名称・略称を合わせるとファジーマッチが効きます。
+                ・CSVに事業者名が無い場合、ファイル単位で分けて表示し、ここで名前を手入力すると (番号+入力名) として恒久登録されます。空のままだと今回の取り込みのみに適用されます。
               </p>
               <table className="w-full text-xs">
                 <thead className="bg-yellow-100/60">
                   <tr>
                     <th className="text-left px-2 py-1 font-medium">種別</th>
                     <th className="text-left px-2 py-1 font-medium">CSVの値</th>
-                    <th className="text-left px-2 py-1 font-medium">事業者名（ヒント）</th>
+                    <th className="text-left px-2 py-1 font-medium">事業者名 / ヒント</th>
                     <th className="text-left px-2 py-1 font-medium">紐付け先の事業所</th>
                   </tr>
                 </thead>
                 <tbody>
                   {unresolvedRefs.map((ref, i) => (
-                    <tr key={i} className="border-t border-yellow-200">
-                      <td className="px-2 py-1">
+                    <tr key={i} className="border-t border-yellow-200 align-top">
+                      <td className="px-2 py-1 whitespace-nowrap">
                         {ref.kind === "number" ? <span className="text-purple-700">障害番号</span> : <span className="text-blue-700">事業者名</span>}
                       </td>
                       <td className="px-2 py-1 font-mono">{ref.value}</td>
-                      <td className="px-2 py-1 text-muted-foreground">
-                        {ref.kind === "number"
-                          ? (ref.nameHint ? ref.nameHint : <span className="text-muted-foreground/60">（CSVに名前なし）</span>)
-                          : <span className="text-muted-foreground/60">—</span>}
+                      <td className="px-2 py-1">
+                        {ref.kind === "number" ? (
+                          ref.nameHint ? (
+                            <span className="text-muted-foreground">{ref.nameHint}</span>
+                          ) : (
+                            <div className="space-y-0.5">
+                              <input
+                                type="text"
+                                className="border rounded px-2 py-0.5 text-xs bg-background w-full min-w-[180px]"
+                                placeholder="名前を入力（任意）"
+                                value={ref.manualName ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, manualName: v } : x));
+                                }}
+                              />
+                              {ref.sourceFileName && (
+                                <p className="text-[10px] text-muted-foreground/80">from: {ref.sourceFileName}</p>
+                              )}
+                            </div>
+                          )
+                        ) : (
+                          <span className="text-muted-foreground/60">—</span>
+                        )}
                       </td>
                       <td className="px-2 py-1">
                         <select
