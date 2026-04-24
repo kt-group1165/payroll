@@ -137,6 +137,32 @@ export interface Payment {
   created_at: string;
 }
 
+/** 法人ごとの請求書フォーマット設定 */
+export interface CompanyInvoiceFormat {
+  id: string;
+  company_id: string;
+  invoice_title: string | null;
+  mark_text: string | null;
+  greeting: string | null;
+  show_bank_account_number: boolean;
+  show_bank_account_holder: boolean;
+  show_bank_name: boolean;
+  show_withdrawal_amount: boolean;
+  show_reduction: boolean;
+  show_mitigation: boolean;
+  show_medical_deduction: boolean;
+  show_tax: boolean;
+  show_calendar: boolean;
+  print_seal: boolean;
+  overbilling_text: string | null;
+  underbilling_text: string | null;
+  offset_remaining_text: string | null;
+  inquiry_tel: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ServiceRecord {
   id: string;
   import_batch_id: string;
