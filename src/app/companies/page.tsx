@@ -31,6 +31,8 @@ const defaultForm = {
   formal_name: "",
   registration_number: "",
   tel: "",
+  fax: "",
+  representative: "",
   seal_image_url: "",
   invoice_greeting: "",
   inquiry_tel: "",
@@ -67,6 +69,8 @@ export default function CompaniesPage() {
       formal_name: toNull(form.formal_name),
       registration_number: toNull(form.registration_number),
       tel: toNull(form.tel),
+      fax: toNull(form.fax),
+      representative: toNull(form.representative),
       seal_image_url: toNull(form.seal_image_url),
       invoice_greeting: toNull(form.invoice_greeting),
       inquiry_tel: toNull(form.inquiry_tel),
@@ -96,6 +100,8 @@ export default function CompaniesPage() {
       formal_name: company.formal_name ?? "",
       registration_number: company.registration_number ?? "",
       tel: company.tel ?? "",
+      fax: company.fax ?? "",
+      representative: company.representative ?? "",
       seal_image_url: company.seal_image_url ?? "",
       invoice_greeting: company.invoice_greeting ?? "",
       inquiry_tel: company.inquiry_tel ?? "",
@@ -171,7 +177,7 @@ export default function CompaniesPage() {
               {/* 請求書関連 */}
               <div className="pt-3 border-t">
                 <Label className="text-sm">請求書 差出人情報</Label>
-                <p className="text-xs text-muted-foreground mb-2">請求書のヘッダに表示されます。</p>
+                <p className="text-xs text-muted-foreground mb-2">請求書のヘッダ右上に表示されます。</p>
                 <div className="space-y-3">
                   <div>
                     <Label className="text-xs">正式名称（請求書表記）</Label>
@@ -179,6 +185,22 @@ export default function CompaniesPage() {
                       value={form.formal_name}
                       onChange={(e) => setForm({ ...form, formal_name: e.target.value })}
                       placeholder="例: (株)ケイ・ティ・サービス"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">代表者（役職＋氏名）</Label>
+                    <Input
+                      value={form.representative}
+                      onChange={(e) => setForm({ ...form, representative: e.target.value })}
+                      placeholder="例: 代表取締役　手代木　正儀"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">FAX（請求書表記）</Label>
+                    <Input
+                      value={form.fax}
+                      onChange={(e) => setForm({ ...form, fax: e.target.value })}
+                      placeholder="例: 0436-60-3230"
                     />
                   </div>
                   <div>

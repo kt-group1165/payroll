@@ -33,6 +33,8 @@ export interface Company {
   formal_name: string | null;
   registration_number: string | null;
   tel: string | null;
+  fax: string | null;
+  representative: string | null;  // 代表取締役 〇〇 等
   seal_image_url: string | null;
   invoice_greeting: string | null;
   inquiry_tel: string | null;

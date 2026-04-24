@@ -305,8 +305,8 @@ function InvoicePrintInner() {
             )}
           </div>
 
-          {/* 右: 発行日 + 区分（複数事業所をまとめる想定のため、差出人は各セクション内に表示） */}
-          <div className="text-right">
+          {/* 右: 発行日 + 区分 + 法人情報（住所・代表者・TEL/FAX） */}
+          <div className="text-right text-[10px] leading-[14px]">
             <div className="flex items-start justify-end gap-2 mb-1">
               <span>{issueDate}</span>
               <div className="border border-black px-1 py-0.5 text-[9px] inline-flex flex-col items-start gap-0.5 leading-[12px]">
@@ -314,6 +314,16 @@ function InvoicePrintInner() {
                 <span>{hasSegment("障害") ? "☑" : "☐"}障害</span>
                 <span>{hasSegment("自費") ? "☑" : "☐"}事業所書式(自費)</span>
               </div>
+            </div>
+            {/* 法人情報ブロック（住所→法人名→代表者→TEL/FAX） */}
+            <div className="mt-1">
+              {company?.zipcode && <p>〒{company.zipcode}</p>}
+              {company?.address && <p>{company.address}</p>}
+              {company?.formal_name && <p className="font-medium">{company.formal_name}</p>}
+              {company?.representative && <p>{company.representative}</p>}
+              {company?.tel && <p>TEL：{company.tel}</p>}
+              {company?.fax && <p>FAX：{company.fax}</p>}
+              {company?.registration_number && <p className="text-[9px]">登録番号：{company.registration_number}</p>}
             </div>
           </div>
         </div>
