@@ -50,6 +50,17 @@ const sections: { title: string; items: NavItem[] }[] = [
 export function Sidebar() {
   const pathname = usePathname();
 
+  // /billing と /billing/import のように href が前方一致する場合、
+  // 最も長く一致した1つだけをアクティブにする（親menuが一緒に点灯しないように）
+  const allHrefs = sections.flatMap((s) => s.items.map((i) => i.href));
+  const activeHref = (() => {
+    const matches = allHrefs.filter((h) =>
+      h === "/" ? pathname === "/" : pathname === h || pathname.startsWith(h + "/")
+    );
+    if (matches.length === 0) return null;
+    return matches.reduce((best, h) => (h.length > best.length ? h : best));
+  })();
+
   return (
     <aside className="w-60 border-r bg-muted/30 flex flex-col">
       <div className="p-4 border-b">
@@ -65,8 +76,7 @@ export function Sidebar() {
               {sec.title}
             </p>
             {sec.items.map((item) => {
-              const isActive =
-                item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              const isActive = activeHref === item.href;
               return (
                 <Link
                   key={item.href}
