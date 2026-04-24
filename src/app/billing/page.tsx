@@ -473,11 +473,11 @@ export default function BillingPage() {
                           const v = r.monthlyAmounts[m] ?? 0;
                           const st = r.monthlyStatus[m];
                           return (
-                            <td key={m} className="border px-2 py-1 text-right font-mono relative">
-                              {v !== 0 ? yen(v) : ""}
-                              {st && v !== 0 && (
-                                <StatusBadge status={st} />
-                              )}
+                            <td key={m} className="border px-2 py-1 text-right font-mono">
+                              <span className="inline-flex items-center gap-1 justify-end">
+                                {st && v !== 0 && <StatusBadge status={st} />}
+                                <span>{v !== 0 ? yen(v) : ""}</span>
+                              </span>
                             </td>
                           );
                         })}
@@ -663,7 +663,7 @@ function PaymentQuickDialog({
   );
 }
 
-// ─── ステータスバッジ（月セル右上の小さい印） ──────────────
+// ─── ステータスバッジ（月セルに表示する小さい印） ──────────────
 function StatusBadge({ status }: { status: string }) {
   const meta: Record<string, { bg: string; text: string; label: string; title: string }> = {
     scheduled:  { bg: "bg-gray-100",    text: "text-gray-700",    label: "未",  title: "未発行（請求予定）" },
@@ -678,7 +678,7 @@ function StatusBadge({ status }: { status: string }) {
   const m = meta[status] ?? meta.scheduled;
   return (
     <span
-      className={`absolute top-0.5 right-0.5 ${m.bg} ${m.text} text-[9px] leading-none rounded px-1 py-0.5`}
+      className={`${m.bg} ${m.text} text-[9px] leading-none rounded px-1 py-0.5 shrink-0`}
       title={m.title}
     >
       {m.label}
