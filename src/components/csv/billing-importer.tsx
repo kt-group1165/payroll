@@ -67,6 +67,33 @@ type UnresolvedRef = {
 };
 
 /**
+ * fallback alias (value_name_norm='') で自動解決された行の記録。
+ * CSVに事業者名がなかったため、過去の alias 設定のみを根拠に特定事業所にルーティングした。
+ * 誤ルーティングの恐れがあるため、取り込み前にユーザー確認する。
+ */
+type FallbackHit = {
+  csvNumber: string;
+  csvName: string;
+  resolvedOfficeId: string;
+  resolvedOfficeName: string;
+  sourceFileName: string;
+};
+
+/** 取り込み前のプレビューに表示するスコープごとの件数（DB既存 vs 新規） */
+type ImportScopeSummary = {
+  segment: "介護" | "障害";
+  office_number: string;
+  office_name: string;
+  billing_month: string;
+  currentAmount: number;
+  currentUnit: number;
+  currentDaily: number;
+  newAmount: number;
+  newUnit: number;
+  newDaily: number;
+};
+
+/**
  * 事業者名から office_number を引き当てる
  * 表記揺れ対策:
  *  - 全角英数/カナ ↔ 半角
@@ -106,12 +133,17 @@ function resolveOfficeByNumber(num: string, offices: OfficeLite[]): OfficeLite |
  *   2) (番号, 名前NULL) = どの名前でも受け入れる fallback alias
  *   3) 名前だけの alias（kind=shogai_name）
  */
+type AliasResolution = {
+  office: OfficeLite | null;
+  via: "exact" | "fallback" | "name" | null;  // どの方法で解決したか
+};
+
 function resolveOfficeByAlias(
   rawNumber: string,
   rawName: string,
   aliases: OfficeAlias[],
   offices: OfficeLite[],
-): OfficeLite | null {
+): AliasResolution {
   const numNorm = (rawNumber ?? "").trim().toLowerCase();
   const nameNorm = rawName ? normalizeOfficeName(rawName) : "";
 
@@ -123,7 +155,7 @@ function resolveOfficeByAlias(
         a.value_norm === numNorm &&
         a.value_name_norm === nameNorm
       );
-      if (exact) return offices.find((o) => o.id === exact.office_id) ?? null;
+      if (exact) return { office: offices.find((o) => o.id === exact.office_id) ?? null, via: "exact" };
     }
     // 2) (number, 名前=空) = 任意名を受け入れる fallback
     const byNumOnly = aliases.find((a) =>
@@ -131,14 +163,14 @@ function resolveOfficeByAlias(
       a.value_norm === numNorm &&
       (!a.value_name_norm || a.value_name_norm === "")
     );
-    if (byNumOnly) return offices.find((o) => o.id === byNumOnly.office_id) ?? null;
+    if (byNumOnly) return { office: offices.find((o) => o.id === byNumOnly.office_id) ?? null, via: "fallback" };
   }
   if (nameNorm) {
     // 3) 名前だけの alias
     const byName = aliases.find((a) => a.kind === "shogai_name" && a.value_norm === nameNorm);
-    if (byName) return offices.find((o) => o.id === byName.office_id) ?? null;
+    if (byName) return { office: offices.find((o) => o.id === byName.office_id) ?? null, via: "name" };
   }
-  return null;
+  return { office: null, via: null };
 }
 
 function resolveOfficeNumber(rawName: string, offices: OfficeLite[]): string | null {
@@ -171,6 +203,10 @@ export function BillingImporter() {
   const [existingMatrix, setExistingMatrix] = useState<Map<string, { amount: number; unit: number; daily: number }>>(new Map());
   // 未解決の事業者参照（名前 or 障害番号）。ユーザーが事業所を選ぶと office_number に解決される。
   const [unresolvedRefs, setUnresolvedRefs] = useState<UnresolvedRef[]>([]);
+  // fallback alias で自動解決された行の情報（警告表示用）
+  const [fallbackHits, setFallbackHits] = useState<FallbackHit[]>([]);
+  // 取り込み前のプレビュー（既存 vs 新規の件数比較）
+  const [preview, setPreview] = useState<ImportScopeSummary[] | null>(null);
 
   const fetchAliases = useCallback(async () => {
     const { data, error } = await supabase
@@ -257,6 +293,9 @@ export function BillingImporter() {
     //   - nameHint 空:   `${number}||__empty__||${fileName}` （同じ番号でも別ファイルから来たら別扱い）
     const unresolvedNumPairs = new Map<string, { value: string; nameHint?: string; sourceFileName?: string }>();
     const unresolvedNames = new Set<string>();
+    // fallback alias で自動解決された参照（警告対象）
+    // key = `${numStr}||${nameStr}||${officeId}||${fileName}`
+    const fallbackHits = new Map<string, FallbackHit>();
 
     const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
       const numStr = (r.office_number ?? "").trim();
@@ -267,8 +306,24 @@ export function BillingImporter() {
         const direct = resolveOfficeByNumber(numStr, offices);
         if (direct) { r.office_number = direct.office_number; return; }
         // 2) エイリアス: (番号, 名前) ペアで引く
-        const byAlias = resolveOfficeByAlias(numStr, nameStr, aliases, offices);
-        if (byAlias) { r.office_number = byAlias.office_number; return; }
+        const aliasRes = resolveOfficeByAlias(numStr, nameStr, aliases, offices);
+        if (aliasRes.office) {
+          r.office_number = aliasRes.office.office_number;
+          if (aliasRes.via === "fallback") {
+            // CSVに名前がないが、fallback alias でルーティングされたケース → 警告対象
+            const key = `${numStr}||${nameStr}||${aliasRes.office.id}||${f.name}`;
+            if (!fallbackHits.has(key)) {
+              fallbackHits.set(key, {
+                csvNumber: numStr,
+                csvName: nameStr,
+                resolvedOfficeId: aliasRes.office.id,
+                resolvedOfficeName: aliasRes.office.short_name || aliasRes.office.name,
+                sourceFileName: f.name,
+              });
+            }
+          }
+          return;
+        }
         // 3) 未解決
         const key = nameStr
           ? `${numStr}||${nameStr}`
@@ -285,8 +340,8 @@ export function BillingImporter() {
       // 番号なし → 名前だけで試す
       if (!nameStr) return;
       // 1) エイリアス（名前のみ）
-      const byAlias = resolveOfficeByAlias("", nameStr, aliases, offices);
-      if (byAlias) { r.office_number = byAlias.office_number; return; }
+      const aliasRes = resolveOfficeByAlias("", nameStr, aliases, offices);
+      if (aliasRes.office) { r.office_number = aliasRes.office.office_number; return; }
       // 2) offices テーブルの名前ファジーマッチ
       const num = resolveOfficeNumber(nameStr, offices);
       if (num) { r.office_number = num; return; }
@@ -301,6 +356,7 @@ export function BillingImporter() {
       dailyRows,
       unresolvedNumPairs: [...unresolvedNumPairs.values()],
       unresolvedNames: [...unresolvedNames],
+      fallbackHits: [...fallbackHits.values()],
     };
   }, [offices, aliases]);
 
@@ -339,11 +395,21 @@ export function BillingImporter() {
     });
   };
 
+  const mergeFallbackHits = (hits: FallbackHit[]) => {
+    setFallbackHits((prev) => {
+      const keyOf = (h: FallbackHit) => `${h.csvNumber}|${h.csvName}|${h.resolvedOfficeId}|${h.sourceFileName}`;
+      const map = new Map(prev.map((h) => [keyOf(h), h]));
+      for (const h of hits) if (!map.has(keyOf(h))) map.set(keyOf(h), h);
+      return [...map.values()];
+    });
+  };
+
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
     const newResults: FileResult[] = [];
-    const newUnresolvedNumPairs: { value: string; nameHint?: string }[] = [];
+    const newUnresolvedNumPairs: { value: string; nameHint?: string; sourceFileName?: string }[] = [];
     const newUnresolvedNames: string[] = [];
+    const newFallbackHits: FallbackHit[] = [];
     for (const f of files) {
       const type = await detectBillingFileType(f);
       let amountRows: BillingAmountItem[] = [];
@@ -360,6 +426,7 @@ export function BillingImporter() {
           dailyRows = parsed.dailyRows;
           newUnresolvedNumPairs.push(...parsed.unresolvedNumPairs);
           newUnresolvedNames.push(...parsed.unresolvedNames);
+          newFallbackHits.push(...parsed.fallbackHits);
         } catch (e) {
           errors.push(`パースエラー: ${e instanceof Error ? e.message : String(e)}`);
         }
@@ -368,6 +435,7 @@ export function BillingImporter() {
     }
     setResults((prev) => [...prev, ...newResults]);
     mergeUnresolved(newUnresolvedNumPairs, newUnresolvedNames);
+    mergeFallbackHits(newFallbackHits);
   }, [parseByType]);
 
   // 手動で種別を変更した際の再解析
@@ -380,6 +448,7 @@ export function BillingImporter() {
         ? { ...r, type: newType, errors: [], amountRows: parsed.amountRows, unitRows: parsed.unitRows, dailyRows: parsed.dailyRows }
         : r));
       mergeUnresolved(parsed.unresolvedNumPairs, parsed.unresolvedNames);
+      mergeFallbackHits(parsed.fallbackHits);
     } catch (e) {
       setResults((prev) => prev.map((r, i) => i === index
         ? { ...r, type: newType, amountRows: [], unitRows: [], dailyRows: [], errors: [`パースエラー: ${e instanceof Error ? e.message : String(e)}`] }
@@ -390,24 +459,20 @@ export function BillingImporter() {
   const handleClear = () => {
     setResults([]);
     setUnresolvedRefs([]);
+    setFallbackHits([]);
+    setPreview(null);
     setImported(false);
   };
 
-  const handleImport = async () => {
-    // 未選択の未解決参照があれば警告（無視して進める選択肢も残す）
-    const pendingRefs = unresolvedRefs.filter((r) => !r.pickedOfficeId);
-    if (pendingRefs.length > 0) {
-      if (!confirm(`未解決の事業者が${pendingRefs.length}件あります。該当行は office_number が空のまま登録されます（集計で表示されません）。このまま取り込みますか？`)) return;
-    }
-
-    // ── 未解決参照から alias 永続化 & マッピング情報を組み立てる ──
-    // 「nameHint も manualName も空」の場合:
-    //   - alias 永続化しない（次回以降も未解決として出る。ファイル名では永続識別できないため）
-    //   - ただし今回の取り込みには反映するため、sourceFileName でスコープ限定の per-file map を使う
+  /**
+   * マッピング（未解決参照・alias永続化情報）を組み立てて、各 results 行の office_number を書き換える。
+   * 戻り値: alias永続化リスト, shogai更新リスト, CSV→DB行数サマリ（プレビュー用）
+   */
+  const resolveAndApplyMappings = () => {
     type PerFileRef = { numNorm: string; officeNumber: string };
-    const pairMap = new Map<string, string>();           // `${numNorm}||${nameNorm}` → office_number (クロスファイル適用)
-    const nameMap = new Map<string, string>();           // nameNorm → office_number (クロスファイル)
-    const perFileNumberRefs = new Map<string, PerFileRef[]>();  // fileName → [{ numNorm, officeNumber }]
+    const pairMap = new Map<string, string>();
+    const nameMap = new Map<string, string>();
+    const perFileNumberRefs = new Map<string, PerFileRef[]>();
     const shogaiUpdates: { officeId: string; shogaiNum: string }[] = [];
     const newAliases: {
       office_id: string;
@@ -424,29 +489,21 @@ export function BillingImporter() {
       if (!off) continue;
       if (ref.kind === "number") {
         const numNorm = ref.value.trim().toLowerCase();
-        // 名前の優先順位: 手入力 > CSVの nameHint > なし
         const effectiveName = (ref.manualName ?? "").trim() || ref.nameHint || "";
         const nameNorm = effectiveName ? normalizeOfficeName(effectiveName) : "";
-
         if (nameNorm) {
-          // 名前あり → クロスファイルで適用 + alias 永続化
           pairMap.set(`${numNorm}||${nameNorm}`, off.office_number);
           newAliases.push({
-            office_id: off.id,
-            kind: "shogai_number",
-            value_raw: ref.value,
-            value_norm: numNorm,
-            value_name_raw: effectiveName,
-            value_name_norm: nameNorm,
+            office_id: off.id, kind: "shogai_number",
+            value_raw: ref.value, value_norm: numNorm,
+            value_name_raw: effectiveName, value_name_norm: nameNorm,
           });
         } else {
-          // 名前なし → 当該ファイルの行にだけ適用、alias は保存しない
           const file = ref.sourceFileName ?? "";
           const arr = perFileNumberRefs.get(file) ?? [];
           arr.push({ numNorm, officeNumber: off.office_number });
           perFileNumberRefs.set(file, arr);
         }
-        // 後方互換: offices.shogai_office_number も更新
         if (off.shogai_office_number !== ref.value) {
           shogaiUpdates.push({ officeId: off.id, shogaiNum: ref.value });
         }
@@ -454,36 +511,26 @@ export function BillingImporter() {
         const nameNorm = normalizeOfficeName(ref.value);
         nameMap.set(nameNorm, off.office_number);
         newAliases.push({
-          office_id: off.id,
-          kind: "shogai_name",
-          value_raw: ref.value,
-          value_norm: nameNorm,
-          value_name_raw: "",
-          value_name_norm: "",
+          office_id: off.id, kind: "shogai_name",
+          value_raw: ref.value, value_norm: nameNorm,
+          value_name_raw: "", value_name_norm: "",
         });
       }
     }
 
-    // ── 各ファイルごとにマッピングを適用 ──
-    const applyMapForFile = <T extends { office_number: string; office_name?: string }>(
-      rows: T[],
-      fileName: string,
-    ) => {
+    const applyMapForFile = <T extends { office_number: string; office_name?: string }>(rows: T[], fileName: string) => {
       const fileRefs = perFileNumberRefs.get(fileName) ?? [];
       for (const r of rows) {
         const numStr = (r.office_number ?? "").trim().toLowerCase();
         const nameStr = r.office_name ? normalizeOfficeName(r.office_name) : "";
         if (!numStr && !nameStr) continue;
-        // 1) (番号, 名前) ペア（クロスファイル）
         if (numStr && nameStr && pairMap.has(`${numStr}||${nameStr}`)) {
           r.office_number = pairMap.get(`${numStr}||${nameStr}`)!; continue;
         }
-        // 2) このファイル限定の (番号のみ) マッピング
         if (numStr) {
           const hit = fileRefs.find((x) => x.numNorm === numStr);
           if (hit) { r.office_number = hit.officeNumber; continue; }
         }
-        // 3) 名前のみ（クロスファイル）
         if (!numStr && nameStr && nameMap.has(nameStr)) {
           r.office_number = nameMap.get(nameStr)!; continue;
         }
@@ -495,11 +542,90 @@ export function BillingImporter() {
       applyMapForFile(r.dailyRows, r.file.name);
     }
 
+    return { newAliases, shogaiUpdates };
+  };
+
+  /**
+   * プレビュー表示: 各 (segment, office_number, billing_month) スコープごとに
+   * DB の既存件数と新規件数を比較するサマリを組み立てる
+   */
+  const handlePreview = async () => {
+    // 未選択の未解決参照があれば警告（無視して進める選択肢も残す）
+    const pendingRefs = unresolvedRefs.filter((r) => !r.pickedOfficeId);
+    if (pendingRefs.length > 0) {
+      if (!confirm(`未解決の事業者が${pendingRefs.length}件あります。該当行は office_number が空のまま登録されます（集計で表示されません）。このまま進めますか？`)) return;
+    }
+
+    // マッピング解決を実施（rows の office_number を書き換え）
+    resolveAndApplyMappings();
+
+    // 新規行数をスコープごとに集計
+    type ScopeCounts = { amount: number; unit: number; daily: number };
+    const newCounts = new Map<string, ScopeCounts>();
+    const keyOf = (segment: string, office_number: string, billing_month: string) =>
+      `${segment}|${office_number}|${billing_month}`;
+    const ensure = (k: string) => {
+      if (!newCounts.has(k)) newCounts.set(k, { amount: 0, unit: 0, daily: 0 });
+      return newCounts.get(k)!;
+    };
+    for (const r of results) {
+      for (const a of r.amountRows) if (a.office_number && a.billing_month) ensure(keyOf(a.segment, a.office_number, a.billing_month)).amount++;
+      for (const u of r.unitRows)   if (u.office_number && u.billing_month) ensure(keyOf(u.segment, u.office_number, u.billing_month)).unit++;
+      for (const d of r.dailyRows)  if (d.office_number && d.billing_month) ensure(keyOf(d.segment, d.office_number, d.billing_month)).daily++;
+    }
+
+    if (newCounts.size === 0) {
+      toast.error("取り込み対象のデータがありません");
+      return;
+    }
+
+    // DB の既存件数をスコープごとに取得（並列）
+    const fetchCount = async (table: string, segment: string, office_number: string, billing_month: string) => {
+      const { count } = await supabase
+        .from(table)
+        .select("id", { count: "exact", head: true })
+        .eq("segment", segment)
+        .eq("office_number", office_number)
+        .eq("billing_month", billing_month);
+      return count ?? 0;
+    };
+
+    const summaries: ImportScopeSummary[] = [];
+    for (const [k, nc] of newCounts) {
+      const [segment, office_number, billing_month] = k.split("|") as ["介護" | "障害", string, string];
+      const [currentAmount, currentUnit, currentDaily] = await Promise.all([
+        fetchCount("billing_amount_items", segment, office_number, billing_month),
+        fetchCount("billing_unit_items", segment, office_number, billing_month),
+        fetchCount("billing_daily_items", segment, office_number, billing_month),
+      ]);
+      const off = offices.find((o) => o.office_number === office_number);
+      summaries.push({
+        segment, office_number, billing_month,
+        office_name: (off?.short_name || off?.name) ?? office_number,
+        currentAmount, currentUnit, currentDaily,
+        newAmount: nc.amount, newUnit: nc.unit, newDaily: nc.daily,
+      });
+    }
+    // 表示順: 事業所名 → 月 → 区分
+    summaries.sort((a, b) => {
+      const na = a.office_name.localeCompare(b.office_name, "ja");
+      if (na !== 0) return na;
+      if (a.billing_month !== b.billing_month) return a.billing_month.localeCompare(b.billing_month);
+      return a.segment.localeCompare(b.segment);
+    });
+
+    setPreview(summaries);
+  };
+
+  /** プレビュー確認後の実際の取り込み */
+  const executeImport = async () => {
+    // resolveAndApplyMappings は既にプレビュー時点で呼ばれているが、念のため再適用（alias永続化情報は必要）
+    const { newAliases, shogaiUpdates } = resolveAndApplyMappings();
+
     const totalAmount = results.reduce((s, r) => s + r.amountRows.length, 0);
     const totalUnit = results.reduce((s, r) => s + r.unitRows.length, 0);
     const totalDaily = results.reduce((s, r) => s + r.dailyRows.length, 0);
     if (totalAmount + totalUnit + totalDaily === 0) { toast.error("取り込むデータがありません"); return; }
-    if (pendingRefs.length === 0 && !confirm(`金額${totalAmount}件 / 単位${totalUnit}件 / 利用日${totalDaily}件を取り込みますか？\n（同じ事業所×月×利用者の既存データは削除してから挿入します）`)) return;
 
     setImporting(true);
     try {
@@ -580,6 +706,8 @@ export function BillingImporter() {
       setImported(true);
       setResults([]);
       setUnresolvedRefs([]);
+      setFallbackHits([]);
+      setPreview(null);
       fetchExistingMatrix();
     } catch (e) {
       toast.error(`取り込みエラー: ${e instanceof Error ? e.message : String(e)}`);
@@ -813,9 +941,133 @@ export function BillingImporter() {
             </div>
           )}
 
-          <Button onClick={handleImport} disabled={importing || imported}>
-            {importing ? "取り込み中…" : imported ? "登録済み" : "データベースに登録"}
+          {/* fallback alias で自動解決された行の警告 */}
+          {fallbackHits.length > 0 && (
+            <div className="border border-orange-300 rounded-md bg-orange-50 p-3 space-y-2">
+              <p className="text-sm font-medium text-orange-900">
+                ⚠ CSVに事業者名がない行が、過去のエイリアス設定から自動で事業所に紐付けられました
+              </p>
+              <p className="text-xs text-orange-800">
+                この判定が正しくない場合、取り込むと本来別事業所のデータが上書きされる恐れがあります。<br />
+                不安なら、/offices の「障害福祉事業所番号」や office_billing_aliases を見直してください。
+              </p>
+              <table className="w-full text-xs">
+                <thead className="bg-orange-100/60">
+                  <tr>
+                    <th className="text-left px-2 py-1">CSVの番号</th>
+                    <th className="text-left px-2 py-1">自動紐付け先</th>
+                    <th className="text-left px-2 py-1">ファイル</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fallbackHits.map((h, i) => (
+                    <tr key={i} className="border-t border-orange-200">
+                      <td className="px-2 py-1 font-mono">{h.csvNumber}</td>
+                      <td className="px-2 py-1">{h.resolvedOfficeName}</td>
+                      <td className="px-2 py-1 text-muted-foreground">{h.sourceFileName}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <Button onClick={handlePreview} disabled={importing || imported}>
+            {importing ? "取り込み中…" : imported ? "登録済み" : "取り込みプレビュー"}
           </Button>
+        </div>
+      )}
+
+      {/* ─── 取り込みプレビューダイアログ ─── */}
+      {preview && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !importing && setPreview(null)}>
+          <div className="bg-background border rounded-lg max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 border-b">
+              <h3 className="text-lg font-semibold">取り込みプレビュー</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                以下の範囲で<b>既存データを削除 → 新規挿入</b>します。
+                削除件数が新規件数より大幅に多い行は<span className="text-red-700 font-medium">赤</span>で警告表示します（誤紐付けの可能性）。
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <table className="w-full text-xs border-collapse">
+                <thead className="bg-muted/40 sticky top-0">
+                  <tr>
+                    <th className="border px-2 py-1 text-left">事業所</th>
+                    <th className="border px-2 py-1 text-left w-16">区分</th>
+                    <th className="border px-2 py-1 text-left w-20">月</th>
+                    <th className="border px-2 py-1 text-right w-24" colSpan={2}>金額 (既存→新規)</th>
+                    <th className="border px-2 py-1 text-right w-24" colSpan={2}>単位 (既存→新規)</th>
+                    <th className="border px-2 py-1 text-right w-24" colSpan={2}>利用日 (既存→新規)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((s, i) => {
+                    // 警告判定: 既存件数 >> 新規件数 で消失リスク高
+                    const dangerAmount = s.currentAmount > 0 && s.newAmount === 0;
+                    const dangerUnit = s.currentUnit > 0 && s.newUnit === 0;
+                    const dangerDaily = s.currentDaily > 0 && s.newDaily === 0;
+                    const bigDropAmount = s.currentAmount > s.newAmount * 2 && s.currentAmount > 10;
+                    const bigDropUnit = s.currentUnit > s.newUnit * 2 && s.currentUnit > 10;
+                    const bigDropDaily = s.currentDaily > s.newDaily * 2 && s.currentDaily > 10;
+                    const hasWarning = dangerAmount || dangerUnit || dangerDaily || bigDropAmount || bigDropUnit || bigDropDaily;
+                    return (
+                      <tr key={i} className={hasWarning ? "bg-red-50" : ""}>
+                        <td className="border px-2 py-1">{s.office_name}</td>
+                        <td className="border px-2 py-1">{s.segment}</td>
+                        <td className="border px-2 py-1 font-mono">{`${s.billing_month.slice(0, 4)}/${s.billing_month.slice(4, 6)}`}</td>
+                        <td className="border px-2 py-1 text-right font-mono">{s.currentAmount}</td>
+                        <td className={`border px-2 py-1 text-right font-mono ${dangerAmount || bigDropAmount ? "text-red-700 font-bold" : ""}`}>→ {s.newAmount}</td>
+                        <td className="border px-2 py-1 text-right font-mono">{s.currentUnit}</td>
+                        <td className={`border px-2 py-1 text-right font-mono ${dangerUnit || bigDropUnit ? "text-red-700 font-bold" : ""}`}>→ {s.newUnit}</td>
+                        <td className="border px-2 py-1 text-right font-mono">{s.currentDaily}</td>
+                        <td className={`border px-2 py-1 text-right font-mono ${dangerDaily || bigDropDaily ? "text-red-700 font-bold" : ""}`}>→ {s.newDaily}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* fallback 警告をプレビュー内にも再表示 */}
+              {fallbackHits.length > 0 && (
+                <div className="mt-3 p-2 border border-orange-300 bg-orange-50 rounded text-xs space-y-1">
+                  <p className="font-medium text-orange-900">⚠ fallback alias で自動紐付けされた行:</p>
+                  {fallbackHits.map((h, i) => (
+                    <div key={i} className="text-orange-800">
+                      <span className="font-mono">{h.csvNumber}</span> → {h.resolvedOfficeName} <span className="text-muted-foreground">(from {h.sourceFileName})</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(() => {
+                const hasAnyWarning = preview.some((s) => {
+                  const dropA = s.currentAmount > 0 && (s.newAmount === 0 || s.currentAmount > s.newAmount * 2);
+                  const dropU = s.currentUnit > 0 && (s.newUnit === 0 || s.currentUnit > s.newUnit * 2);
+                  const dropD = s.currentDaily > 0 && (s.newDaily === 0 || s.currentDaily > s.newDaily * 2);
+                  return dropA || dropU || dropD;
+                });
+                if (!hasAnyWarning) return null;
+                return (
+                  <div className="mt-3 p-2 border border-red-400 bg-red-50 rounded text-xs">
+                    <p className="font-medium text-red-800">⚠ 既存データが失われる可能性があります</p>
+                    <p className="text-red-700 mt-1">
+                      赤表示の行は「既存件数が新規件数より大幅に多い」状態です。本当にこの範囲で削除してよいかを確認してから実行してください。
+                      不安な場合はキャンセルして、未解決参照や事業者名の紐付けを見直すことを推奨します。
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="p-4 border-t flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => setPreview(null)} disabled={importing}>
+                キャンセル
+              </Button>
+              <Button onClick={executeImport} disabled={importing}>
+                {importing ? "取り込み中…" : "この内容で取り込み実行"}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
