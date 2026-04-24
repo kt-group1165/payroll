@@ -118,12 +118,15 @@ function normalizeOfficeName(raw: string): string {
   return s;
 }
 
-/** 事業所番号（介護 or 障害）から事業所を引き当て */
+/**
+ * 介護保険事業所番号（office_number）から事業所を引き当て。
+ * 注意: 過去は offices.shogai_office_number もここで直接マッチさせていたが、
+ * 9999999999 のようなダミー番号が複数事業所で登録されていた場合に誤紐付けを起こすため廃止。
+ * 障害番号は必ず `(番号 + 事業者名)` の alias 経由で特定する。
+ */
 function resolveOfficeByNumber(num: string, offices: OfficeLite[]): OfficeLite | null {
   if (!num) return null;
-  return offices.find((o) => o.office_number === num)
-      ?? offices.find((o) => o.shogai_office_number && o.shogai_office_number === num)
-      ?? null;
+  return offices.find((o) => o.office_number === num) ?? null;
 }
 
 /**
@@ -138,6 +141,15 @@ type AliasResolution = {
   via: "exact" | "fallback" | "name" | null;  // どの方法で解決したか
 };
 
+/**
+ * エイリアス表から (番号, 事業者名) ペアで事業所を引き当てる。
+ * 優先度:
+ *   1) (番号, 名前) 完全一致の alias
+ *   2) 名前だけの alias (kind='shogai_name')
+ *
+ * 注: 旧仕様にあった「(番号, 名前=空) の fallback」は、誤紐付けを招くため廃止。
+ *     同じ番号が複数事業所で使われている場合、必ず名前で区別するポリシー。
+ */
 function resolveOfficeByAlias(
   rawNumber: string,
   rawName: string,
@@ -147,26 +159,17 @@ function resolveOfficeByAlias(
   const numNorm = (rawNumber ?? "").trim().toLowerCase();
   const nameNorm = rawName ? normalizeOfficeName(rawName) : "";
 
-  if (numNorm) {
-    // 1) (number, name) 両方一致
-    if (nameNorm) {
-      const exact = aliases.find((a) =>
-        a.kind === "shogai_number" &&
-        a.value_norm === numNorm &&
-        a.value_name_norm === nameNorm
-      );
-      if (exact) return { office: offices.find((o) => o.id === exact.office_id) ?? null, via: "exact" };
-    }
-    // 2) (number, 名前=空) = 任意名を受け入れる fallback
-    const byNumOnly = aliases.find((a) =>
+  if (numNorm && nameNorm) {
+    // 1) (number, name) 両方一致のみ
+    const exact = aliases.find((a) =>
       a.kind === "shogai_number" &&
       a.value_norm === numNorm &&
-      (!a.value_name_norm || a.value_name_norm === "")
+      a.value_name_norm === nameNorm
     );
-    if (byNumOnly) return { office: offices.find((o) => o.id === byNumOnly.office_id) ?? null, via: "fallback" };
+    if (exact) return { office: offices.find((o) => o.id === exact.office_id) ?? null, via: "exact" };
   }
   if (nameNorm) {
-    // 3) 名前だけの alias
+    // 2) 名前だけの alias (番号が空のCSV向け)
     const byName = aliases.find((a) => a.kind === "shogai_name" && a.value_norm === nameNorm);
     if (byName) return { office: offices.find((o) => o.id === byName.office_id) ?? null, via: "name" };
   }
@@ -864,82 +867,111 @@ export function BillingImporter() {
           )}
 
           {/* 未解決の事業者参照: 該当の事業所を選択してもらう */}
-          {unresolvedRefs.length > 0 && (
-            <div className="border border-yellow-300 rounded-md bg-yellow-50 p-3 space-y-2">
-              <p className="text-sm font-medium text-yellow-900">
-                ⚠ CSV内の以下の事業者を、どの事業所と紐付けるか選択してください
-              </p>
-              <p className="text-xs text-yellow-800">
-                ・<b>事業所番号</b>＋<b>事業者名</b>の組で記憶されるため、同じ番号が別事業所のCSVで出てきても誤紐付けされません。次回以降は自動で解決されます。<br />
-                ・CSVに事業者名が無い場合、ファイル単位で分けて表示し、ここで名前を手入力すると (番号+入力名) として恒久登録されます。空のままだと今回の取り込みのみに適用されます。
-              </p>
-              <table className="w-full text-xs">
-                <thead className="bg-yellow-100/60">
-                  <tr>
-                    <th className="text-left px-2 py-1 font-medium">種別</th>
-                    <th className="text-left px-2 py-1 font-medium">CSVの値</th>
-                    <th className="text-left px-2 py-1 font-medium">事業者名 / ヒント</th>
-                    <th className="text-left px-2 py-1 font-medium">紐付け先の事業所</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unresolvedRefs.map((ref, i) => (
-                    <tr key={i} className="border-t border-yellow-200 align-top">
-                      <td className="px-2 py-1 whitespace-nowrap">
-                        {ref.kind === "number" ? <span className="text-purple-700">障害番号</span> : <span className="text-blue-700">事業者名</span>}
-                      </td>
-                      <td className="px-2 py-1 font-mono">{ref.value}</td>
-                      <td className="px-2 py-1">
-                        {ref.kind === "number" ? (
-                          ref.nameHint ? (
-                            <span className="text-muted-foreground">{ref.nameHint}</span>
-                          ) : (
-                            <div className="space-y-0.5">
-                              <input
-                                type="text"
-                                className="border rounded px-2 py-0.5 text-xs bg-background w-full min-w-[180px]"
-                                placeholder="名前を入力（任意）"
-                                value={ref.manualName ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, manualName: v } : x));
-                                }}
-                              />
-                              {ref.sourceFileName && (
-                                <p className="text-[10px] text-muted-foreground/80">from: {ref.sourceFileName}</p>
-                              )}
-                            </div>
-                          )
-                        ) : (
-                          <span className="text-muted-foreground/60">—</span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1">
-                        <select
-                          className="border rounded px-2 py-0.5 text-xs bg-background min-w-[280px]"
-                          value={ref.pickedOfficeId ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value || null;
-                            setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, pickedOfficeId: v } : x));
-                          }}
-                        >
-                          <option value="">（選択してください）</option>
-                          {offices
-                            .slice()
-                            .sort((a, b) => ((a.short_name || a.name) ?? "").localeCompare((b.short_name || b.name) ?? "", "ja"))
-                            .map((o) => (
-                              <option key={o.id} value={o.id}>
-                                {o.short_name || o.name}（{o.office_number}{o.shogai_office_number ? ` / 障害:${o.shogai_office_number}` : ""}）
-                              </option>
-                            ))}
-                        </select>
-                      </td>
+          {unresolvedRefs.length > 0 && (() => {
+            // 同じ番号が複数の名前で出てきた場合を把握（ユーザーに気づかせる）
+            const numCounts = new Map<string, number>();
+            for (const ref of unresolvedRefs) {
+              if (ref.kind !== "number") continue;
+              numCounts.set(ref.value, (numCounts.get(ref.value) ?? 0) + 1);
+            }
+            return (
+              <div className="border border-yellow-300 rounded-md bg-yellow-50 p-3 space-y-2">
+                <p className="text-sm font-medium text-yellow-900">
+                  ⚠ CSV内の以下の事業者を、どの事業所と紐付けるか選択してください
+                </p>
+                <p className="text-xs text-yellow-800">
+                  ・紐付けは <b>「番号 + 事業者名」の組ごと</b> に個別に判断できます（複数事業所合算CSVでも事業所ごとに違う紐付け先を選べます）。<br />
+                  ・記憶されるのも (番号 + 名前) ペアなので、同じ番号が別事業所のCSVで来ても誤紐付けしません。<br />
+                  ・CSVに事業者名が無い場合、ファイル単位で分けて表示されます。手入力すれば恒久登録、空なら今回限り。
+                </p>
+                <table className="w-full text-xs">
+                  <thead className="bg-yellow-100/60">
+                    <tr>
+                      <th className="text-left px-2 py-1 font-medium w-16">種別</th>
+                      <th className="text-left px-2 py-1 font-medium">事業所番号</th>
+                      <th className="text-left px-2 py-1 font-medium">事業者名</th>
+                      <th className="text-left px-2 py-1 font-medium">紐付け先の事業所</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {unresolvedRefs.map((ref, i) => {
+                      const sameNumMulti = ref.kind === "number" && (numCounts.get(ref.value) ?? 0) > 1;
+                      return (
+                        <tr key={i} className="border-t border-yellow-200 align-top">
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            {ref.kind === "number" ? (
+                              <span className="text-purple-700">障害番号</span>
+                            ) : (
+                              <span className="text-blue-700">事業者名</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1">
+                            {ref.kind === "number" ? (
+                              <div>
+                                <span className="font-mono font-medium">{ref.value}</span>
+                                {sameNumMulti && (
+                                  <span className="ml-1 text-[10px] text-orange-700 bg-orange-100 border border-orange-300 rounded px-1">
+                                    同番号の別事業所あり
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground/60">—</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1">
+                            {ref.kind === "number" ? (
+                              ref.nameHint ? (
+                                <span className="font-medium">{ref.nameHint}</span>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  <input
+                                    type="text"
+                                    className="border rounded px-2 py-0.5 text-xs bg-background w-full min-w-[180px]"
+                                    placeholder="事業者名を入力（任意）"
+                                    value={ref.manualName ?? ""}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, manualName: v } : x));
+                                    }}
+                                  />
+                                  {ref.sourceFileName && (
+                                    <p className="text-[10px] text-muted-foreground/80">from: {ref.sourceFileName}</p>
+                                  )}
+                                </div>
+                              )
+                            ) : (
+                              <span className="font-medium">{ref.value}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1">
+                            <select
+                              className="border rounded px-2 py-0.5 text-xs bg-background min-w-[280px]"
+                              value={ref.pickedOfficeId ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value || null;
+                                setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, pickedOfficeId: v } : x));
+                              }}
+                            >
+                              <option value="">（選択してください）</option>
+                              {offices
+                                .slice()
+                                .sort((a, b) => ((a.short_name || a.name) ?? "").localeCompare((b.short_name || b.name) ?? "", "ja"))
+                                .map((o) => (
+                                  <option key={o.id} value={o.id}>
+                                    {o.short_name || o.name}（{o.office_number}{o.shogai_office_number ? ` / 障害:${o.shogai_office_number}` : ""}）
+                                  </option>
+                                ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
 
           {/* fallback alias で自動解決された行の警告 */}
           {fallbackHits.length > 0 && (

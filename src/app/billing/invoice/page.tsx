@@ -477,7 +477,13 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
             </tr>
           </thead>
           <tbody>
-            {units.map((u) => {
+            {[...units].sort((a, b) => {
+              // 単価（1回あたり）が出せる行（回数>1）を上、加算等の回数=1の行を下に寄せる
+              const aHasPerVisit = (a.repetition ?? 0) > 1;
+              const bHasPerVisit = (b.repetition ?? 0) > 1;
+              if (aHasPerVisit !== bHasPerVisit) return aHasPerVisit ? -1 : 1;
+              return 0;
+            }).map((u) => {
               // CSVの「単位数」列には期間内合計が入っているため、
               //   - 単位列: unit_count をそのまま総計として表示（無ければ amount にフォールバック）
               //   - 単位数列: 1回あたり = 合計 / 回数（回数>1 の時のみ。加算等 回数=1 は空表示）
