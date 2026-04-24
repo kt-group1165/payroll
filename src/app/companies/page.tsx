@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -263,11 +262,8 @@ export default function CompaniesPage() {
                 <TableCell>{company.phone || company.tel || "—"}</TableCell>
                 <TableCell className="text-xs font-mono">{company.registration_number || "—"}</TableCell>
                 <TableCell>
-                  <div className="flex gap-1 flex-wrap">
+                  <div className="flex gap-1">
                     <Button variant="ghost" size="sm" onClick={() => handleEdit(company)}>編集</Button>
-                    <Link href={`/companies/${company.id}/invoice-format`}>
-                      <Button variant="ghost" size="sm">📝 請求書式</Button>
-                    </Link>
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(company.id)}>削除</Button>
                   </div>
                 </TableCell>

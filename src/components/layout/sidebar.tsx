@@ -41,8 +41,9 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "請求管理",
     items: [
-      { href: "/billing",        label: "請求管理",   icon: "🧾" },
-      { href: "/billing/import", label: "請求CSV取り込み", icon: "📁" },
+      { href: "/billing",         label: "請求管理",       icon: "🧾" },
+      { href: "/billing/import",  label: "請求CSV取り込み", icon: "📁" },
+      { href: "/billing/formats", label: "請求書様式管理",   icon: "📝" },
     ],
   },
 ];
@@ -66,7 +67,7 @@ export function Sidebar() {
       <div className="p-4 border-b">
         <h1 className="text-lg font-bold">
           給与計算システム
-          <span className="text-xs font-normal text-muted-foreground ml-1">V59</span>
+          <span className="text-xs font-normal text-muted-foreground ml-1">V60</span>
         </h1>
       </div>
       <nav className="flex-1 p-2 overflow-y-auto">

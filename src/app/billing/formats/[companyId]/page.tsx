@@ -11,7 +11,7 @@ import type { Company, CompanyInvoiceFormat } from "@/types/database";
 
 /**
  * 法人ごとの請求書フォーマット設定画面
- * /companies/[id]/invoice-format
+ * /billing/formats/[companyId]
  *
  * DB: company_invoice_formats (1法人につき1レコード、なければ作成)
  */
@@ -58,8 +58,8 @@ const defaultForm: Form = {
   note: "",
 };
 
-export default function InvoiceFormatPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: companyId } = use(params);
+export default function InvoiceFormatPage({ params }: { params: Promise<{ companyId: string }> }) {
+  const { companyId } = use(params);
   const [company, setCompany] = useState<Company | null>(null);
   const [formatId, setFormatId] = useState<string | null>(null);
   const [form, setForm] = useState<Form>(defaultForm);
@@ -158,11 +158,11 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ id: st
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Link href="/companies" className="hover:underline">法人一覧</Link>
+            <Link href="/billing/formats" className="hover:underline">請求書様式管理</Link>
             <span>/</span>
             <span>{company.name}</span>
           </div>
-          <h2 className="text-2xl font-bold mt-1">請求書フォーマット設定</h2>
+          <h2 className="text-2xl font-bold mt-1">請求書様式 編集</h2>
         </div>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? "保存中…" : "💾 保存"}
@@ -269,7 +269,7 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ id: st
         </section>
 
         <div className="flex justify-end gap-2">
-          <Link href="/companies">
+          <Link href="/billing/formats">
             <Button variant="ghost">戻る</Button>
           </Link>
           <Button onClick={handleSave} disabled={saving}>
