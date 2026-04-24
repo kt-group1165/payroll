@@ -362,6 +362,10 @@ export async function parse02ShogaiUnit(file: File): Promise<{ data: BillingUnit
       get("請求事業者名") ||
       get("事業者名") ||
       get("事業所名") ||
+      get("施設名") ||
+      get("事業所名称") ||
+      get("サービス事業所") ||
+      get("サービス事業所名") ||
       "";
     data.push({
       segment: "障害",
@@ -451,6 +455,10 @@ export async function parse03ShogaiDaily(file: File): Promise<{ data: BillingDai
       get("請求事業者名") ||
       get("事業者名") ||
       get("事業所名") ||
+      get("施設名") ||
+      get("事業所名称") ||
+      get("サービス事業所") ||
+      get("サービス事業所名") ||
       "";
     // 提供年月（複数の列名候補）
     const billingMonth = normalizeBillingMonth(

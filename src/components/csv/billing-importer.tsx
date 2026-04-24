@@ -874,6 +874,19 @@ export function BillingImporter() {
                 {r.errors.length > 0 && (
                   <span className="text-xs text-red-700">{r.errors.join(" / ")}</span>
                 )}
+                <button
+                  className="ml-auto text-xs text-red-600 hover:text-red-800"
+                  onClick={() => {
+                    const removedFile = r.file.name;
+                    setResults((prev) => prev.filter((_, j) => j !== i));
+                    // 削除したファイルだけに依存する未解決参照・fallback を落とす
+                    setUnresolvedRefs((prev) => prev.filter((x) => !(x.sourceFileName === removedFile)));
+                    setFallbackHits((prev) => prev.filter((x) => x.sourceFileName !== removedFile));
+                  }}
+                  title="このファイルを一覧から外す"
+                >
+                  ✕ 削除
+                </button>
               </div>
             ))}
             <div className="px-3 py-2 bg-muted/20 flex justify-end">
@@ -947,9 +960,19 @@ export function BillingImporter() {
                           <td className="px-2 py-1">
                             {ref.kind === "number" ? (
                               ref.nameHint ? (
-                                <span className="font-medium">{ref.nameHint}</span>
+                                <div>
+                                  <span className="font-medium">{ref.nameHint}</span>
+                                  {ref.sourceFileName && (
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">📄 {ref.sourceFileName}</p>
+                                  )}
+                                </div>
                               ) : (
-                                <div className="space-y-0.5">
+                                <div className="space-y-1">
+                                  {ref.sourceFileName && (
+                                    <p className="text-[11px] bg-blue-100 text-blue-900 rounded px-2 py-1 font-medium inline-block">
+                                      📄 {ref.sourceFileName}
+                                    </p>
+                                  )}
                                   <input
                                     type="text"
                                     className="border rounded px-2 py-0.5 text-xs bg-background w-full min-w-[180px]"
@@ -960,9 +983,6 @@ export function BillingImporter() {
                                       setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, manualName: v } : x));
                                     }}
                                   />
-                                  {ref.sourceFileName && (
-                                    <p className="text-[10px] text-muted-foreground/80">from: {ref.sourceFileName}</p>
-                                  )}
                                 </div>
                               )
                             ) : (
