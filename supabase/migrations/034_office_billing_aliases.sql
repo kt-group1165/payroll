@@ -19,29 +19,23 @@ CREATE TABLE IF NOT EXISTS office_billing_aliases (
   -- 検索用の正規化済み値（小文字・全半角統一・括弧/スペース除去 など）
   value_norm       text NOT NULL,
   -- kind='shogai_number' の時、同時にCSVで現れた事業者名（あれば）を併記
-  value_name_raw   text,
-  value_name_norm  text,
+  -- NULL ではなく '' を使うことで単純な UNIQUE 制約を張れるようにする
+  value_name_raw   text NOT NULL DEFAULT '',
+  value_name_norm  text NOT NULL DEFAULT '',
   note             text,
-  created_at       timestamptz DEFAULT now()
+  created_at       timestamptz DEFAULT now(),
+  -- 自動解決の一意性: 同じ (kind, value_norm, value_name_norm) は1行のみ
+  CONSTRAINT office_billing_aliases_unique_key UNIQUE (kind, value_norm, value_name_norm)
 );
-
--- 自動解決の一意性: 同じ (kind, value_norm, value_name_norm) は1行のみ
--- NULL を許容するため、COALESCE で空文字に寄せてユニーク制約を張る
-CREATE UNIQUE INDEX IF NOT EXISTS office_billing_aliases_unique_key
-  ON office_billing_aliases (kind, value_norm, COALESCE(value_name_norm, ''));
 
 CREATE INDEX IF NOT EXISTS office_billing_aliases_office
   ON office_billing_aliases (office_id);
 
 -- ── 既存データからの移行 ──────────────────────────────────────
 -- offices.shogai_office_number に既に値が入っている = ユーザーが過去に紐付け済み
--- それを alias として転記（番号のみの alias, 名前は NULL = "どの名前でも受け入れ" の状態）
---
--- NOTE: 名前部が NULL の alias は「後方互換の fallback」として機能させる。
---       アプリ側のロジックで、完全一致 (number+name) を優先し、
---       ダメなら (number only) を参照する二段構えにする。
-INSERT INTO office_billing_aliases (office_id, kind, value_raw, value_norm)
-SELECT id, 'shogai_number', shogai_office_number, LOWER(TRIM(shogai_office_number))
+-- それを alias として転記（名前部は '' = "どの名前でも受け入れ" の fallback）
+INSERT INTO office_billing_aliases (office_id, kind, value_raw, value_norm, value_name_raw, value_name_norm)
+SELECT id, 'shogai_number', shogai_office_number, LOWER(TRIM(shogai_office_number)), '', ''
 FROM offices
 WHERE shogai_office_number IS NOT NULL AND TRIM(shogai_office_number) <> ''
 ON CONFLICT DO NOTHING;

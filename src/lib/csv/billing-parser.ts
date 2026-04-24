@@ -34,6 +34,7 @@ export type BillingAmountItem = {
 export type BillingUnitItem = {
   segment: "介護" | "障害";
   office_number: string;
+  office_name?: string;         // 取り込み時の事業者名（エイリアス登録に使用、DBカラムではない）
   client_number: string;
   client_name: string;
   billing_month: string;
@@ -49,6 +50,7 @@ export type BillingUnitItem = {
 export type BillingDailyItem = {
   segment: "介護" | "障害";
   office_number: string;
+  office_name?: string;         // 取り込み時の事業者名（エイリアス登録に使用、DBカラムではない）
   client_number: string;
   client_name: string;
   billing_month: string;
@@ -335,9 +337,15 @@ export async function parse02ShogaiUnit(file: File): Promise<{ data: BillingUnit
       get("事業所番号") ||
       get("事業者番号") ||
       "";
+    const shogaiName =
+      get("請求事業者名") ||
+      get("事業者名") ||
+      get("事業所名") ||
+      "";
     data.push({
       segment: "障害",
       office_number: shogaiNum,
+      office_name: shogaiName || undefined,
       client_number: clientNumber,
       client_name: get("利用者名"),
       billing_month: normalizeBillingMonth(get("サービス提供年月") || get("提供年月") || get("請求年月")),
@@ -418,6 +426,11 @@ export async function parse03ShogaiDaily(file: File): Promise<{ data: BillingDai
       get("事業所番号") ||
       get("事業者番号") ||
       "";
+    const shogaiName =
+      get("請求事業者名") ||
+      get("事業者名") ||
+      get("事業所名") ||
+      "";
     // 提供年月（複数の列名候補）
     const billingMonth = normalizeBillingMonth(
       get("サービス提供年月") ||
@@ -437,6 +450,7 @@ export async function parse03ShogaiDaily(file: File): Promise<{ data: BillingDai
       data.push({
         segment: "障害",
         office_number: shogaiNum,
+        office_name: shogaiName || undefined,
         client_number: clientNumber,
         client_name: get("利用者名"),
         billing_month: billingMonth,

@@ -36,10 +36,26 @@ type FileResult = {
   errors: string[];
 };
 
-/** 未解決の事業者参照（名前 or 障害番号）*/
+/** 事業所エイリアス（office_billing_aliases テーブルと対応） */
+type OfficeAlias = {
+  id: string;
+  office_id: string;
+  kind: "shogai_number" | "shogai_name";
+  value_raw: string;
+  value_norm: string;
+  value_name_raw: string;         // '' = 任意名にマッチする fallback
+  value_name_norm: string;        // ''
+};
+
+/**
+ * 未解決の事業者参照。
+ * kind=number の場合、nameHint に CSV で同時に現れた事業者名を保持しておき、
+ * 紐付け確定時に (番号 + 名前) 組で alias として永続化する。
+ */
 type UnresolvedRef = {
   kind: "name" | "number";
   value: string;                  // 事業者名 or 障害事業所番号（CSVに入っていた値）
+  nameHint?: string;              // 番号と同時にCSVで出た事業者名（alias 登録用、任意）
   pickedOfficeId: string | null;  // ユーザーが選んだ事業所id。未選択はnull
 };
 
@@ -76,6 +92,48 @@ function resolveOfficeByNumber(num: string, offices: OfficeLite[]): OfficeLite |
       ?? null;
 }
 
+/**
+ * エイリアス表から (番号, 事業者名) ペアで事業所を引き当てる。
+ * 優先度:
+ *   1) (番号, 名前) 完全一致の alias を最優先
+ *   2) (番号, 名前NULL) = どの名前でも受け入れる fallback alias
+ *   3) 名前だけの alias（kind=shogai_name）
+ */
+function resolveOfficeByAlias(
+  rawNumber: string,
+  rawName: string,
+  aliases: OfficeAlias[],
+  offices: OfficeLite[],
+): OfficeLite | null {
+  const numNorm = (rawNumber ?? "").trim().toLowerCase();
+  const nameNorm = rawName ? normalizeOfficeName(rawName) : "";
+
+  if (numNorm) {
+    // 1) (number, name) 両方一致
+    if (nameNorm) {
+      const exact = aliases.find((a) =>
+        a.kind === "shogai_number" &&
+        a.value_norm === numNorm &&
+        a.value_name_norm === nameNorm
+      );
+      if (exact) return offices.find((o) => o.id === exact.office_id) ?? null;
+    }
+    // 2) (number, 名前=空) = 任意名を受け入れる fallback
+    const byNumOnly = aliases.find((a) =>
+      a.kind === "shogai_number" &&
+      a.value_norm === numNorm &&
+      (!a.value_name_norm || a.value_name_norm === "")
+    );
+    if (byNumOnly) return offices.find((o) => o.id === byNumOnly.office_id) ?? null;
+  }
+  if (nameNorm) {
+    // 3) 名前だけの alias
+    const byName = aliases.find((a) => a.kind === "shogai_name" && a.value_norm === nameNorm);
+    if (byName) return offices.find((o) => o.id === byName.office_id) ?? null;
+  }
+  return null;
+}
+
 function resolveOfficeNumber(rawName: string, offices: OfficeLite[]): string | null {
   const target = normalizeOfficeName(rawName);
   if (!target) return null;
@@ -102,9 +160,23 @@ export function BillingImporter() {
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(false);
   const [offices, setOffices] = useState<OfficeLite[]>([]);
+  const [aliases, setAliases] = useState<OfficeAlias[]>([]);
   const [existingMatrix, setExistingMatrix] = useState<Map<string, { amount: number; unit: number; daily: number }>>(new Map());
   // 未解決の事業者参照（名前 or 障害番号）。ユーザーが事業所を選ぶと office_number に解決される。
   const [unresolvedRefs, setUnresolvedRefs] = useState<UnresolvedRef[]>([]);
+
+  const fetchAliases = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("office_billing_aliases")
+      .select("id, office_id, kind, value_raw, value_norm, value_name_raw, value_name_norm");
+    if (error) {
+      // テーブル未作成でも致命的にはしない（旧動作にフォールバック）
+      console.warn("office_billing_aliases 取得失敗（マイグレーション未適用の可能性）:", error.message);
+      setAliases([]);
+      return;
+    }
+    setAliases((data ?? []) as OfficeAlias[]);
+  }, []);
 
   const fetchExistingMatrix = useCallback(async () => {
     const m = new Map<string, { amount: number; unit: number; daily: number }>();
@@ -137,8 +209,9 @@ export function BillingImporter() {
     supabase.from("offices").select("id, office_number, shogai_office_number, name, short_name").then(({ data }) => {
       if (data) setOffices(data as OfficeLite[]);
     });
+    fetchAliases();
     fetchExistingMatrix();
-  }, [fetchExistingMatrix]);
+  }, [fetchExistingMatrix, fetchAliases]);
 
   const handleClearScope = async (segment: string, office_number: string, billing_month: string, counts: { amount: number; unit: number; daily: number }) => {
     const off = offices.find((o) => o.office_number === office_number);
@@ -171,40 +244,68 @@ export function BillingImporter() {
     else if (type === "03_介護_利用日") ({ data: dailyRows } = await parse03KaigoDaily(f));
     else if (type === "03_障害_利用日") ({ data: dailyRows } = await parse03ShogaiDaily(f));
 
-    const unresolvedNums = new Set<string>();
+    // 未解決の (番号, 名前) ペア・(名前のみ) を重複排除しつつ記録
+    // 番号のキー: `${number}||${name ?? ""}` 別々の名前ヒントで同じ番号が来たら個別の未解決扱い
+    const unresolvedNumPairs = new Map<string, { value: string; nameHint?: string }>();
     const unresolvedNames = new Set<string>();
 
     const resolveRow = <T extends { office_number: string; office_name?: string }>(r: T) => {
-      // 1) 番号ベース: 介護番号 or 障害番号
-      if (r.office_number) {
-        const off = resolveOfficeByNumber(r.office_number, offices);
-        if (off) { r.office_number = off.office_number; return; }
-        unresolvedNums.add(r.office_number);
+      const numStr = (r.office_number ?? "").trim();
+      const nameStr = (r.office_name ?? "").trim();
+
+      if (numStr) {
+        // 1) 番号ベース: 介護番号 or 障害番号（offices テーブル直接）
+        const direct = resolveOfficeByNumber(numStr, offices);
+        if (direct) { r.office_number = direct.office_number; return; }
+        // 2) エイリアス: (番号, 名前) ペアで引く
+        const byAlias = resolveOfficeByAlias(numStr, nameStr, aliases, offices);
+        if (byAlias) { r.office_number = byAlias.office_number; return; }
+        // 3) 未解決（名前ヒントつき）
+        const key = `${numStr}||${nameStr}`;
+        if (!unresolvedNumPairs.has(key)) {
+          unresolvedNumPairs.set(key, { value: numStr, nameHint: nameStr || undefined });
+        }
         return;
       }
-      // 2) 事業者名ベース
-      const name = r.office_name ?? "";
-      if (!name) return;
-      const num = resolveOfficeNumber(name, offices);
+      // 番号なし → 名前だけで試す
+      if (!nameStr) return;
+      // 1) エイリアス（名前のみ）
+      const byAlias = resolveOfficeByAlias("", nameStr, aliases, offices);
+      if (byAlias) { r.office_number = byAlias.office_number; return; }
+      // 2) offices テーブルの名前ファジーマッチ
+      const num = resolveOfficeNumber(nameStr, offices);
       if (num) { r.office_number = num; return; }
-      unresolvedNames.add(name);
+      unresolvedNames.add(nameStr);
     };
     for (const r of amountRows) resolveRow(r);
-    for (const r of unitRows)   resolveRow(r as unknown as { office_number: string; office_name?: string });
-    for (const r of dailyRows)  resolveRow(r as unknown as { office_number: string; office_name?: string });
-    return { amountRows, unitRows, dailyRows, unresolvedNums: [...unresolvedNums], unresolvedNames: [...unresolvedNames] };
-  }, [offices]);
+    for (const r of unitRows)   resolveRow(r);
+    for (const r of dailyRows)  resolveRow(r);
+    return {
+      amountRows,
+      unitRows,
+      dailyRows,
+      unresolvedNumPairs: [...unresolvedNumPairs.values()],
+      unresolvedNames: [...unresolvedNames],
+    };
+  }, [offices, aliases]);
 
-  const mergeUnresolved = (nums: string[], names: string[]) => {
+  const mergeUnresolved = (
+    numPairs: { value: string; nameHint?: string }[],
+    names: string[],
+  ) => {
     setUnresolvedRefs((prev) => {
-      const existing = new Map(prev.map((r) => [`${r.kind}:${r.value}`, r]));
-      for (const n of nums) {
-        const k = `number:${n}`;
-        if (!existing.has(k)) existing.set(k, { kind: "number", value: n, pickedOfficeId: null });
+      // 重複判定キーは (kind, value, nameHint) の組。同じ番号でも名前ヒントが違えば別エントリ。
+      const keyOf = (r: UnresolvedRef) => `${r.kind}:${r.value}::${r.nameHint ?? ""}`;
+      const existing = new Map(prev.map((r) => [keyOf(r), r]));
+      for (const p of numPairs) {
+        const ref: UnresolvedRef = { kind: "number", value: p.value, nameHint: p.nameHint, pickedOfficeId: null };
+        const k = keyOf(ref);
+        if (!existing.has(k)) existing.set(k, ref);
       }
       for (const n of names) {
-        const k = `name:${n}`;
-        if (!existing.has(k)) existing.set(k, { kind: "name", value: n, pickedOfficeId: null });
+        const ref: UnresolvedRef = { kind: "name", value: n, pickedOfficeId: null };
+        const k = keyOf(ref);
+        if (!existing.has(k)) existing.set(k, ref);
       }
       return [...existing.values()];
     });
@@ -213,7 +314,7 @@ export function BillingImporter() {
   const handleFilesSelected = useCallback(async (files: File[]) => {
     setImported(false);
     const newResults: FileResult[] = [];
-    const newUnresolvedNums: string[] = [];
+    const newUnresolvedNumPairs: { value: string; nameHint?: string }[] = [];
     const newUnresolvedNames: string[] = [];
     for (const f of files) {
       const type = await detectBillingFileType(f);
@@ -229,7 +330,7 @@ export function BillingImporter() {
           amountRows = parsed.amountRows;
           unitRows = parsed.unitRows;
           dailyRows = parsed.dailyRows;
-          newUnresolvedNums.push(...parsed.unresolvedNums);
+          newUnresolvedNumPairs.push(...parsed.unresolvedNumPairs);
           newUnresolvedNames.push(...parsed.unresolvedNames);
         } catch (e) {
           errors.push(`パースエラー: ${e instanceof Error ? e.message : String(e)}`);
@@ -238,7 +339,7 @@ export function BillingImporter() {
       newResults.push({ file: f, type, amountRows, unitRows, dailyRows, errors });
     }
     setResults((prev) => [...prev, ...newResults]);
-    mergeUnresolved(newUnresolvedNums, newUnresolvedNames);
+    mergeUnresolved(newUnresolvedNumPairs, newUnresolvedNames);
   }, [parseByType]);
 
   // 手動で種別を変更した際の再解析
@@ -250,7 +351,7 @@ export function BillingImporter() {
       setResults((prev) => prev.map((r, i) => i === index
         ? { ...r, type: newType, errors: [], amountRows: parsed.amountRows, unitRows: parsed.unitRows, dailyRows: parsed.dailyRows }
         : r));
-      mergeUnresolved(parsed.unresolvedNums, parsed.unresolvedNames);
+      mergeUnresolved(parsed.unresolvedNumPairs, parsed.unresolvedNames);
     } catch (e) {
       setResults((prev) => prev.map((r, i) => i === index
         ? { ...r, type: newType, amountRows: [], unitRows: [], dailyRows: [], errors: [`パースエラー: ${e instanceof Error ? e.message : String(e)}`] }
@@ -271,37 +372,84 @@ export function BillingImporter() {
       if (!confirm(`未解決の事業者が${pendingRefs.length}件あります。該当行は office_number が空のまま登録されます（集計で表示されません）。このまま取り込みますか？`)) return;
     }
 
-    // 未解決マッピングを適用: office_number を選択した事業所の介護番号に書き換え
-    const numberMap = new Map<string, string>();   // CSV内の障害番号 → 介護番号
-    const nameMap   = new Map<string, string>();   // CSV内の事業者名 → 介護番号
+    // 未解決マッピングを適用: (番号, 事業者名) ペアごとに office_number を書き換え
+    // キーは `${number}||${nameHint}` で照合（同じ番号でも名前ヒントが違えば別事業所にルーティング可）
+    const pairMap = new Map<string, string>();     // `${numNorm}||${nameNorm}` → office_number
+    const numberOnlyMap = new Map<string, string>(); // nameHint なしで紐付けられた番号
+    const nameMap = new Map<string, string>();     // nameNorm → office_number
     const shogaiUpdates: { officeId: string; shogaiNum: string }[] = [];
+    const newAliases: {
+      office_id: string;
+      kind: "shogai_number" | "shogai_name";
+      value_raw: string;
+      value_norm: string;
+      value_name_raw: string;
+      value_name_norm: string;
+    }[] = [];
+
     for (const ref of unresolvedRefs) {
       if (!ref.pickedOfficeId) continue;
       const off = offices.find((o) => o.id === ref.pickedOfficeId);
       if (!off) continue;
       if (ref.kind === "number") {
-        numberMap.set(ref.value, off.office_number);
-        // 同じ事業所の shogai_office_number にこの障害番号を永続化
+        const numNorm = ref.value.trim().toLowerCase();
+        const nameNorm = ref.nameHint ? normalizeOfficeName(ref.nameHint) : "";
+        if (nameNorm) {
+          pairMap.set(`${numNorm}||${nameNorm}`, off.office_number);
+        } else {
+          numberOnlyMap.set(numNorm, off.office_number);
+        }
+        // エイリアス永続化
+        newAliases.push({
+          office_id: off.id,
+          kind: "shogai_number",
+          value_raw: ref.value,
+          value_norm: numNorm,
+          value_name_raw: ref.nameHint ?? "",
+          value_name_norm: nameNorm,
+        });
+        // 後方互換: offices.shogai_office_number も更新（/offices 編集画面での表示用）
         if (off.shogai_office_number !== ref.value) {
           shogaiUpdates.push({ officeId: off.id, shogaiNum: ref.value });
         }
       } else {
-        nameMap.set(ref.value, off.office_number);
+        const nameNorm = normalizeOfficeName(ref.value);
+        nameMap.set(nameNorm, off.office_number);
+        newAliases.push({
+          office_id: off.id,
+          kind: "shogai_name",
+          value_raw: ref.value,
+          value_norm: nameNorm,
+          value_name_raw: "",
+          value_name_norm: "",
+        });
       }
     }
+
     const applyMap = <T extends { office_number: string; office_name?: string }>(rows: T[]) => {
       for (const r of rows) {
-        if (!r.office_number && r.office_name && nameMap.has(r.office_name)) {
-          r.office_number = nameMap.get(r.office_name)!;
-        } else if (r.office_number && numberMap.has(r.office_number)) {
-          r.office_number = numberMap.get(r.office_number)!;
+        const numStr = (r.office_number ?? "").trim().toLowerCase();
+        const nameStr = r.office_name ? normalizeOfficeName(r.office_name) : "";
+        // 既に正しい介護番号なら何もしない
+        if (!numStr && !nameStr) continue;
+        // 1) (番号, 名前) ペア
+        if (numStr && nameStr && pairMap.has(`${numStr}||${nameStr}`)) {
+          r.office_number = pairMap.get(`${numStr}||${nameStr}`)!; continue;
+        }
+        // 2) 番号のみ
+        if (numStr && numberOnlyMap.has(numStr)) {
+          r.office_number = numberOnlyMap.get(numStr)!; continue;
+        }
+        // 3) 名前のみ
+        if (!numStr && nameStr && nameMap.has(nameStr)) {
+          r.office_number = nameMap.get(nameStr)!; continue;
         }
       }
     };
     for (const r of results) {
       applyMap(r.amountRows);
-      applyMap(r.unitRows as unknown as { office_number: string; office_name?: string }[]);
-      applyMap(r.dailyRows as unknown as { office_number: string; office_name?: string }[]);
+      applyMap(r.unitRows);
+      applyMap(r.dailyRows);
     }
 
     const totalAmount = results.reduce((s, r) => s + r.amountRows.length, 0);
@@ -312,7 +460,23 @@ export function BillingImporter() {
 
     setImporting(true);
     try {
-      // 障害番号の永続化（offices.shogai_office_number 更新）
+      // エイリアス永続化（(番号, 名前) ペアで事業所を記憶）
+      if (newAliases.length > 0) {
+        const { error } = await supabase.from("office_billing_aliases").upsert(newAliases, {
+          onConflict: "kind,value_norm,value_name_norm",
+          ignoreDuplicates: false,
+        });
+        if (error) {
+          console.error("office_billing_aliases 保存エラー", error);
+          // テーブル未作成などの場合でも取り込み自体は継続させる（旧 shogai_office_number 更新で fallback）
+          toast.warning(`エイリアス保存に失敗（${error.message}）。shogai_office_number のみ更新します。`);
+        } else {
+          // 最新エイリアスを再取得
+          fetchAliases();
+        }
+      }
+
+      // 後方互換: offices.shogai_office_number を更新（/offices 編集画面での表示用）
       for (const u of shogaiUpdates) {
         const { error } = await supabase.from("offices").update({ shogai_office_number: u.shogaiNum }).eq("id", u.officeId);
         if (error) console.error("shogai_office_number 更新エラー", error);
@@ -356,8 +520,15 @@ export function BillingImporter() {
         }
       };
       const allAmount = results.flatMap((r) => r.amountRows);
-      const allUnit = results.flatMap((r) => r.unitRows);
-      const allDaily = results.flatMap((r) => r.dailyRows);
+      // billing_unit_items / billing_daily_items の DB カラムには office_name が無いため除外
+      const stripOfficeName = <T extends { office_name?: string }>(rows: T[]): Omit<T, "office_name">[] =>
+        rows.map((r) => {
+          const copy = { ...r } as T;
+          delete copy.office_name;
+          return copy;
+        });
+      const allUnit = stripOfficeName(results.flatMap((r) => r.unitRows));
+      const allDaily = stripOfficeName(results.flatMap((r) => r.dailyRows));
       await insertAll("billing_amount_items", allAmount);
       await insertAll("billing_unit_items", allUnit);
       await insertAll("billing_daily_items", allDaily);
@@ -528,14 +699,15 @@ export function BillingImporter() {
                 ⚠ CSV内の以下の事業者を、どの事業所と紐付けるか選択してください
               </p>
               <p className="text-xs text-yellow-800">
-                ・<b>事業所番号</b>（障害番号など）を選択すると、その番号が事業所の「障害福祉事業所番号」に自動登録されます。次回以降は自動で解決されます。<br />
-                ・<b>事業者名</b>は今回の取り込みのみに適用されます。恒久的に自動解決したい場合は /offices で正式名称・略称を合わせてください。
+                ・<b>事業所番号</b>＋<b>事業者名</b>の組で記憶されるため、同じ番号が別事業所のCSVで出てきても誤紐付けされません。次回以降は自動で解決されます。<br />
+                ・<b>事業者名</b>のみの場合も、次回以降は自動解決されます。/offices で正式名称・略称を合わせるとファジーマッチが効きます。
               </p>
               <table className="w-full text-xs">
                 <thead className="bg-yellow-100/60">
                   <tr>
                     <th className="text-left px-2 py-1 font-medium">種別</th>
                     <th className="text-left px-2 py-1 font-medium">CSVの値</th>
+                    <th className="text-left px-2 py-1 font-medium">事業者名（ヒント）</th>
                     <th className="text-left px-2 py-1 font-medium">紐付け先の事業所</th>
                   </tr>
                 </thead>
@@ -546,6 +718,11 @@ export function BillingImporter() {
                         {ref.kind === "number" ? <span className="text-purple-700">障害番号</span> : <span className="text-blue-700">事業者名</span>}
                       </td>
                       <td className="px-2 py-1 font-mono">{ref.value}</td>
+                      <td className="px-2 py-1 text-muted-foreground">
+                        {ref.kind === "number"
+                          ? (ref.nameHint ? ref.nameHint : <span className="text-muted-foreground/60">（CSVに名前なし）</span>)
+                          : <span className="text-muted-foreground/60">—</span>}
+                      </td>
                       <td className="px-2 py-1">
                         <select
                           className="border rounded px-2 py-0.5 text-xs bg-background min-w-[280px]"
