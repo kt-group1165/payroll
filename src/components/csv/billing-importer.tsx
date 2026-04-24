@@ -93,6 +93,8 @@ type ImportScopeSummary = {
   newDaily: number;
   /** 既に発行済・入金済・調整済の行の件数（これがあると再取り込みでステータスが吹き飛ぶ） */
   lockedRows: number;
+  /** ユーザーがこのスコープを取り込み対象から除外しているか */
+  excluded?: boolean;
 };
 
 /**
@@ -684,12 +686,21 @@ export function BillingImporter() {
         if (refreshed) setOffices(refreshed as OfficeLite[]);
       }
 
+      // 除外スコープの Set を構築（プレビュー UI で外されたもの）
+      const excludedScopes = new Set<string>();
+      for (const s of preview ?? []) {
+        if (s.excluded) excludedScopes.add(`${s.segment}|${s.office_number}|${s.billing_month}`);
+      }
+      const isExcluded = (segment: string, office_number: string, billing_month: string) =>
+        excludedScopes.has(`${segment}|${office_number}|${billing_month}`);
+
       // 事業所×月 ごとに既存データを削除してから再挿入（重複防止）
       type ScopeKey = { office_number: string; billing_month: string; segment: "介護" | "障害" };
       const scopes = new Set<string>();
       const scopeList: ScopeKey[] = [];
       const push = (s: ScopeKey) => {
         if (!s.office_number || !s.billing_month) return;
+        if (isExcluded(s.segment, s.office_number, s.billing_month)) return;  // 除外スコープはDELETEしない
         const k = `${s.segment}|${s.office_number}|${s.billing_month}`;
         if (!scopes.has(k)) { scopes.add(k); scopeList.push(s); }
       };
@@ -716,7 +727,10 @@ export function BillingImporter() {
           if (error) throw error;
         }
       };
-      const allAmount = results.flatMap((r) => r.amountRows);
+      // 除外スコープの行は INSERT からも除く
+      const filterNotExcluded = <T extends { segment: "介護" | "障害"; office_number: string; billing_month: string }>(rows: T[]) =>
+        rows.filter((r) => !isExcluded(r.segment, r.office_number, r.billing_month));
+      const allAmount = filterNotExcluded(results.flatMap((r) => r.amountRows));
       // billing_unit_items / billing_daily_items の DB カラムには office_name が無いため除外
       const stripOfficeName = <T extends { office_name?: string }>(rows: T[]): Omit<T, "office_name">[] =>
         rows.map((r) => {
@@ -724,8 +738,8 @@ export function BillingImporter() {
           delete copy.office_name;
           return copy;
         });
-      const allUnit = stripOfficeName(results.flatMap((r) => r.unitRows));
-      const allDaily = stripOfficeName(results.flatMap((r) => r.dailyRows));
+      const allUnit = stripOfficeName(filterNotExcluded(results.flatMap((r) => r.unitRows)));
+      const allDaily = stripOfficeName(filterNotExcluded(results.flatMap((r) => r.dailyRows)));
       await insertAll("billing_amount_items", allAmount);
       await insertAll("billing_unit_items", allUnit);
       await insertAll("billing_daily_items", allDaily);
@@ -961,9 +975,12 @@ export function BillingImporter() {
                             {ref.kind === "number" ? (
                               ref.nameHint ? (
                                 <div>
-                                  <span className="font-medium">{ref.nameHint}</span>
+                                  <span className="inline-block bg-green-100 text-green-900 rounded px-2 py-1 text-[11px] font-medium">
+                                    📋 {ref.nameHint}
+                                  </span>
+                                  <p className="text-[9px] text-muted-foreground mt-0.5">CSVの事業所名</p>
                                   {ref.sourceFileName && (
-                                    <p className="text-[10px] text-muted-foreground mt-0.5">📄 {ref.sourceFileName}</p>
+                                    <p className="text-[9px] text-muted-foreground mt-0.5">📄 {ref.sourceFileName}</p>
                                   )}
                                 </div>
                               ) : (
@@ -983,6 +1000,9 @@ export function BillingImporter() {
                                       setUnresolvedRefs((prev) => prev.map((x, j) => j === i ? { ...x, manualName: v } : x));
                                     }}
                                   />
+                                  <p className="text-[9px] text-muted-foreground">
+                                    ※ CSVに事業所名列が無いかパースできませんでした
+                                  </p>
                                 </div>
                               )
                             ) : (
@@ -1070,6 +1090,7 @@ export function BillingImporter() {
               <table className="w-full text-xs border-collapse">
                 <thead className="bg-muted/40 sticky top-0">
                   <tr>
+                    <th className="border px-2 py-1 text-center w-10">取込</th>
                     <th className="border px-2 py-1 text-left">事業所</th>
                     <th className="border px-2 py-1 text-left w-16">区分</th>
                     <th className="border px-2 py-1 text-left w-20">月</th>
@@ -1090,19 +1111,33 @@ export function BillingImporter() {
                     const bigDropDaily = s.currentDaily > s.newDaily * 2 && s.currentDaily > 10;
                     const hasLocked = s.lockedRows > 0;
                     const hasWarning = dangerAmount || dangerUnit || dangerDaily || bigDropAmount || bigDropUnit || bigDropDaily || hasLocked;
+                    const isExcl = !!s.excluded;
                     return (
-                      <tr key={i} className={hasLocked ? "bg-yellow-100" : hasWarning ? "bg-red-50" : ""}>
+                      <tr key={i} className={isExcl ? "bg-gray-200 text-muted-foreground line-through" : hasLocked ? "bg-yellow-100" : hasWarning ? "bg-red-50" : ""}>
+                        <td className="border px-2 py-1 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!isExcl}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setPreview((prev) => prev ? prev.map((p, j) => j === i ? { ...p, excluded: !checked } : p) : prev);
+                            }}
+                            title="取り込み対象に含める/除外する"
+                          />
+                        </td>
                         <td className="border px-2 py-1">{s.office_name}</td>
                         <td className="border px-2 py-1">{s.segment}</td>
                         <td className="border px-2 py-1 font-mono">{`${s.billing_month.slice(0, 4)}/${s.billing_month.slice(4, 6)}`}</td>
                         <td className="border px-2 py-1 text-right font-mono">{s.currentAmount}</td>
-                        <td className={`border px-2 py-1 text-right font-mono ${dangerAmount || bigDropAmount ? "text-red-700 font-bold" : ""}`}>→ {s.newAmount}</td>
+                        <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerAmount || bigDropAmount) ? "text-red-700 font-bold" : ""}`}>→ {s.newAmount}</td>
                         <td className="border px-2 py-1 text-right font-mono">{s.currentUnit}</td>
-                        <td className={`border px-2 py-1 text-right font-mono ${dangerUnit || bigDropUnit ? "text-red-700 font-bold" : ""}`}>→ {s.newUnit}</td>
+                        <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerUnit || bigDropUnit) ? "text-red-700 font-bold" : ""}`}>→ {s.newUnit}</td>
                         <td className="border px-2 py-1 text-right font-mono">{s.currentDaily}</td>
-                        <td className={`border px-2 py-1 text-right font-mono ${dangerDaily || bigDropDaily ? "text-red-700 font-bold" : ""}`}>→ {s.newDaily}</td>
+                        <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerDaily || bigDropDaily) ? "text-red-700 font-bold" : ""}`}>→ {s.newDaily}</td>
                         <td className="border px-2 py-1 text-center">
-                          {hasLocked ? (
+                          {isExcl ? (
+                            <span className="text-[10px] bg-gray-400 text-white rounded px-1.5 py-0.5">除外</span>
+                          ) : hasLocked ? (
                             <span className="inline-flex items-center gap-0.5 bg-yellow-200 text-yellow-900 rounded px-1.5 py-0.5 text-[10px] font-medium">
                               🔒 {s.lockedRows}件確定済
                             </span>
@@ -1115,6 +1150,10 @@ export function BillingImporter() {
                   })}
                 </tbody>
               </table>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                ・「取込」のチェックを外すと、そのスコープは DELETE も INSERT もしません（既存データも保持）。<br />
+                ・意図しない月が混入している場合、チェックを外して取り込めます。
+              </p>
 
               {/* 確定済行の警告 */}
               {(() => {
