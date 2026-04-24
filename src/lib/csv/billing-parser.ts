@@ -241,10 +241,18 @@ export async function parse01ShogaiAmount(file: File): Promise<{ data: BillingAm
     const mPeriod = period.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
     const billingMonth = mPeriod ? `${mPeriod[1]}${mPeriod[2].padStart(2, "0")}` : "";
 
+    // 障害番号（事業所番号）は複数の列名の可能性があるのでフォールバック
+    const shogaiNum =
+      get("請求事業者指定事業所番号") ||
+      get("指定事業所番号") ||
+      get("事業所番号") ||
+      get("事業者番号") ||
+      "";
+
     data.push({
       segment: "障害",
-      office_number: "",
-      office_name: get("事業者名"),
+      office_number: shogaiNum,
+      office_name: get("事業者名") || get("事業所名"),
       client_number: clientNumber,
       client_name: get("利用者名"),
       billing_month: billingMonth,
@@ -321,12 +329,18 @@ export async function parse02ShogaiUnit(file: File): Promise<{ data: BillingUnit
     const rawObj: Record<string, string> = {};
     for (const k of Object.keys(idx)) rawObj[k] = get(k);
 
+    const shogaiNum =
+      get("請求事業者指定事業所番号") ||
+      get("指定事業所番号") ||
+      get("事業所番号") ||
+      get("事業者番号") ||
+      "";
     data.push({
       segment: "障害",
-      office_number: get("請求事業者指定事業所番号"),
+      office_number: shogaiNum,
       client_number: clientNumber,
       client_name: get("利用者名"),
-      billing_month: normalizeBillingMonth(get("サービス提供年月")),
+      billing_month: normalizeBillingMonth(get("サービス提供年月") || get("提供年月") || get("請求年月")),
       service_name: get("サービス内容") || "",
       service_code: get("サービスコード") || null,
       unit_count: toNum(get("単位数")),
@@ -396,6 +410,25 @@ export async function parse03ShogaiDaily(file: File): Promise<{ data: BillingDai
     const get = (k: string) => (idx[k] != null ? (r[idx[k]] ?? "").trim() : "");
     const clientNumber = get("利用者番号");
     if (!clientNumber) continue;
+
+    // 障害番号（列名のゆらぎをフォールバックで吸収）
+    const shogaiNum =
+      get("請求事業者指定事業所番号") ||
+      get("指定事業所番号") ||
+      get("事業所番号") ||
+      get("事業者番号") ||
+      "";
+    // 提供年月（複数の列名候補）
+    const billingMonth = normalizeBillingMonth(
+      get("サービス提供年月") ||
+      get("提供年月") ||
+      get("請求年月") ||
+      get("処理年月") ||
+      ""
+    );
+    const serviceName = get("サービス内容") || get("サービス名称") || "";
+    const serviceCode = get("サービスコード") || null;
+
     for (let d = 1; d <= 31; d++) {
       const qStr = get(`${d}日`);
       if (!qStr) continue;
@@ -403,12 +436,12 @@ export async function parse03ShogaiDaily(file: File): Promise<{ data: BillingDai
       if (q == null || q === 0) continue;
       data.push({
         segment: "障害",
-        office_number: "",
+        office_number: shogaiNum,
         client_number: clientNumber,
         client_name: get("利用者名"),
-        billing_month: "",
-        service_name: "",
-        service_code: null,
+        billing_month: billingMonth,
+        service_name: serviceName,
+        service_code: serviceCode,
         day: d,
         quantity: q,
       });
