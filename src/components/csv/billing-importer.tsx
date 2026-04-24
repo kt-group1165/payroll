@@ -568,19 +568,21 @@ export function BillingImporter() {
     // マッピング解決を実施（rows の office_number を書き換え）
     resolveAndApplyMappings();
 
-    // 新規行数をスコープごとに集計
+    // 新規行数をスコープごとに集計（取り込みは「提供年月」ベース）
     type ScopeCounts = { amount: number; unit: number; daily: number };
     const newCounts = new Map<string, ScopeCounts>();
-    const keyOf = (segment: string, office_number: string, billing_month: string) =>
-      `${segment}|${office_number}|${billing_month}`;
+    const keyOf = (segment: string, office_number: string, service_month: string) =>
+      `${segment}|${office_number}|${service_month}`;
     const ensure = (k: string) => {
       if (!newCounts.has(k)) newCounts.set(k, { amount: 0, unit: 0, daily: 0 });
       return newCounts.get(k)!;
     };
+    // 各行の scope は service_month (無ければ billing_month をフォールバック)
+    const scopeOf = (r: { billing_month: string; service_month?: string }) => r.service_month || r.billing_month;
     for (const r of results) {
-      for (const a of r.amountRows) if (a.office_number && a.billing_month) ensure(keyOf(a.segment, a.office_number, a.billing_month)).amount++;
-      for (const u of r.unitRows)   if (u.office_number && u.billing_month) ensure(keyOf(u.segment, u.office_number, u.billing_month)).unit++;
-      for (const d of r.dailyRows)  if (d.office_number && d.billing_month) ensure(keyOf(d.segment, d.office_number, d.billing_month)).daily++;
+      for (const a of r.amountRows) { const sm = scopeOf(a); if (a.office_number && sm) ensure(keyOf(a.segment, a.office_number, sm)).amount++; }
+      for (const u of r.unitRows)   { const sm = scopeOf(u); if (u.office_number && sm) ensure(keyOf(u.segment, u.office_number, sm)).unit++; }
+      for (const d of r.dailyRows)  { const sm = scopeOf(d); if (d.office_number && sm) ensure(keyOf(d.segment, d.office_number, sm)).daily++; }
     }
 
     if (newCounts.size === 0) {
@@ -588,40 +590,40 @@ export function BillingImporter() {
       return;
     }
 
-    // DB の既存件数をスコープごとに取得（並列）
-    const fetchCount = async (table: string, segment: string, office_number: string, billing_month: string) => {
+    // DB の既存件数をスコープごとに取得（service_month ベース）
+    const fetchCount = async (table: string, segment: string, office_number: string, service_month: string) => {
       const { count } = await supabase
         .from(table)
         .select("id", { count: "exact", head: true })
         .eq("segment", segment)
         .eq("office_number", office_number)
-        .eq("billing_month", billing_month);
+        .eq("service_month", service_month);
       return count ?? 0;
     };
     // 「発行済・入金済・調整済」等の再取り込みで失われる行の数
-    const fetchLockedCount = async (segment: string, office_number: string, billing_month: string) => {
+    const fetchLockedCount = async (segment: string, office_number: string, service_month: string) => {
       const { count } = await supabase
         .from("billing_amount_items")
         .select("id", { count: "exact", head: true })
         .eq("segment", segment)
         .eq("office_number", office_number)
-        .eq("billing_month", billing_month)
+        .eq("service_month", service_month)
         .in("billing_status", ["invoiced", "paid", "overdue", "adjustment"]);
       return count ?? 0;
     };
 
     const summaries: ImportScopeSummary[] = [];
     for (const [k, nc] of newCounts) {
-      const [segment, office_number, billing_month] = k.split("|") as ["介護" | "障害", string, string];
+      const [segment, office_number, service_month] = k.split("|") as ["介護" | "障害", string, string];
       const [currentAmount, currentUnit, currentDaily, lockedRows] = await Promise.all([
-        fetchCount("billing_amount_items", segment, office_number, billing_month),
-        fetchCount("billing_unit_items", segment, office_number, billing_month),
-        fetchCount("billing_daily_items", segment, office_number, billing_month),
-        fetchLockedCount(segment, office_number, billing_month),
+        fetchCount("billing_amount_items", segment, office_number, service_month),
+        fetchCount("billing_unit_items", segment, office_number, service_month),
+        fetchCount("billing_daily_items", segment, office_number, service_month),
+        fetchLockedCount(segment, office_number, service_month),
       ]);
       const off = offices.find((o) => o.office_number === office_number);
       summaries.push({
-        segment, office_number, billing_month,
+        segment, office_number, billing_month: service_month, // UI上は「月」として service_month を表示
         office_name: (off?.short_name || off?.name) ?? office_number,
         currentAmount, currentUnit, currentDaily,
         newAmount: nc.amount, newUnit: nc.unit, newDaily: nc.daily,
@@ -688,37 +690,38 @@ export function BillingImporter() {
         if (refreshed) setOffices(refreshed as OfficeLite[]);
       }
 
-      // 除外スコープの Set を構築（プレビュー UI で外されたもの）
+      // 除外スコープの Set を構築（プレビュー UI で外されたもの、月は service_month ベース）
       const excludedScopes = new Set<string>();
       for (const s of preview ?? []) {
         if (s.excluded) excludedScopes.add(`${s.segment}|${s.office_number}|${s.billing_month}`);
       }
-      const isExcluded = (segment: string, office_number: string, billing_month: string) =>
-        excludedScopes.has(`${segment}|${office_number}|${billing_month}`);
+      const isExcluded = (segment: string, office_number: string, month: string) =>
+        excludedScopes.has(`${segment}|${office_number}|${month}`);
 
-      // 事業所×月 ごとに既存データを削除してから再挿入（重複防止）
-      type ScopeKey = { office_number: string; billing_month: string; segment: "介護" | "障害" };
+      // 事業所×提供月 ごとに既存データを削除してから再挿入（重複防止）
+      type ScopeKey = { office_number: string; service_month: string; segment: "介護" | "障害" };
       const scopes = new Set<string>();
       const scopeList: ScopeKey[] = [];
       const push = (s: ScopeKey) => {
-        if (!s.office_number || !s.billing_month) return;
-        if (isExcluded(s.segment, s.office_number, s.billing_month)) return;  // 除外スコープはDELETEしない
-        const k = `${s.segment}|${s.office_number}|${s.billing_month}`;
+        if (!s.office_number || !s.service_month) return;
+        if (isExcluded(s.segment, s.office_number, s.service_month)) return;
+        const k = `${s.segment}|${s.office_number}|${s.service_month}`;
         if (!scopes.has(k)) { scopes.add(k); scopeList.push(s); }
       };
+      const sm = (r: { billing_month: string; service_month?: string }) => r.service_month || r.billing_month;
       for (const r of results) {
-        for (const a of r.amountRows) push({ segment: a.segment, office_number: a.office_number, billing_month: a.billing_month });
-        for (const u of r.unitRows)   push({ segment: u.segment, office_number: u.office_number, billing_month: u.billing_month });
-        for (const d of r.dailyRows)  if (d.billing_month) push({ segment: d.segment, office_number: d.office_number, billing_month: d.billing_month });
+        for (const a of r.amountRows) push({ segment: a.segment, office_number: a.office_number, service_month: sm(a) });
+        for (const u of r.unitRows)   push({ segment: u.segment, office_number: u.office_number, service_month: sm(u) });
+        for (const d of r.dailyRows)  { const m = sm(d); if (m) push({ segment: d.segment, office_number: d.office_number, service_month: m }); }
       }
 
       for (const s of scopeList) {
         await supabase.from("billing_amount_items").delete()
-          .eq("segment", s.segment).eq("office_number", s.office_number).eq("billing_month", s.billing_month);
+          .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
         await supabase.from("billing_unit_items").delete()
-          .eq("segment", s.segment).eq("office_number", s.office_number).eq("billing_month", s.billing_month);
+          .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
         await supabase.from("billing_daily_items").delete()
-          .eq("segment", s.segment).eq("office_number", s.office_number).eq("billing_month", s.billing_month);
+          .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
       }
 
       // INSERT (chunk)
@@ -729,9 +732,9 @@ export function BillingImporter() {
           if (error) throw error;
         }
       };
-      // 除外スコープの行は INSERT からも除く
-      const filterNotExcluded = <T extends { segment: "介護" | "障害"; office_number: string; billing_month: string }>(rows: T[]) =>
-        rows.filter((r) => !isExcluded(r.segment, r.office_number, r.billing_month));
+      // 除外スコープの行は INSERT からも除く (service_month ベース)
+      const filterNotExcluded = <T extends { segment: "介護" | "障害"; office_number: string; billing_month: string; service_month?: string }>(rows: T[]) =>
+        rows.filter((r) => !isExcluded(r.segment, r.office_number, r.service_month || r.billing_month));
       const allAmount = filterNotExcluded(results.flatMap((r) => r.amountRows));
       // billing_unit_items / billing_daily_items の DB カラムには office_name が無いため除外
       const stripOfficeName = <T extends { office_name?: string }>(rows: T[]): Omit<T, "office_name">[] =>
