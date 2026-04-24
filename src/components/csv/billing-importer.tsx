@@ -91,6 +91,8 @@ type ImportScopeSummary = {
   newAmount: number;
   newUnit: number;
   newDaily: number;
+  /** 既に発行済・入金済・調整済の行の件数（これがあると再取り込みでステータスが吹き飛ぶ） */
+  lockedRows: number;
 };
 
 /**
@@ -592,14 +594,26 @@ export function BillingImporter() {
         .eq("billing_month", billing_month);
       return count ?? 0;
     };
+    // 「発行済・入金済・調整済」等の再取り込みで失われる行の数
+    const fetchLockedCount = async (segment: string, office_number: string, billing_month: string) => {
+      const { count } = await supabase
+        .from("billing_amount_items")
+        .select("id", { count: "exact", head: true })
+        .eq("segment", segment)
+        .eq("office_number", office_number)
+        .eq("billing_month", billing_month)
+        .in("billing_status", ["invoiced", "paid", "overdue", "adjustment"]);
+      return count ?? 0;
+    };
 
     const summaries: ImportScopeSummary[] = [];
     for (const [k, nc] of newCounts) {
       const [segment, office_number, billing_month] = k.split("|") as ["介護" | "障害", string, string];
-      const [currentAmount, currentUnit, currentDaily] = await Promise.all([
+      const [currentAmount, currentUnit, currentDaily, lockedRows] = await Promise.all([
         fetchCount("billing_amount_items", segment, office_number, billing_month),
         fetchCount("billing_unit_items", segment, office_number, billing_month),
         fetchCount("billing_daily_items", segment, office_number, billing_month),
+        fetchLockedCount(segment, office_number, billing_month),
       ]);
       const off = offices.find((o) => o.office_number === office_number);
       summaries.push({
@@ -607,6 +621,7 @@ export function BillingImporter() {
         office_name: (off?.short_name || off?.name) ?? office_number,
         currentAmount, currentUnit, currentDaily,
         newAmount: nc.amount, newUnit: nc.unit, newDaily: nc.daily,
+        lockedRows,
       });
     }
     // 表示順: 事業所名 → 月 → 区分
@@ -629,6 +644,16 @@ export function BillingImporter() {
     const totalUnit = results.reduce((s, r) => s + r.unitRows.length, 0);
     const totalDaily = results.reduce((s, r) => s + r.dailyRows.length, 0);
     if (totalAmount + totalUnit + totalDaily === 0) { toast.error("取り込むデータがありません"); return; }
+
+    // 確定済行があれば追加で confirm（プレビューでも表示しているが二重セーフティ）
+    const lockedTotal = (preview ?? []).reduce((s, p) => s + p.lockedRows, 0);
+    if (lockedTotal > 0) {
+      if (!confirm(
+        `⚠️ 発行済・入金済等の行が ${lockedTotal} 件あります。\n` +
+        `取り込むと、それらの発行日・入金日・調整行が削除されます。\n\n` +
+        `本当に取り込みますか？`
+      )) return;
+    }
 
     setImporting(true);
     try {
@@ -1031,6 +1056,7 @@ export function BillingImporter() {
                     <th className="border px-2 py-1 text-right w-24" colSpan={2}>金額 (既存→新規)</th>
                     <th className="border px-2 py-1 text-right w-24" colSpan={2}>単位 (既存→新規)</th>
                     <th className="border px-2 py-1 text-right w-24" colSpan={2}>利用日 (既存→新規)</th>
+                    <th className="border px-2 py-1 text-center w-20">ステータス</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1042,9 +1068,10 @@ export function BillingImporter() {
                     const bigDropAmount = s.currentAmount > s.newAmount * 2 && s.currentAmount > 10;
                     const bigDropUnit = s.currentUnit > s.newUnit * 2 && s.currentUnit > 10;
                     const bigDropDaily = s.currentDaily > s.newDaily * 2 && s.currentDaily > 10;
-                    const hasWarning = dangerAmount || dangerUnit || dangerDaily || bigDropAmount || bigDropUnit || bigDropDaily;
+                    const hasLocked = s.lockedRows > 0;
+                    const hasWarning = dangerAmount || dangerUnit || dangerDaily || bigDropAmount || bigDropUnit || bigDropDaily || hasLocked;
                     return (
-                      <tr key={i} className={hasWarning ? "bg-red-50" : ""}>
+                      <tr key={i} className={hasLocked ? "bg-yellow-100" : hasWarning ? "bg-red-50" : ""}>
                         <td className="border px-2 py-1">{s.office_name}</td>
                         <td className="border px-2 py-1">{s.segment}</td>
                         <td className="border px-2 py-1 font-mono">{`${s.billing_month.slice(0, 4)}/${s.billing_month.slice(4, 6)}`}</td>
@@ -1054,11 +1081,44 @@ export function BillingImporter() {
                         <td className={`border px-2 py-1 text-right font-mono ${dangerUnit || bigDropUnit ? "text-red-700 font-bold" : ""}`}>→ {s.newUnit}</td>
                         <td className="border px-2 py-1 text-right font-mono">{s.currentDaily}</td>
                         <td className={`border px-2 py-1 text-right font-mono ${dangerDaily || bigDropDaily ? "text-red-700 font-bold" : ""}`}>→ {s.newDaily}</td>
+                        <td className="border px-2 py-1 text-center">
+                          {hasLocked ? (
+                            <span className="inline-flex items-center gap-0.5 bg-yellow-200 text-yellow-900 rounded px-1.5 py-0.5 text-[10px] font-medium">
+                              🔒 {s.lockedRows}件確定済
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/60 text-[10px]">—</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+
+              {/* 確定済行の警告 */}
+              {(() => {
+                const lockedTotal = preview.reduce((s, p) => s + p.lockedRows, 0);
+                if (lockedTotal === 0) return null;
+                return (
+                  <div className="mt-3 p-3 border border-yellow-400 bg-yellow-50 rounded text-xs">
+                    <p className="font-bold text-yellow-900 mb-1">⚠️ 発行済み・入金済み等の行が {lockedTotal} 件含まれています</p>
+                    <p className="text-yellow-900">
+                      この取り込みは対象月×事業所のデータを <b>全て削除して再作成</b> するため、以下の情報が失われます:
+                    </p>
+                    <ul className="list-disc ml-5 mt-1 text-yellow-900">
+                      <li>発行済ステータス（invoiced）、発行日</li>
+                      <li>入金済ステータス（paid）、入金日、入金額</li>
+                      <li>引落不可ステータス（overdue）</li>
+                      <li>手動で作成した過誤調整行（adjustment）</li>
+                    </ul>
+                    <p className="mt-1 text-yellow-900">
+                      通常運用では同月のCSVを再取り込みしません。間違って再取り込みしようとしている場合は <b>キャンセル</b> してください。<br />
+                      本当に過去月のデータをリセットしたい場合のみ続行してください。
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* fallback 警告をプレビュー内にも再表示 */}
               {fallbackHits.length > 0 && (
