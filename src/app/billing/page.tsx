@@ -173,16 +173,21 @@ export default function BillingPage() {
 
       // key: `${office_number}|${client_number}|${segment}` → TableRow
       const map = new Map<string, TableRow>();
+      // 同じキーについて最新月レコードを追跡（name/office_name を最新のCSV値で上書きするため）
+      const latestMonthForKey = new Map<string, string>();
       const monthSet = new Set(monthColumns);
       for (const a of allAmounts) {
         const off = offices.find((o) => o.office_number === a.office_number);
         const officeName = (off?.short_name || off?.name) ?? a.office_number;
         const key = `${a.office_number}|${a.client_number}|${a.segment}`;
+        const c = clientByNumber.get(a.client_number);
+        // 名前はCSVの利用者名を最優先（番号の使い回し・マスタ古データによる誤表示を防ぐ）
+        // マスタは補助（CSVに名前が入っていない時のみ使う）
+        const resolvedName = a.client_name?.trim() || c?.name || a.client_number;
         if (!map.has(key)) {
-          const c = clientByNumber.get(a.client_number);
           map.set(key, {
             client_number: a.client_number,
-            client_name: c?.name ?? a.client_name ?? a.client_number,
+            client_name: resolvedName,
             furigana: "", // 現状マスタに無いので空
             office_number: a.office_number,
             office_name: officeName,
@@ -193,6 +198,16 @@ export default function BillingPage() {
             totalPaid: 0,
             outstanding: 0,
           });
+          latestMonthForKey.set(key, a.billing_month ?? "");
+        } else {
+          // より新しい月のレコードが来たら name/office_name を上書き（人が替わった番号対策）
+          const prev = latestMonthForKey.get(key) ?? "";
+          if ((a.billing_month ?? "") >= prev) {
+            const r = map.get(key)!;
+            r.client_name = resolvedName;
+            r.office_name = officeName;
+            latestMonthForKey.set(key, a.billing_month ?? "");
+          }
         }
         const r = map.get(key)!;
         r.totalBilled += a.amount ?? 0;
