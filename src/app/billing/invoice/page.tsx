@@ -411,10 +411,11 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
       ? `${amounts[0].billing_month.slice(0, 4)}年${parseInt(amounts[0].billing_month.slice(4, 6), 10)}月`
       : "";
 
-  // 02_単位CSV の「単位数」は 1回あたりの単位数。合計単位 = 単位数 × 回数。
-  // 加算系（単位数も回数も空）は amount (合計単位数/サービス単位数) を総計として使う。
-  const totalUnitsFor = (u: { unit_count: number | null; repetition: number | null; amount: number | null }) => {
-    if (u.unit_count != null && u.repetition != null) return u.unit_count * u.repetition;
+  // CSV仕様: 「単位数」列には "期間内の合計単位（= 単価 × 回数）" が入っている。
+  //   - 回数>1 の通常行は、1回あたり単価 = 単位数 / 回数 で算出して表示
+  //   - 加算行（回数=1 or 回数空 で per-visit が意味を持たない）は per-visit を空にする
+  //   - 単位数が空でも amount（合計単位数/サービス単位数）があればそれを合計として使う
+  const totalUnitsFor = (u: { unit_count: number | null; amount: number | null }) => {
     if (u.unit_count != null) return u.unit_count;
     if (u.amount != null) return u.amount;
     return 0;
@@ -477,23 +478,23 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
           </thead>
           <tbody>
             {units.map((u) => {
-              // 単位数は 1回あたり、回数は提供回数。合計 = 単位数 × 回数。
-              // 加算系などで unit_count/repetition が空で amount (合計) だけがある場合はそれを単位列に表示する。
-              const hasPerVisit = u.unit_count != null;
-              const hasReps = u.repetition != null;
-              const total = hasPerVisit && hasReps ? u.unit_count! * u.repetition!
-                : hasPerVisit ? u.unit_count!
-                : u.amount ?? null;
+              // CSVの「単位数」列には期間内合計が入っているため、
+              //   - 単位列: unit_count をそのまま総計として表示（無ければ amount にフォールバック）
+              //   - 単位数列: 1回あたり = 合計 / 回数（回数>1 の時のみ。加算等 回数=1 は空表示）
+              const total = u.unit_count ?? u.amount ?? null;
+              const reps = u.repetition ?? null;
+              const showPerVisit = total != null && reps != null && reps > 1;
+              const perVisit = showPerVisit ? Math.round((total as number) / (reps as number)) : null;
               return (
                 <tr key={u.id}>
                   <td className="border border-black px-1 py-0.5">{u.service_name || "—"}</td>
                   <td className="border border-black px-1 py-0.5"></td>
                   <td className="border border-black px-1 py-0.5 text-center">＊</td>
                   <td className="border border-black px-1 py-0.5 text-right">
-                    {hasPerVisit ? yen(u.unit_count!) : ""}
+                    {perVisit != null ? yen(perVisit) : ""}
                   </td>
                   <td className="border border-black px-1 py-0.5 text-right">
-                    {hasReps ? u.repetition : ""}
+                    {reps != null ? reps : ""}
                   </td>
                   <td className="border border-black px-1 py-0.5 text-right">
                     {total != null ? `${yen(total)}単位` : ""}
