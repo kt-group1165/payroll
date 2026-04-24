@@ -258,7 +258,7 @@ function InvoicePrintInner() {
         <button onClick={() => window.close()} className="border rounded px-4 py-2 text-sm hover:bg-muted">閉じる</button>
       </div>
 
-      <div className="invoice-sheet max-w-[210mm] mx-auto bg-white border p-4 text-[10px] leading-[14px]">
+      <div className="invoice-sheet mx-auto bg-white border p-4 text-[10px] leading-[14px]" style={{ width: "210mm", minHeight: "297mm" }}>
         {/* ─── 上部ヘッダ: 3列レイアウト（左: 宛名, 中央: 在中マーク, 右: 発行日+区分+差出人） ─── */}
         <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-start mb-2">
           {/* 左: タイトル + 宛名 */}
@@ -279,7 +279,7 @@ function InvoicePrintInner() {
             </div>
           </div>
 
-          {/* 右: 発行日 + 区分 + 差出人 */}
+          {/* 右: 発行日 + 区分（複数事業所をまとめる想定のため、差出人は各セクション内に表示） */}
           <div className="text-right">
             <div className="flex items-start justify-end gap-2 mb-1">
               <span>{issueDate}</span>
@@ -288,13 +288,6 @@ function InvoicePrintInner() {
                 <span>{hasSegment("障害") ? "☑" : "☐"}障害</span>
                 <span>{hasSegment("自費") ? "☑" : "☐"}事業所書式(自費)</span>
               </div>
-            </div>
-            <div className="text-[10px] leading-[13px]">
-              {company?.zipcode && <p>〒{company.zipcode}</p>}
-              {company?.address && <p>{company.address}</p>}
-              <p className="font-medium text-[11px] mt-0.5">{company?.formal_name || company?.name}</p>
-              {company?.registration_number && <p>登録番号：{company.registration_number}</p>}
-              {company?.tel && <p>TEL：{company.tel}</p>}
             </div>
           </div>
         </div>
@@ -418,9 +411,15 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
       ? `${amounts[0].billing_month.slice(0, 4)}年${parseInt(amounts[0].billing_month.slice(4, 6), 10)}月`
       : "";
 
-  // 02_単位CSV の「単位数」は既に 1回あたり×回数 の総計が入っているため、
-  // ここでは掛け算せずそのまま合計する。
-  const unitSubtotal = units.reduce((s, u) => s + (u.unit_count ?? 0), 0);
+  // 02_単位CSV の「単位数」は 1回あたりの単位数。合計単位 = 単位数 × 回数。
+  // 加算系（単位数も回数も空）は amount (合計単位数/サービス単位数) を総計として使う。
+  const totalUnitsFor = (u: { unit_count: number | null; repetition: number | null; amount: number | null }) => {
+    if (u.unit_count != null && u.repetition != null) return u.unit_count * u.repetition;
+    if (u.unit_count != null) return u.unit_count;
+    if (u.amount != null) return u.amount;
+    return 0;
+  };
+  const unitSubtotal = units.reduce((s, u) => s + totalUnitsFor(u), 0);
 
   type AmountGrouped = { service_item: string; unit_price: number | null; quantity: number | null; amount: number };
   const amountGroups: AmountGrouped[] = useMemo(() => {
@@ -478,20 +477,26 @@ function InvoiceGroup({ group, client, companyInquiryTel, companyFormalName }: {
           </thead>
           <tbody>
             {units.map((u) => {
-              // CSVの「単位数」は総計なので、1回あたりは 単位数/回数 で算出
-              const reps = u.repetition && u.repetition > 0 ? u.repetition : 1;
-              const perVisit = u.unit_count != null ? u.unit_count / reps : null;
+              // 単位数は 1回あたり、回数は提供回数。合計 = 単位数 × 回数。
+              // 加算系などで unit_count/repetition が空で amount (合計) だけがある場合はそれを単位列に表示する。
+              const hasPerVisit = u.unit_count != null;
+              const hasReps = u.repetition != null;
+              const total = hasPerVisit && hasReps ? u.unit_count! * u.repetition!
+                : hasPerVisit ? u.unit_count!
+                : u.amount ?? null;
               return (
                 <tr key={u.id}>
                   <td className="border border-black px-1 py-0.5">{u.service_name || "—"}</td>
                   <td className="border border-black px-1 py-0.5"></td>
                   <td className="border border-black px-1 py-0.5 text-center">＊</td>
                   <td className="border border-black px-1 py-0.5 text-right">
-                    {perVisit != null ? yen(Math.round(perVisit)) : ""}
+                    {hasPerVisit ? yen(u.unit_count!) : ""}
                   </td>
-                  <td className="border border-black px-1 py-0.5 text-right">{u.repetition ?? ""}</td>
                   <td className="border border-black px-1 py-0.5 text-right">
-                    {u.unit_count != null ? `${yen(u.unit_count)}単位` : ""}
+                    {hasReps ? u.repetition : ""}
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {total != null ? `${yen(total)}単位` : ""}
                   </td>
                 </tr>
               );

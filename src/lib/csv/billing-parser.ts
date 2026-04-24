@@ -303,6 +303,18 @@ export async function parse02KaigoUnit(file: File): Promise<{ data: BillingUnitI
       get("内訳") ||
       get("介護サービス内訳") ||
       "";
+    // 加算系（単位数・回数が空で「合計単位」「サービス単位数」だけ入る行）にも対応
+    // 単位/点/円 列に "454単位" 等の文字列が入る可能性もあるため、数値を抽出して amount にも反映
+    const unitPointYenRaw = get("単位/点/円");
+    const unitPointYenNum = (() => {
+      const cleaned = unitPointYenRaw.replace(/[単位点円]/g, "").replace(/,/g, "").trim();
+      const n = parseInt(cleaned, 10);
+      return Number.isFinite(n) ? n : null;
+    })();
+    const totalUnits =
+      toInt(get("合計単位数")) ??
+      toInt(get("サービス単位数")) ??
+      unitPointYenNum;
     data.push({
       segment: "介護",
       office_number: get("事業所番号"),
@@ -312,9 +324,9 @@ export async function parse02KaigoUnit(file: File): Promise<{ data: BillingUnitI
       service_name: serviceName,
       service_code: get("サービスコード") || null,
       unit_count: toNum(get("単位数")),
-      unit_type: get("単位/点/円") || null,
+      unit_type: unitPointYenRaw || null,
       repetition: toNum(get("回数")),
-      amount: null,
+      amount: totalUnits,
       raw: rawObj,
     });
   }
