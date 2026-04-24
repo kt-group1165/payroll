@@ -16,7 +16,8 @@ export type BillingAmountItem = {
   office_name: string;
   client_number: string;
   client_name: string;
-  billing_month: string; // YYYYMM
+  billing_month: string; // YYYYMM 請求月
+  service_month?: string; // YYYYMM 提供月（省略時は billing_month と同じ扱い）
   service_item_code: string | null;
   service_item: string;
   unit_price: number | null;
@@ -194,13 +195,16 @@ export async function parse01KaigoAmount(file: File): Promise<{ data: BillingAmo
     const rawObj: Record<string, string> = {};
     for (const k of Object.keys(idxOnce)) rawObj[k] = get(k);
 
+    const billingMonth = normalizeBillingMonth(get("請求年月") || get("提供年月"));
+    const serviceMonth = normalizeBillingMonth(get("提供年月") || get("サービス提供年月") || get("請求年月"));
     data.push({
       segment: "介護",
       office_number: get("事業所番号"),
       office_name: get("事業所名"),
       client_number: clientNumber,
       client_name: get("利用者名"),
-      billing_month: normalizeBillingMonth(get("請求年月") || get("提供年月")),
+      billing_month: billingMonth,
+      service_month: serviceMonth || billingMonth,
       service_item_code: get("利用料項目コード") || null,
       service_item: get("利用料項目"),
       unit_price: toNum(get("単価")),

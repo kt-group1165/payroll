@@ -214,6 +214,8 @@ export function BillingImporter() {
   const [fallbackHits, setFallbackHits] = useState<FallbackHit[]>([]);
   // 取り込み前のプレビュー（既存 vs 新規の件数比較）
   const [preview, setPreview] = useState<ImportScopeSummary[] | null>(null);
+  // プレビュー内でサンプル行展開中のスコープキー (`${segment}|${office_number}|${billing_month}`)
+  const [expandedScope, setExpandedScope] = useState<string | null>(null);
 
   const fetchAliases = useCallback(async () => {
     const { data, error } = await supabase
@@ -1112,40 +1114,113 @@ export function BillingImporter() {
                     const hasLocked = s.lockedRows > 0;
                     const hasWarning = dangerAmount || dangerUnit || dangerDaily || bigDropAmount || bigDropUnit || bigDropDaily || hasLocked;
                     const isExcl = !!s.excluded;
+                    const scopeKey = `${s.segment}|${s.office_number}|${s.billing_month}`;
+                    const isExpanded = expandedScope === scopeKey;
+
+                    // サンプル行を集める (新規=CSV由来)
+                    type SampleRow = { file: string; kind: "金額" | "単位" | "利用日"; client_number: string; client_name: string; raw_hint: string };
+                    const samples: SampleRow[] = [];
+                    if (isExpanded) {
+                      for (const r of results) {
+                        for (const a of r.amountRows) {
+                          if (a.segment === s.segment && a.office_number === s.office_number && a.billing_month === s.billing_month) {
+                            samples.push({ file: r.file.name, kind: "金額", client_number: a.client_number, client_name: a.client_name || "", raw_hint: `請求年月=${a.raw?.["請求年月"] ?? a.raw?.["処理年月"] ?? "?"}` });
+                            if (samples.length >= 10) break;
+                          }
+                        }
+                        for (const u of r.unitRows) {
+                          if (samples.length >= 10) break;
+                          if (u.segment === s.segment && u.office_number === s.office_number && u.billing_month === s.billing_month) {
+                            samples.push({ file: r.file.name, kind: "単位", client_number: u.client_number, client_name: u.client_name || "", raw_hint: `請求年月=${u.raw?.["請求年月"] ?? u.raw?.["処理年月"] ?? u.raw?.["サービス提供年月"] ?? "?"}` });
+                          }
+                        }
+                        for (const d of r.dailyRows) {
+                          if (samples.length >= 10) break;
+                          if (d.segment === s.segment && d.office_number === s.office_number && d.billing_month === s.billing_month) {
+                            samples.push({ file: r.file.name, kind: "利用日", client_number: d.client_number, client_name: d.client_name || "", raw_hint: `` });
+                          }
+                        }
+                        if (samples.length >= 10) break;
+                      }
+                    }
+
                     return (
-                      <tr key={i} className={isExcl ? "bg-gray-200 text-muted-foreground line-through" : hasLocked ? "bg-yellow-100" : hasWarning ? "bg-red-50" : ""}>
-                        <td className="border px-2 py-1 text-center">
-                          <input
-                            type="checkbox"
-                            checked={!isExcl}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setPreview((prev) => prev ? prev.map((p, j) => j === i ? { ...p, excluded: !checked } : p) : prev);
-                            }}
-                            title="取り込み対象に含める/除外する"
-                          />
-                        </td>
-                        <td className="border px-2 py-1">{s.office_name}</td>
-                        <td className="border px-2 py-1">{s.segment}</td>
-                        <td className="border px-2 py-1 font-mono">{`${s.billing_month.slice(0, 4)}/${s.billing_month.slice(4, 6)}`}</td>
-                        <td className="border px-2 py-1 text-right font-mono">{s.currentAmount}</td>
-                        <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerAmount || bigDropAmount) ? "text-red-700 font-bold" : ""}`}>→ {s.newAmount}</td>
-                        <td className="border px-2 py-1 text-right font-mono">{s.currentUnit}</td>
-                        <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerUnit || bigDropUnit) ? "text-red-700 font-bold" : ""}`}>→ {s.newUnit}</td>
-                        <td className="border px-2 py-1 text-right font-mono">{s.currentDaily}</td>
-                        <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerDaily || bigDropDaily) ? "text-red-700 font-bold" : ""}`}>→ {s.newDaily}</td>
-                        <td className="border px-2 py-1 text-center">
-                          {isExcl ? (
-                            <span className="text-[10px] bg-gray-400 text-white rounded px-1.5 py-0.5">除外</span>
-                          ) : hasLocked ? (
-                            <span className="inline-flex items-center gap-0.5 bg-yellow-200 text-yellow-900 rounded px-1.5 py-0.5 text-[10px] font-medium">
-                              🔒 {s.lockedRows}件確定済
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground/60 text-[10px]">—</span>
-                          )}
-                        </td>
-                      </tr>
+                      <>
+                        <tr key={i} className={isExcl ? "bg-gray-200 text-muted-foreground line-through" : hasLocked ? "bg-yellow-100" : hasWarning ? "bg-red-50" : ""}>
+                          <td className="border px-2 py-1 text-center">
+                            <input
+                              type="checkbox"
+                              checked={!isExcl}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPreview((prev) => prev ? prev.map((p, j) => j === i ? { ...p, excluded: !checked } : p) : prev);
+                              }}
+                              title="取り込み対象に含める/除外する"
+                            />
+                          </td>
+                          <td className="border px-2 py-1">
+                            <button
+                              className="text-left hover:underline text-blue-700"
+                              onClick={() => setExpandedScope(isExpanded ? null : scopeKey)}
+                              title="クリックで新規行のサンプルを表示"
+                            >
+                              {isExpanded ? "▼ " : "▶ "}{s.office_name}
+                            </button>
+                          </td>
+                          <td className="border px-2 py-1">{s.segment}</td>
+                          <td className="border px-2 py-1 font-mono">{`${s.billing_month.slice(0, 4)}/${s.billing_month.slice(4, 6)}`}</td>
+                          <td className="border px-2 py-1 text-right font-mono">{s.currentAmount}</td>
+                          <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerAmount || bigDropAmount) ? "text-red-700 font-bold" : ""}`}>→ {s.newAmount}</td>
+                          <td className="border px-2 py-1 text-right font-mono">{s.currentUnit}</td>
+                          <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerUnit || bigDropUnit) ? "text-red-700 font-bold" : ""}`}>→ {s.newUnit}</td>
+                          <td className="border px-2 py-1 text-right font-mono">{s.currentDaily}</td>
+                          <td className={`border px-2 py-1 text-right font-mono ${!isExcl && (dangerDaily || bigDropDaily) ? "text-red-700 font-bold" : ""}`}>→ {s.newDaily}</td>
+                          <td className="border px-2 py-1 text-center">
+                            {isExcl ? (
+                              <span className="text-[10px] bg-gray-400 text-white rounded px-1.5 py-0.5">除外</span>
+                            ) : hasLocked ? (
+                              <span className="inline-flex items-center gap-0.5 bg-yellow-200 text-yellow-900 rounded px-1.5 py-0.5 text-[10px] font-medium">
+                                🔒 {s.lockedRows}件確定済
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/60 text-[10px]">—</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={11} className="border px-2 py-2 bg-blue-50">
+                              <p className="text-[11px] font-medium text-blue-900 mb-1">このスコープの新規行サンプル (最大10件) — どのCSVのどの行が {s.billing_month.slice(0, 4)}/{s.billing_month.slice(4, 6)} として判定されたかを確認</p>
+                              {samples.length === 0 ? (
+                                <p className="text-[11px] text-muted-foreground">新規行はありません（既存データの方が多いスコープです）</p>
+                              ) : (
+                                <table className="w-full text-[11px]">
+                                  <thead className="bg-blue-100">
+                                    <tr>
+                                      <th className="px-1 py-0.5 text-left">ファイル</th>
+                                      <th className="px-1 py-0.5 text-left">種類</th>
+                                      <th className="px-1 py-0.5 text-left">利用者番号</th>
+                                      <th className="px-1 py-0.5 text-left">利用者名</th>
+                                      <th className="px-1 py-0.5 text-left">元の月表記</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {samples.map((sr, k) => (
+                                      <tr key={k} className="border-t border-blue-200">
+                                        <td className="px-1 py-0.5 font-mono">{sr.file}</td>
+                                        <td className="px-1 py-0.5">{sr.kind}</td>
+                                        <td className="px-1 py-0.5 font-mono">{sr.client_number}</td>
+                                        <td className="px-1 py-0.5">{sr.client_name}</td>
+                                        <td className="px-1 py-0.5 text-muted-foreground">{sr.raw_hint}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     );
                   })}
                 </tbody>
