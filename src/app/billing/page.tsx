@@ -21,7 +21,11 @@ type AmountRow = {
   client_number: string;
   client_name: string;
   billing_month: string;
+  service_month: string | null;
   amount: number;
+  invoiced_amount: number | null;
+  paid_amount: number | null;
+  billing_status: string | null;
 };
 
 type OfficeLite = { id: string; office_number: string; name: string; short_name: string; company_id: string | null };
@@ -152,7 +156,7 @@ export default function BillingPage() {
       while (true) {
         const { data } = await supabase
           .from("billing_amount_items")
-          .select("segment, office_number, client_number, client_name, billing_month, amount")
+          .select("segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status")
           .in("office_number", companyOfficeNums)
           .range(from, from + 999);
         if (!data || data.length === 0) break;
@@ -216,20 +220,47 @@ export default function BillingPage() {
         }
       }
 
-      // 入金を利用者単位で合算（事業別の入金は区別していない → 未収残は利用者×事業で按分せず全体での概算）
-      // 簡易に: 入金は利用者単位で「過去全入金」を返す
+      // 入金を利用者単位で合算（payments テーブル由来の個別入金）
       const paidByClient = new Map<string, number>();
       for (const p of payments) paidByClient.set(p.client_number, (paidByClient.get(p.client_number) ?? 0) + p.amount);
 
-      // 利用者ごとの総請求額も集計（売掛残計算用）
-      const billedByClient = new Map<string, number>();
-      for (const a of allAmounts) billedByClient.set(a.client_number, (billedByClient.get(a.client_number) ?? 0) + (a.amount ?? 0));
-
-      // 売掛金残額を各行に割り振る: 同じ client_number の行は同じ値を持つ
+      // ── 売掛金残額の計算（ライフサイクル対応版）──
+      // 売掛として見なすのは以下のケース:
+      //   invoiced                → 未入金: +invoiced_amount (invoiced_amount 空なら amount)
+      //   overdue                 → 未回収: +invoiced_amount
+      //   paid                    → 残差が出ることがある: +(invoiced_amount - paid_amount)
+      //   adjustment              → 過誤調整: +expected_amount (符号そのまま、減額なら負)
+      // 除外: draft / scheduled / deferred / cancelled
+      const outstandingByClient = new Map<string, number>();
+      const addOutstanding = (cn: string, v: number) => {
+        outstandingByClient.set(cn, (outstandingByClient.get(cn) ?? 0) + v);
+      };
+      for (const a of allAmounts) {
+        const st = a.billing_status ?? "scheduled";
+        const inv = a.invoiced_amount ?? a.amount ?? 0;
+        const pay = a.paid_amount ?? 0;
+        const amt = a.amount ?? 0;
+        switch (st) {
+          case "invoiced":
+          case "overdue":
+            addOutstanding(a.client_number, inv);
+            break;
+          case "paid":
+            addOutstanding(a.client_number, inv - pay);
+            break;
+          case "adjustment":
+            addOutstanding(a.client_number, amt);
+            break;
+          default:
+            // draft / scheduled / deferred / cancelled は売掛に含めない
+            break;
+        }
+      }
+      // payments テーブルの個別入金も差し引く (billing_status=paid 以外の手動入金を反映)
       const clientOutstanding = new Map<string, number>();
-      for (const [cn, billed] of billedByClient) {
-        const paid = paidByClient.get(cn) ?? 0;
-        clientOutstanding.set(cn, Math.max(0, billed - paid));
+      for (const [cn, bal] of outstandingByClient) {
+        const extraPaid = paidByClient.get(cn) ?? 0;
+        clientOutstanding.set(cn, bal - extraPaid);
       }
 
       // Map → Array + 利用者単位の集計値を充填
@@ -263,7 +294,7 @@ export default function BillingPage() {
     return rows
       .filter((r) => !q || r.client_name.toLowerCase().includes(q) || r.client_number.toLowerCase().includes(q))
       .filter((r) => !filterPaymentMethod || r.payment_method === filterPaymentMethod)
-      .filter((r) => !filterOutstandingOnly || r.outstanding > 0);
+      .filter((r) => !filterOutstandingOnly || r.outstanding !== 0);
   }, [rows, searchName, filterPaymentMethod, filterOutstandingOnly]);
 
   // ─── 同一(顧客送付先=client_number)で rowspan するため、利用者ごとにまとめる ─
@@ -450,8 +481,8 @@ export default function BillingPage() {
                           )}
                         </td>
                         {isFirst && (
-                          <td rowSpan={spanRows} className={`border px-2 py-1 text-right font-mono font-bold ${r.outstanding > 0 ? "text-red-700" : "text-muted-foreground"}`}>
-                            {r.outstanding > 0 ? yen(r.outstanding) : "0"}
+                          <td rowSpan={spanRows} className={`border px-2 py-1 text-right font-mono font-bold ${r.outstanding > 0 ? "text-red-700" : r.outstanding < 0 ? "text-blue-700" : "text-muted-foreground"}`}>
+                            {r.outstanding !== 0 ? yen(r.outstanding) : "0"}
                           </td>
                         )}
                       </tr>

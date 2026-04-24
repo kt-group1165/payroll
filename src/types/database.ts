@@ -139,6 +139,51 @@ export interface Payment {
   created_at: string;
 }
 
+/** ライフサイクル状態 */
+export type BillingStatus =
+  | "draft"       // 債権発生（提供あり、請求予定未確定）
+  | "scheduled"   // 請求予定（CSV取込済、発行前）
+  | "invoiced"    // 請求書発行済
+  | "paid"        // 入金済
+  | "deferred"    // 翌月繰越
+  | "cancelled"   // 請求キャンセル
+  | "overdue"     // 引落不可・支払遅延
+  | "adjustment"; // 過誤調整行
+
+/** billing_amount_items DBレコード (拡張後) */
+export interface BillingAmountItemRow {
+  id: string;
+  segment: "介護" | "障害" | "自費";
+  office_number: string | null;
+  office_name: string | null;
+  client_number: string;
+  client_name: string | null;
+  billing_month: string;              // 請求月 YYYYMM
+  service_month: string;              // サービス提供月 YYYYMM (不変)
+  service_item_code: string | null;
+  service_item: string | null;
+  unit_price: number | null;
+  quantity: number | null;
+  amount: number;                     // expected_amount相当（CSVから来た予定額）
+  invoiced_amount: number | null;     // 請求書記載額
+  paid_amount: number | null;         // 実入金額
+  tax_amount: number | null;
+  reduction_amount: number | null;
+  medical_deduction: number | null;
+  period_start: string | null;
+  period_end: string | null;
+  status: string | null;              // CSVの「状態」(確定等)、既存カラム
+  billing_status: BillingStatus;      // ライフサイクル
+  parent_item_id: string | null;
+  actual_issue_date: string | null;
+  actual_withdrawal_date: string | null;
+  source: "csv" | "manual" | "api";
+  lifecycle_note: string | null;
+  import_batch_id: string | null;
+  raw: Record<string, unknown> | null;
+  created_at: string;
+}
+
 /** 法人ごとの請求書フォーマット設定 */
 export interface CompanyInvoiceFormat {
   id: string;
