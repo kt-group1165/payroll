@@ -327,14 +327,28 @@ function InvoicePreview({ form, company }: { form: Form; company: Company }) {
     miniTable: { medical_deduction: 12340, reduction: 0, mitigation: 0, tax: 0 },
   };
 
+  const SCALE = 0.72;
   return (
     <div className="sticky top-2">
       <div className="flex items-center gap-2 mb-2">
         <h3 className="text-sm font-semibold">プレビュー</h3>
-        <span className="text-[10px] text-muted-foreground">サンプルデータ表示</span>
+        <span className="text-[10px] text-muted-foreground">A4縦・サンプルデータ</span>
       </div>
-      <div className="border rounded-md overflow-auto max-h-[calc(100vh-140px)] bg-white">
-        <div className="mx-auto bg-white p-3 text-[10px] leading-[14px]" style={{ width: "210mm", transform: "scale(0.72)", transformOrigin: "top left", minHeight: "297mm" }}>
+      {/* A4縦の紙枠（210 × 297mm を 0.72 倍で表示、影付き） */}
+      <div className="mx-auto" style={{
+        width: `calc(210mm * ${SCALE})`,
+        maxWidth: "100%",
+      }}>
+        <div
+          className="bg-white shadow-lg border border-gray-400 relative overflow-hidden mx-auto"
+          style={{
+            width: `calc(210mm * ${SCALE})`,
+            height: `calc(297mm * ${SCALE})`,
+          }}
+        >
+          {/* A4 ラベル（右上） */}
+          <span className="absolute top-1 right-1 text-[9px] text-gray-400 z-10 bg-white px-1 border border-gray-300 rounded">A4縦</span>
+          <div className="text-[10px] leading-[14px]" style={{ width: "210mm", height: "297mm", transform: `scale(${SCALE})`, transformOrigin: "top left", padding: "4mm", overflow: "hidden" }}>
           {/* ヘッダ */}
           <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-start mb-2">
             <div>
@@ -513,10 +527,10 @@ function InvoicePreview({ form, company }: { form: Form; company: Company }) {
             </div>
           </section>
 
-          {/* カレンダー */}
+          {/* カレンダー（A4枠内に収めるためコンパクト化） */}
           {form.show_calendar && (
-            <div className="mt-3">
-              <p className="text-[10px] text-blue-700 text-center mb-1">カレンダーの表示</p>
+            <div className="mt-2">
+              <p className="text-[10px] text-blue-700 text-center mb-0.5">カレンダーの表示</p>
               <div className="grid grid-cols-3 gap-2">
                 <div className="border-[3px] border-orange-500 rounded p-1.5">
                   <p className="text-center text-[10px] font-semibold">{sample.officeName}</p>
@@ -536,6 +550,7 @@ function InvoicePreview({ form, company }: { form: Form; company: Company }) {
               </div>
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>
