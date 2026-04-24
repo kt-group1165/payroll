@@ -272,12 +272,51 @@ function InvoicePrintInner() {
         }
       `}</style>
 
-      <div className="no-print mb-4 flex gap-2">
+      <div className="no-print mb-4 flex gap-2 items-center">
         <button
-          onClick={() => window.print()}
+          onClick={async () => {
+            // 印刷前に status='scheduled' の行を 'invoiced' に遷移
+            // 対象: この (client, month, company配下のoffice) の scheduled 行すべて
+            try {
+              const companyOfficeNums = offices.map((o) => o.office_number);
+              if (companyOfficeNums.length > 0) {
+                // 対象行を取得
+                const { data: targets } = await supabase
+                  .from("billing_amount_items")
+                  .select("id, amount")
+                  .eq("client_number", clientNumber)
+                  .eq("billing_month", month)
+                  .in("office_number", companyOfficeNums)
+                  .eq("billing_status", "scheduled");
+
+                const today = new Date().toISOString().slice(0, 10);
+                if (targets && targets.length > 0) {
+                  // 各行を invoiced に更新 (invoiced_amount = amount をコピー)
+                  await Promise.all(
+                    (targets as { id: string; amount: number }[]).map((t) =>
+                      supabase
+                        .from("billing_amount_items")
+                        .update({
+                          billing_status: "invoiced",
+                          actual_issue_date: today,
+                          invoiced_amount: t.amount,
+                        })
+                        .eq("id", t.id)
+                    )
+                  );
+                }
+              }
+            } catch (e) {
+              console.warn("請求書発行ステータスの更新に失敗:", e);
+            }
+            window.print();
+          }}
           className="border rounded px-4 py-2 text-sm bg-primary text-primary-foreground hover:opacity-90"
         >
-          🖨️ 印刷
+          🖨️ 印刷 & 発行済にする
+        </button>
+        <button onClick={() => window.print()} className="border rounded px-4 py-2 text-sm hover:bg-muted">
+          印刷のみ（ステータス変更なし）
         </button>
         <button onClick={() => window.close()} className="border rounded px-4 py-2 text-sm hover:bg-muted">閉じる</button>
       </div>

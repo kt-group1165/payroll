@@ -40,6 +40,7 @@ type TableRow = {
   segment: BillingSegment;
   payment_method: PaymentMethod;
   monthlyAmounts: Record<string, number>; // key: YYYYMM → 金額
+  monthlyStatus: Record<string, string>;  // key: YYYYMM → billing_status (最多ステータス)
   totalBilled: number;      // 過去全請求合計
   totalPaid: number;        // 過去全入金合計
   outstanding: number;      // 売掛金残額
@@ -198,6 +199,7 @@ export default function BillingPage() {
             segment: a.segment,
             payment_method: (c?.payment_method as PaymentMethod) ?? "",
             monthlyAmounts: {},
+            monthlyStatus: {},
             totalBilled: 0,
             totalPaid: 0,
             outstanding: 0,
@@ -217,6 +219,15 @@ export default function BillingPage() {
         r.totalBilled += a.amount ?? 0;
         if (monthSet.has(a.billing_month)) {
           r.monthlyAmounts[a.billing_month] = (r.monthlyAmounts[a.billing_month] ?? 0) + (a.amount ?? 0);
+          // ステータスは「代表1つ」: 優先度 overdue > invoiced > paid > adjustment > deferred > cancelled > scheduled
+          const statusPriority: Record<string, number> = {
+            overdue: 7, invoiced: 6, paid: 5, adjustment: 4, deferred: 3, cancelled: 2, scheduled: 1, draft: 0,
+          };
+          const prev = r.monthlyStatus[a.billing_month];
+          const cur = a.billing_status ?? "scheduled";
+          if (!prev || (statusPriority[cur] ?? 0) > (statusPriority[prev] ?? 0)) {
+            r.monthlyStatus[a.billing_month] = cur;
+          }
         }
       }
 
@@ -389,6 +400,12 @@ export default function BillingPage() {
           <Button variant="outline" size="sm" onClick={computeRows} disabled={loading}>
             {loading ? "集計中…" : "🔄 再集計"}
           </Button>
+          <BulkIssueButton
+            companyId={selectedCompanyId}
+            officeNumbers={availableOffices.filter((o) => !selectedOfficeNum || o.office_number === selectedOfficeNum).map((o) => o.office_number)}
+            billingMonth={selectedMonth}
+            onDone={computeRows}
+          />
         </div>
       </div>
 
@@ -454,9 +471,13 @@ export default function BillingPage() {
                         </td>
                         {monthColumns.map((m) => {
                           const v = r.monthlyAmounts[m] ?? 0;
+                          const st = r.monthlyStatus[m];
                           return (
-                            <td key={m} className="border px-2 py-1 text-right font-mono">
-                              {v > 0 ? yen(v) : ""}
+                            <td key={m} className="border px-2 py-1 text-right font-mono relative">
+                              {v !== 0 ? yen(v) : ""}
+                              {st && v !== 0 && (
+                                <StatusBadge status={st} />
+                              )}
                             </td>
                           );
                         })}
@@ -639,5 +660,97 @@ function PaymentQuickDialog({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ─── ステータスバッジ（月セル右上の小さい印） ──────────────
+function StatusBadge({ status }: { status: string }) {
+  const meta: Record<string, { bg: string; text: string; label: string; title: string }> = {
+    scheduled:  { bg: "bg-gray-100",    text: "text-gray-700",    label: "未",  title: "未発行（請求予定）" },
+    invoiced:   { bg: "bg-blue-100",    text: "text-blue-800",    label: "発",  title: "発行済" },
+    paid:       { bg: "bg-green-100",   text: "text-green-800",   label: "済",  title: "入金済" },
+    overdue:    { bg: "bg-red-100",     text: "text-red-800",     label: "未",  title: "引落不可・未回収" },
+    deferred:   { bg: "bg-yellow-100",  text: "text-yellow-800",  label: "繰",  title: "翌月繰越" },
+    cancelled:  { bg: "bg-gray-200",    text: "text-gray-500",    label: "×",  title: "請求キャンセル" },
+    adjustment: { bg: "bg-orange-100",  text: "text-orange-800",  label: "調",  title: "過誤調整" },
+    draft:      { bg: "bg-gray-100",    text: "text-gray-500",    label: "草",  title: "下書き" },
+  };
+  const m = meta[status] ?? meta.scheduled;
+  return (
+    <span
+      className={`absolute top-0.5 right-0.5 ${m.bg} ${m.text} text-[9px] leading-none rounded px-1 py-0.5`}
+      title={m.title}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+// ─── 一括発行ボタン ──────────────
+function BulkIssueButton({
+  companyId,
+  officeNumbers,
+  billingMonth,
+  onDone,
+}: {
+  companyId: string;
+  officeNumbers: string[];
+  billingMonth: string;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const handleClick = async () => {
+    if (!companyId || !billingMonth || officeNumbers.length === 0) {
+      toast.error("法人と月を選択してください");
+      return;
+    }
+    // 対象 (scheduled 行) を取得
+    const { data: targets, error: e1 } = await supabase
+      .from("billing_amount_items")
+      .select("id, amount")
+      .eq("billing_month", billingMonth)
+      .in("office_number", officeNumbers)
+      .eq("billing_status", "scheduled");
+    if (e1) { toast.error(`取得エラー: ${e1.message}`); return; }
+    const list = (targets ?? []) as { id: string; amount: number }[];
+    if (list.length === 0) {
+      toast.info("一括発行の対象（未発行）データがありません");
+      return;
+    }
+    if (!confirm(`${billingMonth.slice(0, 4)}年${parseInt(billingMonth.slice(4, 6), 10)}月分の未発行 ${list.length} 件を「発行済」にします。\nよろしいですか？`)) return;
+
+    setBusy(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const chunkSize = 100;
+      for (let i = 0; i < list.length; i += chunkSize) {
+        const chunk = list.slice(i, i + chunkSize);
+        await Promise.all(
+          chunk.map((t) =>
+            supabase
+              .from("billing_amount_items")
+              .update({
+                billing_status: "invoiced",
+                actual_issue_date: today,
+                invoiced_amount: t.amount,
+              })
+              .eq("id", t.id)
+          )
+        );
+      }
+      toast.success(`${list.length} 件を発行済にしました`);
+      onDone();
+    } catch (e) {
+      toast.error(`更新エラー: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button variant="default" size="sm" onClick={handleClick} disabled={busy}>
+      {busy ? "発行中…" : "🧾 一括発行"}
+    </Button>
   );
 }
