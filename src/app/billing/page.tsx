@@ -473,11 +473,13 @@ export default function BillingPage() {
                           const v = r.monthlyAmounts[m] ?? 0;
                           const st = r.monthlyStatus[m];
                           return (
-                            <td key={m} className="border px-2 py-1 text-right font-mono">
-                              <span className="inline-flex items-center gap-1 justify-end">
-                                {st && v !== 0 && <StatusBadge status={st} />}
+                            <td key={m} className="border px-2 py-1 font-mono">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="w-5 flex-shrink-0">
+                                  {st && v !== 0 && <StatusBadge status={st} />}
+                                </span>
                                 <span>{v !== 0 ? yen(v) : ""}</span>
-                              </span>
+                              </div>
                             </td>
                           );
                         })}
