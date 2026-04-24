@@ -29,6 +29,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Office, OfficeType, Company } from "@/types/database";
+import { sortCompanies } from "@/lib/sort-companies";
 
 const OFFICE_TYPES: OfficeType[] = [
   "訪問介護",
@@ -96,7 +97,7 @@ export default function OfficesPage() {
   useEffect(() => {
     fetchOffices();
     supabase.from("companies").select("*").order("name").then(({ data }) => {
-      if (data) setCompanies(data as Company[]);
+      if (data) setCompanies(sortCompanies(data as Company[]));
     });
   }, [fetchOffices]);
 

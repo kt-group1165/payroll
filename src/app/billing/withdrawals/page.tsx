@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import { sortCompanies } from "@/lib/sort-companies";
 import type { Company } from "@/types/database";
 
 /**
@@ -93,8 +94,9 @@ export default function WithdrawalsImportPage() {
   useEffect(() => {
     supabase.from("companies").select("*").order("name").then(({ data }) => {
       if (data) {
-        setCompanies(data as Company[]);
-        if ((data as Company[]).length > 0 && !selectedCompanyId) setSelectedCompanyId((data as Company[])[0].id);
+        const sorted = sortCompanies(data as Company[]);
+        setCompanies(sorted);
+        if (sorted.length > 0 && !selectedCompanyId) setSelectedCompanyId(sorted[0].id);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

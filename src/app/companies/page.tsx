@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import { sortCompanies } from "@/lib/sort-companies";
 import type { Company } from "@/types/database";
 
 const defaultForm = {
@@ -46,7 +47,7 @@ export default function CompaniesPage() {
 
   const fetchCompanies = useCallback(async () => {
     const { data } = await supabase.from("companies").select("*").order("created_at");
-    if (data) setCompanies(data as Company[]);
+    if (data) setCompanies(sortCompanies(data as Company[]));
   }, []);
 
   useEffect(() => { fetchCompanies(); }, [fetchCompanies]);

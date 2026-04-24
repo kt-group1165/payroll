@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/sort-companies";
 import type { Company } from "@/types/database";
 
 /**
@@ -66,8 +67,9 @@ export default function ReconciliationPage() {
         supabase.from("offices").select("id, office_number, name, short_name, company_id"),
       ]);
       if (coRes.data) {
-        setCompanies(coRes.data as Company[]);
-        if ((coRes.data as Company[]).length > 0 && !selectedCompanyId) setSelectedCompanyId((coRes.data as Company[])[0].id);
+        const sorted = sortCompanies(coRes.data as Company[]);
+        setCompanies(sorted);
+        if (sorted.length > 0 && !selectedCompanyId) setSelectedCompanyId(sorted[0].id);
       }
       if (offRes.data) setOffices(offRes.data as OfficeLite[]);
     })();

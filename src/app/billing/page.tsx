@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import type { Company, Client, Payment } from "@/types/database";
+import { sortCompanies } from "@/lib/sort-companies";
 
 type BillingSegment = "介護" | "障害" | "自費";
 type PaymentMethod = "withdrawal" | "transfer" | "cash" | "other" | "";
@@ -103,9 +104,10 @@ export default function BillingPage() {
         supabase.from("companies").select("*").order("name"),
         supabase.from("offices").select("id, office_number, name, short_name, company_id"),
       ]);
-      if (coRes.data) setCompanies(coRes.data as Company[]);
+      const sortedCompanies = coRes.data ? sortCompanies(coRes.data as Company[]) : [];
+      setCompanies(sortedCompanies);
       if (offRes.data) setOffices(offRes.data as OfficeLite[]);
-      if (coRes.data && coRes.data.length > 0) setSelectedCompanyId((coRes.data as Company[])[0].id);
+      if (sortedCompanies.length > 0) setSelectedCompanyId(sortedCompanies[0].id);
 
       // 利用者（ページング）
       const allClients: Client[] = [];

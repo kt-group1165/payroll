@@ -7,6 +7,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
+import { sortCompanies } from "@/lib/sort-companies";
 import type { Company, CompanyInvoiceFormat } from "@/types/database";
 
 /**
@@ -24,7 +25,7 @@ export default function InvoiceFormatsPage() {
       supabase.from("companies").select("*").order("name"),
       supabase.from("company_invoice_formats").select("*"),
     ]);
-    if (coRes.data) setCompanies(coRes.data as Company[]);
+    if (coRes.data) setCompanies(sortCompanies(coRes.data as Company[]));
     if (fmtRes.data) setFormats(fmtRes.data as CompanyInvoiceFormat[]);
     setLoading(false);
   }, []);
