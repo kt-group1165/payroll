@@ -442,14 +442,14 @@ export default function ClientsPage() {
           >
             新規登録
           </DialogTrigger>
-          <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[96vw] max-h-[92vh] overflow-y-auto" style={{ maxWidth: "1400px" }}>
             <DialogHeader>
               <DialogTitle>
                 {editingId ? "利用者を編集" : "利用者を登録"}
               </DialogTitle>
             </DialogHeader>
-            {/* 左: 基本情報・マップ / 右: 請求情報 の2カラム */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 3カラム: 基本情報 / マップ / 請求情報 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1fr_1.2fr] gap-4">
               {/* ── 左カラム ─────────────────── */}
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -510,8 +510,11 @@ export default function ClientsPage() {
                   </Select>
                 </div>
 
-                {/* マップ用位置（任意） */}
-                <div className="pt-2 border-t">
+              </div>
+
+              {/* ── 中央カラム: マップ ─────────────── */}
+              <div className="space-y-3">
+                <div>
                   <div className="flex items-center justify-between mb-1">
                     <Label className="text-sm">マップ用位置（任意）</Label>
                     {(form.map_latitude !== null || form.map_longitude !== null) && (
