@@ -107,6 +107,8 @@ export default function ClientsPage() {
     setFilterOfficeIdRaw(v);
   };
   const [isOpen, setIsOpen] = useState(false);
+  // 「住所をマップで指定する」チェックでマップ表示切り替え
+  const [showMap, setShowMap] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     client_number: "",
@@ -163,6 +165,7 @@ export default function ClientsPage() {
       seal_required: false, care_plan_provider: "",
     });
     setEditingId(null);
+    setShowMap(false);
   };
 
   const handleSubmit = async () => {
@@ -244,6 +247,8 @@ export default function ClientsPage() {
       care_plan_provider: client.care_plan_provider ?? "",
     });
     setEditingId(client.id);
+    // 既にマップ位置が登録済みならチェックON
+    setShowMap(client.map_latitude != null || client.map_longitude != null);
     setIsOpen(true);
   };
 
@@ -442,15 +447,15 @@ export default function ClientsPage() {
           >
             新規登録
           </DialogTrigger>
-          <DialogContent className="w-[96vw] max-h-[92vh] overflow-y-auto" style={{ maxWidth: "1400px" }}>
+          <DialogContent className="w-[96vw] max-h-[92vh] overflow-y-auto" style={{ maxWidth: showMap ? "1400px" : "1000px" }}>
             <DialogHeader>
               <DialogTitle>
                 {editingId ? "利用者を編集" : "利用者を登録"}
               </DialogTitle>
             </DialogHeader>
-            {/* 3カラム: 基本情報 / マップ / 請求情報 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1fr_1fr_1.2fr] gap-4">
-              {/* ── 左カラム ─────────────────── */}
+            {/* 2 or 3カラム: 基本情報 / [マップ] / 請求情報 */}
+            <div className={`grid grid-cols-1 md:grid-cols-2 ${showMap ? "lg:grid-cols-[1fr_1fr_1.2fr]" : "lg:grid-cols-[1fr_1.2fr]"} gap-4`}>
+              {/* ── 左カラム: 基本情報 ─────────────────── */}
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -472,16 +477,6 @@ export default function ClientsPage() {
                       }
                     />
                   </div>
-                </div>
-                <div>
-                  <Label>住所</Label>
-                  <Input
-                    value={form.address}
-                    onChange={(e) =>
-                      setForm({ ...form, address: e.target.value })
-                    }
-                    placeholder="通常の住所（請求書等に使用）"
-                  />
                 </div>
                 <div>
                   <Label>所属事業所</Label>
@@ -509,10 +504,28 @@ export default function ClientsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
+                <div>
+                  <Label>住所</Label>
+                  <Input
+                    value={form.address}
+                    onChange={(e) =>
+                      setForm({ ...form, address: e.target.value })
+                    }
+                    placeholder="通常の住所（請求書等に使用）"
+                  />
+                  <label className="flex items-center gap-2 mt-2 text-xs cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showMap}
+                      onChange={(e) => setShowMap(e.target.checked)}
+                    />
+                    <span>住所をマップで指定する（施設入所中など、住所と実位置が異なる場合）</span>
+                  </label>
+                </div>
               </div>
 
-              {/* ── 中央カラム: マップ ─────────────── */}
+              {/* ── 中央カラム: マップ (showMap が true の時のみ表示) ─────────────── */}
+              {showMap && (
               <div className="space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-1">
@@ -528,7 +541,7 @@ export default function ClientsPage() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground mb-2">
-                    通常の住所とは別の場所（施設入所中など）の位置を指定する場合に設定。距離計算はここで指定した座標を優先します。
+                    距離計算はここで指定した座標を優先します。
                   </p>
                   <Input
                     value={form.map_note}
@@ -549,6 +562,7 @@ export default function ClientsPage() {
                   )}
                 </div>
               </div>
+              )}
 
               {/* ── 右カラム: 請求情報 ─────────────── */}
               <div className="space-y-3">
