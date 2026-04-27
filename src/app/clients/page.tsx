@@ -131,24 +131,33 @@ export default function ClientsPage() {
   });
 
   const fetchData = useCallback(async () => {
-    // clientsは1000件を超える可能性があるためページング取得
+    // 1ページ目の clients と offices を並列で取得 → 即UIに反映
     const pageSize = 1000;
-    const allClients: Client[] = [];
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
-        .from("clients")
-        .select("*")
-        .order("client_number")
-        .range(from, from + pageSize - 1);
-      if (!data || data.length === 0) break;
-      allClients.push(...(data as Client[]));
-      if (data.length < pageSize) break;
-      from += pageSize;
+    const [first, offRes] = await Promise.all([
+      supabase.from("clients").select("*").order("client_number").range(0, pageSize - 1),
+      supabase.from("offices").select("*").order("name"),
+    ]);
+    if (offRes.data) setOffices(offRes.data as Office[]);
+    const firstBatch = (first.data ?? []) as Client[];
+    setClients(firstBatch);
+
+    // 1000件を超える分は背景で追加取得
+    if (firstBatch.length === pageSize) {
+      const tail: Client[] = [];
+      let from = pageSize;
+      while (true) {
+        const { data } = await supabase
+          .from("clients")
+          .select("*")
+          .order("client_number")
+          .range(from, from + pageSize - 1);
+        if (!data || data.length === 0) break;
+        tail.push(...(data as Client[]));
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      if (tail.length > 0) setClients((prev) => [...prev, ...tail]);
     }
-    const { data: offData } = await supabase.from("offices").select("*").order("name");
-    setClients(allClients);
-    if (offData) setOffices(offData as Office[]);
   }, []);
 
   useEffect(() => {
