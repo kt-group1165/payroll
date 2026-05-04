@@ -44,14 +44,14 @@ export default function DistancePage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   useEffect(() => {
-    supabase.from("payroll_offices").select("id,name,short_name,office_number").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,name,short_name,office_number").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
     });
     // service_records実データのある月を import_batches 経由で取得（高速）
     supabase
-      .from("payroll_import_batches")
+      .from("import_batches")
       .select("processing_month,record_count,import_type,status")
       .eq("import_type", "meisai")
       .eq("status", "completed")
@@ -75,7 +75,7 @@ export default function DistancePage() {
       // 1. 職員取得
       setProgress("職員情報を取得中...");
       const { data: empData } = await supabase
-        .from("payroll_employees")
+        .from("employees")
         .select("id,employee_number,name,address,office_id")
         .eq("office_id", selectedOfficeId)
         .neq("employment_status", "退職者");
@@ -86,7 +86,7 @@ export default function DistancePage() {
       // 2. 利用者住所マップ
       setProgress("利用者情報を取得中...");
       const { data: clientData } = await supabase
-        .from("payroll_clients")
+        .from("clients")
         .select("client_number,address")
         .eq("office_id", selectedOfficeId);
       const clientMap = new Map((clientData ?? []).map((c: Client) => [c.client_number, c.address]));
@@ -98,7 +98,7 @@ export default function DistancePage() {
       let from = 0;
       while (true) {
         const { data } = await supabase
-          .from("payroll_service_records")
+          .from("service_records")
           .select("employee_number,service_date,client_number,dispatch_start_time,dispatch_end_time")
           .eq("processing_month", selectedMonth)
           .eq("office_number", office.office_number)

@@ -44,7 +44,7 @@ export function MeisaiImporter() {
     let from = 0;
     while (true) {
       const { data } = await supabase
-        .from("payroll_service_records")
+        .from("service_records")
         .select("processing_month,office_number")
         .range(from, from + pageSize - 1);
       if (!data || data.length === 0) break;
@@ -66,7 +66,7 @@ export function MeisaiImporter() {
 
   useEffect(() => {
     fetchExistingMonths();
-    supabase.from("payroll_offices").select("id,office_number,name,short_name,office_type").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,office_number,name,short_name,office_type").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
       if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
@@ -79,7 +79,7 @@ export function MeisaiImporter() {
     const officeName = (_o?.short_name || _o?.name) ?? office_number;
     if (!confirm(`${officeName} ${label}のサービス実績データ（${count}件）を削除しますか？`)) return;
     const { error } = await supabase
-      .from("payroll_service_records")
+      .from("service_records")
       .delete()
       .eq("processing_month", month)
       .eq("office_number", office_number);
@@ -123,7 +123,7 @@ export function MeisaiImporter() {
       const officeNumber = selectedOffice.office_number;
 
       const { data: batch, error: batchError } = await supabase
-        .from("payroll_import_batches")
+        .from("import_batches")
         .insert({
           import_type: "meisai" as const,
           file_names: files.map((f) => f.name),
@@ -193,12 +193,12 @@ export function MeisaiImporter() {
         }));
 
         const { error: insertError } = await supabase
-          .from("payroll_service_records")
+          .from("service_records")
           .insert(records);
 
         if (insertError) {
           await supabase
-            .from("payroll_import_batches")
+            .from("import_batches")
             .update({
               status: "error" as const,
               error_message: insertError.message,
@@ -211,7 +211,7 @@ export function MeisaiImporter() {
 
       // バッチを完了に更新
       await supabase
-        .from("payroll_import_batches")
+        .from("import_batches")
         .update({ status: "completed" as const })
         .eq("id", batch.id);
 

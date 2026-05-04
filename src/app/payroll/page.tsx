@@ -515,7 +515,7 @@ export default function PayrollPage() {
   useEffect(() => {
     // service_records実データのある月を import_batches 経由で取得（高速）
     supabase
-      .from("payroll_import_batches")
+      .from("import_batches")
       .select("processing_month,record_count,import_type,status")
       .eq("import_type", "meisai")
       .eq("status", "completed")
@@ -527,7 +527,7 @@ export default function PayrollPage() {
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
-    supabase.from("payroll_offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
+    supabase.from("offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as unknown as Office[]);
       // 訪問介護の最初の事業所を初期選択
@@ -562,7 +562,7 @@ export default function PayrollPage() {
         let from = 0;
         while (true) {
           const { data } = await supabase
-            .from("payroll_service_records")
+            .from("service_records")
             .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
@@ -581,7 +581,7 @@ export default function PayrollPage() {
         let sFrom = 0;
         while (true) {
           const { data } = await supabase
-            .from("payroll_salary_settings").select("*").range(sFrom, sFrom + 999);
+            .from("salary_settings").select("*").range(sFrom, sFrom + 999);
           if (!data || data.length === 0) break;
           all.push(...(data as SalarySettings[]));
           if (data.length < 1000) break;
@@ -591,17 +591,17 @@ export default function PayrollPage() {
       };
 
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
-        supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
-        supabase.from("payroll_service_categories").select("id,name"),
-        supabase.from("payroll_offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
-        supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
+        supabase.from("service_type_mappings").select("service_code,category_id"),
+        supabase.from("service_categories").select("id,name"),
+        supabase.from("offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
+        supabase.from("category_hourly_rates").select("category_id,office_id,hourly_rate"),
+        supabase.from("employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         fetchAllSalarySettings(),
-        supabase.from("payroll_attendance_records")
+        supabase.from("attendance_records")
           .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
           .eq("year", year).eq("month", month)
           .eq("office_number", selectedOffice.office_number),
-        supabase.from("payroll_overtime_settings").select("*"),
+        supabase.from("overtime_settings").select("*"),
       ]);
 
       // office_form_records は1000件上限を回避するためページネーション
@@ -611,7 +611,7 @@ export default function PayrollPage() {
         let from = 0;
         while (true) {
           const { data } = await supabase
-            .from("payroll_office_form_records")
+            .from("office_form_records")
             .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,year_month,child_name,amount")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
@@ -757,7 +757,7 @@ export default function PayrollPage() {
         let ymFrom = 0;
         while (true) {
           const { data: ymData } = await supabase
-            .from("payroll_service_records")
+            .from("service_records")
             .select("employee_number,calc_duration,accompanied_visit")
             .eq("processing_month", ym)
             .eq("office_number", selectedOffice.office_number)
@@ -910,7 +910,7 @@ export default function PayrollPage() {
         );
         if (visitCareEmps.length > 0) {
           const { data: clientData } = await supabase
-            .from("payroll_clients")
+            .from("clients")
             .select("client_number,address,map_latitude,map_longitude")
             .eq("office_id", selectedOfficeId);
           // マップ用座標が設定されていればそちらを優先（"lat,lng" 文字列としてDistance Matrix APIに渡せる）

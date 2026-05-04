@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   );
   const uniqueOrigins = [...new Set(uniquePairs.map((p) => p.origin))];
   const { data: cachedRows } = await supabase
-    .from("payroll_distance_cache")
+    .from("distance_cache")
     .select("origin_address,destination_address,distance_meters,duration_seconds")
     .in("origin_address", uniqueOrigins);
   const cacheMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
 
         if (cacheRows.length > 0) {
           await supabase
-            .from("payroll_distance_cache")
+            .from("distance_cache")
             .upsert(cacheRows, { onConflict: "origin_address,destination_address" });
         }
       }

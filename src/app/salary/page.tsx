@@ -344,10 +344,10 @@ export default function SalaryPage() {
     }
 
     const [emps, offRes, sals, otRes] = await Promise.all([
-      fetchAllPages<Employee>("payroll_employees", "*", "employee_number"),
-      supabase.from("payroll_offices").select("*"),
-      fetchAllPages<SalarySettings>("payroll_salary_settings"),
-      supabase.from("payroll_overtime_settings").select("*"),
+      fetchAllPages<Employee>("employees", "*", "employee_number"),
+      supabase.from("offices").select("*"),
+      fetchAllPages<SalarySettings>("salary_settings"),
+      supabase.from("overtime_settings").select("*"),
     ]);
     setEmployees(emps);
     if (offRes.data) setOffices(offRes.data as Office[]);
@@ -365,7 +365,7 @@ export default function SalaryPage() {
     if (!empId) { setSettings(null); return; }
     setLoading(true);
     const { data } = await supabase
-      .from("payroll_salary_settings").select("*").eq("employee_id", empId).maybeSingle();
+      .from("salary_settings").select("*").eq("employee_id", empId).maybeSingle();
     setSettings((data as SalarySettings | null) ?? emptySettings(empId));
     setLoading(false);
   }, []);
@@ -381,9 +381,9 @@ export default function SalaryPage() {
     const { id, ...payload } = settings;
     let error;
     if (id) {
-      ({ error } = await supabase.from("payroll_salary_settings").update(payload).eq("id", id));
+      ({ error } = await supabase.from("salary_settings").update(payload).eq("id", id));
     } else {
-      ({ error } = await supabase.from("payroll_salary_settings").insert(payload));
+      ({ error } = await supabase.from("salary_settings").insert(payload));
     }
     if (error) toast.error(`保存エラー: ${error.message}`);
     else { toast.success("給与設定を保存しました"); loadSettings(selectedId); fetchAll(); }
@@ -539,9 +539,9 @@ export default function SalaryPage() {
       const existingId = settingsMap.get(row.employee_id!);
       let error;
       if (existingId) {
-        ({ error } = await supabase.from("payroll_salary_settings").update(payload).eq("id", existingId));
+        ({ error } = await supabase.from("salary_settings").update(payload).eq("id", existingId));
       } else {
-        ({ error } = await supabase.from("payroll_salary_settings").insert(payload));
+        ({ error } = await supabase.from("salary_settings").insert(payload));
       }
       if (error) fail++;
       else success++;
@@ -575,9 +575,9 @@ export default function SalaryPage() {
       const { id, ...payload } = s;
       let error;
       if (id) {
-        ({ error } = await supabase.from("payroll_overtime_settings").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id));
+        ({ error } = await supabase.from("overtime_settings").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id));
       } else {
-        ({ error } = await supabase.from("payroll_overtime_settings").insert(payload));
+        ({ error } = await supabase.from("overtime_settings").insert(payload));
       }
       if (error) fail++; else ok++;
     }
@@ -637,7 +637,7 @@ export default function SalaryPage() {
     setEditOpen(true);
     setLoading(true);
     const { data } = await supabase
-      .from("payroll_salary_settings").select("*").eq("employee_id", empId).maybeSingle();
+      .from("salary_settings").select("*").eq("employee_id", empId).maybeSingle();
     setSettings((data as SalarySettings | null) ?? emptySettings(empId));
     setLoading(false);
   };

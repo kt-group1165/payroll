@@ -208,7 +208,7 @@ export default function EmployeesPage() {
     let from = 0;
     while (true) {
       const { data } = await supabase
-        .from("payroll_employees")
+        .from("employees")
         .select("*")
         .order("employee_number")
         .range(from, from + pageSize - 1);
@@ -217,7 +217,7 @@ export default function EmployeesPage() {
       if (data.length < pageSize) break;
       from += pageSize;
     }
-    const { data: offData } = await supabase.from("payroll_offices").select("*").order("name");
+    const { data: offData } = await supabase.from("offices").select("*").order("name");
     setEmployees(allEmployees);
     if (offData) setOffices(offData as Office[]);
   }, []);
@@ -264,11 +264,11 @@ export default function EmployeesPage() {
     };
 
     if (editingId) {
-      const { error } = await supabase.from("payroll_employees").update(payload).eq("id", editingId);
+      const { error } = await supabase.from("employees").update(payload).eq("id", editingId);
       if (error) { toast.error(`更新エラー: ${error.message}`); return; }
       toast.success("職員情報を更新しました");
     } else {
-      const { error } = await supabase.from("payroll_employees").insert(payload);
+      const { error } = await supabase.from("employees").insert(payload);
       if (error) { toast.error(`登録エラー: ${error.message}`); return; }
       toast.success("職員を登録しました");
     }
@@ -308,7 +308,7 @@ export default function EmployeesPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("この職員を削除しますか？")) return;
-    const { error } = await supabase.from("payroll_employees").delete().eq("id", id);
+    const { error } = await supabase.from("employees").delete().eq("id", id);
     if (error) { toast.error(`削除エラー: ${error.message}`); return; }
     toast.success("職員を削除しました");
     fetchData();
@@ -567,7 +567,7 @@ export default function EmployeesPage() {
       };
 
       const { error } = await supabase
-        .from("payroll_employees")
+        .from("employees")
         .upsert(payload, { onConflict: "employee_number,office_id" });
 
       if (error) fail++;

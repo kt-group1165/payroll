@@ -22,8 +22,8 @@ export default function InvoiceFormatsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [coRes, fmtRes] = await Promise.all([
-      supabase.from("payroll_companies").select("*").order("name"),
-      supabase.from("payroll_company_invoice_formats").select("*"),
+      supabase.from("companies").select("*").order("name"),
+      supabase.from("company_invoice_formats").select("*"),
     ]);
     if (coRes.data) setCompanies(sortCompanies(coRes.data as Company[]));
     if (fmtRes.data) setFormats(fmtRes.data as CompanyInvoiceFormat[]);

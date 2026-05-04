@@ -92,7 +92,7 @@ export default function WithdrawalsImportPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    supabase.from("payroll_companies").select("*").order("name").then(({ data }) => {
+    supabase.from("companies").select("*").order("name").then(({ data }) => {
       if (data) {
         const sorted = sortCompanies(data as Company[]);
         setCompanies(sorted);
@@ -106,13 +106,13 @@ export default function WithdrawalsImportPage() {
   const fetchInvoiced = useCallback(async () => {
     if (!selectedCompanyId || !billingMonth) { setInvoicedRows([]); return; }
     const { data: offData } = await supabase
-      .from("payroll_offices")
+      .from("offices")
       .select("office_number")
       .eq("company_id", selectedCompanyId);
     const officeNums = ((offData ?? []) as { office_number: string }[]).map((o) => o.office_number);
     if (officeNums.length === 0) { setInvoicedRows([]); return; }
     const { data } = await supabase
-      .from("payroll_billing_amount_items")
+      .from("billing_amount_items")
       .select("id, segment, office_number, client_number, client_name, billing_month, invoiced_amount, amount, billing_status")
       .eq("billing_month", billingMonth)
       .in("office_number", officeNums)
@@ -189,7 +189,7 @@ export default function WithdrawalsImportPage() {
         for (let i = 0; i < toOverdue.length; i += chunk) {
           const ids = toOverdue.slice(i, i + chunk);
           const { error } = await supabase
-            .from("payroll_billing_amount_items")
+            .from("billing_amount_items")
             .update({
               billing_status: "overdue",
               lifecycle_note: `引落不可 (${withdrawalDate}) 取り込み`,
@@ -201,7 +201,7 @@ export default function WithdrawalsImportPage() {
       // paid 更新 (行ごとに paid_amount が異なるので個別)
       for (const t of toPaid) {
         const { error } = await supabase
-          .from("payroll_billing_amount_items")
+          .from("billing_amount_items")
           .update({
             billing_status: "paid",
             actual_withdrawal_date: withdrawalDate,

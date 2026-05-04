@@ -63,8 +63,8 @@ export default function ReconciliationPage() {
   useEffect(() => {
     (async () => {
       const [coRes, offRes] = await Promise.all([
-        supabase.from("payroll_companies").select("*").order("name"),
-        supabase.from("payroll_offices").select("id, office_number, name, short_name, company_id"),
+        supabase.from("companies").select("*").order("name"),
+        supabase.from("offices").select("id, office_number, name, short_name, company_id"),
       ]);
       if (coRes.data) {
         const sorted = sortCompanies(coRes.data as Company[]);
@@ -97,7 +97,7 @@ export default function ReconciliationPage() {
       const pageSize = 1000;
       while (true) {
         let q = supabase
-          .from("payroll_billing_amount_items")
+          .from("billing_amount_items")
           .select("id, segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status, actual_issue_date, actual_withdrawal_date, parent_item_id, lifecycle_note, service_item")
           .in("office_number", officeNums)
           .range(from, from + pageSize - 1);

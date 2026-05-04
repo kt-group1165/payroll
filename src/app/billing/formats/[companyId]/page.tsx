@@ -69,8 +69,8 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ compan
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [coRes, fmtRes] = await Promise.all([
-      supabase.from("payroll_companies").select("*").eq("id", companyId).single(),
-      supabase.from("payroll_company_invoice_formats").select("*").eq("company_id", companyId).maybeSingle(),
+      supabase.from("companies").select("*").eq("id", companyId).single(),
+      supabase.from("company_invoice_formats").select("*").eq("company_id", companyId).maybeSingle(),
     ]);
     if (coRes.data) setCompany(coRes.data as Company);
     if (fmtRes.data) {
@@ -139,10 +139,10 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ compan
     };
 
     if (formatId) {
-      const { error } = await supabase.from("payroll_company_invoice_formats").update(payload).eq("id", formatId);
+      const { error } = await supabase.from("company_invoice_formats").update(payload).eq("id", formatId);
       if (error) { toast.error(`保存エラー: ${error.message}`); setSaving(false); return; }
     } else {
-      const { data, error } = await supabase.from("payroll_company_invoice_formats").insert(payload).select().single();
+      const { data, error } = await supabase.from("company_invoice_formats").insert(payload).select().single();
       if (error) { toast.error(`保存エラー: ${error.message}`); setSaving(false); return; }
       if (data) setFormatId((data as CompanyInvoiceFormat).id);
     }

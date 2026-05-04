@@ -101,8 +101,8 @@ export default function BillingPage() {
   useEffect(() => {
     (async () => {
       const [coRes, offRes] = await Promise.all([
-        supabase.from("payroll_companies").select("*").order("name"),
-        supabase.from("payroll_offices").select("id, office_number, name, short_name, company_id"),
+        supabase.from("companies").select("*").order("name"),
+        supabase.from("offices").select("id, office_number, name, short_name, company_id"),
       ]);
       const sortedCompanies = coRes.data ? sortCompanies(coRes.data as Company[]) : [];
       setCompanies(sortedCompanies);
@@ -113,7 +113,7 @@ export default function BillingPage() {
       const allClients: Client[] = [];
       let from = 0;
       while (true) {
-        const { data } = await supabase.from("payroll_clients").select("*").range(from, from + 999);
+        const { data } = await supabase.from("clients").select("*").range(from, from + 999);
         if (!data || data.length === 0) break;
         allClients.push(...(data as Client[]));
         if (data.length < 1000) break;
@@ -125,7 +125,7 @@ export default function BillingPage() {
       const monthsSet = new Set<string>();
       from = 0;
       while (true) {
-        const { data } = await supabase.from("payroll_billing_amount_items").select("billing_month").range(from, from + 999);
+        const { data } = await supabase.from("billing_amount_items").select("billing_month").range(from, from + 999);
         if (!data || data.length === 0) break;
         for (const r of data) monthsSet.add((r as { billing_month: string }).billing_month);
         if (data.length < 1000) break;
@@ -167,7 +167,7 @@ export default function BillingPage() {
       let from = 0;
       while (true) {
         const { data } = await supabase
-          .from("payroll_billing_amount_items")
+          .from("billing_amount_items")
           .select("segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status")
           .in("office_number", companyOfficeNums)
           .range(from, from + 999);
@@ -179,7 +179,7 @@ export default function BillingPage() {
 
       // 入金
       const { data: payData } = await supabase
-        .from("payroll_payments").select("*").eq("company_id", selectedCompanyId);
+        .from("payments").select("*").eq("company_id", selectedCompanyId);
       const payments = (payData ?? []) as Payment[];
 
       // 利用者マスタ
@@ -635,7 +635,7 @@ function PaymentQuickDialog({
     const amt = parseInt(amount, 10);
     if (!amt || amt <= 0) { toast.error("金額を入力してください"); return; }
     setSaving(true);
-    const { error } = await supabase.from("payroll_payments").insert({
+    const { error } = await supabase.from("payments").insert({
       company_id: companyId,
       client_number: clientNumber,
       billing_month: defaultMonth,
@@ -747,7 +747,7 @@ function BulkIssueButton({
     }
     // 対象 (scheduled 行) を取得
     const { data: targets, error: e1 } = await supabase
-      .from("payroll_billing_amount_items")
+      .from("billing_amount_items")
       .select("id, amount")
       .eq("billing_month", billingMonth)
       .in("office_number", officeNumbers)
@@ -769,7 +769,7 @@ function BulkIssueButton({
         await Promise.all(
           chunk.map((t) =>
             supabase
-              .from("payroll_billing_amount_items")
+              .from("billing_amount_items")
               .update({
                 billing_status: "invoiced",
                 actual_issue_date: today,
@@ -835,7 +835,7 @@ function CellDetailDialog({
   const fetchItems = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
-      .from("payroll_billing_amount_items")
+      .from("billing_amount_items")
       .select("id, service_item, amount, invoiced_amount, paid_amount, billing_status, parent_item_id, billing_month, service_month, actual_issue_date, lifecycle_note")
       .eq("office_number", detail.office_number)
       .eq("client_number", detail.client_number)
@@ -866,7 +866,7 @@ function CellDetailDialog({
       if (item.billing_status === "scheduled" || item.billing_status === "draft") {
         // 発行前: 直接上書き
         const { error } = await supabase
-          .from("payroll_billing_amount_items")
+          .from("billing_amount_items")
           .update({ amount: newAmt })
           .eq("id", item.id);
         if (error) throw error;
@@ -880,7 +880,7 @@ function CellDetailDialog({
           return;
         }
         const adjustmentMonth = nextMonth(detail.billing_month);
-        const { error } = await supabase.from("payroll_billing_amount_items").insert({
+        const { error } = await supabase.from("billing_amount_items").insert({
           segment: detail.segment,
           office_number: detail.office_number,
           client_number: detail.client_number,
@@ -914,7 +914,7 @@ function CellDetailDialog({
     }
     const newMonth = nextMonth(item.billing_month);
     const { error } = await supabase
-      .from("payroll_billing_amount_items")
+      .from("billing_amount_items")
       .update({
         billing_month: newMonth,
         lifecycle_note: `翌月繰越 ${item.billing_month.slice(0, 4)}/${item.billing_month.slice(4, 6)} → ${newMonth.slice(0, 4)}/${newMonth.slice(4, 6)}`,
@@ -929,7 +929,7 @@ function CellDetailDialog({
   const handleCancel = async (item: DetailItem) => {
     if (!confirm(`この明細（${item.service_item} ¥${item.amount.toLocaleString()}）をキャンセルしますか？`)) return;
     const { error } = await supabase
-      .from("payroll_billing_amount_items")
+      .from("billing_amount_items")
       .update({ billing_status: "cancelled", lifecycle_note: `キャンセル（旧状態: ${item.billing_status}）` })
       .eq("id", item.id);
     if (error) { toast.error(`保存エラー: ${error.message}`); return; }
@@ -945,7 +945,7 @@ function CellDetailDialog({
     }
     const today = new Date().toISOString().slice(0, 10);
     const { error } = await supabase
-      .from("payroll_billing_amount_items")
+      .from("billing_amount_items")
       .update({
         billing_status: "paid",
         actual_withdrawal_date: today,

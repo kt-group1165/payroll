@@ -118,7 +118,7 @@ function CategoriesTab() {
 
   const fetch = useCallback(async () => {
     const { data } = await supabase
-      .from("payroll_service_categories")
+      .from("service_categories")
       .select("*")
       .order("sort_order");
     if (data) setCategories(data);
@@ -135,7 +135,7 @@ function CategoriesTab() {
       0
     );
     const { error } = await supabase
-      .from("payroll_service_categories")
+      .from("service_categories")
       .insert({ name: newName.trim(), sort_order: maxOrder + 1 });
     if (error) {
       toast.error(`エラー: ${error.message}`);
@@ -151,7 +151,7 @@ function CategoriesTab() {
     if (!confirm("この類型を削除しますか？関連するマッピングと時給設定も削除されます。"))
       return;
     const { error } = await supabase
-      .from("payroll_service_categories")
+      .from("service_categories")
       .delete()
       .eq("id", id);
     if (error) {
@@ -240,10 +240,10 @@ function MappingsTab() {
   const fetchData = useCallback(async () => {
     const [mapRes, catRes] = await Promise.all([
       supabase
-        .from("payroll_service_type_mappings")
+        .from("service_type_mappings")
         .select("*, service_categories(name)")
         .order("service_code"),
-      supabase.from("payroll_service_categories").select("*").order("sort_order"),
+      supabase.from("service_categories").select("*").order("sort_order"),
     ]);
     if (mapRes.data) setMappings(mapRes.data);
     if (catRes.data) setCategories(catRes.data);
@@ -258,7 +258,7 @@ function MappingsTab() {
       let from = 0;
       while (true) {
         const { data } = await supabase
-          .from("payroll_service_records")
+          .from("service_records")
           .select("service_code,service_type")
           .order("id")
           .range(from, from + pageSize - 1);
@@ -293,7 +293,7 @@ function MappingsTab() {
       toast.error("サービスコードと類型を入力してください");
       return;
     }
-    const { error } = await supabase.from("payroll_service_type_mappings").insert({
+    const { error } = await supabase.from("service_type_mappings").insert({
       service_code: form.service_code,
       service_name: form.service_name,
       category_id: form.category_id,
@@ -311,7 +311,7 @@ function MappingsTab() {
   const handleDelete = async (id: string) => {
     if (!confirm("このマッピングを削除しますか？")) return;
     const { error } = await supabase
-      .from("payroll_service_type_mappings")
+      .from("service_type_mappings")
       .delete()
       .eq("id", id);
     if (error) {
@@ -323,7 +323,7 @@ function MappingsTab() {
   };
 
   const handleQuickMap = async (svc: UnmappedService, categoryId: string) => {
-    const { error } = await supabase.from("payroll_service_type_mappings").insert({
+    const { error } = await supabase.from("service_type_mappings").insert({
       service_code: svc.service_code,
       service_name: svc.service_name,
       category_id: categoryId,
@@ -435,12 +435,12 @@ function MappingsTab() {
 
     // 全削除して再挿入
     await supabase
-      .from("payroll_service_type_mappings")
+      .from("service_type_mappings")
       .delete()
       .neq("id", "00000000-0000-0000-0000-000000000000");
 
     const { error } = await supabase
-      .from("payroll_service_type_mappings")
+      .from("service_type_mappings")
       .insert(dedupedMappings);
     if (error) {
       toast.error(`インポートエラー: ${error.message}`);
@@ -647,16 +647,16 @@ function RatesTab() {
   const fetchData = useCallback(async () => {
     const [rateRes, catRes, offRes, mapRes] = await Promise.all([
       supabase
-        .from("payroll_category_hourly_rates")
+        .from("category_hourly_rates")
         .select("*, offices(name, short_name), service_categories(name)")
         .order("created_at"),
-      supabase.from("payroll_service_categories").select("*").order("sort_order"),
+      supabase.from("service_categories").select("*").order("sort_order"),
       supabase
-        .from("payroll_offices")
+        .from("offices")
         .select("id, office_number, name, short_name, office_type")
         .order("name"),
       supabase
-        .from("payroll_service_type_mappings")
+        .from("service_type_mappings")
         .select("*, service_categories(name)")
         .order("service_code"),
     ]);
@@ -675,7 +675,7 @@ function RatesTab() {
       toast.error("全項目を入力してください");
       return;
     }
-    const { error } = await supabase.from("payroll_category_hourly_rates").insert({
+    const { error } = await supabase.from("category_hourly_rates").insert({
       office_id: form.office_id,
       category_id: form.category_id,
       hourly_rate: parseInt(form.hourly_rate, 10),
@@ -698,7 +698,7 @@ function RatesTab() {
     const rate = parseInt(newRate, 10);
     if (isNaN(rate) || rate <= 0) return;
     const { error } = await supabase
-      .from("payroll_category_hourly_rates")
+      .from("category_hourly_rates")
       .update({ hourly_rate: rate })
       .eq("id", id);
     if (error) {
@@ -712,7 +712,7 @@ function RatesTab() {
   const handleDelete = async (id: string) => {
     if (!confirm("この時給設定を削除しますか？")) return;
     const { error } = await supabase
-      .from("payroll_category_hourly_rates")
+      .from("category_hourly_rates")
       .delete()
       .eq("id", id);
     if (error) {
@@ -850,7 +850,7 @@ function RatesTab() {
       }
 
       const { error } = await supabase
-        .from("payroll_category_hourly_rates")
+        .from("category_hourly_rates")
         .upsert(upsertRows, { onConflict: "office_id,category_id" });
       if (error) {
         toast.error(`インポートエラー: ${error.message}`);

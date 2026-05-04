@@ -14,7 +14,7 @@ export default function OfficeDashboardPage() {
 
   useEffect(() => {
     supabase
-      .from("payroll_offices")
+      .from("offices")
       .select("*")
       .eq("office_number", officeNumber)
       .maybeSingle()

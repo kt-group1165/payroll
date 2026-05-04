@@ -210,7 +210,7 @@ export default function AttendancePage() {
   // 利用可能な月一覧
   useEffect(() => {
     supabase
-      .from("payroll_attendance_records")
+      .from("attendance_records")
       .select("year,month")
       .then(({ data }) => {
         if (!data) return;
@@ -237,7 +237,7 @@ export default function AttendancePage() {
       let from = 0;
       while (true) {
         const { data } = await supabase
-          .from("payroll_employees")
+          .from("employees")
           .select("employee_number,name,role_type,salary_type")
           .range(from, from + 999);
         if (!data || data.length === 0) break;
@@ -250,14 +250,14 @@ export default function AttendancePage() {
 
     const [attRes, emps, offRes] = await Promise.all([
       supabase
-        .from("payroll_attendance_records")
+        .from("attendance_records")
         .select("*")
         .eq("year", selectedYear)
         .eq("month", selectedMonth)
         .order("employee_number")
         .order("day"),
       fetchAllEmployees(),
-      supabase.from("payroll_offices").select("office_number,name,work_week_start"),
+      supabase.from("offices").select("office_number,name,work_week_start"),
     ]);
 
     const records   = (attRes.data ?? []) as AttendanceRecord[];
@@ -309,7 +309,7 @@ export default function AttendancePage() {
     const batchIds = new Set(summaries.flatMap(s => s.records.map(r => r.id)));
     // 直接 attendance_records を year/month で削除
     const { error } = await supabase
-      .from("payroll_attendance_records")
+      .from("attendance_records")
       .delete()
       .eq("year", selectedYear)
       .eq("month", selectedMonth);
@@ -329,7 +329,7 @@ export default function AttendancePage() {
     if (!confirm(`${emp.employee_name}の${selectedYear}年${selectedMonth}月データを削除しますか？`)) return;
 
     const { error } = await supabase
-      .from("payroll_attendance_records")
+      .from("attendance_records")
       .delete()
       .eq("year", selectedYear)
       .eq("month", selectedMonth)

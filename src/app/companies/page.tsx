@@ -46,7 +46,7 @@ export default function CompaniesPage() {
   const [form, setForm] = useState(defaultForm);
 
   const fetchCompanies = useCallback(async () => {
-    const { data } = await supabase.from("payroll_companies").select("*").order("created_at");
+    const { data } = await supabase.from("companies").select("*").order("created_at");
     if (data) setCompanies(sortCompanies(data as Company[]));
   }, []);
 
@@ -78,11 +78,11 @@ export default function CompaniesPage() {
     };
 
     if (editingId) {
-      const { error } = await supabase.from("payroll_companies").update(payload).eq("id", editingId);
+      const { error } = await supabase.from("companies").update(payload).eq("id", editingId);
       if (error) { toast.error(`更新エラー: ${error.message}`); return; }
       toast.success("法人を更新しました");
     } else {
-      const { error } = await supabase.from("payroll_companies").insert(payload);
+      const { error } = await supabase.from("companies").insert(payload);
       if (error) { toast.error(`登録エラー: ${error.message}`); return; }
       toast.success("法人を登録しました");
     }
@@ -113,7 +113,7 @@ export default function CompaniesPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("この法人を削除しますか？関連する事業所の法人情報が解除されます。")) return;
-    const { error } = await supabase.from("payroll_companies").delete().eq("id", id);
+    const { error } = await supabase.from("companies").delete().eq("id", id);
     if (error) { toast.error(`削除エラー: ${error.message}`); return; }
     toast.success("法人を削除しました");
     fetchCompanies();
