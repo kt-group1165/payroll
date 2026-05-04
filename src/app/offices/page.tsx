@@ -88,7 +88,7 @@ export default function OfficesPage() {
 
   const fetchOffices = useCallback(async () => {
     const { data } = await supabase
-      .from("offices")
+      .from("payroll_offices")
       .select("*")
       .order("created_at");
     if (data) setOffices(data as Office[]);
@@ -96,7 +96,7 @@ export default function OfficesPage() {
 
   useEffect(() => {
     fetchOffices();
-    supabase.from("companies").select("*").order("name").then(({ data }) => {
+    supabase.from("payroll_companies").select("*").order("name").then(({ data }) => {
       if (data) setCompanies(sortCompanies(data as Company[]));
     });
   }, [fetchOffices]);
@@ -131,7 +131,7 @@ export default function OfficesPage() {
 
     if (editingId) {
       const { error } = await supabase
-        .from("offices")
+        .from("payroll_offices")
         .update({
           name: form.name,
           short_name: form.short_name,
@@ -156,7 +156,7 @@ export default function OfficesPage() {
       }
       toast.success("事業所を更新しました");
     } else {
-      const { error } = await supabase.from("offices").insert({
+      const { error } = await supabase.from("payroll_offices").insert({
         ...form,
         meeting_unit_price: form.meeting_unit_price,
         distance_adjustment_rate: form.distance_adjustment_rate,
@@ -199,7 +199,7 @@ export default function OfficesPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("この事業所を削除しますか？")) return;
-    const { error } = await supabase.from("offices").delete().eq("id", id);
+    const { error } = await supabase.from("payroll_offices").delete().eq("id", id);
     if (error) {
       toast.error(`削除エラー: ${error.message}`);
       return;
@@ -283,7 +283,7 @@ export default function OfficesPage() {
       const headers = rows[0].map((h) => h.trim());
 
       // 最新の法人情報を取得してマップ構築
-      const { data: compData } = await supabase.from("companies").select("id,name");
+      const { data: compData } = await supabase.from("payroll_companies").select("id,name");
       const cMap = new Map((compData ?? []).map((c) => [c.name, c.id]));
 
       const ALLOWED_TYPES = new Set<string>(OFFICE_TYPES);
@@ -368,7 +368,7 @@ export default function OfficesPage() {
         toast.warning(`事業所番号重複${duplicates.size}件を後勝ちで統合（例: ${[...duplicates].slice(0, 3).join(", ")}）`);
       }
 
-      const { error } = await supabase.from("offices").upsert(deduped, { onConflict: "office_number" });
+      const { error } = await supabase.from("payroll_offices").upsert(deduped, { onConflict: "office_number" });
       if (error) { toast.error(`取り込みエラー: ${error.message}`); return; }
       toast.success(`${deduped.length}件を取り込みました`);
       fetchOffices();

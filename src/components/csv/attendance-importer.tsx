@@ -40,7 +40,7 @@ export function AttendanceImporter() {
     let from = 0;
     while (true) {
       const { data } = await supabase
-        .from("attendance_records")
+        .from("payroll_attendance_records")
         .select("year, month, office_number")
         .range(from, from + pageSize - 1);
       if (!data || data.length === 0) break;
@@ -62,7 +62,7 @@ export function AttendanceImporter() {
 
   useEffect(() => {
     fetchExistingCounts();
-    supabase.from("offices").select("id, office_number, name, short_name").order("name").then(({ data }) => {
+    supabase.from("payroll_offices").select("id, office_number, name, short_name").order("name").then(({ data }) => {
       if (data) setOffices(data as Office[]);
     });
   }, [fetchExistingCounts]);
@@ -75,7 +75,7 @@ export function AttendanceImporter() {
     const year = parseInt(month.slice(0, 4), 10);
     const m = parseInt(month.slice(4, 6), 10);
     const { error } = await supabase
-      .from("attendance_records")
+      .from("payroll_attendance_records")
       .delete()
       .eq("year", year).eq("month", m)
       .eq("office_number", office_number);
@@ -117,7 +117,7 @@ export function AttendanceImporter() {
       for (const attendance of allData) {
         const { meta } = attendance;
         const { count } = await supabase
-          .from("attendance_records")
+          .from("payroll_attendance_records")
           .select("id", { count: "exact", head: true })
           .eq("employee_number", meta.employeeNumber)
           .eq("year", meta.year)
@@ -140,7 +140,7 @@ export function AttendanceImporter() {
 
         // バッチ作成
         const { data: batch, error: batchError } = await supabase
-          .from("import_batches")
+          .from("payroll_import_batches")
           .insert({
             import_type: "attendance" as const,
             file_names: [
@@ -201,12 +201,12 @@ export function AttendanceImporter() {
         }));
 
         const { error: insertError } = await supabase
-          .from("attendance_records")
+          .from("payroll_attendance_records")
           .insert(records);
 
         if (insertError) {
           await supabase
-            .from("import_batches")
+            .from("payroll_import_batches")
             .update({
               status: "error" as const,
               error_message: insertError.message,
@@ -219,7 +219,7 @@ export function AttendanceImporter() {
         }
 
         await supabase
-          .from("import_batches")
+          .from("payroll_import_batches")
           .update({ status: "completed" as const })
           .eq("id", batch.id);
       }

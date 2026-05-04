@@ -50,7 +50,7 @@ export function OfficeFormImporter() {
     let from = 0;
     while (true) {
       const { data } = await supabase
-        .from("office_form_records")
+        .from("payroll_office_form_records")
         .select("processing_month,office_number")
         .range(from, from + pageSize - 1);
       if (!data || data.length === 0) break;
@@ -72,7 +72,7 @@ export function OfficeFormImporter() {
 
   useEffect(() => {
     fetchExistingMonths();
-    supabase.from("offices").select("id,name,short_name,office_number").order("name")
+    supabase.from("payroll_offices").select("id,name,short_name,office_number").order("name")
       .then(({ data }) => { if (data) setOffices(data as Office[]); });
   }, [fetchExistingMonths]);
 
@@ -82,7 +82,7 @@ export function OfficeFormImporter() {
     const officeName = (_o?.short_name || _o?.name) ?? office_number;
     if (!confirm(`${officeName} ${label}の事業所書式データ（${count}件）を削除しますか？`)) return;
     const { error } = await supabase
-      .from("office_form_records")
+      .from("payroll_office_form_records")
       .delete()
       .eq("processing_month", month)
       .eq("office_number", office_number);
@@ -124,7 +124,7 @@ export function OfficeFormImporter() {
       const officeNumber    = allData[0]?.office_number ?? "";
 
       const { data: batch, error: batchError } = await supabase
-        .from("import_batches")
+        .from("payroll_import_batches")
         .insert({
           import_type: "office_form" as const,
           file_names: files.map((f) => f.name),
@@ -162,12 +162,12 @@ export function OfficeFormImporter() {
         }));
 
         const { error: insertError } = await supabase
-          .from("office_form_records")
+          .from("payroll_office_form_records")
           .insert(records);
 
         if (insertError) {
           await supabase
-            .from("import_batches")
+            .from("payroll_import_batches")
             .update({ status: "error" as const, error_message: insertError.message })
             .eq("id", batch.id);
           toast.error(`登録エラー: ${insertError.message}`);
@@ -176,7 +176,7 @@ export function OfficeFormImporter() {
       }
 
       await supabase
-        .from("import_batches")
+        .from("payroll_import_batches")
         .update({ status: "completed" as const })
         .eq("id", batch.id);
 
