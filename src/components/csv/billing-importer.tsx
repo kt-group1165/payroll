@@ -728,7 +728,10 @@ export function BillingImporter() {
       const chunk = 500;
       const insertAll = async <T,>(table: string, rows: T[]) => {
         for (let i = 0; i < rows.length; i += chunk) {
-          const { error } = await supabase.from(table).insert(rows.slice(i, i + chunk));
+          // dynamic table name + generic T のため supabase-js v2 の RejectExcessProperties
+          // 厳格制約を回避する（@supabase/ssr 0.10 + supabase-js 2.105 の組合せで Vercel 側
+          // のみ TS error。runtime 動作は同一）。
+          const { error } = await supabase.from(table).insert(rows.slice(i, i + chunk) as never);
           if (error) throw error;
         }
       };
