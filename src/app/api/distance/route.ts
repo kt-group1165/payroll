@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
 
 type Pair = { origin: string; destination: string };
 type DistResult = Pair & { distance_meters: number; duration_seconds: number };
@@ -6,12 +6,12 @@ type DistResult = Pair & { distance_meters: number; duration_seconds: number };
 export async function POST(request: Request) {
   try {
   const GOOGLE_API_KEY = (process.env["DISTANCE_API_KEY"] ?? process.env["GOOGLE_MAPS_API_KEY"] ?? "") as string;
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const { pairs }: { pairs: Pair[] } = await request.json();
   if (!pairs || pairs.length === 0) return Response.json({ results: [] });
 
-  const supabase = createClient(supabaseUrl, supabaseKey);
+  // Phase 3-3a: 共通 Supabase の payroll_distance_cache は anon DROP 後 authenticated 必須。
+  // request cookie から session を読み込んで RLS 上 authenticated として動く。
+  const supabase = await createClient();
   const results: DistResult[] = [];
   const uncached: Pair[] = [];
 
