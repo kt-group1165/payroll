@@ -21,7 +21,7 @@ export function OfficeSidebar() {
       return;
     }
     supabase
-      .from("offices")
+      .from("payroll_offices")
       .select("name, short_name")
       .eq("office_number", officeNumber)
       .maybeSingle()

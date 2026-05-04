@@ -11,7 +11,7 @@ export default function OfficeIndexPage() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    supabase.from("offices").select("*").order("office_number").then(({ data }) => {
+    supabase.from("payroll_offices").select("*").order("office_number").then(({ data }) => {
       if (data) setOffices(data as Office[]);
     });
   }, []);

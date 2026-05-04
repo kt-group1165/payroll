@@ -219,7 +219,7 @@ export function BillingImporter() {
 
   const fetchAliases = useCallback(async () => {
     const { data, error } = await supabase
-      .from("office_billing_aliases")
+      .from("payroll_office_billing_aliases")
       .select("id, office_id, kind, value_raw, value_norm, value_name_raw, value_name_norm");
     if (error) {
       // テーブル未作成でも致命的にはしない（旧動作にフォールバック）
@@ -251,14 +251,14 @@ export function BillingImporter() {
         from += pageSize;
       }
     };
-    await scan("billing_amount_items", "amount");
-    await scan("billing_unit_items", "unit");
-    await scan("billing_daily_items", "daily");
+    await scan("payroll_billing_amount_items", "amount");
+    await scan("payroll_billing_unit_items", "unit");
+    await scan("payroll_billing_daily_items", "daily");
     setExistingMatrix(m);
   }, []);
 
   useEffect(() => {
-    supabase.from("offices").select("id, office_number, shogai_office_number, name, short_name").then(({ data }) => {
+    supabase.from("payroll_offices").select("id, office_number, shogai_office_number, name, short_name").then(({ data }) => {
       if (data) setOffices(data as OfficeLite[]);
     });
     fetchAliases();
@@ -273,7 +273,7 @@ export function BillingImporter() {
     if (!confirm(`${officeName} ${label} の${segment}データ（金額${counts.amount}件 / 単位${counts.unit}件 / 利用日${counts.daily}件、計${total}件）を削除しますか？`)) return;
     const where = { segment, office_number, billing_month };
     const q = (table: string) => supabase.from(table).delete().match(where);
-    const [r1, r2, r3] = await Promise.all([q("billing_amount_items"), q("billing_unit_items"), q("billing_daily_items")]);
+    const [r1, r2, r3] = await Promise.all([q("payroll_billing_amount_items"), q("payroll_billing_unit_items"), q("payroll_billing_daily_items")]);
     if (r1.error || r2.error || r3.error) {
       toast.error(`削除エラー: ${(r1.error || r2.error || r3.error)!.message}`);
       return;
@@ -603,7 +603,7 @@ export function BillingImporter() {
     // 「発行済・入金済・調整済」等の再取り込みで失われる行の数
     const fetchLockedCount = async (segment: string, office_number: string, service_month: string) => {
       const { count } = await supabase
-        .from("billing_amount_items")
+        .from("payroll_billing_amount_items")
         .select("id", { count: "exact", head: true })
         .eq("segment", segment)
         .eq("office_number", office_number)
@@ -616,9 +616,9 @@ export function BillingImporter() {
     for (const [k, nc] of newCounts) {
       const [segment, office_number, service_month] = k.split("|") as ["介護" | "障害", string, string];
       const [currentAmount, currentUnit, currentDaily, lockedRows] = await Promise.all([
-        fetchCount("billing_amount_items", segment, office_number, service_month),
-        fetchCount("billing_unit_items", segment, office_number, service_month),
-        fetchCount("billing_daily_items", segment, office_number, service_month),
+        fetchCount("payroll_billing_amount_items", segment, office_number, service_month),
+        fetchCount("payroll_billing_unit_items", segment, office_number, service_month),
+        fetchCount("payroll_billing_daily_items", segment, office_number, service_month),
         fetchLockedCount(segment, office_number, service_month),
       ]);
       const off = offices.find((o) => o.office_number === office_number);
@@ -665,7 +665,7 @@ export function BillingImporter() {
     try {
       // エイリアス永続化（(番号, 名前) ペアで事業所を記憶）
       if (newAliases.length > 0) {
-        const { error } = await supabase.from("office_billing_aliases").upsert(newAliases, {
+        const { error } = await supabase.from("payroll_office_billing_aliases").upsert(newAliases, {
           onConflict: "kind,value_norm,value_name_norm",
           ignoreDuplicates: false,
         });
@@ -681,12 +681,12 @@ export function BillingImporter() {
 
       // 後方互換: offices.shogai_office_number を更新（/offices 編集画面での表示用）
       for (const u of shogaiUpdates) {
-        const { error } = await supabase.from("offices").update({ shogai_office_number: u.shogaiNum }).eq("id", u.officeId);
+        const { error } = await supabase.from("payroll_offices").update({ shogai_office_number: u.shogaiNum }).eq("id", u.officeId);
         if (error) console.error("shogai_office_number 更新エラー", error);
       }
       if (shogaiUpdates.length > 0) {
         // 最新のofficesを再取得（以降の取り込みで同じ番号が自動解決されるように）
-        const { data: refreshed } = await supabase.from("offices").select("id, office_number, shogai_office_number, name, short_name");
+        const { data: refreshed } = await supabase.from("payroll_offices").select("id, office_number, shogai_office_number, name, short_name");
         if (refreshed) setOffices(refreshed as OfficeLite[]);
       }
 
@@ -716,11 +716,11 @@ export function BillingImporter() {
       }
 
       for (const s of scopeList) {
-        await supabase.from("billing_amount_items").delete()
+        await supabase.from("payroll_billing_amount_items").delete()
           .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
-        await supabase.from("billing_unit_items").delete()
+        await supabase.from("payroll_billing_unit_items").delete()
           .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
-        await supabase.from("billing_daily_items").delete()
+        await supabase.from("payroll_billing_daily_items").delete()
           .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
       }
 
@@ -745,9 +745,9 @@ export function BillingImporter() {
         });
       const allUnit = stripOfficeName(filterNotExcluded(results.flatMap((r) => r.unitRows)));
       const allDaily = stripOfficeName(filterNotExcluded(results.flatMap((r) => r.dailyRows)));
-      await insertAll("billing_amount_items", allAmount);
-      await insertAll("billing_unit_items", allUnit);
-      await insertAll("billing_daily_items", allDaily);
+      await insertAll("payroll_billing_amount_items", allAmount);
+      await insertAll("payroll_billing_unit_items", allUnit);
+      await insertAll("payroll_billing_daily_items", allDaily);
 
       toast.success(`金額${allAmount.length}件 / 単位${allUnit.length}件 / 利用日${allDaily.length}件を取り込みました`);
       setImported(true);

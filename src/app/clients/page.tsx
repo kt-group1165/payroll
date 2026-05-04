@@ -134,8 +134,8 @@ export default function ClientsPage() {
     // 1ページ目の clients と offices を並列で取得 → 即UIに反映
     const pageSize = 1000;
     const [first, offRes] = await Promise.all([
-      supabase.from("clients").select("*").order("client_number").range(0, pageSize - 1),
-      supabase.from("offices").select("*").order("name"),
+      supabase.from("payroll_clients").select("*").order("client_number").range(0, pageSize - 1),
+      supabase.from("payroll_offices").select("*").order("name"),
     ]);
     if (offRes.data) setOffices(offRes.data as Office[]);
     const firstBatch = (first.data ?? []) as Client[];
@@ -147,7 +147,7 @@ export default function ClientsPage() {
       let from = pageSize;
       while (true) {
         const { data } = await supabase
-          .from("clients")
+          .from("payroll_clients")
           .select("*")
           .order("client_number")
           .range(from, from + pageSize - 1);
@@ -197,7 +197,7 @@ export default function ClientsPage() {
 
     if (editingId) {
       const { error } = await supabase
-        .from("clients")
+        .from("payroll_clients")
         .update({
           name: form.name,
           address: form.address,
@@ -214,7 +214,7 @@ export default function ClientsPage() {
       }
       toast.success("利用者情報を更新しました");
     } else {
-      const { error } = await supabase.from("clients").insert({
+      const { error } = await supabase.from("payroll_clients").insert({
         client_number: form.client_number,
         name: form.name,
         address: form.address,
@@ -263,7 +263,7 @@ export default function ClientsPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("この利用者を削除しますか？")) return;
-    const { error } = await supabase.from("clients").delete().eq("id", id);
+    const { error } = await supabase.from("payroll_clients").delete().eq("id", id);
     if (error) {
       toast.error(`削除エラー: ${error.message}`);
       return;
@@ -411,14 +411,14 @@ export default function ClientsPage() {
       let ok = 0; let fail = 0;
       // 更新は個別（バッチupdateはmaster_id違いの複数行を1クエリでできない）
       for (const u of toUpdate) {
-        const { error } = await supabase.from("clients").update(u.patch).eq("master_id", u.master_id);
+        const { error } = await supabase.from("payroll_clients").update(u.patch).eq("master_id", u.master_id);
         if (error) { console.error(error); fail++; } else ok++;
       }
       // 新規はまとめてinsert
       if (toInsert.length > 0) {
         const chunkSize = 500;
         for (let i = 0; i < toInsert.length; i += chunkSize) {
-          const { error } = await supabase.from("clients").insert(toInsert.slice(i, i + chunkSize));
+          const { error } = await supabase.from("payroll_clients").insert(toInsert.slice(i, i + chunkSize));
           if (error) { console.error(error); fail += Math.min(chunkSize, toInsert.length - i); }
           else ok += Math.min(chunkSize, toInsert.length - i);
         }

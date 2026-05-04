@@ -95,10 +95,10 @@ function InvoicePrintInner() {
     if (!companyId || !month || !clientNumber) return;
     (async () => {
       const [coRes, fmtRes, offRes, cliListRes] = await Promise.all([
-        supabase.from("companies").select("*").eq("id", companyId).maybeSingle(),
-        supabase.from("company_invoice_formats").select("*").eq("company_id", companyId).maybeSingle(),
-        supabase.from("offices").select("id, office_number, name, short_name, company_id").eq("company_id", companyId),
-        supabase.from("clients").select("*").eq("client_number", clientNumber),
+        supabase.from("payroll_companies").select("*").eq("id", companyId).maybeSingle(),
+        supabase.from("payroll_company_invoice_formats").select("*").eq("company_id", companyId).maybeSingle(),
+        supabase.from("payroll_offices").select("id, office_number, name, short_name, company_id").eq("company_id", companyId),
+        supabase.from("payroll_clients").select("*").eq("client_number", clientNumber),
       ]);
       if (coRes.data) setCompany(coRes.data as Company);
       if (fmtRes.data) setFormat(fmtRes.data as CompanyInvoiceFormat);
@@ -127,14 +127,14 @@ function InvoicePrintInner() {
         }
         return out;
       };
-      setAmounts(await fetchAll<AmountItem>("billing_amount_items"));
-      setUnits(await fetchAll<UnitItem>("billing_unit_items"));
-      setDailies(await fetchAll<DailyItem>("billing_daily_items"));
+      setAmounts(await fetchAll<AmountItem>("payroll_billing_amount_items"));
+      setUnits(await fetchAll<UnitItem>("payroll_billing_unit_items"));
+      setDailies(await fetchAll<DailyItem>("payroll_billing_daily_items"));
 
       const pastAmounts: AmountItem[] = [];
       let from = 0;
       while (true) {
-        const { data } = await supabase.from("billing_amount_items")
+        const { data } = await supabase.from("payroll_billing_amount_items")
           .select("amount, billing_month")
           .lt("billing_month", month)
           .eq("client_number", clientNumber)
@@ -147,7 +147,7 @@ function InvoicePrintInner() {
       }
       setPastBilled(pastAmounts.reduce((s, r) => s + (r.amount ?? 0), 0));
 
-      const { data: payData } = await supabase.from("payments")
+      const { data: payData } = await supabase.from("payroll_payments")
         .select("amount, billing_month")
         .eq("company_id", companyId)
         .eq("client_number", clientNumber)
@@ -282,7 +282,7 @@ function InvoicePrintInner() {
               if (companyOfficeNums.length > 0) {
                 // 対象行を取得
                 const { data: targets } = await supabase
-                  .from("billing_amount_items")
+                  .from("payroll_billing_amount_items")
                   .select("id, amount")
                   .eq("client_number", clientNumber)
                   .eq("billing_month", month)
@@ -295,7 +295,7 @@ function InvoicePrintInner() {
                   await Promise.all(
                     (targets as { id: string; amount: number }[]).map((t) =>
                       supabase
-                        .from("billing_amount_items")
+                        .from("payroll_billing_amount_items")
                         .update({
                           billing_status: "invoiced",
                           actual_issue_date: today,

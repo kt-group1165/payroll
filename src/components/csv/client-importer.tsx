@@ -24,7 +24,7 @@ export function ClientImporter() {
   const [imported, setImported] = useState(false);
 
   useEffect(() => {
-    supabase.from("offices").select("*").order("name").then(({ data }) => {
+    supabase.from("payroll_offices").select("*").order("name").then(({ data }) => {
       if (!data) return;
       setOffices(data as Office[]);
     });
@@ -92,7 +92,7 @@ export function ClientImporter() {
     let success = 0, fail = 0;
     for (let i = 0; i < payload.length; i += chunkSize) {
       const { error } = await supabase
-        .from("clients")
+        .from("payroll_clients")
         .upsert(payload.slice(i, i + chunkSize), { onConflict: "client_number,office_id" });
       if (error) { console.error(error); fail += Math.min(chunkSize, payload.length - i); }
       else success += Math.min(chunkSize, payload.length - i);
