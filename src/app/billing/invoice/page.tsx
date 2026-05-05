@@ -4,6 +4,12 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { Client, Company, Payment, CompanyInvoiceFormat } from "@/types/database";
+import {
+  COMPANY_MASTER_JOIN,
+  OFFICE_MASTER_JOIN,
+  flattenCompanyMaster,
+  flattenOfficeMaster,
+} from "@/types/database";
 
 type BillingSegment = "介護" | "障害" | "自費";
 
@@ -95,14 +101,17 @@ function InvoicePrintInner() {
     if (!companyId || !month || !clientNumber) return;
     (async () => {
       const [coRes, fmtRes, offRes, cliListRes] = await Promise.all([
-        supabase.from("payroll_companies").select("*").eq("id", companyId).maybeSingle(),
+        supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`).eq("id", companyId).maybeSingle(),
         supabase.from("payroll_company_invoice_formats").select("*").eq("company_id", companyId).maybeSingle(),
-        supabase.from("payroll_offices").select("id, office_number, name, short_name, company_id").eq("company_id", companyId),
+        supabase.from("payroll_offices").select(`id, office_number, short_name, company_id, ${OFFICE_MASTER_JOIN}`).eq("company_id", companyId),
         supabase.from("payroll_clients").select("*").eq("client_number", clientNumber),
       ]);
-      if (coRes.data) setCompany(coRes.data as Company);
+      if (coRes.data) {
+        const flatCompany = flattenCompanyMaster([coRes.data as never])[0] as unknown as Company;
+        setCompany(flatCompany);
+      }
       if (fmtRes.data) setFormat(fmtRes.data as CompanyInvoiceFormat);
-      const offList = (offRes.data ?? []) as OfficeLite[];
+      const offList = flattenOfficeMaster(offRes.data as never) as unknown as OfficeLite[];
       setOffices(offList);
       const officeIds = new Set(offList.map((o) => o.id));
       const matched = ((cliListRes.data ?? []) as Client[]).find((c) => officeIds.has(c.office_id));

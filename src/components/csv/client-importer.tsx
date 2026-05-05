@@ -13,6 +13,7 @@ import { parseClientFile, type ParsedClient, type ClientParseResult } from "@/li
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Office } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
 type ImportRow = ParsedClient & { office_id: string | null; office_display: string; error?: string };
 
@@ -24,9 +25,11 @@ export function ClientImporter() {
   const [imported, setImported] = useState(false);
 
   useEffect(() => {
-    supabase.from("payroll_offices").select("*").order("name").then(({ data }) => {
+    supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (!data) return;
-      setOffices(data as Office[]);
+      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
     });
   }, []);
 

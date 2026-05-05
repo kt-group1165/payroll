@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 // ─── CSVユーティリティ ────────────────────────────────────────
@@ -96,7 +97,8 @@ interface CategoryHourlyRate {
   office_id: string;
   category_id: string;
   hourly_rate: number;
-  offices?: { name: string; short_name: string };
+  /** payroll_offices.short_name + master offices.name via nested JOIN */
+  offices?: { short_name: string; master?: { name: string } | null };
   service_categories?: { name: string };
 }
 
@@ -648,13 +650,12 @@ function RatesTab() {
     const [rateRes, catRes, offRes, mapRes] = await Promise.all([
       supabase
         .from("payroll_category_hourly_rates")
-        .select("*, offices(name, short_name), service_categories(name)")
+        .select("*, offices:payroll_offices!office_id(short_name, master:offices!office_id(name)), service_categories(name)")
         .order("created_at"),
       supabase.from("payroll_service_categories").select("*").order("sort_order"),
       supabase
         .from("payroll_offices")
-        .select("id, office_number, name, short_name, office_type")
-        .order("name"),
+        .select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`),
       supabase
         .from("payroll_service_type_mappings")
         .select("*, service_categories(name)")
@@ -662,7 +663,11 @@ function RatesTab() {
     ]);
     if (rateRes.data) setRates(rateRes.data);
     if (catRes.data) setCategories(catRes.data);
-    if (offRes.data) setOffices(offRes.data);
+    if (offRes.data) {
+      const flattened = flattenOfficeMaster(offRes.data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
+    }
     if (mapRes.data) setMappings(mapRes.data);
   }, []);
 
@@ -867,7 +872,7 @@ function RatesTab() {
   // 事業所ごとにグループ化
   const ratesByOffice = rates.reduce(
     (acc, r) => {
-      const officeName = (r.offices?.short_name || r.offices?.name) ?? "不明";
+      const officeName = (r.offices?.short_name || r.offices?.master?.name) ?? "不明";
       if (!acc[officeName]) acc[officeName] = [];
       acc[officeName].push(r);
       return acc;

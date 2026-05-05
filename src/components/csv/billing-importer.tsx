@@ -23,6 +23,7 @@ const BILLING_TYPE_LABELS: Record<BillingFileType, string> = {
   "03_障害_利用日": "利用日（障害）",
 };
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 type OfficeLite = { id: string; office_number: string; shogai_office_number: string | null; name: string; short_name: string };
@@ -258,8 +259,9 @@ export function BillingImporter() {
   }, []);
 
   useEffect(() => {
-    supabase.from("payroll_offices").select("id, office_number, shogai_office_number, name, short_name").then(({ data }) => {
-      if (data) setOffices(data as OfficeLite[]);
+    supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
+      const flattened = flattenOfficeMaster(data as never) as unknown as OfficeLite[];
+      setOffices(flattened);
     });
     fetchAliases();
     fetchExistingMatrix();
@@ -686,8 +688,9 @@ export function BillingImporter() {
       }
       if (shogaiUpdates.length > 0) {
         // 最新のofficesを再取得（以降の取り込みで同じ番号が自動解決されるように）
-        const { data: refreshed } = await supabase.from("payroll_offices").select("id, office_number, shogai_office_number, name, short_name");
-        if (refreshed) setOffices(refreshed as OfficeLite[]);
+        const { data: refreshed } = await supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, ${OFFICE_MASTER_JOIN}`);
+        const flattened = flattenOfficeMaster(refreshed as never) as unknown as OfficeLite[];
+        setOffices(flattened);
       }
 
       // 除外スコープの Set を構築（プレビュー UI で外されたもの、月は service_month ベース）

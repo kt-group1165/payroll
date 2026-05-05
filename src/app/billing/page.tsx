@@ -11,6 +11,12 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import type { Company, Client, Payment } from "@/types/database";
+import {
+  COMPANY_MASTER_JOIN,
+  OFFICE_MASTER_JOIN,
+  flattenCompanyMaster,
+  flattenOfficeMaster,
+} from "@/types/database";
 import { sortCompanies } from "@/lib/sort-companies";
 
 type BillingSegment = "介護" | "障害" | "自費";
@@ -101,12 +107,16 @@ export default function BillingPage() {
   useEffect(() => {
     (async () => {
       const [coRes, offRes] = await Promise.all([
-        supabase.from("payroll_companies").select("*").order("name"),
-        supabase.from("payroll_offices").select("id, office_number, name, short_name, company_id"),
+        supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
+        supabase.from("payroll_offices").select(`id, office_number, short_name, company_id, ${OFFICE_MASTER_JOIN}`),
       ]);
-      const sortedCompanies = coRes.data ? sortCompanies(coRes.data as Company[]) : [];
+      const flatCompanies = coRes.data
+        ? (flattenCompanyMaster(coRes.data as never) as unknown as Company[])
+        : [];
+      const sortedCompanies = sortCompanies(flatCompanies);
       setCompanies(sortedCompanies);
-      if (offRes.data) setOffices(offRes.data as OfficeLite[]);
+      const flatOffices = flattenOfficeMaster(offRes.data as never) as unknown as OfficeLite[];
+      setOffices(flatOffices);
       if (sortedCompanies.length > 0) setSelectedCompanyId(sortedCompanies[0].id);
 
       // 利用者（ページング）

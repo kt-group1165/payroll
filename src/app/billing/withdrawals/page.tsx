@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { sortCompanies } from "@/lib/sort-companies";
 import type { Company } from "@/types/database";
+import { COMPANY_MASTER_JOIN, flattenCompanyMaster } from "@/types/database";
 
 /**
  * 引落結果（不可データ）取り込み
@@ -92,9 +93,10 @@ export default function WithdrawalsImportPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    supabase.from("payroll_companies").select("*").order("name").then(({ data }) => {
+    supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`).then(({ data }) => {
       if (data) {
-        const sorted = sortCompanies(data as Company[]);
+        const flattened = flattenCompanyMaster(data as never) as unknown as Company[];
+        const sorted = sortCompanies(flattened);
         setCompanies(sorted);
         if (sorted.length > 0 && !selectedCompanyId) setSelectedCompanyId(sorted[0].id);
       }

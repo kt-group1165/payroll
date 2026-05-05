@@ -30,6 +30,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Client, Office } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import dynamic from "next/dynamic";
 
 // クライアント側でのみロード（Google Maps JS APIはwindowが必要）
@@ -135,9 +136,13 @@ export default function ClientsPage() {
     const pageSize = 1000;
     const [first, offRes] = await Promise.all([
       supabase.from("payroll_clients").select("*").order("client_number").range(0, pageSize - 1),
-      supabase.from("payroll_offices").select("*").order("name"),
+      supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`),
     ]);
-    if (offRes.data) setOffices(offRes.data as Office[]);
+    if (offRes.data) {
+      const flattened = flattenOfficeMaster(offRes.data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
+    }
     const firstBatch = (first.data ?? []) as Client[];
     setClients(firstBatch);
 

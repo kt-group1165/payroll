@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Office } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Input } from "@/components/ui/input";
 
 export default function OfficeIndexPage() {
@@ -11,8 +12,11 @@ export default function OfficeIndexPage() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    supabase.from("payroll_offices").select("*").order("office_number").then(({ data }) => {
-      if (data) setOffices(data as Office[]);
+    supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`).order("office_number").then(({ data }) => {
+      if (data) {
+        const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+        setOffices(flattened);
+      }
     });
   }, []);
 

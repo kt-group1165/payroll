@@ -25,16 +25,21 @@ export type ImportType = "meisai" | "attendance" | "office_form";
 
 export interface Company {
   id: string;
+  /** 共通マスタ companies.id (Phase 3-4a で追加)。法人名/住所/電話の真実は master 側 */
+  master_company_id: string | null;
+  /** master companies.name from JOIN (Phase 3-4b 以降は post-fetch synthesize) */
   name: string;
+  /** master companies.address from JOIN */
   address: string;
+  /** master companies.phone from JOIN */
   phone: string;
-  /** 請求書差出人情報 */
+  /** 請求書差出人情報 (payroll-app 固有) */
   zipcode: string | null;
   formal_name: string | null;
   registration_number: string | null;
   tel: string | null;
   fax: string | null;
-  representative: string | null;  // 代表取締役 〇〇 等
+  representative: string | null;
   seal_image_url: string | null;
   invoice_greeting: string | null;
   inquiry_tel: string | null;
@@ -44,25 +49,62 @@ export interface Company {
 
 export interface Office {
   id: string;
-  office_number: string;                       // 介護保険の事業所番号（主キー扱い）
-  /** 同一事業所の障害福祉事業所番号（別採番）。請求CSV取り込み時の突合に使用 */
+  /** 共通マスタ offices.id (Phase 3-1 で追加)。事業所名/住所の真実は master 側 */
+  office_id: string | null;
+  office_number: string;
   shogai_office_number: string | null;
+  /** master offices.name from JOIN (Phase 3-4b 以降は post-fetch synthesize) */
   name: string;
   short_name: string;
+  /** master offices.address from JOIN */
   address: string;
   office_type: OfficeType;
-  work_week_start: number;  // 0=日, 1=月, ..., 6=土
-  travel_unit_price: number;       // 出張手当単価（円/km）
-  commute_unit_price: number;      // 通勤手当単価（円/km）
-  treatment_subsidy_amount: number; // 処遇改善補助金手当（社保加入者・月額）
-  cancel_unit_price: number;        // キャンセル手当単価（円/件）
-  travel_allowance_rate: number;    // 移動手当単価（円/時）
-  communication_fee_amount: number; // 固定通信費額（円）
-  meeting_unit_price: number;       // 会議1単価（円/件）
-  distance_adjustment_rate: number; // 距離調整係数（%、例: 125 = 125%）
+  work_week_start: number;
+  travel_unit_price: number;
+  commute_unit_price: number;
+  treatment_subsidy_amount: number;
+  cancel_unit_price: number;
+  travel_allowance_rate: number;
+  communication_fee_amount: number;
+  meeting_unit_price: number;
+  distance_adjustment_rate: number;
   company_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** SELECT 結果に master JOIN が含まれる shape (post-fetch flatten 前) */
+export interface OfficeWithMaster extends Omit<Office, "name" | "address"> {
+  master: { name: string; address: string | null } | null;
+}
+export interface CompanyWithMaster extends Omit<Company, "name" | "address" | "phone"> {
+  master: { name: string; address: string | null; phone: string | null } | null;
+}
+
+/** payroll_offices SELECT 用の master JOIN clause (Plan B) */
+export const OFFICE_MASTER_JOIN = "master:offices!office_id(name, address)";
+export const COMPANY_MASTER_JOIN = "master:companies!master_company_id(name, address, phone)";
+
+/** 共通マスタ offices.id を引いて name/address を synthesize する flatten */
+export function flattenOfficeMaster<T extends { master?: { name?: string | null; address?: string | null } | null }>(
+  rows: T[] | null | undefined,
+): (Omit<T, "master"> & { name: string; address: string })[] {
+  return (rows ?? []).map(({ master, ...rest }) => ({
+    ...(rest as Omit<T, "master">),
+    name: master?.name ?? "",
+    address: master?.address ?? "",
+  }));
+}
+
+export function flattenCompanyMaster<T extends { master?: { name?: string | null; address?: string | null; phone?: string | null } | null }>(
+  rows: T[] | null | undefined,
+): (Omit<T, "master"> & { name: string; address: string; phone: string })[] {
+  return (rows ?? []).map(({ master, ...rest }) => ({
+    ...(rest as Omit<T, "master">),
+    name: master?.name ?? "",
+    address: master?.address ?? "",
+    phone: master?.phone ?? "",
+  }));
 }
 
 export type EmploymentStatus = "在職者" | "休職者" | "退職者";

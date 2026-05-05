@@ -37,6 +37,7 @@ import type {
   SalaryType,
   EmploymentStatus,
 } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
 // ─── 定数 ────────────────────────────────────────────────────
 
@@ -217,9 +218,13 @@ export default function EmployeesPage() {
       if (data.length < pageSize) break;
       from += pageSize;
     }
-    const { data: offData } = await supabase.from("payroll_offices").select("*").order("name");
+    const { data: offData } = await supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`);
     setEmployees(allEmployees);
-    if (offData) setOffices(offData as Office[]);
+    if (offData) {
+      const flattened = flattenOfficeMaster(offData as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
+    }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);

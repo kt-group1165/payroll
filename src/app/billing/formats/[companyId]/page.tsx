@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Company, CompanyInvoiceFormat } from "@/types/database";
+import { COMPANY_MASTER_JOIN, flattenCompanyMaster } from "@/types/database";
 
 /**
  * 法人ごとの請求書フォーマット設定画面
@@ -69,10 +70,13 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ compan
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [coRes, fmtRes] = await Promise.all([
-      supabase.from("payroll_companies").select("*").eq("id", companyId).single(),
+      supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`).eq("id", companyId).single(),
       supabase.from("payroll_company_invoice_formats").select("*").eq("company_id", companyId).maybeSingle(),
     ]);
-    if (coRes.data) setCompany(coRes.data as Company);
+    const flatCompany = coRes.data
+      ? (flattenCompanyMaster([coRes.data as never])[0] as unknown as Company)
+      : null;
+    if (flatCompany) setCompany(flatCompany);
     if (fmtRes.data) {
       const f = fmtRes.data as CompanyInvoiceFormat;
       setFormatId(f.id);
@@ -98,8 +102,8 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ compan
       });
     } else {
       // まだ存在しない場合は companies の既存値を初期値に流し込む
-      if (coRes.data) {
-        const c = coRes.data as Company;
+      if (flatCompany) {
+        const c = flatCompany;
         setForm((prev) => ({
           ...prev,
           greeting: c.invoice_greeting ?? "",

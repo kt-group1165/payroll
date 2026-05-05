@@ -5,6 +5,12 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/sort-companies";
 import type { Company } from "@/types/database";
+import {
+  COMPANY_MASTER_JOIN,
+  OFFICE_MASTER_JOIN,
+  flattenCompanyMaster,
+  flattenOfficeMaster,
+} from "@/types/database";
 
 /**
  * 突合・月次サマリダッシュボード
@@ -63,15 +69,19 @@ export default function ReconciliationPage() {
   useEffect(() => {
     (async () => {
       const [coRes, offRes] = await Promise.all([
-        supabase.from("payroll_companies").select("*").order("name"),
-        supabase.from("payroll_offices").select("id, office_number, name, short_name, company_id"),
+        supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
+        supabase.from("payroll_offices").select(`id, office_number, short_name, company_id, ${OFFICE_MASTER_JOIN}`),
       ]);
       if (coRes.data) {
-        const sorted = sortCompanies(coRes.data as Company[]);
+        const flattened = flattenCompanyMaster(coRes.data as never) as unknown as Company[];
+        const sorted = sortCompanies(flattened);
         setCompanies(sorted);
         if (sorted.length > 0 && !selectedCompanyId) setSelectedCompanyId(sorted[0].id);
       }
-      if (offRes.data) setOffices(offRes.data as OfficeLite[]);
+      if (offRes.data) {
+        const flattened = flattenOfficeMaster(offRes.data as never) as unknown as OfficeLite[];
+        setOffices(flattened);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

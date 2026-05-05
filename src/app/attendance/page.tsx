@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -257,12 +258,13 @@ export default function AttendancePage() {
         .order("employee_number")
         .order("day"),
       fetchAllEmployees(),
-      supabase.from("payroll_offices").select("office_number,name,work_week_start"),
+      supabase.from("payroll_offices").select(`office_number, work_week_start, ${OFFICE_MASTER_JOIN}`),
     ]);
 
     const records   = (attRes.data ?? []) as AttendanceRecord[];
     const empMap    = new Map(emps.map(e => [e.employee_number, e]));
-    const officeMap = new Map(((offRes.data ?? []) as Office[]).map(o => [o.office_number, o]));
+    const officeRows = flattenOfficeMaster(offRes.data as never) as unknown as Office[];
+    const officeMap = new Map(officeRows.map(o => [o.office_number, o]));
 
     // 週起算曜日（最初に見つかった事業所の設定を使用）
     const firstOfficeNum = records[0]?.office_number;

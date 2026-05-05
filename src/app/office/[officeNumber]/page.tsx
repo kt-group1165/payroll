@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Office } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
 export default function OfficeDashboardPage() {
   const params = useParams<{ officeNumber: string }>();
@@ -15,12 +16,15 @@ export default function OfficeDashboardPage() {
   useEffect(() => {
     supabase
       .from("payroll_offices")
-      .select("*")
+      .select(`*, ${OFFICE_MASTER_JOIN}`)
       .eq("office_number", officeNumber)
       .maybeSingle()
       .then(({ data }) => {
         if (!data) setNotFound(true);
-        else setOffice(data as Office);
+        else {
+          const flat = flattenOfficeMaster([data as never])[0] as unknown as Office;
+          setOffice(flat);
+        }
       });
   }, [officeNumber]);
 

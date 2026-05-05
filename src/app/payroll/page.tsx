@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -527,13 +528,15 @@ export default function PayrollPage() {
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
-    supabase.from("payroll_offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price").order("name").then(({ data }) => {
+    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (!data) return;
-      setOffices(data as unknown as Office[]);
+      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
       // 訪問介護の最初の事業所を初期選択
-      const firstVisitCare = (data as unknown as Office[]).find((o) => o.office_type === "訪問介護");
+      const firstVisitCare = flattened.find((o) => o.office_type === "訪問介護");
       if (firstVisitCare) setSelectedOfficeId(firstVisitCare.id);
-      else if (data.length > 0) setSelectedOfficeId((data as unknown as Office[])[0].id);
+      else if (flattened.length > 0) setSelectedOfficeId(flattened[0].id);
     });
   }, []);
 
@@ -593,7 +596,7 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
-        supabase.from("payroll_offices").select("id,office_number,name,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
+        supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         fetchAllSalarySettings(),
@@ -627,8 +630,9 @@ export default function PayrollPage() {
       const records    = allServiceRecords;
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
       const categoryMap= new Map((catRes.data ?? []).map((c: ServiceCategory) => [c.id, c.name]));
-      const officeMap         = new Map((officeRes.data ?? []).map((o: Office) => [o.office_number, o.id]));
-      const officeByIdMap     = new Map((officeRes.data ?? []).map((o: Office) => [o.id, o]));
+      const officeRows        = flattenOfficeMaster(officeRes.data as never) as unknown as Office[];
+      const officeMap         = new Map(officeRows.map((o: Office) => [o.office_number, o.id]));
+      const officeByIdMap     = new Map(officeRows.map((o: Office) => [o.id, o]));
       const rateMap    = new Map((rateRes.data ?? []).map((r: CategoryHourlyRate) => [`${r.office_id}:${r.category_id}`, r.hourly_rate]));
       const employees  = (empRes.data ?? []) as Employee[];
       const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import type { Employee, Office, JobType } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
 // ─── 型定義 ──────────────────────────────────────────────────
 
@@ -345,12 +346,15 @@ export default function SalaryPage() {
 
     const [emps, offRes, sals, otRes] = await Promise.all([
       fetchAllPages<Employee>("payroll_employees", "*", "employee_number"),
-      supabase.from("payroll_offices").select("*"),
+      supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`),
       fetchAllPages<SalarySettings>("payroll_salary_settings"),
       supabase.from("payroll_overtime_settings").select("*"),
     ]);
     setEmployees(emps);
-    if (offRes.data) setOffices(offRes.data as Office[]);
+    if (offRes.data) {
+      const flattened = flattenOfficeMaster(offRes.data as never) as unknown as Office[];
+      setOffices(flattened);
+    }
     setAllSettings(sals);
     if (otRes.data) {
       const map = new Map<string, OvertimeSetting>();

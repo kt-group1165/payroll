@@ -17,6 +17,7 @@ import { FileDropzone } from "./file-dropzone";
 import { parseOfficeFormFile } from "@/lib/csv/office-form-parser";
 import type { OfficeFormRecord, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 const RECORD_TYPE_LABELS: Record<string, string> = {
@@ -72,8 +73,12 @@ export function OfficeFormImporter() {
 
   useEffect(() => {
     fetchExistingMonths();
-    supabase.from("payroll_offices").select("id,name,short_name,office_number").order("name")
-      .then(({ data }) => { if (data) setOffices(data as Office[]); });
+    supabase.from("payroll_offices").select(`id, short_name, office_number, ${OFFICE_MASTER_JOIN}`)
+      .then(({ data }) => {
+        const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+        flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+        setOffices(flattened);
+      });
   }, [fetchExistingMonths]);
 
   const handleClearMonth = async (month: string, office_number: string, count: number) => {

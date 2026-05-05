@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
-import type { Office } from "@/types/database";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
 export function OfficeSidebar() {
   const pathname = usePathname();
@@ -22,11 +22,14 @@ export function OfficeSidebar() {
     }
     supabase
       .from("payroll_offices")
-      .select("name, short_name")
+      .select(`short_name, ${OFFICE_MASTER_JOIN}`)
       .eq("office_number", officeNumber)
       .maybeSingle()
       .then(({ data }) => {
-        if (data) setOfficeName((data.short_name as string) || (data.name as string));
+        if (data) {
+          const flat = flattenOfficeMaster([data as never])[0] as unknown as { short_name: string; name: string };
+          setOfficeName(flat.short_name || flat.name);
+        }
       });
   }, [officeNumber]);
 

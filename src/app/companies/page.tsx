@@ -12,6 +12,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -22,12 +29,16 @@ import {
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { sortCompanies } from "@/lib/sort-companies";
-import type { Company } from "@/types/database";
+import {
+  COMPANY_MASTER_JOIN,
+  flattenCompanyMaster,
+  type Company,
+} from "@/types/database";
+
+type MasterCompany = { id: string; name: string; address: string | null; phone: string | null };
 
 const defaultForm = {
-  name: "",
-  address: "",
-  phone: "",
+  master_company_id: "",
   zipcode: "",
   formal_name: "",
   registration_number: "",
@@ -41,16 +52,32 @@ const defaultForm = {
 
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [masters, setMasters] = useState<MasterCompany[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
 
   const fetchCompanies = useCallback(async () => {
-    const { data } = await supabase.from("payroll_companies").select("*").order("created_at");
-    if (data) setCompanies(sortCompanies(data as Company[]));
+    const { data } = await supabase
+      .from("payroll_companies")
+      .select(`*, ${COMPANY_MASTER_JOIN}`)
+      .order("created_at");
+    const flattened = flattenCompanyMaster(data as never) as unknown as Company[];
+    setCompanies(sortCompanies(flattened));
   }, []);
 
-  useEffect(() => { fetchCompanies(); }, [fetchCompanies]);
+  const fetchMasters = useCallback(async () => {
+    const { data } = await supabase
+      .from("companies")
+      .select("id, name, address, phone")
+      .order("name");
+    setMasters((data ?? []) as MasterCompany[]);
+  }, []);
+
+  useEffect(() => {
+    fetchCompanies();
+    fetchMasters();
+  }, [fetchCompanies, fetchMasters]);
 
   const resetForm = () => {
     setForm(defaultForm);
@@ -58,14 +85,14 @@ export default function CompaniesPage() {
   };
 
   const handleSubmit = async () => {
-    if (!form.name) { toast.error("法人名は必須です"); return; }
+    if (!form.master_company_id) {
+      toast.error("法人(マスタ)を選択してください");
+      return;
+    }
 
-    // 空文字は null に変換（DBの任意カラム向け）
     const toNull = (v: string) => (v.trim() === "" ? null : v);
     const payload = {
-      name: form.name,
-      address: form.address,
-      phone: form.phone,
+      master_company_id: form.master_company_id,
       zipcode: toNull(form.zipcode),
       formal_name: toNull(form.formal_name),
       registration_number: toNull(form.registration_number),
@@ -78,7 +105,9 @@ export default function CompaniesPage() {
     };
 
     if (editingId) {
-      const { error } = await supabase.from("payroll_companies").update(payload).eq("id", editingId);
+      const { master_company_id: _omit, ...updatePayload } = payload;
+      void _omit;
+      const { error } = await supabase.from("payroll_companies").update(updatePayload).eq("id", editingId);
       if (error) { toast.error(`更新エラー: ${error.message}`); return; }
       toast.success("法人を更新しました");
     } else {
@@ -94,9 +123,7 @@ export default function CompaniesPage() {
 
   const handleEdit = (company: Company) => {
     setForm({
-      name: company.name,
-      address: company.address ?? "",
-      phone: company.phone ?? "",
+      master_company_id: company.master_company_id ?? "",
       zipcode: company.zipcode ?? "",
       formal_name: company.formal_name ?? "",
       registration_number: company.registration_number ?? "",
@@ -119,6 +146,14 @@ export default function CompaniesPage() {
     fetchCompanies();
   };
 
+  const linkedMasterIds = new Set(
+    companies
+      .filter((c) => c.master_company_id && c.id !== editingId)
+      .map((c) => c.master_company_id as string),
+  );
+  const availableMasters = masters.filter((m) => !linkedMasterIds.has(m.id));
+  const selectedMaster = masters.find((m) => m.id === form.master_company_id);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -130,14 +165,51 @@ export default function CompaniesPage() {
               <DialogTitle>{editingId ? "法人を編集" : "法人を登録"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <div>
-                <Label>法人名</Label>
-                <Input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="例: 株式会社儀八"
-                />
+              <div className="rounded border bg-muted/30 p-3 space-y-2">
+                <Label className="text-xs text-muted-foreground">
+                  法人(マスタ) - 名称・住所・電話の編集は介護アプリ側
+                </Label>
+                {editingId ? (
+                  <div className="text-sm">
+                    <p className="font-medium">{selectedMaster?.name ?? "(未紐付け)"}</p>
+                    {selectedMaster?.address && <p className="text-xs text-muted-foreground">{selectedMaster.address}</p>}
+                    {selectedMaster?.phone && <p className="text-xs text-muted-foreground">TEL: {selectedMaster.phone}</p>}
+                    <p className="text-[10px] text-muted-foreground mt-1">編集中の紐付けは変更できません</p>
+                  </div>
+                ) : availableMasters.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    紐付け可能な法人(マスタ)がありません。先に介護アプリで法人を作成してください。
+                  </p>
+                ) : (
+                  <Select
+                    value={form.master_company_id || "__none__"}
+                    onValueChange={(v) => setForm({ ...form, master_company_id: !v || v === "__none__" ? "" : v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="法人(マスタ)を選択">
+                        {(v: string) => {
+                          if (!v || v === "__none__") return "選択してください";
+                          const m = masters.find((x) => x.id === v);
+                          return m ? m.name : "選択してください";
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">選択してください</SelectItem>
+                      {availableMasters.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {!editingId && selectedMaster && (
+                  <div className="text-xs text-muted-foreground space-y-0.5">
+                    {selectedMaster.address && <p>{selectedMaster.address}</p>}
+                    {selectedMaster.phone && <p>TEL: {selectedMaster.phone}</p>}
+                  </div>
+                )}
               </div>
+
               <div className="grid grid-cols-[120px_1fr] gap-2">
                 <div>
                   <Label>郵便番号</Label>
@@ -145,24 +217,6 @@ export default function CompaniesPage() {
                     value={form.zipcode}
                     onChange={(e) => setForm({ ...form, zipcode: e.target.value })}
                     placeholder="299-0110"
-                  />
-                </div>
-                <div>
-                  <Label>住所</Label>
-                  <Input
-                    value={form.address}
-                    onChange={(e) => setForm({ ...form, address: e.target.value })}
-                    placeholder="千葉県市原市..."
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>電話番号（社内）</Label>
-                  <Input
-                    value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    placeholder="例: 0475-00-0000"
                   />
                 </div>
                 <div>
@@ -175,7 +229,6 @@ export default function CompaniesPage() {
                 </div>
               </div>
 
-              {/* 請求書関連 */}
               <div className="pt-3 border-t">
                 <Label className="text-sm">請求書 差出人情報</Label>
                 <p className="text-xs text-muted-foreground mb-2">請求書のヘッダ右上に表示されます。</p>
@@ -247,7 +300,7 @@ export default function CompaniesPage() {
                 </div>
               </div>
 
-              <Button onClick={handleSubmit} className="w-full">
+              <Button onClick={handleSubmit} className="w-full" disabled={!form.master_company_id}>
                 {editingId ? "更新" : "登録"}
               </Button>
             </div>
@@ -258,7 +311,7 @@ export default function CompaniesPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>法人名</TableHead>
+            <TableHead>法人名(マスタ)</TableHead>
             <TableHead>正式名称</TableHead>
             <TableHead>住所</TableHead>
             <TableHead>電話番号</TableHead>
@@ -276,7 +329,7 @@ export default function CompaniesPage() {
           ) : (
             companies.map((company) => (
               <TableRow key={company.id}>
-                <TableCell className="font-medium">{company.name}</TableCell>
+                <TableCell className="font-medium">{company.name || "(未紐付け)"}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{company.formal_name || "—"}</TableCell>
                 <TableCell className="text-sm">
                   {company.zipcode && <span className="text-xs text-muted-foreground">〒{company.zipcode}　</span>}

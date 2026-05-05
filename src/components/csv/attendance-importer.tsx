@@ -17,6 +17,7 @@ import { FileDropzone } from "./file-dropzone";
 import { parseAttendanceFiles } from "@/lib/csv/attendance-parser";
 import type { ParsedAttendance, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 interface Office { id: string; office_number: string; name: string; short_name: string; }
@@ -62,8 +63,10 @@ export function AttendanceImporter() {
 
   useEffect(() => {
     fetchExistingCounts();
-    supabase.from("payroll_offices").select("id, office_number, name, short_name").order("name").then(({ data }) => {
-      if (data) setOffices(data as Office[]);
+    supabase.from("payroll_offices").select(`id, office_number, short_name, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
+      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
     });
   }, [fetchExistingCounts]);
 

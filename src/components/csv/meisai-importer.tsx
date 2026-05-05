@@ -17,6 +17,7 @@ import { FileDropzone } from "./file-dropzone";
 import { parseMeisaiFiles } from "@/lib/csv/meisai-parser";
 import type { MeisaiRow, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 interface Office { id: string; office_number: string; name: string; short_name: string; office_type: string; }
@@ -66,10 +67,12 @@ export function MeisaiImporter() {
 
   useEffect(() => {
     fetchExistingMonths();
-    supabase.from("payroll_offices").select("id,office_number,name,short_name,office_type").order("name").then(({ data }) => {
+    supabase.from("payroll_offices").select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (!data) return;
-      setOffices(data as Office[]);
-      if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
+      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
+      if (flattened.length === 1) setSelectedOfficeId(flattened[0].id);
     });
   }, [fetchExistingMonths]);
 

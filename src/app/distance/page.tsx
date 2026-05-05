@@ -7,6 +7,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 import {
   calcDayRoute, collectAddressPairs, mToKm, secToHm,
@@ -44,10 +45,12 @@ export default function DistancePage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   useEffect(() => {
-    supabase.from("payroll_offices").select("id,name,short_name,office_number").order("name").then(({ data }) => {
+    supabase.from("payroll_offices").select(`id, short_name, office_number, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (!data) return;
-      setOffices(data as Office[]);
-      if (data.length === 1) setSelectedOfficeId((data as Office[])[0].id);
+      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
+      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      setOffices(flattened);
+      if (flattened.length === 1) setSelectedOfficeId(flattened[0].id);
     });
     // service_records実データのある月を import_batches 経由で取得（高速）
     supabase

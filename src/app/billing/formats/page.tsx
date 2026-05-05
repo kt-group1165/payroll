@@ -9,6 +9,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { sortCompanies } from "@/lib/sort-companies";
 import type { Company, CompanyInvoiceFormat } from "@/types/database";
+import { COMPANY_MASTER_JOIN, flattenCompanyMaster } from "@/types/database";
 
 /**
  * /billing/formats
@@ -22,10 +23,13 @@ export default function InvoiceFormatsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [coRes, fmtRes] = await Promise.all([
-      supabase.from("payroll_companies").select("*").order("name"),
+      supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
       supabase.from("payroll_company_invoice_formats").select("*"),
     ]);
-    if (coRes.data) setCompanies(sortCompanies(coRes.data as Company[]));
+    if (coRes.data) {
+      const flattened = flattenCompanyMaster(coRes.data as never) as unknown as Company[];
+      setCompanies(sortCompanies(flattened));
+    }
     if (fmtRes.data) setFormats(fmtRes.data as CompanyInvoiceFormat[]);
     setLoading(false);
   }, []);
