@@ -617,7 +617,6 @@ export default function EmployeesPage() {
   const showMonthlyFields = form.salary_type === "月給";
   const showFixedOvertimeFields =
     form.role_type === "提責" || form.role_type === "管理者" || form.role_type === "社員";
-  const showHourlyRateFields = form.salary_type === "時給";
 
   // ─── 描画 ─────────────────────────────────────────────────────
 

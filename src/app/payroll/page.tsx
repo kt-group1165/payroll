@@ -487,13 +487,6 @@ function downloadCsv(filename: string, rows: string[][]): void {
   URL.revokeObjectURL(url);
 }
 
-function countNoteKeyword(attDays: AttendanceRecord[], keyword: string): number {
-  return attDays.filter((r) =>
-    [r.work_note_1, r.work_note_2, r.work_note_3, r.work_note_4, r.work_note_5]
-      .some((n) => n && n.includes(keyword))
-  ).length;
-}
-
 // ─── メインコンポーネント ─────────────────────────────────────
 
 export default function PayrollPage() {
@@ -1708,7 +1701,6 @@ export default function PayrollPage() {
                       {monthlyResults.map((p) => {
                         const s  = p.settings;
                         const sm = p.summary;
-                        const fixed = s ? fixedTotal(s) : 0;
                         const total = monthlyGrandTotal(p, otSettings);
                         const cop   = careOvertimePay(p);
                         const yocho = yochoAllowance(p);

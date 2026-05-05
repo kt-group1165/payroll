@@ -41,9 +41,6 @@ const OPTIONAL_HEADERS = [
   "同行訪問",
 ] as const;
 
-// 末尾3カラムは固定
-const TAIL_HEADERS = ["事業所番号", "利用者番号", "サービスコード"] as const;
-
 export async function parseMeisaiFile(
   file: File
 ): Promise<CsvParseResult<MeisaiRow>> {

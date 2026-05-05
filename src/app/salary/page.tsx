@@ -577,7 +577,7 @@ export default function SalaryPage() {
 
   const handleSaveOvertime = async () => {
     setSavingOvertime(true);
-    let ok = 0, fail = 0;
+    let fail = 0;
     for (const jt of JOB_TYPES_FOR_OVERTIME) {
       const s = overtimeSettings.get(jt) ?? emptyOvertimeSetting(jt);
       const { id, ...payload } = s;
@@ -587,7 +587,7 @@ export default function SalaryPage() {
       } else {
         ({ error } = await supabase.from("payroll_overtime_settings").insert(payload));
       }
-      if (error) fail++; else ok++;
+      if (error) fail++;
     }
     setSavingOvertime(false);
     if (fail === 0) { toast.success("残業設定を保存しました"); fetchAll(); }

@@ -78,7 +78,6 @@ export default function CompaniesPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchCompanies();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchMasters();
   }, [fetchCompanies, fetchMasters]);
 

@@ -641,7 +641,6 @@ function RatesTab() {
   const [rates, setRates] = useState<CategoryHourlyRate[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
-  const [mappings, setMappings] = useState<ServiceTypeMapping[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({
     office_id: "",
@@ -651,7 +650,7 @@ function RatesTab() {
   const importRef = useRef<HTMLInputElement>(null);
 
   const fetchData = useCallback(async () => {
-    const [rateRes, catRes, offRes, mapRes] = await Promise.all([
+    const [rateRes, catRes, offRes] = await Promise.all([
       supabase
         .from("payroll_category_hourly_rates")
         .select("*, offices:payroll_offices!office_id(short_name, master:offices!office_id(name)), service_categories(name)")
@@ -660,10 +659,6 @@ function RatesTab() {
       supabase
         .from("payroll_offices")
         .select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`),
-      supabase
-        .from("payroll_service_type_mappings")
-        .select("*, service_categories(name)")
-        .order("service_code"),
     ]);
     if (rateRes.data) setRates(rateRes.data);
     if (catRes.data) setCategories(catRes.data);
@@ -672,7 +667,6 @@ function RatesTab() {
       flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
       setOffices(flattened);
     }
-    if (mapRes.data) setMappings(mapRes.data);
   }, []);
 
   // mount 時の async data fetch (HANDOVER §2 参照)。

@@ -383,6 +383,7 @@ function InvoicePrintInner() {
           </p>
           <div className="text-right min-w-[140px]">
             {sealOn && company?.seal_image_url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- print preview / PDF 出力で next/image は不適 (lazy load + optimization が印刷側で動かない)
               <img src={company.seal_image_url} alt="印" className="h-16 w-16 object-contain ml-auto" />
             ) : (
               <span className="text-[10px]">※押印は省略させていただきます。</span>
