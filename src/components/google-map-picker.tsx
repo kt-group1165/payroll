@@ -71,7 +71,11 @@ export function GoogleMapPicker({ latitude, longitude, fallbackAddress, onChange
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
+  // Google Maps script の async ロード (HANDOVER §2 参照)。env 不在時の即時 setStatus
+  // も含むが、status は表示用の transient state で derive 化すると script 多重ロード
+  // と整合しないため effect に残す。複数 setState 行があるので block 抑止。
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- transient script load status */
     if (!apiKey) {
       setStatus("error");
       setMessage("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY が設定されていません");
@@ -84,6 +88,7 @@ export function GoogleMapPicker({ latitude, longitude, fallbackAddress, onChange
         setStatus("error");
         setMessage(String(e));
       });
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [apiKey]);
 
   useEffect(() => {

@@ -15,7 +15,9 @@ export function OfficeSidebar() {
 
   const [officeName, setOfficeName] = useState<string>("");
 
+  // pathname 変化時の office 名 fetch (HANDOVER §2 参照)。
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- pathname-driven async fetch */
     if (!officeNumber) {
       setOfficeName("");
       return;
@@ -31,6 +33,7 @@ export function OfficeSidebar() {
           setOfficeName(flat.short_name || flat.name);
         }
       });
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [officeNumber]);
 
   // 事業所スコープがあるかどうかで navItems を切り替え

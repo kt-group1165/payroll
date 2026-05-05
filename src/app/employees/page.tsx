@@ -172,7 +172,7 @@ export default function EmployeesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [filterStatus, setFilterStatus] = useState<string>("在職者");
-  const [filterOfficeId, setFilterOfficeIdRaw] = useState<string>("");
+  const [filterOfficeIdInternal, setFilterOfficeIdRaw] = useState<string>("");
 
   // URL が /office/[officeNumber]/... の場合、事業所をロック（選択不可）
   const pathname = usePathname();
@@ -185,12 +185,9 @@ export default function EmployeesPage() {
     return offices.find((o) => o.office_number === lockedOfficeNumber)?.id ?? null;
   }, [lockedOfficeNumber, offices]);
 
-  // ロック中は常にロック対象のoffice_idを強制。それ以外は通常動作
-  useEffect(() => {
-    if (lockedOfficeId !== null && filterOfficeId !== lockedOfficeId) {
-      setFilterOfficeIdRaw(lockedOfficeId);
-    }
-  }, [lockedOfficeId, filterOfficeId]);
+  // ロック中は lockedOfficeId が読み取り値、それ以外は internal state。
+  // useEffect での state 同期 (cascading render) を避けるため derived state 化。
+  const filterOfficeId = lockedOfficeId ?? filterOfficeIdInternal;
   const setFilterOfficeId = (v: string) => {
     if (lockedOfficeId) return; // ロック中は変更不可
     setFilterOfficeIdRaw(v);
@@ -227,7 +224,11 @@ export default function EmployeesPage() {
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchData();
+  }, [fetchData]);
 
   const resetForm = () => {
     setForm({ ...defaultForm, office_id: lockedOfficeId ?? "" });

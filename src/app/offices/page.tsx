@@ -118,8 +118,11 @@ export default function OfficesPage() {
     setMasters((data ?? []) as MasterOffice[]);
   }, []);
 
+  // mount 時の async data fetch (HANDOVER §2 参照)。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchOffices();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchMasters();
     supabase
       .from("payroll_companies")

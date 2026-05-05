@@ -114,7 +114,11 @@ export default function InvoiceFormatPage({ params }: { params: Promise<{ compan
     setLoading(false);
   }, [companyId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchData();
+  }, [fetchData]);
 
   const handleSave = async () => {
     if (!company) return;

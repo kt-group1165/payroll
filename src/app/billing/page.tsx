@@ -316,7 +316,9 @@ export default function BillingPage() {
     }
   }, [selectedCompanyId, selectedOfficeNum, monthColumns, offices, clients]);
 
+  // 依存変化時の async re-compute (HANDOVER §2 参照)。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     computeRows();
   }, [computeRows]);
 
@@ -856,7 +858,11 @@ function CellDetailDialog({
     setLoading(false);
   }, [detail]);
 
-  useEffect(() => { fetchItems(); }, [fetchItems]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchItems();
+  }, [fetchItems]);
 
   const monthLabel = `${detail.billing_month.slice(0, 4)}年${parseInt(detail.billing_month.slice(4, 6), 10)}月`;
   const nextMonth = (m: string) => {

@@ -61,7 +61,9 @@ export function AttendanceImporter() {
     );
   }, []);
 
+  // mount 時の async data fetch (HANDOVER §2 参照)。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchExistingCounts();
     supabase.from("payroll_offices").select(`id, office_number, short_name, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       const flattened = flattenOfficeMaster(data as never) as unknown as Office[];

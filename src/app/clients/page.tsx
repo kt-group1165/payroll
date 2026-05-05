@@ -83,7 +83,7 @@ function parseCsvText(text: string): string[][] {
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
-  const [filterOfficeId, setFilterOfficeIdRaw] = useState("");
+  const [filterOfficeIdInternal, setFilterOfficeIdRaw] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
 
@@ -98,11 +98,9 @@ export default function ClientsPage() {
     return offices.find((o) => o.office_number === lockedOfficeNumber)?.id ?? null;
   }, [lockedOfficeNumber, offices]);
 
-  useEffect(() => {
-    if (lockedOfficeId && filterOfficeId !== lockedOfficeId) {
-      setFilterOfficeIdRaw(lockedOfficeId);
-    }
-  }, [lockedOfficeId, filterOfficeId]);
+  // ロック中は lockedOfficeId が読み取り値、それ以外は internal state。
+  // useEffect での state 同期 (cascading render) を避けるため derived state 化。
+  const filterOfficeId = lockedOfficeId ?? filterOfficeIdInternal;
   const setFilterOfficeId = (v: string) => {
     if (lockedOfficeId) return;
     setFilterOfficeIdRaw(v);
@@ -165,7 +163,9 @@ export default function ClientsPage() {
     }
   }, []);
 
+  // mount 時の async data fetch (HANDOVER §2 参照)。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, [fetchData]);
 

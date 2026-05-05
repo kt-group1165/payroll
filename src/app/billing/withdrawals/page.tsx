@@ -122,7 +122,11 @@ export default function WithdrawalsImportPage() {
       .limit(10000);
     setInvoicedRows((data ?? []) as BillingRow[]);
   }, [selectedCompanyId, billingMonth]);
-  useEffect(() => { fetchInvoiced(); }, [fetchInvoiced]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchInvoiced();
+  }, [fetchInvoiced]);
 
   const handleFile = async (f: File) => {
     try {

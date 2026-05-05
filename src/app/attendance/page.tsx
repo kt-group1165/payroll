@@ -300,7 +300,13 @@ export default function AttendancePage() {
     setLoading(false);
   }, [selectedYear, selectedMonth]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // mount 時の async data fetch (await 後の setState)。React 19 lint rule
+  // (set-state-in-effect) はこの canonical pattern も flag するが、true positive
+  // ではないため抑止。RSC 化で除去予定 (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadData();
+  }, [loadData]);
 
   // ── データクリア ──────────────────────────────────────────
 

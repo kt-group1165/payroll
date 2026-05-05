@@ -123,7 +123,11 @@ export default function ReconciliationPage() {
       setLoading(false);
     }
   }, [selectedCompanyId, companyOffices, filterMonth]);
-  useEffect(() => { fetchRows(); }, [fetchRows]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchRows();
+  }, [fetchRows]);
 
   // ── 集計 ──
   const summary = useMemo(() => {

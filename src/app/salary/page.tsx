@@ -363,7 +363,11 @@ export default function SalaryPage() {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchAll();
+  }, [fetchAll]);
 
   const loadSettings = useCallback(async (empId: string) => {
     if (!empId) { setSettings(null); return; }

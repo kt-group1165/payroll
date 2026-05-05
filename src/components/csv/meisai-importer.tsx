@@ -65,7 +65,9 @@ export function MeisaiImporter() {
     setExistingMonths(sorted);
   }, []);
 
+  // mount 時の async data fetch (HANDOVER §2 参照)。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchExistingMonths();
     supabase.from("payroll_offices").select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (!data) return;

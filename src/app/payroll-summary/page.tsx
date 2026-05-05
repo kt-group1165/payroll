@@ -235,13 +235,16 @@ function fmtMonth(m: string) {
 export default function PayrollSummaryPage() {
   const [index, setIndex] = useState<IndexEntry[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>("");
-  const [summary, setSummary] = useState<Summary | null>(null);
   const [visibleHourly, setVisibleHourly] = useState<string[]>(() => defaultVisibleKeys(HOURLY_COLS));
   const [visibleMonthly, setVisibleMonthly] = useState<string[]>(() => defaultVisibleKeys(MONTHLY_COLS));
   const [colDialogOpen, setColDialogOpen] = useState(false);
 
-  // 初期化: index と 列選択
+  // 初期化: localStorage は SSR で参照不可 (Next.js)。useState の lazy init で読むと
+  // server/client で値が異なり hydration mismatch を起こすので、mount 後 useEffect
+  // で client-only に取り込む。setState を effect 内で呼ぶ React 19 lint 警告は
+  // この hydration-safe init 用途では正規パターンのため block 抑止。
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- hydration-safe init from localStorage */
     try {
       const idx = JSON.parse(localStorage.getItem("payroll-summary:index") ?? "[]") as IndexEntry[];
       idx.sort((a, b) => b.calculated_at.localeCompare(a.calculated_at));
@@ -250,14 +253,17 @@ export default function PayrollSummaryPage() {
     } catch { setIndex([]); }
     setVisibleHourly(loadVisible(HOURLY_COL_STORAGE, HOURLY_COLS.map((c) => c.key), defaultVisibleKeys(HOURLY_COLS)));
     setVisibleMonthly(loadVisible(MONTHLY_COL_STORAGE, MONTHLY_COLS.map((c) => c.key), defaultVisibleKeys(MONTHLY_COLS)));
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
-  useEffect(() => {
-    if (!selectedKey) { setSummary(null); return; }
+  // selectedKey から summary を導出 (useEffect+setState ではなく純粋な derived)
+  const summary = useMemo<Summary | null>(() => {
+    if (!selectedKey || typeof window === "undefined") return null;
     try {
       const raw = localStorage.getItem(selectedKey);
-      if (raw) setSummary(JSON.parse(raw) as Summary);
-    } catch { setSummary(null); }
+      if (raw) return JSON.parse(raw) as Summary;
+    } catch {}
+    return null;
   }, [selectedKey]);
 
   // 列選択の保存

@@ -34,7 +34,11 @@ export default function InvoiceFormatsPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // mount 時の async data fetch (HANDOVER §2 参照)。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchData();
+  }, [fetchData]);
 
   const formatByCompany = new Map(formats.map((f) => [f.company_id, f]));
 

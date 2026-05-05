@@ -74,8 +74,11 @@ export default function CompaniesPage() {
     setMasters((data ?? []) as MasterCompany[]);
   }, []);
 
+  // mount 時の async data fetch (HANDOVER §2 参照)。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchCompanies();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchMasters();
   }, [fetchCompanies, fetchMasters]);
 
