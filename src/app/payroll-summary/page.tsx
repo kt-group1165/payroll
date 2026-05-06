@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { useLocalStorage } from "@/lib/use-local-storage";
 
 // ─── 型 ──────────────────────────────────────────────
 
@@ -215,17 +216,6 @@ function defaultVisibleKeys<T>(cols: ColDef<T>[]): string[] {
   return cols.filter((c) => !c.defaultOff).map((c) => c.key);
 }
 
-function loadVisible(storageKey: string, allKeys: string[], defaults: string[]): string[] {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return defaults;
-    const arr = JSON.parse(raw) as string[];
-    return arr.filter((k) => allKeys.includes(k));
-  } catch {
-    return defaults;
-  }
-}
-
 function fmtMonth(m: string) {
   return `${m.slice(0, 4)}年${parseInt(m.slice(4, 6), 10)}月`;
 }
@@ -233,28 +223,42 @@ function fmtMonth(m: string) {
 // ─── 本体 ────────────────────────────────────────────
 
 export default function PayrollSummaryPage() {
-  const [index, setIndex] = useState<IndexEntry[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>("");
-  const [visibleHourly, setVisibleHourly] = useState<string[]>(() => defaultVisibleKeys(HOURLY_COLS));
-  const [visibleMonthly, setVisibleMonthly] = useState<string[]>(() => defaultVisibleKeys(MONTHLY_COLS));
-  const [colDialogOpen, setColDialogOpen] = useState(false);
+  // useLocalStorage で SSR-safe に hydrate (setState-in-effect 不要)
+  const [index] = useLocalStorage<IndexEntry[]>(
+    "payroll-summary:index",
+    [],
+    (raw) => {
+      const arr = JSON.parse(raw) as IndexEntry[];
+      arr.sort((a, b) => b.calculated_at.localeCompare(a.calculated_at));
+      return arr;
+    },
+    JSON.stringify,
+  );
+  // selectedKey は user override or default to index[0] の派生値
+  const [userSelectedKey, setUserSelectedKey] = useState<string | null>(null);
+  const selectedKey = userSelectedKey ?? index[0]?.key ?? "";
 
-  // 初期化: localStorage は SSR で参照不可 (Next.js)。useState の lazy init で読むと
-  // server/client で値が異なり hydration mismatch を起こすので、mount 後 useEffect
-  // で client-only に取り込む。setState を effect 内で呼ぶ React 19 lint 警告は
-  // この hydration-safe init 用途では正規パターンのため block 抑止。
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- hydration-safe init from localStorage */
-    try {
-      const idx = JSON.parse(localStorage.getItem("payroll-summary:index") ?? "[]") as IndexEntry[];
-      idx.sort((a, b) => b.calculated_at.localeCompare(a.calculated_at));
-      setIndex(idx);
-      if (idx.length > 0) setSelectedKey(idx[0].key);
-    } catch { setIndex([]); }
-    setVisibleHourly(loadVisible(HOURLY_COL_STORAGE, HOURLY_COLS.map((c) => c.key), defaultVisibleKeys(HOURLY_COLS)));
-    setVisibleMonthly(loadVisible(MONTHLY_COL_STORAGE, MONTHLY_COLS.map((c) => c.key), defaultVisibleKeys(MONTHLY_COLS)));
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, []);
+  const [visibleHourly, setVisibleHourly] = useLocalStorage<string[]>(
+    HOURLY_COL_STORAGE,
+    defaultVisibleKeys(HOURLY_COLS),
+    (raw) => {
+      const arr = JSON.parse(raw) as string[];
+      const allKeys = HOURLY_COLS.map((c) => c.key);
+      return arr.filter((k) => allKeys.includes(k));
+    },
+    JSON.stringify,
+  );
+  const [visibleMonthly, setVisibleMonthly] = useLocalStorage<string[]>(
+    MONTHLY_COL_STORAGE,
+    defaultVisibleKeys(MONTHLY_COLS),
+    (raw) => {
+      const arr = JSON.parse(raw) as string[];
+      const allKeys = MONTHLY_COLS.map((c) => c.key);
+      return arr.filter((k) => allKeys.includes(k));
+    },
+    JSON.stringify,
+  );
+  const [colDialogOpen, setColDialogOpen] = useState(false);
 
   // selectedKey から summary を導出 (useEffect+setState ではなく純粋な derived)
   const summary = useMemo<Summary | null>(() => {
@@ -266,20 +270,14 @@ export default function PayrollSummaryPage() {
     return null;
   }, [selectedKey]);
 
-  // 列選択の保存
+  // 列選択 (useLocalStorage の setter が localStorage 書込まで担当)
   const toggleHourly = (key: string, on: boolean) => {
-    setVisibleHourly((prev) => {
-      const next = on ? [...new Set([...prev, key])] : prev.filter((k) => k !== key);
-      localStorage.setItem(HOURLY_COL_STORAGE, JSON.stringify(next));
-      return next;
-    });
+    const next = on ? [...new Set([...visibleHourly, key])] : visibleHourly.filter((k) => k !== key);
+    setVisibleHourly(next);
   };
   const toggleMonthly = (key: string, on: boolean) => {
-    setVisibleMonthly((prev) => {
-      const next = on ? [...new Set([...prev, key])] : prev.filter((k) => k !== key);
-      localStorage.setItem(MONTHLY_COL_STORAGE, JSON.stringify(next));
-      return next;
-    });
+    const next = on ? [...new Set([...visibleMonthly, key])] : visibleMonthly.filter((k) => k !== key);
+    setVisibleMonthly(next);
   };
 
   // 表示する列の順序は COLS の定義順を維持
@@ -367,7 +365,7 @@ export default function PayrollSummaryPage() {
             <select
               className="border rounded px-3 py-1.5 text-sm bg-background min-w-[360px]"
               value={selectedKey}
-              onChange={(e) => setSelectedKey(e.target.value)}
+              onChange={(e) => setUserSelectedKey(e.target.value)}
             >
               {index.map((e) => (
                 <option key={e.key} value={e.key}>
