@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,7 +17,6 @@ import { FileDropzone } from "./file-dropzone";
 import { parseOfficeFormFile } from "@/lib/csv/office-form-parser";
 import type { OfficeFormRecord, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
-import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 const RECORD_TYPE_LABELS: Record<string, string> = {
@@ -29,15 +28,22 @@ const RECORD_TYPE_LABELS: Record<string, string> = {
 
 type Office = { id: string; name: string; short_name: string; office_number: string };
 
-export function OfficeFormImporter() {
+export interface OfficeFormExistingMonth { month: string; office_number: string; count: number }
+
+interface OfficeFormImporterProps {
+  initialOffices: Office[];
+  initialExistingMonths: OfficeFormExistingMonth[];
+}
+
+export function OfficeFormImporter({ initialOffices, initialExistingMonths }: OfficeFormImporterProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<CsvParseResult<OfficeFormRecord>[]>([]);
   const [allData, setAllData] = useState<OfficeFormRecord[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
-  const [offices, setOffices] = useState<Office[]>([]);
-  const [existingMonths, setExistingMonths] = useState<{ month: string; office_number: string; count: number }[]>([]);
+  const [offices] = useState<Office[]>(initialOffices);
+  const [existingMonths, setExistingMonths] = useState<OfficeFormExistingMonth[]>(initialExistingMonths);
   const [selectedProcessingMonth, setSelectedProcessingMonth] = useState<string>(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 1);
@@ -70,18 +76,6 @@ export function OfficeFormImporter() {
       .sort((a, b) => b.month.localeCompare(a.month));
     setExistingMonths(sorted);
   }, []);
-
-  // mount 時の async data fetch (HANDOVER §2 参照)。
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchExistingMonths();
-    supabase.from("payroll_offices").select(`id, short_name, office_number, ${OFFICE_MASTER_JOIN}`)
-      .then(({ data }) => {
-        const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
-        flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
-        setOffices(flattened);
-      });
-  }, [fetchExistingMonths]);
 
   const handleClearMonth = async (month: string, office_number: string, count: number) => {
     const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;

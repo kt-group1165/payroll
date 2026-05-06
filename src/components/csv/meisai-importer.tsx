@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,26 +17,32 @@ import { FileDropzone } from "./file-dropzone";
 import { parseMeisaiFiles } from "@/lib/csv/meisai-parser";
 import type { MeisaiRow, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
-import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 interface Office { id: string; office_number: string; name: string; short_name: string; office_type: string; }
 
-export function MeisaiImporter() {
+export interface MeisaiExistingMonth { month: string; office_number: string; count: number }
+
+interface MeisaiImporterProps {
+  initialOffices: Office[];
+  initialExistingMonths: MeisaiExistingMonth[];
+}
+
+export function MeisaiImporter({ initialOffices, initialExistingMonths }: MeisaiImporterProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<CsvParseResult<MeisaiRow>[]>([]);
   const [allData, setAllData] = useState<MeisaiRow[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
-  const [existingMonths, setExistingMonths] = useState<{ month: string; office_number: string; count: number }[]>([]);
+  const [existingMonths, setExistingMonths] = useState<MeisaiExistingMonth[]>(initialExistingMonths);
   const [selectedProcessingMonth, setSelectedProcessingMonth] = useState<string>(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
-  const [offices, setOffices] = useState<Office[]>([]);
-  const [selectedOfficeId, setSelectedOfficeId] = useState("");
+  const [offices] = useState<Office[]>(initialOffices);
+  const [selectedOfficeId, setSelectedOfficeId] = useState(() => (initialOffices.length === 1 ? initialOffices[0].id : ""));
   const [selectedOfficeType, setSelectedOfficeType] = useState<string>("訪問介護");
 
   const fetchExistingMonths = useCallback(async () => {
@@ -64,19 +70,6 @@ export function MeisaiImporter() {
       .sort((a, b) => b.month.localeCompare(a.month) || a.office_number.localeCompare(b.office_number));
     setExistingMonths(sorted);
   }, []);
-
-  // mount 時の async data fetch (HANDOVER §2 参照)。
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchExistingMonths();
-    supabase.from("payroll_offices").select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
-      if (!data) return;
-      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
-      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
-      setOffices(flattened);
-      if (flattened.length === 1) setSelectedOfficeId(flattened[0].id);
-    });
-  }, [fetchExistingMonths]);
 
   const handleClearMonth = async (month: string, office_number: string, count: number) => {
     const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,12 +17,18 @@ import { FileDropzone } from "./file-dropzone";
 import { parseAttendanceFiles } from "@/lib/csv/attendance-parser";
 import type { ParsedAttendance, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
-import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 
 interface Office { id: string; office_number: string; name: string; short_name: string; }
 
-export function AttendanceImporter() {
+export interface AttendanceExistingCount { month: string; office_number: string; count: number }
+
+interface AttendanceImporterProps {
+  initialOffices: Office[];
+  initialExistingCounts: AttendanceExistingCount[];
+}
+
+export function AttendanceImporter({ initialOffices, initialExistingCounts }: AttendanceImporterProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<
     CsvParseResult<ParsedAttendance>[]
@@ -31,9 +37,9 @@ export function AttendanceImporter() {
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
-  const [offices, setOffices] = useState<Office[]>([]);
+  const [offices] = useState<Office[]>(initialOffices);
   // (年月文字列 YYYYMM, 事業所番号) → 件数
-  const [existingCounts, setExistingCounts] = useState<{ month: string; office_number: string; count: number }[]>([]);
+  const [existingCounts, setExistingCounts] = useState<AttendanceExistingCount[]>(initialExistingCounts);
 
   const fetchExistingCounts = useCallback(async () => {
     const counts = new Map<string, number>();
@@ -60,17 +66,6 @@ export function AttendanceImporter() {
       })
     );
   }, []);
-
-  // mount 時の async data fetch (HANDOVER §2 参照)。
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchExistingCounts();
-    supabase.from("payroll_offices").select(`id, office_number, short_name, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
-      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
-      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
-      setOffices(flattened);
-    });
-  }, [fetchExistingCounts]);
 
   const handleClearMonth = async (month: string, office_number: string, count: number) => {
     const label = `${month.slice(0, 4)}年${parseInt(month.slice(4, 6), 10)}月`;
