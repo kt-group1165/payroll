@@ -1,12 +1,9 @@
-"use client";
-
-import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/server";
 import { sortCompanies } from "@/lib/sort-companies";
 import type { Company, CompanyInvoiceFormat } from "@/types/database";
 import { COMPANY_MASTER_JOIN, flattenCompanyMaster } from "@/types/database";
@@ -14,32 +11,19 @@ import { COMPANY_MASTER_JOIN, flattenCompanyMaster } from "@/types/database";
 /**
  * /billing/formats
  * 法人ごとの請求書様式(フォーマット) の一覧。クリックすると編集画面へ。
+ *
+ * Server Component: data fetch を server-side に持ち、useEffect+setState pattern を排除。
  */
-export default function InvoiceFormatsPage() {
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [formats, setFormats] = useState<CompanyInvoiceFormat[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    const [coRes, fmtRes] = await Promise.all([
-      supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
-      supabase.from("payroll_company_invoice_formats").select("*"),
-    ]);
-    if (coRes.data) {
-      const flattened = flattenCompanyMaster(coRes.data as never) as unknown as Company[];
-      setCompanies(sortCompanies(flattened));
-    }
-    if (fmtRes.data) setFormats(fmtRes.data as CompanyInvoiceFormat[]);
-    setLoading(false);
-  }, []);
-
-  // mount 時の async data fetch (HANDOVER §2 参照)。
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchData();
-  }, [fetchData]);
-
+export default async function InvoiceFormatsPage() {
+  const supabase = await createClient();
+  const [coRes, fmtRes] = await Promise.all([
+    supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
+    supabase.from("payroll_company_invoice_formats").select("*"),
+  ]);
+  const companies: Company[] = coRes.data
+    ? sortCompanies(flattenCompanyMaster(coRes.data as never) as unknown as Company[])
+    : [];
+  const formats: CompanyInvoiceFormat[] = (fmtRes.data as CompanyInvoiceFormat[] | null) ?? [];
   const formatByCompany = new Map(formats.map((f) => [f.company_id, f]));
 
   return (
@@ -64,9 +48,7 @@ export default function InvoiceFormatsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {loading ? (
-            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-4">読み込み中…</TableCell></TableRow>
-          ) : companies.length === 0 ? (
+          {companies.length === 0 ? (
             <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-4">法人が登録されていません</TableCell></TableRow>
           ) : (
             companies.map((co) => {
