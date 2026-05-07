@@ -122,12 +122,8 @@ export interface Employee {
   hire_date: string | null;            // 入社年月日
   resignation_date: string | null;     // 退職年月日
   effective_service_months: number;    // 実勤続月数
-  base_salary: number | null;
-  fixed_overtime_hours: number | null;
-  fixed_overtime_pay: number | null;
-  hourly_rate_physical: number | null;
-  hourly_rate_living: number | null;
-  hourly_rate_visit: number | null;
+  // 給与情報は payroll_salary_settings (per-employee 詳細) で管理。
+  // 旧 base_salary / hourly_rate_* / fixed_overtime_* 列は 2026-05-08 削除。
   transport_type: string;
   has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
   social_insurance: boolean;        // 社会保険加入

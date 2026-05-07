@@ -52,7 +52,6 @@ const CSV_HEADERS = [
   "社員番号", "名前", "住所", "事業所番号",
   "在職区分", "入社年月日", "退職年月日", "実勤続月数",
   "職種", "役職", "給与形態",
-  "基本給", "固定残業時間", "固定残業代",
   "移動手段", "介護資格", "社会保険", "有給手当単価",
 ] as const;
 
@@ -70,12 +69,6 @@ const defaultForm = {
   job_type: "訪問介護" as JobType,
   role_type: "パート" as RoleType,
   salary_type: "時給" as SalaryType,
-  base_salary: "",
-  fixed_overtime_hours: "",
-  fixed_overtime_pay: "",
-  hourly_rate_physical: "",
-  hourly_rate_living: "",
-  hourly_rate_visit: "",
   transport_type: "車",
   has_care_qualification: false,
   social_insurance: false,
@@ -148,12 +141,6 @@ type ImportRow = {
   job_type: string;
   role_type: string;
   salary_type: string;
-  base_salary: number | null;
-  fixed_overtime_hours: number | null;
-  fixed_overtime_pay: number | null;
-  hourly_rate_physical: number | null;
-  hourly_rate_living: number | null;
-  hourly_rate_visit: number | null;
   transport_type: string;
   has_care_qualification: boolean;
   social_insurance: boolean;
@@ -230,12 +217,6 @@ export function EmployeesList({
       job_type: form.job_type,
       role_type: form.role_type,
       salary_type: form.salary_type,
-      base_salary: form.base_salary ? parseInt(form.base_salary, 10) : null,
-      fixed_overtime_hours: form.fixed_overtime_hours ? parseFloat(form.fixed_overtime_hours) : null,
-      fixed_overtime_pay: form.fixed_overtime_pay ? parseInt(form.fixed_overtime_pay, 10) : null,
-      hourly_rate_physical: form.hourly_rate_physical ? parseInt(form.hourly_rate_physical, 10) : null,
-      hourly_rate_living: form.hourly_rate_living ? parseInt(form.hourly_rate_living, 10) : null,
-      hourly_rate_visit: form.hourly_rate_visit ? parseInt(form.hourly_rate_visit, 10) : null,
       transport_type: form.transport_type,
       has_care_qualification: form.has_care_qualification,
       social_insurance: form.social_insurance,
@@ -270,12 +251,6 @@ export function EmployeesList({
       job_type: emp.job_type ?? "訪問介護",
       role_type: emp.role_type,
       salary_type: emp.salary_type,
-      base_salary: emp.base_salary?.toString() ?? "",
-      fixed_overtime_hours: emp.fixed_overtime_hours?.toString() ?? "",
-      fixed_overtime_pay: emp.fixed_overtime_pay?.toString() ?? "",
-      hourly_rate_physical: emp.hourly_rate_physical?.toString() ?? "",
-      hourly_rate_living: emp.hourly_rate_living?.toString() ?? "",
-      hourly_rate_visit: emp.hourly_rate_visit?.toString() ?? "",
       transport_type: emp.transport_type,
       has_care_qualification: emp.has_care_qualification ?? false,
       social_insurance: emp.social_insurance ?? false,
@@ -314,9 +289,6 @@ export function EmployeesList({
         emp.job_type ?? "訪問介護",
         emp.role_type,
         emp.salary_type,
-        emp.base_salary?.toString() ?? "",
-        emp.fixed_overtime_hours?.toString() ?? "",
-        emp.fixed_overtime_pay?.toString() ?? "",
         emp.transport_type,
         emp.has_care_qualification ? "1" : "0",
         emp.social_insurance ? "1" : "0",
@@ -368,9 +340,6 @@ export function EmployeesList({
         const errors: string[] = [];
         if (!officeByNumber.has(officeNum)) errors.push(`事業所番号「${officeNum}」が未登録`);
 
-        const toInt = (s: string) => (s === "" ? null : parseInt(s, 10) || null);
-        const toFloat = (s: string) => (s === "" ? null : parseFloat(s) || null);
-
         parsed.push({
           employee_number: empNum,
           name,
@@ -383,12 +352,6 @@ export function EmployeesList({
           job_type: get("職種") || "訪問介護",
           role_type: get("役職") || "パート",
           salary_type: get("給与形態") || "時給",
-          base_salary: toInt(get("基本給")),
-          fixed_overtime_hours: toFloat(get("固定残業時間")),
-          fixed_overtime_pay: toInt(get("固定残業代")),
-          hourly_rate_physical: toInt(get("身体介護時給")),
-          hourly_rate_living: toInt(get("生活援助時給")),
-          hourly_rate_visit: toInt(get("訪問型時給")),
           transport_type: get("移動手段") || "車",
           has_care_qualification: get("介護資格") === "1",
           social_insurance: get("社会保険") === "1",
@@ -487,12 +450,6 @@ export function EmployeesList({
           job_type: jobType,
           role_type: "パート",
           salary_type: salaryType,
-          base_salary: null,
-          fixed_overtime_hours: null,
-          fixed_overtime_pay: null,
-          hourly_rate_physical: null,
-          hourly_rate_living: null,
-          hourly_rate_visit: null,
           transport_type: transportType,
           has_care_qualification: false,
           social_insurance: false,
@@ -534,12 +491,6 @@ export function EmployeesList({
         job_type: row.job_type,
         role_type: row.role_type,
         salary_type: row.salary_type,
-        base_salary: row.base_salary,
-        fixed_overtime_hours: row.fixed_overtime_hours,
-        fixed_overtime_pay: row.fixed_overtime_pay,
-        hourly_rate_physical: row.hourly_rate_physical,
-        hourly_rate_living: row.hourly_rate_living,
-        hourly_rate_visit: row.hourly_rate_visit,
         transport_type: row.transport_type,
         has_care_qualification: row.has_care_qualification,
         social_insurance: row.social_insurance,
@@ -585,12 +536,6 @@ export function EmployeesList({
       : String(av).localeCompare(String(bv), "ja");
     return sortAsc ? cmp : -cmp;
   });
-
-  // ─── 表示制御 ─────────────────────────────────────────────────
-
-  const showMonthlyFields = form.salary_type === "月給";
-  const showFixedOvertimeFields =
-    form.role_type === "提責" || form.role_type === "管理者" || form.role_type === "社員";
 
   // ─── 描画 ─────────────────────────────────────────────────────
 
@@ -744,41 +689,8 @@ export function EmployeesList({
                   </div>
                 </div>
 
-                {showMonthlyFields && (
-                  <div>
-                    <Label>基本給（月額・円）</Label>
-                    <Input
-                      type="number"
-                      value={form.base_salary}
-                      onChange={(e) => setForm({ ...form, base_salary: e.target.value })}
-                      placeholder="例: 250000"
-                    />
-                  </div>
-                )}
-
-                {showMonthlyFields && showFixedOvertimeFields && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label>固定残業時間（h）</Label>
-                      <Input
-                        type="number"
-                        value={form.fixed_overtime_hours}
-                        onChange={(e) => setForm({ ...form, fixed_overtime_hours: e.target.value })}
-                        placeholder="例: 30"
-                      />
-                    </div>
-                    <div>
-                      <Label>固定残業代（円）</Label>
-                      <Input
-                        type="number"
-                        value={form.fixed_overtime_pay}
-                        onChange={(e) => setForm({ ...form, fixed_overtime_pay: e.target.value })}
-                        placeholder="例: 50000"
-                      />
-                    </div>
-                  </div>
-                )}
-
+                {/* 給与額 (基本給/固定残業) は payroll_salary_settings (/salary) で per-employee 管理。
+                   旧 base_salary / fixed_overtime_* 列は 2026-05-08 削除済 */}
 
                 <div>
                   <label className="flex items-center gap-2 cursor-pointer">
