@@ -630,6 +630,55 @@ export function SalaryList({
     return sortDir === "asc" ? cmp : -cmp;
   });
 
+  // ─── 兼務職員の合算行 ─────────────────────────────────────────
+  // 同じ auth_user_id を持つ payroll_employees 行が 2+ ある場合、
+  // 各 row の下に「合算」行を 1 つ挿入。auth_user_id NULL の行は対象外。
+  // フィルタ後（filterOfficeId 適用後）の sorted 内に 2 行以上ある場合のみ表示。
+  type SortedRow =
+    | { kind: "row"; emp: Employee }
+    | { kind: "sum"; key: string; name: string; total: number; basePersonalSalary: number; treatment: number; rowCount: number };
+
+  const authIdCounts = new Map<string, number>();
+  for (const e of sorted) {
+    if (!e.auth_user_id) continue;
+    authIdCounts.set(e.auth_user_id, (authIdCounts.get(e.auth_user_id) ?? 0) + 1);
+  }
+
+  const sortedWithSum: SortedRow[] = [];
+  // auth_user_id ごとの「最後の行」インデックスを把握 → そこで合算行を挿入
+  const lastIdxByAuth = new Map<string, number>();
+  sorted.forEach((e, i) => {
+    if (e.auth_user_id && (authIdCounts.get(e.auth_user_id) ?? 0) >= 2) {
+      lastIdxByAuth.set(e.auth_user_id, i);
+    }
+  });
+  // 各 auth_user_id ごとの合算値を事前計算（合算は固定合計 / 本人給 / 処遇改善計）
+  const sumByAuth = new Map<string, { name: string; total: number; basePersonalSalary: number; treatment: number; rowCount: number }>();
+  for (const e of sorted) {
+    if (!e.auth_user_id || (authIdCounts.get(e.auth_user_id) ?? 0) < 2) continue;
+    const s = settingsMap.get(e.id);
+    const total = s ? fixedTotal(s) : 0;
+    const basePersonal = s?.base_personal_salary ?? 0;
+    const treatment = s
+      ? s.treatment_improvement + s.specific_treatment_improvement + s.treatment_subsidy
+      : 0;
+    const cur = sumByAuth.get(e.auth_user_id) ?? { name: e.name, total: 0, basePersonalSalary: 0, treatment: 0, rowCount: 0 };
+    cur.total += total;
+    cur.basePersonalSalary += basePersonal;
+    cur.treatment += treatment;
+    cur.rowCount += 1;
+    sumByAuth.set(e.auth_user_id, cur);
+  }
+  sorted.forEach((e, i) => {
+    sortedWithSum.push({ kind: "row", emp: e });
+    if (e.auth_user_id && lastIdxByAuth.get(e.auth_user_id) === i) {
+      const sum = sumByAuth.get(e.auth_user_id);
+      if (sum) {
+        sortedWithSum.push({ kind: "sum", key: `sum:${e.auth_user_id}`, ...sum });
+      }
+    }
+  });
+
   const handleSort = (col: SortCol) => {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortCol(col); setSortDir("asc"); }
@@ -735,7 +784,38 @@ export function SalaryList({
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((emp) => {
+                {sortedWithSum.map((row) => {
+                  if (row.kind === "sum") {
+                    return (
+                      <tr
+                        key={row.key}
+                        className="border-b bg-muted/30 italic text-muted-foreground"
+                        title="兼務職員の合算（複数事業所の合計）"
+                      >
+                        <td className="px-4 py-2 font-mono text-xs">—</td>
+                        <td className="px-4 py-2 font-medium">{row.name}（合算）</td>
+                        <td className="px-4 py-2 text-sm">—</td>
+                        <td className="px-4 py-2">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
+                            合算 {row.rowCount}件
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right font-medium">
+                          {row.total > 0 ? row.total.toLocaleString("ja-JP") + "円" : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-sm">
+                          {row.basePersonalSalary > 0 ? row.basePersonalSalary.toLocaleString("ja-JP") + "円" : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-sm">
+                          {row.treatment > 0 ? row.treatment.toLocaleString("ja-JP") + "円" : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-xs">合算</span>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  const emp = row.emp;
                   const s = settingsMap.get(emp.id);
                   const hasSetting = !!s;
                   const total = hasSetting ? fixedTotal(s!) : 0;

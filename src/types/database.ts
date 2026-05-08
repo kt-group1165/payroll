@@ -129,6 +129,8 @@ export interface Employee {
   social_insurance: boolean;        // 社会保険加入
   paid_leave_unit_price: number;    // 有給手当単価（円/時間）
   communication_fee_type: string;   // 通信費タイプ（none / fixed / variable）
+  /** Supabase Auth ユーザーID。兼務職員は同じ auth_user_id を持つ複数行が存在し得る */
+  auth_user_id: string | null;
   created_at: string;
   updated_at: string;
 }

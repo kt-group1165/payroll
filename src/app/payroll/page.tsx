@@ -125,6 +125,8 @@ type Employee = {
   social_insurance: boolean;
   paid_leave_unit_price: number;
   communication_fee_type: string;
+  /** Supabase Auth ユーザーID。兼務職員は同じ auth_user_id の複数行が存在し得る */
+  auth_user_id: string | null;
 };
 
 type SalarySettings = {
@@ -214,6 +216,8 @@ type MonthlyPayroll = {
   employee_name: string;
   role_type: string;
   job_type: string;
+  /** 兼務判定用：同じ auth_user_id の monthlyResults が 2+ 件あれば合算行を表示 */
+  auth_user_id: string | null;
   settings: SalarySettings | null;
   bonus_paid: boolean;
   travel_km: number;        // 手動オーバーライド（0=自動値を使用）
@@ -609,7 +613,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         fetchAllSalarySettings(),
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
@@ -1050,6 +1054,7 @@ export default function PayrollPage() {
             employee_name: e.name,
             role_type: e.role_type,
             job_type: e.job_type ?? "",
+            auth_user_id: e.auth_user_id ?? null,
             settings: settingsWithTenure,
             bonus_paid: false,
             travel_km: 0,
@@ -1149,7 +1154,33 @@ export default function PayrollPage() {
       "固定残業代","残業代","残業代(超過額)","特別報奨金","報奨金","移動費","出張費",
       "育児手当","夜朝時間","夜朝手当","介護超過手当","合計(円)",
     ]];
+    // monthlyResults の通常行 + 兼務職員の合算行（auth_user_id が同じ rows が 2+ ある場合のみ）
+    // 各人物の最終行直後に「（合算）」行を 1 つ追加
+    const authCountsCsv = new Map<string, number>();
     for (const p of monthlyResults) {
+      if (!p.auth_user_id) continue;
+      authCountsCsv.set(p.auth_user_id, (authCountsCsv.get(p.auth_user_id) ?? 0) + 1);
+    }
+    type SumAcc = {
+      name: string;
+      workDays: number; helperDays: number; paidLeave: number; halfLeave: number; specialLeave: number;
+      workHoursMin: number; visitMinExcl: number; visitMinAcc: number; visitMin: number; hrdCount: number;
+      travelKm: number; travelFee: number; commuteKm: number; commuteFee: number;
+      base: number; skill: number; position: number; qual: number; tenure: number;
+      treatImp: number; specTreat: number; treatSubsidy: number; fixedOt: number;
+      otPay: number; otExcess: number; specialBonus: number; bonusPaid: number;
+      travelMove: number; businessTrip: number; childcare: number; yochoHours: number; yochoAmt: number; careOt: number;
+      total: number;
+      rowCount: number;
+    };
+    const sumAcc = new Map<string, SumAcc>();
+    const lastIdxByAuthCsv = new Map<string, number>();
+    monthlyResults.forEach((p, i) => {
+      if (p.auth_user_id && (authCountsCsv.get(p.auth_user_id) ?? 0) >= 2) {
+        lastIdxByAuthCsv.set(p.auth_user_id, i);
+      }
+    });
+    monthlyResults.forEach((p, i) => {
       const s = p.settings;
       const sm = p.summary;
       rows.push([
@@ -1179,7 +1210,69 @@ export default function PayrollPage() {
         String(careOvertimePay(p)),
         String(monthlyGrandTotal(p, otSettings)),
       ]);
-    }
+      // 合算用に蓄積
+      if (p.auth_user_id && (authCountsCsv.get(p.auth_user_id) ?? 0) >= 2) {
+        const cur = sumAcc.get(p.auth_user_id) ?? {
+          name: p.employee_name,
+          workDays: 0, helperDays: 0, paidLeave: 0, halfLeave: 0, specialLeave: 0,
+          workHoursMin: 0, visitMinExcl: 0, visitMinAcc: 0, visitMin: 0, hrdCount: 0,
+          travelKm: 0, travelFee: 0, commuteKm: 0, commuteFee: 0,
+          base: 0, skill: 0, position: 0, qual: 0, tenure: 0,
+          treatImp: 0, specTreat: 0, treatSubsidy: 0, fixedOt: 0,
+          otPay: 0, otExcess: 0, specialBonus: 0, bonusPaid: 0,
+          travelMove: 0, businessTrip: 0, childcare: 0, yochoHours: 0, yochoAmt: 0, careOt: 0,
+          total: 0,
+          rowCount: 0,
+        };
+        cur.workDays += sm.workDays; cur.helperDays += sm.helperDays; cur.paidLeave += sm.paidLeave;
+        cur.halfLeave += sm.halfLeave; cur.specialLeave += sm.specialLeave;
+        cur.workHoursMin += sm.workHoursMin;
+        cur.visitMinExcl += sm.visitMinutesExcludingAccompanied;
+        cur.visitMinAcc += (sm.visitMinutes - sm.visitMinutesExcludingAccompanied);
+        cur.visitMin += sm.visitMinutes;
+        cur.hrdCount += sm.hrdCount;
+        cur.travelKm += effectiveTravelKm(p); cur.travelFee += travelFeeAmount(p);
+        cur.commuteKm += sm.commuteKmTotal; cur.commuteFee += commuteFeeAmount(p);
+        cur.base += s?.base_personal_salary ?? 0;
+        cur.skill += s?.skill_salary ?? 0;
+        cur.position += s?.position_allowance ?? 0;
+        cur.qual += s?.qualification_allowance ?? 0;
+        cur.tenure += s?.tenure_allowance ?? 0;
+        cur.treatImp += s?.treatment_improvement ?? 0;
+        cur.specTreat += s?.specific_treatment_improvement ?? 0;
+        cur.treatSubsidy += s?.treatment_subsidy ?? 0;
+        cur.fixedOt += s?.fixed_overtime_pay ?? 0;
+        cur.otPay += computeOvertimePay(p, otSettings);
+        cur.otExcess += overtimeExcessPay(p, otSettings);
+        cur.specialBonus += s?.special_bonus ?? 0;
+        cur.bonusPaid += p.bonus_paid ? (s?.bonus_amount ?? 0) : 0;
+        cur.travelMove += travelFeeAmount(p);
+        cur.businessTrip += p.business_trip_fee;
+        cur.childcare += p.childcare_allowance;
+        cur.yochoHours += p.yocho_hours;
+        cur.yochoAmt += yochoAllowance(p);
+        cur.careOt += careOvertimePay(p);
+        cur.total += monthlyGrandTotal(p, otSettings);
+        cur.rowCount += 1;
+        sumAcc.set(p.auth_user_id, cur);
+        // 最終行で合算を出力
+        if (lastIdxByAuthCsv.get(p.auth_user_id) === i) {
+          rows.push([
+            "—", `${cur.name}（合算）`, `合算${cur.rowCount}件`,
+            String(cur.workDays), String(cur.helperDays), String(cur.paidLeave), String(cur.halfLeave), String(cur.specialLeave),
+            formatWorkHours(cur.workHoursMin),
+            formatMinutes(cur.visitMinExcl), formatMinutes(cur.visitMinAcc), formatMinutes(cur.visitMin), String(cur.hrdCount),
+            String(cur.travelKm), String(cur.travelFee), String(cur.commuteKm), String(cur.commuteFee),
+            String(cur.base), String(cur.skill), String(cur.position), String(cur.qual), String(cur.tenure),
+            String(cur.treatImp), String(cur.specTreat), String(cur.treatSubsidy),
+            String(cur.fixedOt), String(cur.otPay), String(cur.otExcess), String(cur.specialBonus), String(cur.bonusPaid),
+            String(cur.travelMove), String(cur.businessTrip),
+            String(cur.childcare), String(cur.yochoHours), String(cur.yochoAmt), String(cur.careOt),
+            String(cur.total),
+          ]);
+        }
+      }
+    });
     downloadCsv(`給与計算_${label}_月給者.csv`, rows);
   }
 
@@ -1198,6 +1291,45 @@ export default function PayrollPage() {
   }, 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
   const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p, otSettings), 0);
+
+  // ─── 兼務職員の合算行（月給者タブ） ───────────────────────────
+  // 同じ auth_user_id を持つ MonthlyPayroll が 2+ 件あれば、
+  // 各 row の下に「合算」行を 1 つ挿入。auth_user_id NULL の行は対象外。
+  // 通常 monthlyResults は 1 事業所内のため、同じ auth_user_id が 2+ 件
+  // 出るケースは限定的だが、将来複数事業所をまたぐ表示にしても破綻しないよう実装。
+  type MonthlyRow =
+    | { kind: "row"; p: MonthlyPayroll }
+    | { kind: "sum"; key: string; name: string; total: number; basePersonalSalary: number; visitMinutes: number; workHoursMin: number; rowCount: number };
+  const monthlyAuthCounts = new Map<string, number>();
+  for (const p of monthlyResults) {
+    if (!p.auth_user_id) continue;
+    monthlyAuthCounts.set(p.auth_user_id, (monthlyAuthCounts.get(p.auth_user_id) ?? 0) + 1);
+  }
+  const monthlySumByAuth = new Map<string, { name: string; total: number; basePersonalSalary: number; visitMinutes: number; workHoursMin: number; rowCount: number }>();
+  for (const p of monthlyResults) {
+    if (!p.auth_user_id || (monthlyAuthCounts.get(p.auth_user_id) ?? 0) < 2) continue;
+    const cur = monthlySumByAuth.get(p.auth_user_id) ?? { name: p.employee_name, total: 0, basePersonalSalary: 0, visitMinutes: 0, workHoursMin: 0, rowCount: 0 };
+    cur.total += monthlyGrandTotal(p, otSettings);
+    cur.basePersonalSalary += p.settings?.base_personal_salary ?? 0;
+    cur.visitMinutes += p.summary.visitMinutes;
+    cur.workHoursMin += p.summary.workHoursMin;
+    cur.rowCount += 1;
+    monthlySumByAuth.set(p.auth_user_id, cur);
+  }
+  const monthlyLastIdxByAuth = new Map<string, number>();
+  monthlyResults.forEach((p, i) => {
+    if (p.auth_user_id && (monthlyAuthCounts.get(p.auth_user_id) ?? 0) >= 2) {
+      monthlyLastIdxByAuth.set(p.auth_user_id, i);
+    }
+  });
+  const monthlyRowsWithSum: MonthlyRow[] = [];
+  monthlyResults.forEach((p, i) => {
+    monthlyRowsWithSum.push({ kind: "row", p });
+    if (p.auth_user_id && monthlyLastIdxByAuth.get(p.auth_user_id) === i) {
+      const sum = monthlySumByAuth.get(p.auth_user_id);
+      if (sum) monthlyRowsWithSum.push({ kind: "sum", key: `sum:${p.auth_user_id}`, ...sum });
+    }
+  });
 
   // ─── 描画 ─────────────────────────────────────────────────────
 
@@ -1726,7 +1858,42 @@ export default function PayrollPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {monthlyResults.map((p) => {
+                      {monthlyRowsWithSum.map((row) => {
+                        if (row.kind === "sum") {
+                          return (
+                            <tr
+                              key={row.key}
+                              className="border-b bg-muted/30 italic text-muted-foreground"
+                              title="兼務職員の合算（複数事業所の合計）"
+                            >
+                              <td className="px-3 py-2 sticky left-0 z-10 bg-muted/30">
+                                <div className="flex flex-col">
+                                  <span className="font-mono text-xs">—</span>
+                                  <span className="font-medium">{row.name}（合算）</span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">合算 {row.rowCount}件</span></td>
+                              {/* 出勤日数～HRD: 7列 */}
+                              <td></td><td></td><td></td><td></td><td></td>
+                              <td className="px-3 py-2 text-right">{formatWorkHours(row.workHoursMin)}</td>
+                              <td></td><td></td>
+                              <td className="px-3 py-2 text-right">{row.visitMinutes ? formatMinutes(row.visitMinutes) : "—"}</td>
+                              <td></td>
+                              {/* 出張距離・通勤距離 */}
+                              <td></td><td></td>
+                              {/* 本人給 */}
+                              <td className="px-3 py-2 text-right">{row.basePersonalSalary > 0 ? yen(row.basePersonalSalary) : "—"}</td>
+                              {/* 職能給, 役職手当, 資格手当, 勤続手当, 処遇改善, 特定処遇, 処遇補助金, 固定残業代, 残業代, 残業代超過, 特別報奨金, 介護超過手当, 出張手当, 通勤手当, 育児手当: 15 列空 */}
+                              <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                              <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                              {/* 合計 */}
+                              <td className="px-3 py-2 text-right font-bold">{yen(row.total)}</td>
+                              {/* 展開 chevron 列 */}
+                              <td></td>
+                            </tr>
+                          );
+                        }
+                        const p = row.p;
                         const s  = p.settings;
                         const sm = p.summary;
                         const total = monthlyGrandTotal(p, otSettings);
