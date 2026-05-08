@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -219,16 +219,59 @@ function CategoriesTab({ initialCategories }: { initialCategories: ServiceCatego
 function MappingsTab({
   initialMappings,
   initialCategories,
-  initialUnmapped,
 }: {
   initialMappings: ServiceTypeMapping[];
   initialCategories: ServiceCategory[];
-  initialUnmapped: UnmappedService[];
 }) {
   const router = useRouter();
   const mappings = initialMappings;
   const categories = initialCategories;
-  const unmapped = initialUnmapped;
+  // 未マッピング集計は重い (service_records 全件 scan) ため client 側で lazy fetch。
+  // 初回 SSR を高速化する。
+  const [unmapped, setUnmapped] = useState<UnmappedService[]>([]);
+  const [unmappedLoading, setUnmappedLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const mappedCodes = new Set(mappings.map((m) => m.service_code));
+      const codeNameMap = new Map<string, string>();
+      const pageSize = 1000;
+      let from = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("payroll_service_records")
+          .select("service_code,service_type")
+          .order("id")
+          .range(from, from + pageSize - 1);
+        if (cancelled) return;
+        if (!data || data.length === 0) break;
+        for (const r of data) {
+          const row = r as { service_code: string; service_type: string };
+          const code = row.service_code;
+          const name = row.service_type;
+          if (code && code.trim() && !codeNameMap.has(code)) {
+            codeNameMap.set(code, name || "");
+          }
+        }
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      if (cancelled) return;
+      const result: UnmappedService[] = [];
+      for (const [code, name] of codeNameMap) {
+        if (!mappedCodes.has(code)) {
+          result.push({ service_code: code, service_name: name });
+        }
+      }
+      result.sort((a, b) => a.service_code.localeCompare(b.service_code));
+      setUnmapped(result);
+      setUnmappedLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mappings]);
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({
     service_code: "",
@@ -407,8 +450,13 @@ function MappingsTab({
 
   return (
     <div className="space-y-4">
-      {/* 未マッピング警告 */}
-      {unmapped.length > 0 && (
+      {/* 未マッピング警告 (client-side lazy fetch) */}
+      {unmappedLoading && (
+        <div className="border border-muted bg-muted/30 rounded-md p-3 text-sm text-muted-foreground">
+          未マッピングコードを集計中…
+        </div>
+      )}
+      {!unmappedLoading && unmapped.length > 0 && (
         <div className="border border-orange-200 bg-orange-50 rounded-md p-4 space-y-3">
           <p className="text-sm font-medium">
             未マッピングのサービスコードが {unmapped.length} 件あります
@@ -975,13 +1023,11 @@ function RatesTab({
 export function ServicesContent({
   categories,
   mappings,
-  unmapped,
   rates,
   offices,
 }: {
   categories: ServiceCategory[];
   mappings: ServiceTypeMapping[];
-  unmapped: UnmappedService[];
   rates: CategoryHourlyRate[];
   offices: Office[];
 }) {
@@ -1001,7 +1047,6 @@ export function ServicesContent({
           <MappingsTab
             initialMappings={mappings}
             initialCategories={categories}
-            initialUnmapped={unmapped}
           />
         </TabsContent>
         <TabsContent value="rates" className="mt-4">

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import {
   type AttendanceRecord,
@@ -21,6 +22,11 @@ type OfficeRow = { office_number: string; name: string; work_week_start: number 
  * data を props で渡す。月変更は client から router.push(`?year=Y&month=M`) で。
  *
  * year/month 未指定の場合は monthOptions から最新月を自動選択。
+ *
+ * Perf: monthOptions は payroll_import_batches (attendance タイプ) から導出。
+ * 旧: payroll_attendance_records 全件 paginate で year/month 抽出 (10+ round trips)
+ * 新: import_batches 1 ショット (sub-500行)。/payroll, /distance と同じパターン。
+ * 並列化: monthOptions + employees(count+並列) + offices を Promise.all で同時発火。
  */
 export default async function AttendancePage({
   searchParams,
@@ -30,27 +36,39 @@ export default async function AttendancePage({
   const supabase = await createClient();
   const params = await searchParams;
 
-  // 利用可能な月一覧 (PostgREST 1000 行上限回避: paginate)
+  // 利用可能な月一覧: import_batches から (高速)
+  // 同時に employees / offices も並列発火 (どの月を選ぶかに依存しないため)
+  const [batchRes, allEmployees, offRes] = await Promise.all([
+    supabase
+      .from("payroll_import_batches")
+      .select("processing_month")
+      .eq("import_type", "attendance")
+      .eq("status", "completed")
+      .gt("record_count", 0),
+    fetchAllPagesParallel<Employee>(
+      () => supabase.from("payroll_employees").select("*", { count: "exact", head: true }),
+      (from, to) =>
+        supabase
+          .from("payroll_employees")
+          .select("employee_number,name,role_type,salary_type")
+          .range(from, to) as unknown as PromiseLike<{ data: Employee[] | null }>,
+    ),
+    supabase
+      .from("payroll_offices")
+      .select(`office_number, work_week_start, ${OFFICE_MASTER_JOIN}`),
+  ]);
+
   const seen = new Set<string>();
   const monthOptions: MonthOption[] = [];
-  {
-    const PAGE = 1000;
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
-        .from("payroll_attendance_records")
-        .select("year,month")
-        .range(from, from + PAGE - 1);
-      if (!data || data.length === 0) break;
-      for (const r of data as { year: number; month: number }[]) {
-        const key = `${r.year}-${r.month}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          monthOptions.push({ year: r.year, month: r.month });
-        }
-      }
-      if (data.length < PAGE) break;
-      from += PAGE;
+  for (const r of (batchRes.data ?? []) as { processing_month: string }[]) {
+    if (!r.processing_month || r.processing_month.length < 6) continue;
+    const year = parseInt(r.processing_month.slice(0, 4), 10);
+    const month = parseInt(r.processing_month.slice(4, 6), 10);
+    if (!year || !month) continue;
+    const key = `${year}-${month}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      monthOptions.push({ year, month });
     }
   }
   monthOptions.sort((a, b) => (b.year !== a.year ? b.year - a.year : b.month - a.month));
@@ -67,45 +85,26 @@ export default async function AttendancePage({
   let weekStart = 0;
 
   if (selectedYear && selectedMonth) {
-    // employees (paginate)
-    const allEmployees: Employee[] = [];
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
-        .from("payroll_employees")
-        .select("employee_number,name,role_type,salary_type")
-        .range(from, from + 999);
-      if (!data || data.length === 0) break;
-      allEmployees.push(...(data as Employee[]));
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-
-    // attendance_records は (employees × 1ヶ月の日数) で 1000 行を超え得るため paginate
-    const records: AttendanceRecord[] = [];
-    {
-      const PAGE = 1000;
-      let attFrom = 0;
-      while (true) {
-        const { data } = await supabase
+    // attendance_records は (employees × 1ヶ月の日数) で 1000 行を超え得るため
+    // count + Promise.all で並列取得
+    const records = await fetchAllPagesParallel<AttendanceRecord>(
+      () =>
+        supabase
+          .from("payroll_attendance_records")
+          .select("*", { count: "exact", head: true })
+          .eq("year", selectedYear)
+          .eq("month", selectedMonth),
+      (from, to) =>
+        supabase
           .from("payroll_attendance_records")
           .select("*")
           .eq("year", selectedYear)
           .eq("month", selectedMonth)
           .order("employee_number")
           .order("day")
-          .range(attFrom, attFrom + PAGE - 1);
-        if (!data || data.length === 0) break;
-        records.push(...(data as AttendanceRecord[]));
-        if (data.length < PAGE) break;
-        attFrom += PAGE;
-      }
-    }
-    const { data: offData } = await supabase
-      .from("payroll_offices")
-      .select(`office_number, work_week_start, ${OFFICE_MASTER_JOIN}`);
+          .range(from, to) as unknown as PromiseLike<{ data: AttendanceRecord[] | null }>,
+    );
 
-    const offRes = { data: offData };
     const empMap = new Map(allEmployees.map((e) => [e.employee_number, e]));
     const officeRows = (flattenOfficeMaster(offRes.data as never) as unknown as OfficeRow[]);
     const officeMap = new Map(officeRows.map((o) => [o.office_number, o]));

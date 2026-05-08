@@ -4,7 +4,6 @@ import {
   ServicesContent,
   type ServiceCategory,
   type ServiceTypeMapping,
-  type UnmappedService,
   type CategoryHourlyRate,
   type Office,
 } from "./services-content";
@@ -14,16 +13,15 @@ import {
  * サービスマスタ (3 タブ: 類型 / マッピング / 時給設定)。
  *
  * Server Component: 各タブの初期データを server-side で取得し、ServicesContent
- * (client) に props で渡す。各タブの保存・削除後は client 側で
- * `router.refresh()` を呼んで RSC を再評価。
+ * (client) に props で渡す。各タブの保存・削除後は client 側で `router.refresh()`
+ * を呼んで RSC を再評価。
  *
- * 未マッピング集計 (service_records 全件 paginate して service_type_mappings に
- * 含まれない service_code を抽出) も server-side で実施。1000 件単位で
- * paginate するため初回 SSR が data 量に応じて遅くなる点に注意。
+ * Perf: 旧 SSR 実装は payroll_service_records (年単位で数万行) を全件 paginate して
+ * 「未マッピングコード」を計算していたため、初回 SSR が data 量に応じて何秒も遅延した。
+ * 未マッピング集計は MappingsTab を開いたときに client 側 (lazy) で取得するよう移行。
  */
 export default async function ServicesPage() {
   const supabase = await createClient();
-  const pageSize = 1000;
 
   const [catRes, mapRes, rateRes, offRes] = await Promise.all([
     supabase.from("payroll_service_categories").select("*").order("sort_order"),
@@ -50,41 +48,11 @@ export default async function ServicesPage() {
     offices.sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }
 
-  // 未マッピング集計: service_records 全件 paginate
-  const mappedCodes = new Set(mappings.map((m) => m.service_code));
-  const codeNameMap = new Map<string, string>();
-  let from = 0;
-  while (true) {
-    const { data } = await supabase
-      .from("payroll_service_records")
-      .select("service_code,service_type")
-      .order("id")
-      .range(from, from + pageSize - 1);
-    if (!data || data.length === 0) break;
-    for (const r of data) {
-      const row = r as { service_code: string; service_type: string };
-      const code = row.service_code;
-      const name = row.service_type;
-      if (code && code.trim() && !codeNameMap.has(code)) {
-        codeNameMap.set(code, name || "");
-      }
-    }
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  const unmapped: UnmappedService[] = [];
-  for (const [code, name] of codeNameMap) {
-    if (!mappedCodes.has(code)) {
-      unmapped.push({ service_code: code, service_name: name });
-    }
-  }
-  unmapped.sort((a, b) => a.service_code.localeCompare(b.service_code));
-
+  // 未マッピングは MappingsTab の useEffect で fetch (初回 SSR を高速化)
   return (
     <ServicesContent
       categories={categories}
       mappings={mappings}
-      unmapped={unmapped}
       rates={rates}
       offices={offices}
     />

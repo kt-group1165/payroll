@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { sortCompanies } from "@/lib/sort-companies";
 import {
   COMPANY_MASTER_JOIN,
@@ -57,12 +58,32 @@ export default async function BillingPage({
   const supabase = await createClient();
   const params = await searchParams;
 
-  // 法人 + 事業所
-  const [coRes, offRes] = await Promise.all([
+  // 法人 + 事業所 + 利用者 (paginate parallel) + 月候補 (paginate parallel) を全部
+  // 並列発火。companies / offices / clients / monthRows は互いに独立。
+  const [coRes, offRes, clients, monthRows] = await Promise.all([
     supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
     supabase
       .from("payroll_offices")
       .select(`id, office_number, short_name, company_id, ${OFFICE_MASTER_JOIN}`),
+    fetchAllPagesParallel<Client>(
+      () => supabase.from("payroll_clients").select("*", { count: "exact", head: true }),
+      (from, to) =>
+        supabase
+          .from("payroll_clients")
+          .select("*")
+          .range(from, to) as unknown as PromiseLike<{ data: Client[] | null }>,
+    ),
+    fetchAllPagesParallel<{ billing_month: string }>(
+      () =>
+        supabase
+          .from("payroll_billing_amount_items")
+          .select("billing_month", { count: "exact", head: true }),
+      (from, to) =>
+        supabase
+          .from("payroll_billing_amount_items")
+          .select("billing_month")
+          .range(from, to) as unknown as PromiseLike<{ data: { billing_month: string }[] | null }>,
+    ),
   ]);
   const companies: Company[] = coRes.data
     ? sortCompanies(flattenCompanyMaster(coRes.data as never) as unknown as Company[])
@@ -71,36 +92,9 @@ export default async function BillingPage({
     ? (flattenOfficeMaster(offRes.data as never) as unknown as OfficeLite[])
     : [];
 
-  // 利用者 (paginate)
-  const clients: Client[] = [];
-  {
-    let from = 0;
-    while (true) {
-      const { data } = await supabase.from("payroll_clients").select("*").range(from, from + 999);
-      if (!data || data.length === 0) break;
-      clients.push(...(data as Client[]));
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-  }
-
-  // 月候補
-  const availableMonths: string[] = [];
-  {
-    const monthsSet = new Set<string>();
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
-        .from("payroll_billing_amount_items")
-        .select("billing_month")
-        .range(from, from + 999);
-      if (!data || data.length === 0) break;
-      for (const r of data) monthsSet.add((r as { billing_month: string }).billing_month);
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-    availableMonths.push(...[...monthsSet].sort().reverse());
-  }
+  const monthsSet = new Set<string>();
+  for (const r of monthRows) monthsSet.add(r.billing_month);
+  const availableMonths: string[] = [...monthsSet].sort().reverse();
 
   // filter values: URL 優先、未指定時は default
   const selectedCompanyId =
@@ -128,38 +122,38 @@ export default async function BillingPage({
     const companyOfficeNums = companyOffices.map((o) => o.office_number);
 
     if (companyOfficeNums.length > 0) {
-      const allAmounts: AmountRow[] = [];
-      let from = 0;
-      while (true) {
-        const { data } = await supabase
-          .from("payroll_billing_amount_items")
-          .select(
-            "segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status",
-          )
-          .in("office_number", companyOfficeNums)
-          .range(from, from + 999);
-        if (!data || data.length === 0) break;
-        allAmounts.push(...(data as AmountRow[]));
-        if (data.length < 1000) break;
-        from += 1000;
-      }
-
-      // payroll_payments は法人単位の累積データで 1000 行を超え得る (silent な金額誤差を防ぐため paginate)
-      const payments: Payment[] = [];
-      {
-        let from = 0;
-        while (true) {
-          const { data } = await supabase
-            .from("payroll_payments")
-            .select("*")
-            .eq("company_id", selectedCompanyId)
-            .range(from, from + 999);
-          if (!data || data.length === 0) break;
-          payments.push(...(data as Payment[]));
-          if (data.length < 1000) break;
-          from += 1000;
-        }
-      }
+      // amounts と payments は互いに独立なので Promise.all で並列発火。
+      // それぞれ count + 並列 range で page-loop の順次 wait を避ける。
+      const [allAmounts, payments] = await Promise.all([
+        fetchAllPagesParallel<AmountRow>(
+          () =>
+            supabase
+              .from("payroll_billing_amount_items")
+              .select("billing_month", { count: "exact", head: true })
+              .in("office_number", companyOfficeNums),
+          (from, to) =>
+            supabase
+              .from("payroll_billing_amount_items")
+              .select(
+                "segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status",
+              )
+              .in("office_number", companyOfficeNums)
+              .range(from, to) as unknown as PromiseLike<{ data: AmountRow[] | null }>,
+        ),
+        fetchAllPagesParallel<Payment>(
+          () =>
+            supabase
+              .from("payroll_payments")
+              .select("*", { count: "exact", head: true })
+              .eq("company_id", selectedCompanyId),
+          (from, to) =>
+            supabase
+              .from("payroll_payments")
+              .select("*")
+              .eq("company_id", selectedCompanyId)
+              .range(from, to) as unknown as PromiseLike<{ data: Payment[] | null }>,
+        ),
+      ]);
 
       const companyClients = clients.filter((c) => companyOfficeIds.has(c.office_id));
       const clientByNumber = new Map<string, Client>();

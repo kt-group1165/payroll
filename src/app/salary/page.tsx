@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import {
   OFFICE_MASTER_JOIN,
   flattenOfficeMaster,
@@ -51,30 +52,32 @@ type OvertimeSetting = {
  * Server Component: employees / offices / salary_settings / overtime_settings の
  * 4 dataset を server-side で取得し、`<SalaryList>` (client component) に initial
  * props で渡す。selectedId 変化時の個別 settings fetch は client 側で実行。
+ *
+ * Perf: 4 fetch を Promise.all で並列。employees / salary_settings は count + 並列
+ * range で page-loop の順次 wait を避ける。
  */
 export default async function SalaryPage() {
   const supabase = await createClient();
-  const pageSize = 1000;
-
-  async function fetchAllPages<T>(table: string, select = "*", orderCol?: string): Promise<T[]> {
-    const all: T[] = [];
-    let from = 0;
-    while (true) {
-      let q = supabase.from(table).select(select).range(from, from + pageSize - 1);
-      if (orderCol) q = q.order(orderCol);
-      const { data } = await q;
-      if (!data || data.length === 0) break;
-      all.push(...(data as unknown as T[]));
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return all;
-  }
 
   const [emps, offRes, sals, otRes] = await Promise.all([
-    fetchAllPages<Employee>("payroll_employees", "*", "employee_number"),
+    fetchAllPagesParallel<Employee>(
+      () => supabase.from("payroll_employees").select("*", { count: "exact", head: true }),
+      (from, to) =>
+        supabase
+          .from("payroll_employees")
+          .select("*")
+          .order("employee_number")
+          .range(from, to) as unknown as PromiseLike<{ data: Employee[] | null }>,
+    ),
     supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`),
-    fetchAllPages<SalarySettings>("payroll_salary_settings"),
+    fetchAllPagesParallel<SalarySettings>(
+      () => supabase.from("payroll_salary_settings").select("*", { count: "exact", head: true }),
+      (from, to) =>
+        supabase
+          .from("payroll_salary_settings")
+          .select("*")
+          .range(from, to) as unknown as PromiseLike<{ data: SalarySettings[] | null }>,
+    ),
     supabase.from("payroll_overtime_settings").select("*"),
   ]);
 
