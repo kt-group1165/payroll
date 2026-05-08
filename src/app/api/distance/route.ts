@@ -20,12 +20,27 @@ export async function POST(request: Request) {
     (p, i, arr) => arr.findIndex((x) => x.origin === p.origin && x.destination === p.destination) === i
   );
   const uniqueOrigins = [...new Set(uniquePairs.map((p) => p.origin))];
-  const { data: cachedRows } = await supabase
-    .from("payroll_distance_cache")
-    .select("origin_address,destination_address,distance_meters,duration_seconds")
-    .in("origin_address", uniqueOrigins);
+  // payroll_distance_cache は origin × destination のクロス積で蓄積されるため、
+  // 同一 origin に対して 1000 件超のキャッシュが残る可能性あり。PostgREST 上限回避のため paginate。
+  type CacheRow = { origin_address: string; destination_address: string; distance_meters: number; duration_seconds: number };
+  const cachedRows: CacheRow[] = [];
+  {
+    const PAGE = 1000;
+    let cFrom = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("payroll_distance_cache")
+        .select("origin_address,destination_address,distance_meters,duration_seconds")
+        .in("origin_address", uniqueOrigins)
+        .range(cFrom, cFrom + PAGE - 1);
+      if (!data || data.length === 0) break;
+      cachedRows.push(...(data as CacheRow[]));
+      if (data.length < PAGE) break;
+      cFrom += PAGE;
+    }
+  }
   const cacheMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
-    (cachedRows ?? []).map((r: { origin_address: string; destination_address: string; distance_meters: number; duration_seconds: number }) => [
+    cachedRows.map((r) => [
       `${r.origin_address}|||${r.destination_address}`,
       { distance_meters: r.distance_meters, duration_seconds: r.duration_seconds },
     ])

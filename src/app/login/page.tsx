@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { isValidLoginId, loginIdToSyntheticEmail } from "@/lib/login_id";
 
 export default function LoginPage() {
   return (
@@ -14,7 +15,7 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -22,8 +23,21 @@ function LoginForm() {
   const nextPath = searchParams.get("next") || "/";
   const supabase = createClient();
 
+  function resolveEmail(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.includes("@")) return trimmed; // 実 email
+    if (isValidLoginId(trimmed)) return loginIdToSyntheticEmail(trimmed);
+    return null;
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    const email = resolveEmail(identifier);
+    if (!email) {
+      toast.error("ログイン ID または メールアドレスの形式が正しくありません");
+      return;
+    }
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
@@ -45,16 +59,16 @@ function LoginForm() {
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">
-              メールアドレス
+              ログイン ID または メールアドレス
             </label>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               required
-              autoComplete="email"
+              autoComplete="username"
               className="mt-1 w-full rounded-md border px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              placeholder="example@company.com"
+              placeholder="staff001 または name@example.com"
             />
           </div>
           <div>

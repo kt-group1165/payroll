@@ -532,15 +532,26 @@ function BulkIssueButton({
       toast.error("法人と月を選択してください");
       return;
     }
-    // 対象 (scheduled 行) を取得
-    const { data: targets, error: e1 } = await supabase
-      .from("payroll_billing_amount_items")
-      .select("id, amount")
-      .eq("billing_month", billingMonth)
-      .in("office_number", officeNumbers)
-      .eq("billing_status", "scheduled");
-    if (e1) { toast.error(`取得エラー: ${e1.message}`); return; }
-    const list = (targets ?? []) as { id: string; amount: number }[];
+    // 対象 (scheduled 行) を取得 — 1 month × 複数 office で 1000 行超え得るため paginate
+    const list: { id: string; amount: number }[] = [];
+    {
+      const PAGE = 1000;
+      let from = 0;
+      while (true) {
+        const { data, error: e1 } = await supabase
+          .from("payroll_billing_amount_items")
+          .select("id, amount")
+          .eq("billing_month", billingMonth)
+          .in("office_number", officeNumbers)
+          .eq("billing_status", "scheduled")
+          .range(from, from + PAGE - 1);
+        if (e1) { toast.error(`取得エラー: ${e1.message}`); return; }
+        if (!data || data.length === 0) break;
+        list.push(...(data as { id: string; amount: number }[]));
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+    }
     if (list.length === 0) {
       toast.info("一括発行の対象（未発行）データがありません");
       return;
