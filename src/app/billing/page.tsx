@@ -144,11 +144,22 @@ export default async function BillingPage({
         from += 1000;
       }
 
-      const { data: payData } = await supabase
-        .from("payroll_payments")
-        .select("*")
-        .eq("company_id", selectedCompanyId);
-      const payments = (payData ?? []) as Payment[];
+      // payroll_payments は法人単位の累積データで 1000 行を超え得る (silent な金額誤差を防ぐため paginate)
+      const payments: Payment[] = [];
+      {
+        let from = 0;
+        while (true) {
+          const { data } = await supabase
+            .from("payroll_payments")
+            .select("*")
+            .eq("company_id", selectedCompanyId)
+            .range(from, from + 999);
+          if (!data || data.length === 0) break;
+          payments.push(...(data as Payment[]));
+          if (data.length < 1000) break;
+          from += 1000;
+        }
+      }
 
       const companyClients = clients.filter((c) => companyOfficeIds.has(c.office_id));
       const clientByNumber = new Map<string, Client>();
