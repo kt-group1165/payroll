@@ -86,13 +86,25 @@ export default function DistancePage() {
       const empWithAddress = employees.filter((e) => e.address?.trim());
       if (empWithAddress.length === 0) { toast.error("住所が登録されている職員がいません"); return; }
 
-      // 2. 利用者住所マップ
+      // 2. 利用者住所マップ (1 事業所でも 1000 行を超え得るため paginate)
       setProgress("利用者情報を取得中...");
-      const { data: clientData } = await supabase
-        .from("payroll_clients")
-        .select("client_number,address")
-        .eq("office_id", selectedOfficeId);
-      const clientMap = new Map((clientData ?? []).map((c: Client) => [c.client_number, c.address]));
+      const allClients: Client[] = [];
+      {
+        const PAGE = 1000;
+        let cFrom = 0;
+        while (true) {
+          const { data } = await supabase
+            .from("payroll_clients")
+            .select("client_number,address")
+            .eq("office_id", selectedOfficeId)
+            .range(cFrom, cFrom + PAGE - 1);
+          if (!data || data.length === 0) break;
+          allClients.push(...(data as Client[]));
+          if (data.length < PAGE) break;
+          cFrom += PAGE;
+        }
+      }
+      const clientMap = new Map(allClients.map((c) => [c.client_number, c.address]));
 
       // 3. サービス実績取得（ページング）
       setProgress("サービス実績を取得中...");

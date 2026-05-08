@@ -586,6 +586,24 @@ export default function PayrollPage() {
         return { data: all };
       };
 
+      // attendance_records は 1事業所×1ヶ月でも 1000 行を超え得るため paginate
+      const fetchAllAttendance = async (): Promise<{ data: AttendanceRecord[] }> => {
+        const all: AttendanceRecord[] = [];
+        let aFrom = 0;
+        while (true) {
+          const { data } = await supabase.from("payroll_attendance_records")
+            .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
+            .eq("year", year).eq("month", month)
+            .eq("office_number", selectedOffice.office_number)
+            .range(aFrom, aFrom + 999);
+          if (!data || data.length === 0) break;
+          all.push(...(data as AttendanceRecord[]));
+          if (data.length < 1000) break;
+          aFrom += 1000;
+        }
+        return { data: all };
+      };
+
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
@@ -593,10 +611,7 @@ export default function PayrollPage() {
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
         supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         fetchAllSalarySettings(),
-        supabase.from("payroll_attendance_records")
-          .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
-          .eq("year", year).eq("month", month)
-          .eq("office_number", selectedOffice.office_number),
+        fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
       ]);
 
@@ -906,13 +921,26 @@ export default function PayrollPage() {
           (e) => e.salary_type === "時給" && e.job_type === "訪問介護" && e.address?.trim()
         );
         if (visitCareEmps.length > 0) {
-          const { data: clientData } = await supabase
-            .from("payroll_clients")
-            .select("client_number,address,map_latitude,map_longitude")
-            .eq("office_id", selectedOfficeId);
+          // payroll_clients は 1 事業所で 1000 行を超え得るため paginate
+          const clientData: { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }[] = [];
+          {
+            const PAGE = 1000;
+            let cFrom = 0;
+            while (true) {
+              const { data } = await supabase
+                .from("payroll_clients")
+                .select("client_number,address,map_latitude,map_longitude")
+                .eq("office_id", selectedOfficeId)
+                .range(cFrom, cFrom + PAGE - 1);
+              if (!data || data.length === 0) break;
+              clientData.push(...(data as { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }[]));
+              if (data.length < PAGE) break;
+              cFrom += PAGE;
+            }
+          }
           // マップ用座標が設定されていればそちらを優先（"lat,lng" 文字列としてDistance Matrix APIに渡せる）
           const clientMap = new Map(
-            (clientData ?? []).map((c: { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }) => {
+            clientData.map((c) => {
               const addr = (c.map_latitude != null && c.map_longitude != null)
                 ? `${c.map_latitude},${c.map_longitude}`
                 : c.address;
