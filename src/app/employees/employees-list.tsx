@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -190,6 +191,116 @@ export function EmployeesList({
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  // ─── 招待発行 modal state ──────────────────────────────────────
+  // payroll_offices.office_id は master offices.id への FK。
+  // 招待 API は master offices.id を要求する (consume 時 user_offices.office_id =
+  // master id で INSERT されるため)。
+  const masterOfficeOptions = useMemo(
+    () => offices.filter((o): o is Office & { office_id: string } => !!o.office_id),
+    [offices],
+  );
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [inviteForm, setInviteForm] = useState<{
+    display_name: string;
+    login_id: string;
+    role: "member" | "office_admin";
+    office_id: string;
+  }>({
+    display_name: "",
+    login_id: "",
+    role: "member",
+    office_id: "",
+  });
+  const [inviteResult, setInviteResult] = useState<{
+    invite_url: string;
+    initial_password: string;
+    login_id: string | null;
+    login_id_was_renamed: boolean;
+    expires_at: string | null;
+  } | null>(null);
+  const [copiedField, setCopiedField] = useState<"url" | "pw" | "id" | null>(null);
+
+  const resetInviteForm = () => {
+    setInviteForm({
+      display_name: "",
+      login_id: "",
+      role: "member",
+      office_id: "",
+    });
+    setInviteResult(null);
+  };
+
+  const handleInviteSubmit = async () => {
+    const displayName = inviteForm.display_name.trim();
+    const loginId = inviteForm.login_id.trim().toLowerCase();
+    const officeId = inviteForm.office_id;
+    if (!displayName) { toast.error("表示名を入力してください"); return; }
+    if (!officeId) { toast.error("事業所を選択してください"); return; }
+
+    setInviting(true);
+    try {
+      const res = await fetch("/api/staff/invite", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          display_name: displayName,
+          office_id: officeId,
+          role: inviteForm.role,
+          ...(loginId ? { login_id: loginId } : {}),
+        }),
+      });
+      const json = (await res.json()) as {
+        invite_url?: string;
+        initial_password?: string;
+        login_id?: string | null;
+        login_id_was_renamed?: boolean;
+        expires_at?: string | null;
+        error?: string;
+      };
+      if (!res.ok) {
+        const messages: Record<string, string> = {
+          unauthenticated: "ログインセッションが切れました。再ログインしてください。",
+          office_not_allowed: "この事業所への招待権限がありません (office_admin 以上が必要)。",
+          display_name_invalid: "表示名が不正です (1〜64 文字)。",
+          office_id_invalid: "事業所が選択されていません。",
+          role_invalid: "ロールが不正です。",
+          login_id_invalid: "ログイン ID は英小文字始まり 4〜24 字 (英小・数字・ピリオド・ハイフン) にしてください。",
+          login_id_required: "表示名から ID を自動派生できませんでした。ログイン ID を明示的に入力してください。",
+          login_id_dedup_exhausted: "同じ login_id が大量に使われていて連番候補を使い切りました。別の base を試してください。",
+          insert_failed: "招待の発行に失敗しました (権限不足の可能性)。",
+          permission_check_failed: "権限チェックに失敗しました。",
+          service_key_missing: "サーバ設定エラー (管理者にお問合せください)。",
+          list_users_failed: "既存ユーザーの取得に失敗しました。",
+        };
+        toast.error(messages[json.error ?? ""] ?? `エラー: ${json.error ?? res.statusText}`);
+        return;
+      }
+      setInviteResult({
+        invite_url: json.invite_url ?? "",
+        initial_password: json.initial_password ?? "",
+        login_id: json.login_id ?? null,
+        login_id_was_renamed: !!json.login_id_was_renamed,
+        expires_at: json.expires_at ?? null,
+      });
+      toast.success("招待を発行しました");
+    } catch (e) {
+      toast.error(`通信エラー: ${e instanceof Error ? e.message : "不明"}`);
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const handleCopy = async (text: string, field: "url" | "pw" | "id") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      toast.error("コピーに失敗しました。手動で選択してください。");
+    }
+  };
 
   const resetForm = () => {
     setForm({ ...defaultForm, office_id: lockedOfficeId ?? "" });
@@ -556,8 +667,18 @@ export function EmployeesList({
           </Button>
           <input ref={salarySystemImportRef} type="file" accept=".csv" className="hidden" onChange={handleSalarySystemImportFile} />
 
+          <Button
+            variant="default"
+            onClick={() => {
+              resetInviteForm();
+              setInviteDialogOpen(true);
+            }}
+          >
+            ＋ 招待発行
+          </Button>
+
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
-            <DialogTrigger render={<Button />}>新規登録</DialogTrigger>
+            <DialogTrigger render={<Button variant="outline" />}>手動追加</DialogTrigger>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingId ? "職員を編集" : "職員を登録"}</DialogTitle>
@@ -907,6 +1028,202 @@ export function EmployeesList({
               {importing ? "取り込み中…" : `取り込み実行（${importRows.filter((r) => !r.error).length}件）`}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 招待発行ダイアログ (form / 結果 を 1 枚の modal で兼用) */}
+      <Dialog
+        open={inviteDialogOpen}
+        onOpenChange={(open) => {
+          setInviteDialogOpen(open);
+          if (!open) resetInviteForm();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          {inviteResult ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>招待を発行しました</DialogTitle>
+                <DialogDescription>
+                  この内容は <strong>このタイミングでしか表示されません</strong>。
+                  閉じる前に必ず控えて、招待先に安全な経路 (SMS / 対面 / 紙など) で渡してください。
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs">招待 URL</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      readOnly
+                      value={inviteResult.invite_url}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="font-mono text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => handleCopy(inviteResult.invite_url, "url")}
+                    >
+                      {copiedField === "url" ? "✓" : "コピー"}
+                    </Button>
+                  </div>
+                </div>
+
+                {inviteResult.login_id && (
+                  <div>
+                    <Label className="text-xs">
+                      ログイン ID
+                      {inviteResult.login_id_was_renamed && (
+                        <span className="ml-2 text-amber-600">(自動リネーム済)</span>
+                      )}
+                    </Label>
+                    <div className="flex gap-2 mt-1">
+                      <Input
+                        readOnly
+                        value={inviteResult.login_id}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="font-mono text-xs"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleCopy(inviteResult.login_id ?? "", "id")}
+                      >
+                        {copiedField === "id" ? "✓" : "コピー"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <Label className="text-xs">初期パスワード</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      readOnly
+                      value={inviteResult.initial_password}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="font-mono text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => handleCopy(inviteResult.initial_password, "pw")}
+                    >
+                      {copiedField === "pw" ? "✓" : "コピー"}
+                    </Button>
+                  </div>
+                </div>
+
+                {inviteResult.expires_at && (
+                  <p className="text-xs text-muted-foreground text-center">
+                    有効期限: {new Date(inviteResult.expires_at).toLocaleString("ja-JP")}
+                  </p>
+                )}
+
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    setInviteDialogOpen(false);
+                    resetInviteForm();
+                  }}
+                >
+                  控えました（閉じる）
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>スタッフを招待</DialogTitle>
+                <DialogDescription>
+                  招待 URL + 初期パスワード方式 (メール不使用)。発行後、本人に安全な経路で渡してください。
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label>表示名（必須）</Label>
+                  <Input
+                    value={inviteForm.display_name}
+                    maxLength={64}
+                    placeholder="例: 佐藤花子"
+                    onChange={(e) => setInviteForm({ ...inviteForm, display_name: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <Label>ログイン ID（任意）</Label>
+                  <Input
+                    value={inviteForm.login_id}
+                    maxLength={24}
+                    placeholder="例: kawashima  (空欄なら自動)"
+                    className="font-mono"
+                    onChange={(e) =>
+                      setInviteForm({ ...inviteForm, login_id: e.target.value.toLowerCase() })
+                    }
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    英小文字始まり 4〜24 字 (英小・数字・ピリオド・ハイフン)。
+                    空欄なら表示名から自動派生し、重複時は連番付与。
+                  </p>
+                </div>
+
+                <div>
+                  <Label>所属事業所</Label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+                    value={inviteForm.office_id}
+                    onChange={(e) => setInviteForm({ ...inviteForm, office_id: e.target.value })}
+                  >
+                    <option value="">事業所を選択</option>
+                    {masterOfficeOptions.map((o) => (
+                      <option key={o.id} value={o.office_id}>
+                        {o.short_name || o.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <Label>ロール</Label>
+                  <Select
+                    value={inviteForm.role}
+                    onValueChange={(v) =>
+                      setInviteForm({
+                        ...inviteForm,
+                        role: ((v ?? inviteForm.role) as "member" | "office_admin"),
+                      })
+                    }
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="member">メンバー（現場スタッフ）</SelectItem>
+                      <SelectItem value="office_admin">事業所管理者（所長権限）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setInviteDialogOpen(false);
+                      resetInviteForm();
+                    }}
+                  >
+                    キャンセル
+                  </Button>
+                  <Button
+                    onClick={handleInviteSubmit}
+                    disabled={
+                      inviting || !inviteForm.display_name.trim() || !inviteForm.office_id
+                    }
+                  >
+                    {inviting ? "発行中…" : "発行"}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
