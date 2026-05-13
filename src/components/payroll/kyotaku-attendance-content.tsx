@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +22,11 @@ import {
   formatHM,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
+import {
+  exportKyotakuAttendanceCsv,
+  parseKyotakuAttendanceCsv,
+  type KyotakuAttendanceCsvRow,
+} from "@/lib/csv/kyotaku-attendance-parser";
 
 /**
  * 居宅介護支援ケアマネ 出勤簿入力画面
@@ -187,6 +193,9 @@ export function KyotakuAttendanceContent() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // CSV 取込用の hidden input ref
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   // ---------------- offices 初期 fetch ----------------
   useEffect(() => {
@@ -421,10 +430,104 @@ export function KyotakuAttendanceContent() {
     }
   };
 
-  // ---------------- レンダリング ----------------
+  // ---------------- CSV 出力 ----------------
   const selectedEmployee = useMemo(
     () => employees.find((e) => e.id === selectedEmployeeId) ?? null,
     [employees, selectedEmployeeId],
+  );
+
+  const handleCsvExport = useCallback(() => {
+    if (!selectedEmployee) {
+      toast.error("事業所とスタッフを選択してください");
+      return;
+    }
+    if (rows.length === 0) {
+      toast.error("出力対象の行がありません");
+      return;
+    }
+    try {
+      const csvRows: KyotakuAttendanceCsvRow[] = rows.map((r) => ({
+        work_date: r.work_date,
+        start_time: r.start_time,
+        end_time: r.end_time,
+        break_minutes: r.break_minutes,
+        is_legal_holiday: r.is_legal_holiday,
+        is_paid_leave: r.is_paid_leave,
+        note: r.note,
+        business_km: r.business_km,
+      }));
+      exportKyotakuAttendanceCsv({
+        rows: csvRows,
+        staffName: selectedEmployee.name,
+        month,
+      });
+      toast.success("CSV を出力しました");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`CSV 出力に失敗: ${msg}`);
+    }
+  }, [rows, selectedEmployee, month]);
+
+  // ---------------- CSV 取込 ----------------
+  const handleCsvImportClick = useCallback(() => {
+    if (!selectedEmployee) {
+      toast.error("事業所とスタッフを選択してください");
+      return;
+    }
+    csvInputRef.current?.click();
+  }, [selectedEmployee]);
+
+  const handleCsvFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // input をリセットして同じ file 再選択を可能に
+      if (csvInputRef.current) csvInputRef.current.value = "";
+      if (!file) return;
+      const result = await parseKyotakuAttendanceCsv(file, month);
+      if (!result.success || result.rows.length === 0) {
+        const head = result.errors.slice(0, 3).join(" / ");
+        const rest =
+          result.errors.length > 3
+            ? ` (他 ${result.errors.length - 3} 件)`
+            : "";
+        toast.error(`CSV 取込に失敗: ${head || "データなし"}${rest}`);
+        return;
+      }
+      // detectedMonth と表示中の月が一致するかも一応 check
+      if (result.detectedMonth && result.detectedMonth !== month) {
+        toast.error(
+          `CSV の月 ${result.detectedMonth} が現在の対象月 ${month} と一致しません`,
+        );
+        return;
+      }
+      // CSV row を date 引きの map に
+      const byDate = new Map(result.rows.map((r) => [r.work_date, r]));
+      setRows((prev) =>
+        prev.map((p) => {
+          const hit = byDate.get(p.work_date);
+          if (!hit) return p;
+          return {
+            ...p,
+            start_time: hit.start_time,
+            end_time: hit.end_time,
+            break_minutes: hit.break_minutes,
+            is_legal_holiday: hit.is_legal_holiday,
+            is_paid_leave: hit.is_paid_leave,
+            note: hit.note,
+            business_km: hit.business_km,
+            dirty: true,
+          };
+        }),
+      );
+      const warning =
+        result.errors.length > 0
+          ? ` (警告 ${result.errors.length} 件あり)`
+          : "";
+      toast.success(
+        `${result.rows.length} 件 反映しました。保存ボタンで確定してください${warning}`,
+      );
+    },
+    [month],
   );
 
   return (
@@ -514,6 +617,39 @@ export function KyotakuAttendanceContent() {
                 >
                   今月
                 </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground">CSV</label>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCsvExport}
+                  disabled={!selectedEmployeeId || rows.length === 0}
+                  title="現在の出勤簿を CSV (Shift-JIS) でダウンロード"
+                >
+                  <Download className="mr-1 h-4 w-4" />
+                  CSV 出力
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCsvImportClick}
+                  disabled={!selectedEmployeeId}
+                  title="編集済 CSV (Shift-JIS) を取込んで入力欄に反映"
+                >
+                  <Upload className="mr-1 h-4 w-4" />
+                  CSV 取込
+                </Button>
+                <input
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={handleCsvFileSelected}
+                />
               </div>
             </div>
           </div>
