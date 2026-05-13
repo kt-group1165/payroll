@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
 import type { VisitForRoute } from "@/lib/distance-calculator";
+import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 
 // ─── 実勤続月数の基準月 ─────────────────────────────────────
 // effective_service_months の初期データが何月時点の値かを設定する
@@ -1332,6 +1333,18 @@ export default function PayrollPage() {
   });
 
   // ─── 描画 ─────────────────────────────────────────────────────
+
+  // 居宅介護支援 office を選択中は専用 dashboard を表示
+  // (訪問介護とは給与計算ロジック/データ source が異なる: 国保連 CSV ベース)
+  const currentOffice = offices.find((o) => o.id === selectedOfficeId);
+  if (currentOffice?.office_type === "居宅介護支援") {
+    return (
+      <KyotakuPayrollDashboard
+        officeNumber={currentOffice.office_number}
+        officeName={currentOffice.short_name || currentOffice.name}
+      />
+    );
+  }
 
   return (
     <div>
