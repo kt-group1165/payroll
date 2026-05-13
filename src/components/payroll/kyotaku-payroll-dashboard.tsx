@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { Button } from "@/components/ui/button";
@@ -861,6 +861,7 @@ export function KyotakuPayrollDashboard({
             records={filteredRecords}
             units={units}
             allStaffKeys={allStaffKeys}
+            allMonths={allMonths}
             officeMap={officeMap}
           />
         </TabsContent>
@@ -1718,14 +1719,33 @@ function RiyoshaTab({
   records,
   units,
   allStaffKeys,
+  allMonths,
   officeMap,
 }: {
   records: FullRecord[];
   units: ServiceUnit[];
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
+  allMonths: string[];
   officeMap: Map<string, KyotakuOffice>;
 }) {
-  // ソート: (office, staff) (allStaffKeys 順) → service_month → client_number/insured_number
+  // 月選択 state (default = 最新月 = allMonths 末尾)
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(
+    () => allMonths[allMonths.length - 1] ?? null,
+  );
+  // allMonths 変化時に selected が範囲外なら更新
+  useEffect(() => {
+    if (!selectedMonth || !allMonths.includes(selectedMonth)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- HANDOVER §2 (props/data 変化に追随する初期化)
+      setSelectedMonth(allMonths[allMonths.length - 1] ?? null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allMonths]);
+
+  const monthIdx = selectedMonth ? allMonths.indexOf(selectedMonth) : -1;
+  const goPrev = () => { if (monthIdx > 0) setSelectedMonth(allMonths[monthIdx - 1]); };
+  const goNext = () => { if (monthIdx >= 0 && monthIdx < allMonths.length - 1) setSelectedMonth(allMonths[monthIdx + 1]); };
+
+  // ソート + 選択月で絞り込み + dedup
   const sorted = useMemo(() => {
     const staffIdx = new Map(
       allStaffKeys.map((k, i) => [staffKey(k.officeNumber, k.staffName), i]),
@@ -1734,6 +1754,7 @@ function RiyoshaTab({
     const filtered: FullRecord[] = [];
     for (const r of records) {
       if (!r.insured_number) continue;
+      if (selectedMonth && r.service_month !== selectedMonth) continue;
       const dk = [
         r.office_number,
         r.staff_name,
@@ -1750,61 +1771,126 @@ function RiyoshaTab({
       const ai = staffIdx.get(staffKey(a.office_number, a.staff_name)) ?? 9999;
       const bi = staffIdx.get(staffKey(b.office_number, b.staff_name)) ?? 9999;
       if (ai !== bi) return ai - bi;
-      if (a.service_month !== b.service_month) {
-        return a.service_month.localeCompare(b.service_month);
-      }
       const an = a.client_number ?? a.insured_number ?? "";
       const bn = b.client_number ?? b.insured_number ?? "";
       return an.localeCompare(bn);
     });
     return filtered;
-  }, [records, allStaffKeys]);
+  }, [records, allStaffKeys, selectedMonth]);
 
-  if (sorted.length === 0) {
+  // ケアマネ別単位数合計
+  const staffTotals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of sorted) {
+      const k = staffKey(r.office_number, r.staff_name);
+      const resolved = resolveRecordUnit(r, units);
+      m.set(k, (m.get(k) ?? 0) + (resolved?.unit ?? 0));
+    }
+    return m;
+  }, [sorted, units]);
+
+  // 月遷移コントロール
+  const monthControl = (
+    <div className="flex items-center gap-3 px-1">
+      <Button onClick={goPrev} disabled={monthIdx <= 0} size="sm" variant="outline">← 前月</Button>
+      <span className="text-sm font-medium min-w-[110px] text-center">
+        {selectedMonth ? fmtMonthLabel(selectedMonth) : "—"}
+      </span>
+      <Button onClick={goNext} disabled={monthIdx < 0 || monthIdx >= allMonths.length - 1} size="sm" variant="outline">次月 →</Button>
+      <span className="text-xs text-muted-foreground ml-2">
+        ({sorted.length} 件)
+      </span>
+    </div>
+  );
+
+  if (allMonths.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-        利用者明細がありません
+      <div className="space-y-2">
+        {monthControl}
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          利用者明細がありません
+        </div>
       </div>
     );
   }
 
+  // staff 単位で group して描画 (各 group の末尾に合計行)
+  const groups: Array<{ key: string; rows: FullRecord[]; total: number }> = [];
+  let curKey = "";
+  let curRows: FullRecord[] = [];
+  for (const r of sorted) {
+    const k = staffKey(r.office_number, r.staff_name);
+    if (k !== curKey) {
+      if (curRows.length > 0) {
+        groups.push({ key: curKey, rows: curRows, total: staffTotals.get(curKey) ?? 0 });
+      }
+      curKey = k;
+      curRows = [];
+    }
+    curRows.push(r);
+  }
+  if (curRows.length > 0) {
+    groups.push({ key: curKey, rows: curRows, total: staffTotals.get(curKey) ?? 0 });
+  }
+
   return (
-    <div className="overflow-auto rounded-lg border">
-      <Table className="text-xs">
-        <TableHeader>
-          <TableRow>
-            <TableHead className="min-w-28">事業所</TableHead>
-            <TableHead className="min-w-32">担当ケアマネ</TableHead>
-            <TableHead className="min-w-24">提供年月</TableHead>
-            <TableHead className="min-w-28">利用者名</TableHead>
-            <TableHead className="min-w-20">介護度</TableHead>
-            <TableHead className="min-w-24">保険者</TableHead>
-            <TableHead className="min-w-52">サービス名</TableHead>
-            <TableHead className="min-w-20 text-right">単位数</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sorted.map((r) => {
-            const resolved = resolveRecordUnit(r, units);
-            return (
-              <TableRow key={r.id}>
-                <TableCell>
-                  {officeShortLabel(officeMap, r.office_number)}
-                </TableCell>
-                <TableCell>{r.staff_name}</TableCell>
-                <TableCell>{fmtMonthLabel(r.service_month)}</TableCell>
-                <TableCell>{r.insured_name ?? ""}</TableCell>
-                <TableCell>{r.care_level ?? ""}</TableCell>
-                <TableCell>{r.insurer_name ?? ""}</TableCell>
-                <TableCell>{r.service_name ?? ""}</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {resolved ? resolved.unit.toLocaleString("ja-JP") : ""}
+    <div className="space-y-2">
+      {monthControl}
+      <div className="overflow-auto rounded-lg border">
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-28">事業所</TableHead>
+              <TableHead className="min-w-32">担当ケアマネ</TableHead>
+              <TableHead className="min-w-28">利用者名</TableHead>
+              <TableHead className="min-w-20">介護度</TableHead>
+              <TableHead className="min-w-24">保険者</TableHead>
+              <TableHead className="min-w-52">サービス名</TableHead>
+              <TableHead className="min-w-20 text-right">単位数</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {groups.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                  この月のデータはありません
                 </TableCell>
               </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+            ) : groups.map((g) => {
+              const first = g.rows[0];
+              const officeName = officeShortLabel(officeMap, first.office_number);
+              return (
+                <Fragment key={g.key}>
+                  {g.rows.map((r) => {
+                    const resolved = resolveRecordUnit(r, units);
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell>{officeShortLabel(officeMap, r.office_number)}</TableCell>
+                        <TableCell>{r.staff_name}</TableCell>
+                        <TableCell>{r.insured_name ?? ""}</TableCell>
+                        <TableCell>{r.care_level ?? ""}</TableCell>
+                        <TableCell>{r.insurer_name ?? ""}</TableCell>
+                        <TableCell>{r.service_name ?? ""}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {resolved ? resolved.unit.toLocaleString("ja-JP") : ""}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  <TableRow className="bg-muted/50 font-medium">
+                    <TableCell colSpan={6} className="text-right">
+                      {officeName} / {first.staff_name} 合計
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {g.total.toLocaleString("ja-JP")}
+                    </TableCell>
+                  </TableRow>
+                </Fragment>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
