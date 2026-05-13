@@ -62,6 +62,22 @@ export type KyotakuRecord = {
   care_level: string | null;
 };
 
+/**
+ * 介護予防支援 件数 row (payroll_kyotaku_yobou_records と対応)。
+ *
+ * - 1 row = 1 staff × 1 提供月 × 1 請求月 の集約形式 (records と違い明細単位ではない)
+ * - 件数集計時、要支援1/2 の row 数として yobou1_count + yobou2_count を加算する
+ *   (records 側の「detail_row_no='1' かつ 要支援」row は通常空である運用前提なので、
+ *    単純加算で良い)
+ */
+export type YobouRecord = {
+  service_month: string; // YYYY-MM-01
+  billing_month: string; // YYYY-MM-01
+  staff_name: string;
+  yobou1_count: number;
+  yobou2_count: number;
+};
+
 export type SalaryBreakdown = {
   base: number;
   plan: number; // プラン手当 (T+1 払い)
@@ -75,6 +91,11 @@ export type CalcConfig = {
   settings: EmployeeSetting[];
   units: ServiceUnit[];
   rates: RegionalRate[];
+  /**
+   * 介護予防支援 件数の集約 row (任意 / 省略時は空配列扱い)。
+   * 同一 office の row だけを呼び出し側で絞り込んで渡す前提。
+   */
+  yobouRecords?: YobouRecord[];
 };
 
 export type CalcConfigWithConfirmations = CalcConfig & {
@@ -214,11 +235,16 @@ function emptyDelayCounts(): DelayCounts {
 /**
  * 指定 staff / serviceMonth の delay 別件数を集計。
  * detail_row_no === "1" の行のみ (= 基本サービス行) を対象とする。
+ *
+ * yobouRecords (介護予防支援) は別 source として 要支援1/2 件数を delay 別に加算する。
+ * - 国保連 records は介護給付ベースで、要支援件数は通常 0 件 (袖ヶ浦 CSV 等)。
+ * - 介護予防支援は独立した集約 row なので、records カウントに足し込めば二重計上は出ない。
  */
 function countByDelay(
   records: KyotakuRecord[],
   staffName: string,
   serviceMonth: string,
+  yobouRecords?: YobouRecord[],
 ): DelayCounts {
   const out = emptyDelayCounts();
 
@@ -254,6 +280,35 @@ function countByDelay(
     } else {
       if (isKaigo) out.late2_kaigo += 1;
       else out.late2_shien += 1;
+    }
+  }
+
+  // 介護予防支援件数 (要支援1/2 を加算)
+  if (yobouRecords && yobouRecords.length > 0) {
+    for (const yr of yobouRecords) {
+      if (yr.staff_name !== staffName) continue;
+      if (yr.service_month !== serviceMonth) continue;
+      if (!yr.billing_month) continue;
+
+      let delay: number;
+      try {
+        delay = monthDiff(yr.service_month, yr.billing_month);
+      } catch {
+        delay = 1;
+      }
+
+      const add = (yr.yobou1_count ?? 0) + (yr.yobou2_count ?? 0);
+      if (add === 0) continue;
+
+      if (delay <= 0) {
+        out.same_shien += add;
+      } else if (delay === 1) {
+        out.normal_shien += add;
+      } else if (delay === 2) {
+        out.late1_shien += add;
+      } else {
+        out.late2_shien += add;
+      }
     }
   }
 
@@ -336,7 +391,7 @@ export function calcSalary(
   config: CalcConfig,
 ): SalaryBreakdown {
   const { base, ki, si } = resolveSetting(config.settings, staffName);
-  const c = countByDelay(records, staffName, serviceMonth);
+  const c = countByDelay(records, staffName, serviceMonth, config.yobouRecords);
 
   const n_k = c.same_kaigo + c.normal_kaigo;
   const n_s = c.same_shien + c.normal_shien;
@@ -370,11 +425,17 @@ export function calcPaymentForMonth(
   payMonth: string,
   config: CalcConfig,
 ): number {
-  // staff 限定の全提供月 set
+  // staff 限定の全提供月 set (records + yobouRecords の和)
   const serviceMonths = new Set<string>();
   for (const r of records) {
     if (r.staff_name !== staffName) continue;
     if (r.service_month) serviceMonths.add(r.service_month);
+  }
+  if (config.yobouRecords) {
+    for (const yr of config.yobouRecords) {
+      if (yr.staff_name !== staffName) continue;
+      if (yr.service_month) serviceMonths.add(yr.service_month);
+    }
   }
 
   let total = 0;
@@ -407,8 +468,8 @@ export function calcAdjustments(
   serviceMonth: string,
   config: CalcConfigWithConfirmations,
 ): { late_adj: number; sayi_adj: number } {
-  const { settings, units, rates, confirmations } = config;
-  const baseConfig: CalcConfig = { settings, units, rates };
+  const { settings, units, rates, yobouRecords, confirmations } = config;
+  const baseConfig: CalcConfig = { settings, units, rates, yobouRecords };
 
   // 1) late_adj: T+1 へ流れる過去月の chosei
   const { base, plan, kazan } = calcSalary(
@@ -425,13 +486,20 @@ export function calcAdjustments(
   // 2) sayi_adj: 最新未確定月にのみ集約
   //    最新未確定月 = staff の全提供月を新しい順に走査し、
   //      confirmations[(staff, T+1)] が無い (or amount===0) の最初の T
-  const staffMonths = Array.from(
-    new Set(
-      records
-        .filter((r) => r.staff_name === staffName && r.service_month)
-        .map((r) => r.service_month),
-    ),
-  ).sort();
+  const staffMonthsSet = new Set<string>();
+  for (const r of records) {
+    if (r.staff_name === staffName && r.service_month) {
+      staffMonthsSet.add(r.service_month);
+    }
+  }
+  if (yobouRecords) {
+    for (const yr of yobouRecords) {
+      if (yr.staff_name === staffName && yr.service_month) {
+        staffMonthsSet.add(yr.service_month);
+      }
+    }
+  }
+  const staffMonths = Array.from(staffMonthsSet).sort();
 
   // confirmations を (staff, pay_month) → amount に index 化
   const paidMap = new Map<string, number>();

@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -25,6 +26,7 @@ import {
   type KyotakuRecord,
   type RegionalRate,
   type ServiceUnit,
+  type YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
 import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
 
@@ -86,6 +88,14 @@ type ConfirmationRow = Confirmation & {
   reverted_at: string | null;
 };
 
+type YobouRow = YobouRecord & {
+  id: string;
+  tenant_id: string;
+  office_number: string;
+  source: "csv" | "manual";
+  source_filename: string | null;
+};
+
 // =====================================================================
 // utility
 // =====================================================================
@@ -114,40 +124,9 @@ function fmtSigned(n: number): string {
   return r.toLocaleString("ja-JP");
 }
 
-/** records から service_month の sort 済み distinct 配列を返す */
-function distinctMonths(records: FullRecord[]): string[] {
-  const s = new Set<string>();
-  for (const r of records) if (r.service_month) s.add(r.service_month);
-  return Array.from(s).sort();
-}
-
 /** 集合 key (office_number|staff_name) 用の helper */
 function staffKey(officeNumber: string, staffName: string): string {
   return `${officeNumber}|${staffName}`;
-}
-
-/** records から「(office_number, staff_name) の distinct」を返す (sort: office → staff) */
-function distinctStaffKeys(
-  records: FullRecord[],
-  officeOrder: Map<string, number>,
-): Array<{ officeNumber: string; staffName: string }> {
-  const seen = new Set<string>();
-  const out: Array<{ officeNumber: string; staffName: string }> = [];
-  for (const r of records) {
-    if (!r.staff_name) continue;
-    if (!r.office_number) continue;
-    const k = staffKey(r.office_number, r.staff_name);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push({ officeNumber: r.office_number, staffName: r.staff_name });
-  }
-  out.sort((a, b) => {
-    const oa = officeOrder.get(a.officeNumber) ?? 9999;
-    const ob = officeOrder.get(b.officeNumber) ?? 9999;
-    if (oa !== ob) return oa - ob;
-    return a.staffName.localeCompare(b.staffName, "ja");
-  });
-  return out;
 }
 
 /** all_months から pay_months (各月の +1 / +2 / +3 の和集合) を返す */
@@ -206,14 +185,32 @@ const COUNT_ROWS: ReadonlyArray<{ key: CountKey; label: string }> = [
   { key: "late2_kaigo", label: "月遅れ要介護（3か月後請求）" },
 ];
 
+/** YYYY-MM-01 形式の月文字列 m1, m2 の月差 (= m2 - m1)。失敗時は NaN。 */
+function monthDelayDiff(serviceMonth: string, billingMonth: string): number {
+  const sm = serviceMonth.slice(0, 7);
+  const bm = billingMonth.slice(0, 7);
+  if (!sm || !bm) return NaN;
+  const smN = parseInt(sm.replace("-", ""), 10);
+  const bmN = parseInt(bm.replace("-", ""), 10);
+  if (!Number.isFinite(smN) || !Number.isFinite(bmN)) return NaN;
+  const sy = Math.floor(smN / 100);
+  const ssm = smN % 100;
+  const by = Math.floor(bmN / 100);
+  const bbm = bmN % 100;
+  return (by - sy) * 12 + (bbm - ssm);
+}
+
 /**
  * 件数を「office 内の records だけ」「該当 staff_name のみ」で集計する。
  * 全社 view では office_number で事前 partition した records を渡す前提。
+ *
+ * yobouRecords (介護予防支援) は別 source として 要支援1/2 件数を delay 別に加算する。
  */
 function countCells(
   officeRecords: FullRecord[],
   staff: string,
   month: string,
+  officeYobou?: YobouRow[],
 ): Record<CountKey, number> {
   const out: Record<CountKey, number> = {
     same_shien: 0,
@@ -236,17 +233,8 @@ function countCells(
     const isShien = r.care_level.startsWith("要支援");
     if (!isKaigo && !isShien) continue;
 
-    const sm = r.service_month.slice(0, 7);
-    const bm = r.billing_month.slice(0, 7);
-    if (!sm || !bm) continue;
-    const smN = parseInt(sm.replace("-", ""), 10);
-    const bmN = parseInt(bm.replace("-", ""), 10);
-    if (!Number.isFinite(smN) || !Number.isFinite(bmN)) continue;
-    const sy = Math.floor(smN / 100);
-    const ssm = smN % 100;
-    const by = Math.floor(bmN / 100);
-    const bbm = bmN % 100;
-    const delay = (by - sy) * 12 + (bbm - ssm);
+    const delay = monthDelayDiff(r.service_month, r.billing_month);
+    if (!Number.isFinite(delay)) continue;
 
     if (delay <= 0) {
       if (isKaigo) out.same_kaigo += 1;
@@ -260,6 +248,22 @@ function countCells(
     } else {
       if (isKaigo) out.late2_kaigo += 1;
       else out.late2_shien += 1;
+    }
+  }
+
+  if (officeYobou && officeYobou.length > 0) {
+    for (const yr of officeYobou) {
+      if (yr.staff_name !== staff) continue;
+      if (yr.service_month !== month) continue;
+      const add = (yr.yobou1_count ?? 0) + (yr.yobou2_count ?? 0);
+      if (add === 0) continue;
+      const delay = monthDelayDiff(yr.service_month, yr.billing_month);
+      if (!Number.isFinite(delay)) continue;
+
+      if (delay <= 0) out.same_shien += add;
+      else if (delay === 1) out.normal_shien += add;
+      else if (delay === 2) out.late1_shien += add;
+      else out.late2_shien += add;
     }
   }
 
@@ -337,6 +341,7 @@ export function KyotakuPayrollDashboard({
   const [units, setUnits] = useState<ServiceUnit[]>([]);
   const [rates, setRates] = useState<RegionalRate[]>([]);
   const [confirmations, setConfirmations] = useState<ConfirmationRow[]>([]);
+  const [yobouRows, setYobouRows] = useState<YobouRow[]>([]);
 
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   // 設定 modal は office_number 単位なので、開く時に対象 office を保持する
@@ -390,10 +395,11 @@ export function KyotakuPayrollDashboard({
         setUnits([]);
         setRates([]);
         setConfirmations([]);
+        setYobouRows([]);
         return;
       }
 
-      const [recs, setRes, unitRes, rateRes, confRes] = await Promise.all([
+      const [recs, setRes, unitRes, rateRes, confRes, yobouRes] = await Promise.all([
         fetchAllPagesParallel<FullRecord>(
           () =>
             supabase
@@ -430,12 +436,20 @@ export function KyotakuPayrollDashboard({
           .select("*")
           .in("office_number", officeNumbers)
           .is("reverted_at", null),
+        // 介護予防支援件数 (CSV 取込 + 手入力)。1 row = staff × 提供月 × 請求月 の
+        // 集約形式なので、~30 office × ~数年 × ~ケアマネ数 でも数千行に収まる前提。
+        // DB に table 未 apply の段階では空配列を fallback (error は捕捉して握り潰す)。
+        supabase
+          .from("payroll_kyotaku_yobou_records")
+          .select("*")
+          .in("office_number", officeNumbers),
       ]);
 
       if (setRes.error) throw setRes.error;
       if (unitRes.error) throw unitRes.error;
       if (rateRes.error) throw rateRes.error;
       if (confRes.error) throw confRes.error;
+      // yobouRes は DB 未 apply 段階の error を許容 (空配列 fallback)
 
       setRecords(recs);
       // payroll_employees row → SettingRow に flatten。office_number は embed 経由で
@@ -469,6 +483,7 @@ export function KyotakuPayrollDashboard({
       setUnits((unitRes.data ?? []) as ServiceUnit[]);
       setRates((rateRes.data ?? []) as RegionalRate[]);
       setConfirmations((confRes.data ?? []) as ConfirmationRow[]);
+      setYobouRows(yobouRes.error ? [] : ((yobouRes.data ?? []) as YobouRow[]));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
@@ -508,18 +523,50 @@ export function KyotakuPayrollDashboard({
         : confirmations.filter((c) => c.office_number === filterOfficeNumber),
     [confirmations, filterOfficeNumber],
   );
+  const filteredYobou = useMemo(
+    () =>
+      filterOfficeNumber === null
+        ? yobouRows
+        : yobouRows.filter((y) => y.office_number === filterOfficeNumber),
+    [yobouRows, filterOfficeNumber],
+  );
 
   // ----------------------- derived data -----------------------
 
-  const allMonths = useMemo(
-    () => distinctMonths(filteredRecords),
-    [filteredRecords],
-  );
+  // allMonths は records と yobou の和集合 (介護予防のみ取込済の staff/月も含める)
+  const allMonths = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of filteredRecords) if (r.service_month) s.add(r.service_month);
+    for (const y of filteredYobou) if (y.service_month) s.add(y.service_month);
+    return Array.from(s).sort();
+  }, [filteredRecords, filteredYobou]);
   // staff の identity を (office_number, staff_name) に格上げ。同名ケアマネを区別する。
-  const allStaffKeys = useMemo(
-    () => distinctStaffKeys(filteredRecords, officeOrder),
-    [filteredRecords, officeOrder],
-  );
+  // records / yobou 双方から導出 (yobou-only staff も対象)
+  const allStaffKeys = useMemo(() => {
+    type Pseudo = { office_number: string; staff_name: string };
+    const seen = new Set<string>();
+    const merged: Pseudo[] = [];
+    const push = (officeNumber: string, staffName: string) => {
+      if (!officeNumber || !staffName) return;
+      const k = `${officeNumber}|${staffName}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      merged.push({ office_number: officeNumber, staff_name: staffName });
+    };
+    for (const r of filteredRecords) push(r.office_number, r.staff_name);
+    for (const y of filteredYobou) push(y.office_number, y.staff_name);
+    // distinctStaffKeys と同 sort key で並べ直す
+    merged.sort((a, b) => {
+      const oa = officeOrder.get(a.office_number) ?? 9999;
+      const ob = officeOrder.get(b.office_number) ?? 9999;
+      if (oa !== ob) return oa - ob;
+      return a.staff_name.localeCompare(b.staff_name, "ja");
+    });
+    return merged.map((r) => ({
+      officeNumber: r.office_number,
+      staffName: r.staff_name,
+    }));
+  }, [filteredRecords, filteredYobou, officeOrder]);
   const allPayMonths = useMemo(
     () => deriveAllPayMonths(allMonths),
     [allMonths],
@@ -549,6 +596,10 @@ export function KyotakuPayrollDashboard({
     () => partitionByOffice(filteredConfirmations),
     [filteredConfirmations],
   );
+  const yobouByOffice = useMemo(
+    () => partitionByOffice(filteredYobou),
+    [filteredYobou],
+  );
 
   /** office_number → 該当 office の CalcConfig */
   const calcConfigByOffice = useMemo(() => {
@@ -558,10 +609,11 @@ export function KyotakuPayrollDashboard({
         settings: settingsByOffice.get(o.office_number) ?? [],
         units,
         rates,
+        yobouRecords: yobouByOffice.get(o.office_number) ?? [],
       });
     }
     return m;
-  }, [allKyotakuOffices, settingsByOffice, units, rates]);
+  }, [allKyotakuOffices, settingsByOffice, units, rates, yobouByOffice]);
 
   // staff × month の salary cache (key: officeNumber|staff|month)
   const salaryCache = useMemo(() => {
@@ -781,7 +833,7 @@ export function KyotakuPayrollDashboard({
     setSettingsModalOpen(true);
   };
 
-  if (records.length === 0) {
+  if (records.length === 0 && yobouRows.length === 0) {
     return (
       <div className="space-y-4 p-4">
         <header className="flex items-start justify-between gap-4">
@@ -807,12 +859,12 @@ export function KyotakuPayrollDashboard({
           </Button>
         </header>
         <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-          まだ国保連 CSV を取り込んでいません。
+          まだ国保連 CSV / 介護予防件数データを取り込んでいません。
           <br />
           <a href="/csv-import" className="text-primary underline">
             /csv-import
           </a>{" "}
-          から取り込んでください。
+          から取り込むか、「予防件数」タブから手入力できます。
         </div>
         {settingsModalOffice && (
           <KyotakuSettingsModal
@@ -862,6 +914,7 @@ export function KyotakuPayrollDashboard({
           <TabsTrigger value="uriage">売上表</TabsTrigger>
           <TabsTrigger value="riyosha">利用者内訳</TabsTrigger>
           <TabsTrigger value="sayi">差異明細</TabsTrigger>
+          <TabsTrigger value="yobou">予防件数</TabsTrigger>
         </TabsList>
 
         <TabsContent value="kyuyo" className="mt-4">
@@ -869,6 +922,7 @@ export function KyotakuPayrollDashboard({
             allStaffKeys={allStaffKeys}
             allMonths={allMonths}
             recordsByOffice={recordsByOffice}
+            yobouByOffice={yobouByOffice}
             officeMap={officeMap}
             salaryCache={salaryCache}
             adjustmentsByStaffMonth={adjustmentsByStaffMonth}
@@ -922,6 +976,18 @@ export function KyotakuPayrollDashboard({
             salaryCache={salaryCache}
             adjustmentsByStaffMonth={adjustmentsByStaffMonth}
             paidMap={paidMap}
+          />
+        </TabsContent>
+
+        <TabsContent value="yobou" className="mt-4">
+          <YobouTab
+            tenantId={TENANT_ID}
+            allKyotakuOffices={allKyotakuOffices}
+            filterOfficeNumber={filterOfficeNumber}
+            yobouRows={filteredYobou}
+            allStaffKeys={allStaffKeys}
+            officeMap={officeMap}
+            onSaved={fetchAll}
           />
         </TabsContent>
       </Tabs>
@@ -988,6 +1054,7 @@ function KyuyoTab({
   allStaffKeys,
   allMonths,
   recordsByOffice,
+  yobouByOffice,
   officeMap,
   salaryCache,
   adjustmentsByStaffMonth,
@@ -996,6 +1063,7 @@ function KyuyoTab({
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
   allMonths: string[];
   recordsByOffice: Map<string, FullRecord[]>;
+  yobouByOffice: Map<string, YobouRow[]>;
   officeMap: Map<string, KyotakuOffice>;
   salaryCache: Map<string, ReturnType<typeof calcSalary>>;
   adjustmentsByStaffMonth: Map<string, { late_adj: number; sayi_adj: number }>;
@@ -1027,6 +1095,7 @@ function KyuyoTab({
               staff={k.staffName}
               officeMap={officeMap}
               records={recordsByOffice.get(k.officeNumber) ?? []}
+              yobouRecords={yobouByOffice.get(k.officeNumber) ?? []}
               allMonths={allMonths}
               salaryCache={salaryCache}
               adjustmentsByStaffMonth={adjustmentsByStaffMonth}
@@ -1044,6 +1113,7 @@ function StaffBlock({
   staff,
   officeMap,
   records,
+  yobouRecords,
   allMonths,
   salaryCache,
   adjustmentsByStaffMonth,
@@ -1053,6 +1123,7 @@ function StaffBlock({
   staff: string;
   officeMap: Map<string, KyotakuOffice>;
   records: FullRecord[];
+  yobouRecords: YobouRow[];
   allMonths: string[];
   salaryCache: Map<string, ReturnType<typeof calcSalary>>;
   adjustmentsByStaffMonth: Map<string, { late_adj: number; sayi_adj: number }>;
@@ -1066,7 +1137,7 @@ function StaffBlock({
       late_adj: 0,
       sayi_adj: 0,
     };
-    const counts = countCells(records, staff, m);
+    const counts = countCells(records, staff, m, yobouRecords);
     const payMonth = addMonths(m, 1);
     const paid = paidMap.get(`${officeNumber}|${staff}|${payMonth}`) ?? 0;
     const chosei = adj.late_adj + adj.sayi_adj;
@@ -2162,3 +2233,493 @@ function SayiTab({
 
 // `ALL_OFFICES_KEY` は将来 modal 内 office 選択 sentinel として保持 (現状未使用)
 void ALL_OFFICES_KEY;
+
+// =====================================================================
+// Tab: 予防件数 (介護予防支援 件数の手入力 UI + 取込済の読み取り表示)
+// =====================================================================
+
+/**
+ * 編集中 row の中間状態。
+ * - existingId 有 → 既存 row の編集 (upsert で id を渡す)
+ * - existingId 無 → 新規行追加 (upsert は UNIQUE 制約に当たる)
+ * - locked: source='csv' の row は読み取り専用
+ */
+type EditableYobouRow = {
+  key: string; // staffName|billingMonth
+  staffName: string;
+  billingMonth: string; // YYYY-MM-01
+  yobou1: number;
+  yobou2: number;
+  source: "csv" | "manual" | "new";
+  existingId: string | null;
+  locked: boolean;
+};
+
+function YobouTab({
+  tenantId,
+  allKyotakuOffices,
+  filterOfficeNumber,
+  yobouRows,
+  allStaffKeys,
+  officeMap,
+  onSaved,
+}: {
+  tenantId: string;
+  allKyotakuOffices: KyotakuOffice[];
+  filterOfficeNumber: string | null;
+  yobouRows: YobouRow[];
+  allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
+  officeMap: Map<string, KyotakuOffice>;
+  onSaved: () => void | Promise<void>;
+}) {
+  // 「予防件数」tab は office 単位での編集を強制。全社 view では先頭 office を default 採用。
+  const [selectedOfficeNumber, setSelectedOfficeNumber] = useState<string>(
+    () => filterOfficeNumber ?? allKyotakuOffices[0]?.office_number ?? "",
+  );
+  useEffect(() => {
+    if (filterOfficeNumber && filterOfficeNumber !== selectedOfficeNumber) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- props 変化追随
+      setSelectedOfficeNumber(filterOfficeNumber);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterOfficeNumber]);
+
+  // 月リスト (yobou + allStaffKeys 由来) は service_month 単位で
+  const allYobouMonths = useMemo(() => {
+    const s = new Set<string>();
+    for (const y of yobouRows) {
+      if (y.office_number === selectedOfficeNumber && y.service_month) {
+        s.add(y.service_month);
+      }
+    }
+    // 取込済が無くても、最低 1 ヶ月 (今月) は表示できるよう default month を追加
+    if (s.size === 0) {
+      const now = new Date();
+      const y = now.getUTCFullYear();
+      const mo = String(now.getUTCMonth() + 1).padStart(2, "0");
+      s.add(`${y}-${mo}-01`);
+    }
+    return Array.from(s).sort();
+  }, [yobouRows, selectedOfficeNumber]);
+
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(
+    () => allYobouMonths[allYobouMonths.length - 1] ?? null,
+  );
+  useEffect(() => {
+    if (!selectedMonth || !allYobouMonths.includes(selectedMonth)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- data 変化に追随
+      setSelectedMonth(allYobouMonths[allYobouMonths.length - 1] ?? null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allYobouMonths]);
+
+  const monthIdx = selectedMonth ? allYobouMonths.indexOf(selectedMonth) : -1;
+  const goPrev = () => {
+    if (monthIdx > 0) setSelectedMonth(allYobouMonths[monthIdx - 1]);
+  };
+  const goNext = () => {
+    if (monthIdx >= 0 && monthIdx < allYobouMonths.length - 1) {
+      setSelectedMonth(allYobouMonths[monthIdx + 1]);
+    }
+  };
+
+  // 選択中 office の staff 一覧 (allStaffKeys 経由)
+  const officeStaffs = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const k of allStaffKeys) {
+      if (k.officeNumber !== selectedOfficeNumber) continue;
+      if (seen.has(k.staffName)) continue;
+      seen.add(k.staffName);
+      out.push(k.staffName);
+    }
+    return out;
+  }, [allStaffKeys, selectedOfficeNumber]);
+
+  // 編集中の row state (key: staffName|billingMonth)。
+  // 初期化は selectedMonth + officeStaffs + yobouRows から導出。
+  const [editRows, setEditRows] = useState<Map<string, EditableYobouRow>>(
+    () => new Map(),
+  );
+  const [savingState, setSavingState] = useState<"idle" | "saving">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // selectedMonth / officeStaffs / yobouRows が変わったら edit state を rebuild
+  useEffect(() => {
+    if (!selectedMonth) return;
+    const next = new Map<string, EditableYobouRow>();
+
+    // 既存 yobou row (csv / manual) を取り込み
+    for (const y of yobouRows) {
+      if (y.office_number !== selectedOfficeNumber) continue;
+      if (y.service_month !== selectedMonth) continue;
+      const k = `${y.staff_name}|${y.billing_month}`;
+      next.set(k, {
+        key: k,
+        staffName: y.staff_name,
+        billingMonth: y.billing_month,
+        yobou1: y.yobou1_count ?? 0,
+        yobou2: y.yobou2_count ?? 0,
+        source: y.source,
+        existingId: y.id,
+        locked: y.source === "csv",
+      });
+    }
+
+    // 未登録 staff について「翌月請求」default の空 row を追加 (= UI で 0 を表示)
+    const defaultBilling = addMonths(selectedMonth, 1);
+    for (const staff of officeStaffs) {
+      const k = `${staff}|${defaultBilling}`;
+      if (next.has(k)) continue;
+      next.set(k, {
+        key: k,
+        staffName: staff,
+        billingMonth: defaultBilling,
+        yobou1: 0,
+        yobou2: 0,
+        source: "new",
+        existingId: null,
+        locked: false,
+      });
+    }
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 選択月切替時の rebuild
+    setEditRows(next);
+    setSaveError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth, selectedOfficeNumber, yobouRows, officeStaffs.join(",")]);
+
+  const updateField = (
+    key: string,
+    field: "yobou1" | "yobou2",
+    val: number,
+  ) => {
+    setEditRows((prev) => {
+      const next = new Map(prev);
+      const r = next.get(key);
+      if (!r || r.locked) return prev;
+      next.set(key, { ...r, [field]: val });
+      return next;
+    });
+  };
+
+  // 行追加: staff を選んで billingMonth を入力させる。同 staff/billingMonth が
+  // 既にあれば追加せず focus を促すだけ。
+  const [addStaffName, setAddStaffName] = useState<string>("");
+  const [addBillingMonth, setAddBillingMonth] = useState<string>("");
+
+  const handleAddRow = () => {
+    if (!selectedMonth) return;
+    const staff = addStaffName.trim();
+    const bmRaw = addBillingMonth.trim();
+    if (!staff) {
+      setSaveError("行追加: 担当ケアマネを選んでください");
+      return;
+    }
+    // YYYY-MM 入力を YYYY-MM-01 に正規化
+    let bm: string;
+    if (/^\d{4}-\d{2}$/.test(bmRaw)) {
+      bm = `${bmRaw}-01`;
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(bmRaw)) {
+      bm = `${bmRaw.slice(0, 7)}-01`;
+    } else {
+      setSaveError("行追加: 請求年月は YYYY-MM 形式で入力してください");
+      return;
+    }
+    const k = `${staff}|${bm}`;
+    setEditRows((prev) => {
+      if (prev.has(k)) return prev;
+      const next = new Map(prev);
+      next.set(k, {
+        key: k,
+        staffName: staff,
+        billingMonth: bm,
+        yobou1: 0,
+        yobou2: 0,
+        source: "new",
+        existingId: null,
+        locked: false,
+      });
+      return next;
+    });
+    setSaveError(null);
+    setAddStaffName("");
+    setAddBillingMonth("");
+  };
+
+  const handleSave = async () => {
+    if (!selectedMonth) return;
+    if (!selectedOfficeNumber) {
+      setSaveError("事業所が未選択です");
+      return;
+    }
+    setSavingState("saving");
+    setSaveError(null);
+    try {
+      // 編集対象は locked=false の row のみ。
+      // 既存 (existingId 有) は値が変わった row のみ送る。
+      // 新規 (existingId 無) は yobou1+yobou2 > 0 の row のみ送る (空 row 無駄送り回避)
+      const original = new Map<string, YobouRow>();
+      for (const y of yobouRows) {
+        if (y.office_number !== selectedOfficeNumber) continue;
+        if (y.service_month !== selectedMonth) continue;
+        original.set(`${y.staff_name}|${y.billing_month}`, y);
+      }
+
+      const toUpsert: Array<{
+        tenant_id: string;
+        office_number: string;
+        service_month: string;
+        billing_month: string;
+        staff_name: string;
+        yobou1_count: number;
+        yobou2_count: number;
+        source: "manual";
+        source_filename: null;
+      }> = [];
+
+      for (const r of editRows.values()) {
+        if (r.locked) continue;
+        const orig = original.get(r.key);
+        if (orig) {
+          if (
+            (orig.yobou1_count ?? 0) === r.yobou1 &&
+            (orig.yobou2_count ?? 0) === r.yobou2
+          ) {
+            continue; // 変更なし
+          }
+        } else {
+          // 新規かつ全 0 は送らない
+          if (r.yobou1 === 0 && r.yobou2 === 0) continue;
+        }
+        toUpsert.push({
+          tenant_id: tenantId,
+          office_number: selectedOfficeNumber,
+          service_month: selectedMonth,
+          billing_month: r.billingMonth,
+          staff_name: r.staffName,
+          yobou1_count: r.yobou1,
+          yobou2_count: r.yobou2,
+          source: "manual",
+          source_filename: null,
+        });
+      }
+
+      if (toUpsert.length === 0) {
+        setSaveError("変更がありません");
+        setSavingState("idle");
+        return;
+      }
+
+      const { error } = await supabase
+        .from("payroll_kyotaku_yobou_records")
+        .upsert(toUpsert, {
+          onConflict:
+            "office_number,service_month,billing_month,staff_name",
+          ignoreDuplicates: false,
+        });
+      if (error) throw error;
+      await onSaved();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingState("idle");
+    }
+  };
+
+  if (allKyotakuOffices.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+        居宅介護支援 type の事業所が登録されていません。
+      </div>
+    );
+  }
+
+  // edit rows を表示順 sort: source=csv 先頭 / staff 順 / billingMonth 順
+  const rowsSorted = Array.from(editRows.values()).sort((a, b) => {
+    if (a.staffName !== b.staffName) {
+      return a.staffName.localeCompare(b.staffName, "ja");
+    }
+    return a.billingMonth.localeCompare(b.billingMonth);
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3 px-1 flex-wrap">
+        {/* office 切替 (全社 mode のみ表示。固定 mode は filter で既に絞り込まれ済) */}
+        {filterOfficeNumber === null ? (
+          <select
+            value={selectedOfficeNumber}
+            onChange={(e) => setSelectedOfficeNumber(e.target.value)}
+            className="border rounded px-2 py-1 text-sm bg-background"
+          >
+            {allKyotakuOffices.map((o) => (
+              <option key={o.office_number} value={o.office_number}>
+                {o.short_name || o.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="text-sm font-medium">
+            {officeShortLabel(officeMap, selectedOfficeNumber)}
+          </span>
+        )}
+
+        <Button onClick={goPrev} disabled={monthIdx <= 0} size="sm" variant="outline">
+          ← 前月
+        </Button>
+        <span className="text-sm font-medium min-w-[110px] text-center">
+          提供月: {selectedMonth ? fmtMonthLabel(selectedMonth) : "—"}
+        </span>
+        <Button
+          onClick={goNext}
+          disabled={monthIdx < 0 || monthIdx >= allYobouMonths.length - 1}
+          size="sm"
+          variant="outline"
+        >
+          次月 →
+        </Button>
+        <span className="text-xs text-muted-foreground ml-2">
+          ({rowsSorted.length} 行)
+        </span>
+        <Button
+          onClick={handleSave}
+          disabled={savingState === "saving"}
+          size="sm"
+        >
+          {savingState === "saving" ? "保存中..." : "保存"}
+        </Button>
+      </div>
+
+      {/* 行追加 UI */}
+      <div className="flex items-center gap-2 px-1 flex-wrap text-xs">
+        <label className="text-muted-foreground">行追加:</label>
+        <select
+          value={addStaffName}
+          onChange={(e) => setAddStaffName(e.target.value)}
+          className="border rounded px-2 py-1 text-xs bg-background"
+        >
+          <option value="">担当ケアマネ…</option>
+          {officeStaffs.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <input
+          type="month"
+          value={addBillingMonth}
+          onChange={(e) => setAddBillingMonth(e.target.value)}
+          className="border rounded px-2 py-1 text-xs bg-background"
+          placeholder="請求年月"
+        />
+        <Button
+          onClick={handleAddRow}
+          size="xs"
+          variant="outline"
+          disabled={!addStaffName || !addBillingMonth}
+        >
+          ＋ 追加
+        </Button>
+      </div>
+
+      {saveError && (
+        <div className="rounded border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {saveError}
+        </div>
+      )}
+
+      <div className="overflow-auto rounded-lg border">
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-32">担当ケアマネ</TableHead>
+              <TableHead className="min-w-28">請求年月</TableHead>
+              <TableHead className="min-w-24">区分</TableHead>
+              <TableHead className="min-w-24 text-right">要支援1件数</TableHead>
+              <TableHead className="min-w-24 text-right">要支援2件数</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rowsSorted.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                  この月のデータはありません
+                </TableCell>
+              </TableRow>
+            ) : (
+              rowsSorted.map((r) => {
+                const delay = monthDelayDiff(selectedMonth ?? "", r.billingMonth);
+                const delayLabel = !Number.isFinite(delay)
+                  ? "—"
+                  : delay <= 0
+                    ? "当月請求"
+                    : delay === 1
+                      ? "翌月請求"
+                      : delay === 2
+                        ? "月遅れ(翌々月)"
+                        : `月遅れ(${delay}か月後)`;
+                return (
+                  <TableRow key={r.key} className={r.locked ? "bg-muted/30" : ""}>
+                    <TableCell>{r.staffName}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {r.billingMonth.slice(0, 7)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <span className="text-muted-foreground">{delayLabel}</span>
+                        {r.source === "csv" ? (
+                          <Badge variant="secondary" className="text-[10px]">
+                            CSV
+                          </Badge>
+                        ) : r.source === "manual" ? (
+                          <Badge variant="outline" className="text-[10px]">
+                            手入力
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={r.yobou1}
+                        onChange={(e) =>
+                          updateField(
+                            r.key,
+                            "yobou1",
+                            Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                          )
+                        }
+                        disabled={r.locked}
+                        className="w-20 text-right border rounded px-1 py-0.5 bg-background tabular-nums disabled:bg-muted disabled:cursor-not-allowed"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={r.yobou2}
+                        onChange={(e) =>
+                          updateField(
+                            r.key,
+                            "yobou2",
+                            Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                          )
+                        }
+                        disabled={r.locked}
+                        className="w-20 text-right border rounded px-1 py-0.5 bg-background tabular-nums disabled:bg-muted disabled:cursor-not-allowed"
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
