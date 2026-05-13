@@ -555,7 +555,7 @@ export function KyotakuAttendanceContent() {
                     <TableHead className="w-10 text-center">曜</TableHead>
                     <TableHead className="w-24">出勤</TableHead>
                     <TableHead className="w-24">退勤</TableHead>
-                    <TableHead className="w-20 text-right">休憩(分)</TableHead>
+                    <TableHead className="w-20 text-right">休憩</TableHead>
                     <TableHead className="w-20 text-right">実労働</TableHead>
                     <TableHead className="w-20 text-right">残業</TableHead>
                     <TableHead className="w-20 text-right">深夜</TableHead>
@@ -601,18 +601,24 @@ export function KyotakuAttendanceContent() {
                         </TableCell>
                         <TableCell className="text-right">
                           <Input
-                            type="number"
-                            min={0}
-                            value={row.break_minutes}
-                            onChange={(e) =>
-                              updateRow(idx, {
-                                break_minutes: Math.max(
-                                  0,
-                                  parseInt(e.target.value || "0", 10) || 0,
-                                ),
-                              })
-                            }
-                            className="h-8 text-right"
+                            type="time"
+                            value={(() => {
+                              const m = row.break_minutes || 0;
+                              const h = Math.floor(m / 60);
+                              const mm = m % 60;
+                              return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+                            })()}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (!v) {
+                                updateRow(idx, { break_minutes: 0 });
+                                return;
+                              }
+                              const [h, mm] = v.split(":").map(Number);
+                              const total = (h || 0) * 60 + (mm || 0);
+                              updateRow(idx, { break_minutes: Math.max(0, total) });
+                            }}
+                            className="h-8"
                           />
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
