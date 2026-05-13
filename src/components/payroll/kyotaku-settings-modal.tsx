@@ -26,17 +26,22 @@ type Props = {
   onClose: () => void;
   tenantId: string;
   officeNumber: string;
-  /** dashboard から渡される (records に存在するケアマネ一覧) */
+  /** dashboard から渡される (records に存在するケアマネ一覧)。表示候補生成にも使うが
+   *  追加候補は「payroll_employees に登録済みで kyotaku_* がまだ NULL の name」を採用する。 */
   staffNames: string[];
   onSaved?: () => void;
 };
 
 type SettingRow = {
-  id: string | null; // null = まだ DB に保存されていない新規 row
+  /** payroll_employees.id (必須: NULL になることはない、未保存 row は別配列管理) */
+  employee_id: string;
   staff_name: string;
+  /** NULL のときは DEFAULT_BASE_SALARY を表示するが、保存時は入力値をそのまま書く */
   base_salary: number;
   kaigo_rate: number;
   shien_rate: number;
+  /** 「設定済み」(= 3 列のいずれかが non-NULL) のフラグ。delete で全列 NULL に戻すと false */
+  configured: boolean;
 };
 
 const DEFAULT_BASE_SALARY = 250000;
@@ -45,51 +50,107 @@ const DEFAULT_BASE_SALARY = 250000;
  * 居宅介護支援 ケアマネ別給与設定 modal
  *
  * 仕様: apps/居宅給与計算/SPEC.md §2.2 (給与設定 sheet)
- * DB:   payroll_kyotaku_settings (apps/payroll-app/migrations/payroll_kyotaku_v1.sql)
+ * DB:   payroll_employees の kyotaku_base_salary / kyotaku_kaigo_rate / kyotaku_shien_rate
+ *       (2026-05-13 に payroll_kyotaku_settings から集約)
  *
- * - open 時に該当 office の全 row を fetch
+ * - open 時に該当 office の payroll_employees row を fetch
  * - inline 編集 (基本給 / 要介護単価 / 要支援単価)
- * - 「+ ケアマネ追加」: staffNames のうち未登録の名前から select
- * - 「保存」で upsert (onConflict: office_number,staff_name)
- * - 「削除」で DB から削除 (id がある row のみ)
+ * - 「+ ケアマネ追加」: 同 office の employees で 3 列がまだ NULL のものを候補に
+ * - 「保存」: 各 row を payroll_employees.update で書き込み (id ベース)
+ * - 「削除」: 列値を NULL に戻す (row 自体は削除しない、他用途で使われ得るため)
  */
 export function KyotakuSettingsModal({
   open,
   onClose,
-  tenantId,
+  // tenantId は payroll_employees に列が無いため未使用だが、呼び出し側の
+  // interface 互換のため Props 上には残す。
   officeNumber,
   staffNames,
   onSaved,
 }: Props) {
+  // 「設定済み」(編集可能 row): 3 列のいずれかが non-NULL の employees
   const [rows, setRows] = useState<SettingRow[]>([]);
+  // 「未設定」(追加候補): 3 列全て NULL の employees。追加すると rows に移動する
+  const [unconfigured, setUnconfigured] = useState<
+    Array<{ employee_id: string; staff_name: string }>
+  >([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingAddStaff, setPendingAddStaff] = useState<string>("");
+  // 同 office の employees に居ない (= staffNames に出てくるが employees に未登録) 名前
+  // を表示するため、employee 一覧を参照保持しておく
+  const [knownEmployeeNames, setKnownEmployeeNames] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("payroll_kyotaku_settings")
-      .select("id, staff_name, base_salary, kaigo_rate, shien_rate")
+    // payroll_employees は office_id でしか引けないので、まず office_number → office_id を解決
+    const { data: officeRow, error: oErr } = await supabase
+      .from("payroll_offices")
+      .select("id")
       .eq("office_number", officeNumber)
-      .order("staff_name", { ascending: true });
+      .maybeSingle();
+    if (oErr || !officeRow) {
+      toast.error(`事業所解決エラー: ${oErr?.message ?? "office not found"}`);
+      setRows([]);
+      setUnconfigured([]);
+      setLoading(false);
+      return;
+    }
+    const officeId = (officeRow as { id: string }).id;
+
+    const { data, error } = await supabase
+      .from("payroll_employees")
+      .select(
+        "id, name, kyotaku_base_salary, kyotaku_kaigo_rate, kyotaku_shien_rate",
+      )
+      .eq("office_id", officeId)
+      .order("name", { ascending: true });
 
     if (error) {
       toast.error(`設定読込エラー: ${error.message}`);
       setRows([]);
+      setUnconfigured([]);
       setLoading(false);
       return;
     }
 
-    setRows(
-      (data ?? []).map((r) => ({
-        id: r.id as string,
-        staff_name: r.staff_name as string,
-        base_salary: Number(r.base_salary ?? DEFAULT_BASE_SALARY),
-        kaigo_rate: Number(r.kaigo_rate ?? 0),
-        shien_rate: Number(r.shien_rate ?? 0),
-      })),
-    );
+    type EmployeeRow = {
+      id: string;
+      name: string;
+      kyotaku_base_salary: number | null;
+      kyotaku_kaigo_rate: number | null;
+      kyotaku_shien_rate: number | null;
+    };
+    const list = (data ?? []) as EmployeeRow[];
+
+    const configured: SettingRow[] = [];
+    const unconf: Array<{ employee_id: string; staff_name: string }> = [];
+    const knownNames = new Set<string>();
+    for (const e of list) {
+      if (!e.name) continue;
+      knownNames.add(e.name);
+      const isConfigured =
+        e.kyotaku_base_salary !== null ||
+        e.kyotaku_kaigo_rate !== null ||
+        e.kyotaku_shien_rate !== null;
+      if (isConfigured) {
+        configured.push({
+          employee_id: e.id,
+          staff_name: e.name,
+          base_salary: Number(e.kyotaku_base_salary ?? DEFAULT_BASE_SALARY),
+          kaigo_rate: Number(e.kyotaku_kaigo_rate ?? 0),
+          shien_rate: Number(e.kyotaku_shien_rate ?? 0),
+          configured: true,
+        });
+      } else {
+        unconf.push({ employee_id: e.id, staff_name: e.name });
+      }
+    }
+    setRows(configured);
+    setUnconfigured(unconf);
+    setKnownEmployeeNames(knownNames);
     setLoading(false);
   }, [officeNumber]);
 
@@ -102,11 +163,17 @@ export function KyotakuSettingsModal({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, load]);
 
-  /** records に居るが settings に居ないケアマネ一覧 (追加候補) */
+  /** 追加候補: 同 office の payroll_employees にあって、まだ kyotaku_* が NULL のもの */
   const addCandidates = useMemo(() => {
-    const existing = new Set(rows.map((r) => r.staff_name));
-    return staffNames.filter((n) => n && !existing.has(n));
-  }, [rows, staffNames]);
+    const inRows = new Set(rows.map((r) => r.employee_id));
+    return unconfigured.filter((u) => !inRows.has(u.employee_id));
+  }, [rows, unconfigured]);
+
+  /** records には居るが payroll_employees に居ない名前 (本来は backfill 済みで無いはず) */
+  const orphanStaffNames = useMemo(() => {
+    if (!staffNames || staffNames.length === 0) return [] as string[];
+    return staffNames.filter((n) => n && !knownEmployeeNames.has(n));
+  }, [staffNames, knownEmployeeNames]);
 
   const updateRow = useCallback(
     (index: number, patch: Partial<SettingRow>) => {
@@ -124,38 +191,59 @@ export function KyotakuSettingsModal({
       toast.error("追加するケアマネを選択してください");
       return;
     }
-    if (rows.some((r) => r.staff_name === pendingAddStaff)) {
+    const target = unconfigured.find((u) => u.employee_id === pendingAddStaff);
+    if (!target) {
+      toast.error("候補が見つかりません");
+      return;
+    }
+    if (rows.some((r) => r.employee_id === target.employee_id)) {
       toast.error("既に追加されています");
       return;
     }
     setRows((prev) => [
       ...prev,
       {
-        id: null,
-        staff_name: pendingAddStaff,
+        employee_id: target.employee_id,
+        staff_name: target.staff_name,
         base_salary: DEFAULT_BASE_SALARY,
         kaigo_rate: 0,
         shien_rate: 0,
+        configured: false, // 保存後に configured になる
       },
     ]);
     setPendingAddStaff("");
-  }, [pendingAddStaff, rows]);
+  }, [pendingAddStaff, rows, unconfigured]);
 
   const handleDelete = useCallback(
     async (index: number) => {
       const target = rows[index];
       if (!target) return;
-      if (!confirm(`${target.staff_name} の給与設定を削除しますか？`)) return;
+      if (
+        !confirm(
+          `${target.staff_name} の給与設定を削除しますか？\n(payroll_employees の row は残し、kyotaku_* 列を NULL に戻します)`,
+        )
+      )
+        return;
 
-      if (target.id) {
+      if (target.configured) {
+        // 既に DB に書き込み済み: 列を NULL に戻す
         const { error } = await supabase
-          .from("payroll_kyotaku_settings")
-          .delete()
-          .eq("id", target.id);
+          .from("payroll_employees")
+          .update({
+            kyotaku_base_salary: null,
+            kyotaku_kaigo_rate: null,
+            kyotaku_shien_rate: null,
+          })
+          .eq("id", target.employee_id);
         if (error) {
           toast.error(`削除エラー: ${error.message}`);
           return;
         }
+        // unconfigured に戻す
+        setUnconfigured((prev) => [
+          ...prev,
+          { employee_id: target.employee_id, staff_name: target.staff_name },
+        ]);
       }
       setRows((prev) => prev.filter((_, i) => i !== index));
       toast.success(`${target.staff_name} の設定を削除しました`);
@@ -185,17 +273,8 @@ export function KyotakuSettingsModal({
     }
 
     setSaving(true);
-    const payload = rows.map((r) => ({
-      tenant_id: tenantId,
-      office_number: officeNumber,
-      staff_name: r.staff_name,
-      base_salary: Math.trunc(r.base_salary),
-      kaigo_rate: Math.trunc(r.kaigo_rate),
-      shien_rate: Math.trunc(r.shien_rate),
-      updated_at: new Date().toISOString(),
-    }));
 
-    if (payload.length === 0) {
+    if (rows.length === 0) {
       setSaving(false);
       toast.success("設定を保存しました");
       onSaved?.();
@@ -203,20 +282,35 @@ export function KyotakuSettingsModal({
       return;
     }
 
-    const { error } = await supabase
-      .from("payroll_kyotaku_settings")
-      .upsert(payload, { onConflict: "office_number,staff_name" });
+    // payroll_employees を 1 行ずつ update (PostgREST upsert は id PK で動くが、
+    // ここは「同 id の row が必ず存在する (未存在は handleAddStaff 段階で弾く)」前提)
+    let fail = 0;
+    let failMsg = "";
+    for (const r of rows) {
+      const { error } = await supabase
+        .from("payroll_employees")
+        .update({
+          kyotaku_base_salary: Math.trunc(r.base_salary),
+          kyotaku_kaigo_rate: Math.trunc(r.kaigo_rate),
+          kyotaku_shien_rate: Math.trunc(r.shien_rate),
+        })
+        .eq("id", r.employee_id);
+      if (error) {
+        fail += 1;
+        failMsg = error.message;
+      }
+    }
 
     setSaving(false);
 
-    if (error) {
-      toast.error(`保存エラー: ${error.message}`);
+    if (fail > 0) {
+      toast.error(`保存エラー: ${fail} 件失敗 (${failMsg})`);
       return;
     }
-    toast.success(`${payload.length} 件の設定を保存しました`);
+    toast.success(`${rows.length} 件の設定を保存しました`);
     onSaved?.();
     onClose();
-  }, [rows, tenantId, officeNumber, onClose, onSaved]);
+  }, [rows, onClose, onSaved]);
 
   return (
     <Dialog
@@ -242,13 +336,13 @@ export function KyotakuSettingsModal({
           ) : (
             rows.map((row, index) => (
               <div
-                key={`${row.staff_name}-${row.id ?? "new"}`}
+                key={row.employee_id}
                 className="rounded-lg border p-3 space-y-2"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="font-medium text-sm">
                     {row.staff_name}
-                    {row.id === null && (
+                    {!row.configured && (
                       <span className="ml-2 text-xs text-amber-600">(未保存)</span>
                     )}
                   </div>
@@ -313,7 +407,7 @@ export function KyotakuSettingsModal({
 
           <div className="rounded-lg border border-dashed p-3 space-y-2">
             <Label className="text-xs text-muted-foreground">
-              + ケアマネ追加 (records に出現するケアマネのうち未登録の方)
+              + ケアマネ追加 (payroll_employees 登録済み・kyotaku 設定未登録)
             </Label>
             {addCandidates.length === 0 ? (
               <p className="text-xs text-muted-foreground">
@@ -329,16 +423,20 @@ export function KyotakuSettingsModal({
                 >
                   <SelectTrigger className="flex-1">
                     <SelectValue placeholder="ケアマネを選択">
-                      {(v: string) =>
-                        !v || v === "__none__" ? "ケアマネを選択" : v
-                      }
+                      {(v: string) => {
+                        if (!v || v === "__none__") return "ケアマネを選択";
+                        const cand = addCandidates.find(
+                          (c) => c.employee_id === v,
+                        );
+                        return cand?.staff_name ?? "ケアマネを選択";
+                      }}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">ケアマネを選択</SelectItem>
-                    {addCandidates.map((n) => (
-                      <SelectItem key={n} value={n}>
-                        {n}
+                    {addCandidates.map((c) => (
+                      <SelectItem key={c.employee_id} value={c.employee_id}>
+                        {c.staff_name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -355,6 +453,22 @@ export function KyotakuSettingsModal({
               </div>
             )}
           </div>
+
+          {orphanStaffNames.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-1 text-xs text-amber-900">
+              <div className="font-medium">
+                ⚠ records にあるが payroll_employees に未登録のケアマネ:
+              </div>
+              <ul className="list-disc pl-5">
+                {orphanStaffNames.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+              <div className="text-amber-700">
+                /employees から先に職員登録してください。
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="-mx-4 -mb-4 mt-2 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end">

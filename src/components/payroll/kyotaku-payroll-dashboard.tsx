@@ -37,7 +37,8 @@ import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
  *
  * データソース:
  *   - payroll_kyotaku_records          国保連 CSV row (一覧)
- *   - payroll_kyotaku_settings         ケアマネ別 (基本給 / 単価)
+ *   - payroll_employees                ケアマネ別 (kyotaku_base_salary / kyotaku_kaigo_rate / kyotaku_shien_rate)
+ *                                       ※ 旧 payroll_kyotaku_settings から移行 (2026-05-13)
  *   - payroll_kyotaku_service_units    項目別 単位数 (tenant 共通)
  *   - payroll_kyotaku_regional_rates   保険者 → 円/単位 (tenant 共通)
  *   - payroll_kyotaku_confirmations    支給済み (reverted_at IS NULL のみ active)
@@ -400,10 +401,16 @@ export function KyotakuPayrollDashboard({
               data: FullRecord[] | null;
             }>,
         ),
+        // 給与設定は payroll_employees の 3 列に集約 (2026-05-13 移行)。
+        // payroll_employees.office_id は payroll_offices.id への FK。office_number で
+        // partition したいので embed で payroll_offices.office_number を引き寄せる。
+        // 居宅介護支援 office に限らず全 employees を取得しても、後段の filter で
+        // office_number ∈ officeNumbers のみ残るので問題なし。
         supabase
-          .from("payroll_kyotaku_settings")
-          .select("*")
-          .in("office_number", officeNumbers),
+          .from("payroll_employees")
+          .select(
+            "id, name, kyotaku_base_salary, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
+          ),
         supabase.from("payroll_kyotaku_service_units").select("*"),
         supabase.from("payroll_kyotaku_regional_rates").select("*"),
         supabase
@@ -419,7 +426,34 @@ export function KyotakuPayrollDashboard({
       if (confRes.error) throw confRes.error;
 
       setRecords(recs);
-      setSettings((setRes.data ?? []) as SettingRow[]);
+      // payroll_employees row → SettingRow に flatten。office_number は embed 経由で
+      // 取り出す。embed は 1:1 (employees.office_id → offices.id) なので object。
+      // 居宅介護支援以外の office に紐づく employee は office_number が
+      // officeNumbers 集合に含まれないため partitionByOffice で自然に除外される。
+      type RawEmployeeRow = {
+        id: string;
+        name: string;
+        kyotaku_base_salary: number | null;
+        kyotaku_kaigo_rate: number | null;
+        kyotaku_shien_rate: number | null;
+        office: { office_number: string | null } | null;
+      };
+      const officeNumberSet = new Set(officeNumbers);
+      const mappedSettings: SettingRow[] = [];
+      for (const r of (setRes.data ?? []) as unknown as RawEmployeeRow[]) {
+        const officeNumber = r.office?.office_number ?? "";
+        if (!officeNumber || !officeNumberSet.has(officeNumber)) continue;
+        if (!r.name) continue;
+        mappedSettings.push({
+          id: r.id,
+          office_number: officeNumber,
+          staff_name: r.name,
+          base_salary: r.kyotaku_base_salary,
+          kaigo_rate: r.kyotaku_kaigo_rate,
+          shien_rate: r.kyotaku_shien_rate,
+        });
+      }
+      setSettings(mappedSettings);
       setUnits((unitRes.data ?? []) as ServiceUnit[]);
       setRates((rateRes.data ?? []) as RegionalRate[]);
       setConfirmations((confRes.data ?? []) as ConfirmationRow[]);

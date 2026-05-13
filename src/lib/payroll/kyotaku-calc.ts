@@ -23,10 +23,14 @@ export type CareLevel =
   | "要介護５";
 
 export type EmployeeSetting = {
+  /** payroll_employees.name (= payroll_kyotaku_records.staff_name と完全一致 match) */
   staff_name: string;
-  base_salary: number;
-  kaigo_rate: number;
-  shien_rate: number;
+  /** payroll_employees.kyotaku_base_salary (NULL → DEFAULT_BASE_SALARY=250000 にフォールバック) */
+  base_salary: number | null;
+  /** payroll_employees.kyotaku_kaigo_rate (NULL → 0) */
+  kaigo_rate: number | null;
+  /** payroll_employees.kyotaku_shien_rate (NULL → 0) */
+  shien_rate: number | null;
 };
 
 export type ServiceUnit = {
