@@ -1336,12 +1336,20 @@ export default function PayrollPage() {
 
   // 居宅介護支援 office を選択中は専用 dashboard を表示
   // (訪問介護とは給与計算ロジック/データ source が異なる: 国保連 CSV ベース)
+  // 全社横断 view が default で、選択中 office があれば初期絞り込みとして渡す。
   const currentOffice = offices.find((o) => o.id === selectedOfficeId);
   if (currentOffice?.office_type === "居宅介護支援") {
+    const allKyotakuOffices = offices
+      .filter((o) => o.office_type === "居宅介護支援")
+      .map((o) => ({
+        office_number: o.office_number,
+        short_name: o.short_name || o.name,
+        name: o.name,
+      }));
     return (
       <KyotakuPayrollDashboard
-        officeNumber={currentOffice.office_number}
-        officeName={currentOffice.short_name || currentOffice.name}
+        allKyotakuOffices={allKyotakuOffices}
+        initialOfficeNumber={currentOffice.office_number}
       />
     );
   }
