@@ -1342,6 +1342,7 @@ export default function PayrollPage() {
     const allKyotakuOffices = offices
       .filter((o) => o.office_type === "居宅介護支援")
       .map((o) => ({
+        id: o.id,
         office_number: o.office_number,
         short_name: o.short_name || o.name,
         name: o.name,

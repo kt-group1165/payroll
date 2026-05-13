@@ -47,6 +47,8 @@ import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
  */
 
 type KyotakuOffice = {
+  /** payroll_offices.id (UUID)。payroll_employees.office_id への FK 値として使用 */
+  id: string;
   office_number: string;
   short_name: string;
   name: string;
@@ -356,6 +358,14 @@ export function KyotakuPayrollDashboard({
     [allKyotakuOffices],
   );
 
+  // payroll_employees.office_id (= payroll_offices.id) で絞り込むために UUID list を作る。
+  // 1000 行 PostgREST default limit 対策: 全 employees fetch (~数千件) は limit に
+  // 引っ掛かるが、居宅介護支援 office (~30 件) だけに絞れば数百件で完結する。
+  const officeIds = useMemo(
+    () => allKyotakuOffices.map((o) => o.id),
+    [allKyotakuOffices],
+  );
+
   // office_number → office (short_name 解決) の lookup
   const officeMap = useMemo(() => {
     const m = new Map<string, KyotakuOffice>();
@@ -404,13 +414,15 @@ export function KyotakuPayrollDashboard({
         // 給与設定は payroll_employees の 3 列に集約 (2026-05-13 移行)。
         // payroll_employees.office_id は payroll_offices.id への FK。office_number で
         // partition したいので embed で payroll_offices.office_number を引き寄せる。
-        // 居宅介護支援 office に限らず全 employees を取得しても、後段の filter で
-        // office_number ∈ officeNumbers のみ残るので問題なし。
+        // 全 employees fetch すると PostgREST default 1000 行 limit に引っ掛かり、
+        // id 順で範囲外の居宅介護支援ケアマネが落ちる (memory: 1253 件 backfill 済)。
+        // 居宅介護支援 office (~30 件) に絞れば数百件で完結し limit を回避できる。
         supabase
           .from("payroll_employees")
           .select(
             "id, name, kyotaku_base_salary, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
-          ),
+          )
+          .in("office_id", officeIds),
         supabase.from("payroll_kyotaku_service_units").select("*"),
         supabase.from("payroll_kyotaku_regional_rates").select("*"),
         supabase
