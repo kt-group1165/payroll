@@ -12,8 +12,11 @@ import {
   type OfficeFormExistingMonth,
 } from "@/components/csv/office-form-importer";
 import { ClientImporter } from "@/components/csv/client-importer";
+import { KyotakuImporter } from "@/components/csv/kyotaku-importer";
 import { createClient } from "@/lib/supabase/server";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+
+const KYOTAKU_TENANT_ID = "kt-group"; // payroll_kyotaku_records.tenant_id (seed と整合)
 
 interface OfficeForImporters {
   id: string;
@@ -129,6 +132,7 @@ export default async function CsvImportPage() {
           <TabsTrigger value="meisai">介護ソフトCSV</TabsTrigger>
           <TabsTrigger value="attendance">出勤簿</TabsTrigger>
           <TabsTrigger value="office_form">事業所書式</TabsTrigger>
+          <TabsTrigger value="kyotaku">居宅介護支援</TabsTrigger>
           <TabsTrigger value="clients">利用者</TabsTrigger>
         </TabsList>
         <TabsContent value="meisai" className="mt-4">
@@ -147,6 +151,12 @@ export default async function CsvImportPage() {
           <OfficeFormImporter
             initialOffices={offices}
             initialExistingMonths={officeFormMonths}
+          />
+        </TabsContent>
+        <TabsContent value="kyotaku" className="mt-4">
+          <KyotakuImporter
+            tenantId={KYOTAKU_TENANT_ID}
+            initialOffices={offices.filter((o) => o.office_type === "居宅介護支援")}
           />
         </TabsContent>
         <TabsContent value="clients" className="mt-4">
