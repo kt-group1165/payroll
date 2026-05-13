@@ -2306,21 +2306,31 @@ function YobouTab({
     () => allYobouMonths[allYobouMonths.length - 1] ?? null,
   );
   useEffect(() => {
-    if (!selectedMonth || !allYobouMonths.includes(selectedMonth)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- data 変化に追随
+    // 初期化時のみ default 月を設定。ユーザが選択中の月はデータ有無に関わらず保持。
+    if (!selectedMonth) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 初期化
       setSelectedMonth(allYobouMonths[allYobouMonths.length - 1] ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allYobouMonths]);
 
-  const monthIdx = selectedMonth ? allYobouMonths.indexOf(selectedMonth) : -1;
+  // 月遷移は freestyle (= 既存データ無い月も自由に遷移、入力後に DB に追加される)
+  const shiftMonth = (ym: string | null, delta: number): string | null => {
+    if (!ym) return null;
+    const [y, m] = ym.slice(0, 7).split("-").map(Number);
+    if (!y || !m) return null;
+    const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+    const ny = d.getUTCFullYear();
+    const nm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    return `${ny}-${nm}-01`;
+  };
   const goPrev = () => {
-    if (monthIdx > 0) setSelectedMonth(allYobouMonths[monthIdx - 1]);
+    const prev = shiftMonth(selectedMonth, -1);
+    if (prev) setSelectedMonth(prev);
   };
   const goNext = () => {
-    if (monthIdx >= 0 && monthIdx < allYobouMonths.length - 1) {
-      setSelectedMonth(allYobouMonths[monthIdx + 1]);
-    }
+    const next = shiftMonth(selectedMonth, 1);
+    if (next) setSelectedMonth(next);
   };
 
   // 選択中 office の staff 一覧 (allStaffKeys 経由)
@@ -2565,18 +2575,13 @@ function YobouTab({
           </span>
         )}
 
-        <Button onClick={goPrev} disabled={monthIdx <= 0} size="sm" variant="outline">
+        <Button onClick={goPrev} disabled={!selectedMonth} size="sm" variant="outline">
           ← 前月
         </Button>
         <span className="text-sm font-medium min-w-[110px] text-center">
           提供月: {selectedMonth ? fmtMonthLabel(selectedMonth) : "—"}
         </span>
-        <Button
-          onClick={goNext}
-          disabled={monthIdx < 0 || monthIdx >= allYobouMonths.length - 1}
-          size="sm"
-          variant="outline"
-        >
+        <Button onClick={goNext} disabled={!selectedMonth} size="sm" variant="outline">
           次月 →
         </Button>
         <span className="text-xs text-muted-foreground ml-2">
