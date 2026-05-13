@@ -274,6 +274,38 @@ function countCells(
 // 売上表 (項目別売上、地域加算込)
 // =====================================================================
 
+/**
+ * care_level (records 由来、全角想定: 要介護１/要介護２/.../要支援１/要支援２) を
+ * 売上表 master の item_name (要介護１～２ / 要介護３～５ / 要支援１ / 要支援２) に
+ * マッピングする。半角数字混入も保険として吸収。
+ * 該当 master 行が units に存在しなければ null (= 単位数 master 未投入で skip)。
+ */
+function mapCareLevelToMasterItem(
+  careLevel: string,
+  units: ServiceUnit[],
+): string | null {
+  // 半角 → 全角 数字正規化 (master / records どちら向きでも吸収できる)
+  const z = careLevel.replace(/[0-9]/g, (d) =>
+    String.fromCharCode(d.charCodeAt(0) + 0xfee0),
+  );
+  // master 側に存在する key を返す (全角チルダ U+FF5E / 互換 U+301C を許容)
+  const findExisting = (...keys: string[]): string | null => {
+    for (const k of keys) {
+      if (units.some((u) => u.item_name === k)) return k;
+    }
+    return null;
+  };
+  if (z === "要介護１" || z === "要介護２") {
+    return findExisting("要介護１～２", "要介護１〜２");
+  }
+  if (z === "要介護３" || z === "要介護４" || z === "要介護５") {
+    return findExisting("要介護３～５", "要介護３〜５");
+  }
+  if (z === "要支援１") return findExisting("要支援１");
+  if (z === "要支援２") return findExisting("要支援２");
+  return null;
+}
+
 function resolveRecordUnit(
   r: FullRecord,
   units: ServiceUnit[],
@@ -282,7 +314,9 @@ function resolveRecordUnit(
     if (!r.care_level) return null;
     const u = getBaseUnit(r.care_level, units);
     if (u === 0) return null;
-    return { itemName: r.care_level, unit: u };
+    const itemName = mapCareLevelToMasterItem(r.care_level, units);
+    if (!itemName) return null;
+    return { itemName, unit: u };
   }
   if (!r.service_name) return null;
   for (const u of units) {
@@ -947,6 +981,7 @@ export function KyotakuPayrollDashboard({
         <TabsContent value="uriage" className="mt-4">
           <UriageTab
             records={filteredRecords}
+            yobouRecords={filteredYobou}
             allMonths={allMonths}
             allStaffKeys={allStaffKeys}
             officeMap={officeMap}
@@ -1536,6 +1571,7 @@ function PaymentStaffBlock({
 
 function UriageTab({
   records,
+  yobouRecords,
   allMonths,
   allStaffKeys,
   officeMap,
@@ -1544,6 +1580,7 @@ function UriageTab({
   units,
 }: {
   records: FullRecord[];
+  yobouRecords: YobouRow[];
   allMonths: string[];
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
   officeMap: Map<string, KyotakuOffice>;
@@ -1552,22 +1589,57 @@ function UriageTab({
   units: ServiceUnit[];
 }) {
   // revenue[month][office|staff][item] を作る
+  // records (国保連 CSV = 介護給付) + yobouRecords (介護予防 = 要支援1/2) の和。
+  // 売上表は「提供月」集計 (月遅れ請求も提供月へ寄せる)。
+  // yobouRecords は insurer_name を持たないため地域加算は default 10 円
+  // (= 集計.py の chiiki fallback と同じ)。
   const revenue = useMemo(() => {
     const m = new Map<string, Map<string, Map<string, number>>>();
+    const bump = (
+      month: string,
+      sk: string,
+      itemName: string,
+      yen: number,
+    ) => {
+      if (!month || !sk || !itemName) return;
+      if (yen === 0) return;
+      const a = m.get(month) ?? new Map<string, Map<string, number>>();
+      const b = a.get(sk) ?? new Map<string, number>();
+      b.set(itemName, (b.get(itemName) ?? 0) + yen);
+      a.set(sk, b);
+      m.set(month, a);
+    };
+
+    // 1) records (介護給付): 基本サービス + 加算
     for (const r of records) {
       const resolved = resolveRecordUnit(r, units);
       if (!resolved) continue;
       const chiiki = rateMap.get(r.insurer_name ?? "") ?? 10.0;
       const yen = resolved.unit * chiiki;
       const sk = staffKey(r.office_number, r.staff_name);
-      const a = m.get(r.service_month) ?? new Map();
-      const b = a.get(sk) ?? new Map();
-      b.set(resolved.itemName, (b.get(resolved.itemName) ?? 0) + yen);
-      a.set(sk, b);
-      m.set(r.service_month, a);
+      bump(r.service_month, sk, resolved.itemName, yen);
+    }
+
+    // 2) yobouRecords (介護予防支援): 要支援1/2 件数 × 単位 × 10 円
+    //    master に「要支援１」「要支援２」が無ければ skip (= 未投入)。
+    const yobou1Unit =
+      units.find((u) => u.item_name === "要支援１")?.unit_count ?? 0;
+    const yobou2Unit =
+      units.find((u) => u.item_name === "要支援２")?.unit_count ?? 0;
+    for (const yr of yobouRecords) {
+      const sk = staffKey(yr.office_number, yr.staff_name);
+      const chiiki = 10.0; // yobou_records は insurer_name を持たないため default
+      const c1 = yr.yobou1_count ?? 0;
+      const c2 = yr.yobou2_count ?? 0;
+      if (c1 > 0 && yobou1Unit > 0) {
+        bump(yr.service_month, sk, "要支援１", c1 * yobou1Unit * chiiki);
+      }
+      if (c2 > 0 && yobou2Unit > 0) {
+        bump(yr.service_month, sk, "要支援２", c2 * yobou2Unit * chiiki);
+      }
     }
     return m;
-  }, [records, units, rateMap]);
+  }, [records, yobouRecords, units, rateMap]);
 
   // office 表示順 (allStaffKeys 出現順)
   const officeOrderArr = useMemo(() => {
