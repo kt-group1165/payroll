@@ -1,0 +1,389 @@
+// attendance-calc.ts
+// 出勤簿 残業計算ロジック (汎用 / 日本労基準拠 pure-function 集)
+//
+// 設計方針:
+//   - 居宅介護支援ケアマネを主想定としつつ、訪問介護等の他職種でも流用できる汎用設計
+//   - 純粋関数のみ (副作用なし / testable)
+//   - 本 lib は「時間 (分) の集計」に責任を持ち、割増率の適用 (×1.25 / ×1.35 等) は呼出側で行う
+//
+// 日本労基準拠:
+//   - 法定労働時間: 1 日 8 時間 / 1 週 40 時間 (労基法 §32)
+//   - 深夜時間帯: 22:00 - 翌 5:00 (労基法 §37④)
+//   - 法定休日: 週 1 日 (労基法 §35) — シフト上の休日 (= 所定休日) と区別する
+//     法定休日労働は ×1.35、所定休日労働は通常の残業扱い
+//   - 日次残業 (8h 超) と週次残業 (週 40h 超) は重複しないよう、週次は日次超過分を差し引く
+//   - 深夜割増は他の割増と独立して上乗せされるため、本 lib では別 field で集計
+//
+// 入出力単位は分 (minute)。出力 field は全て非負整数を期待する。
+
+// =====================================================================
+// Type 定義
+// =====================================================================
+
+export type AttendanceRecord = {
+  /** 勤務日 (YYYY-MM-DD) */
+  work_date: string;
+  /** 出勤時刻 (HH:mm)。null なら未出勤扱い */
+  start_time: string | null;
+  /** 退勤時刻 (HH:mm)。null なら未出勤扱い。end < start の場合は翌日跨ぎとして +24h */
+  end_time: string | null;
+  /** 休憩時間 (分) */
+  break_minutes: number;
+  /** 法定休日労働か (= シフト上の所定休日とは区別)。true なら全労働時間が holiday_work に積まれる */
+  is_legal_holiday: boolean;
+  /** 有給休暇取得日か (月集計の total_paid_leave_days に加算) */
+  is_paid_leave: boolean;
+};
+
+export type DailyCalc = {
+  work_date: string;
+  /** 実労働時間 (休憩除く、分) */
+  work_minutes: number;
+  /** 日次残業 (1 日 8h 超過、分)。法定休日労働日は 0 (= holiday_work で別計上) */
+  daily_overtime: number;
+  /** 深夜残業 (22:00 - 翌 05:00 の労働、分) */
+  midnight_overtime: number;
+  /** 法定休日労働 (is_legal_holiday=true なら work_minutes 全部、分) */
+  holiday_work: number;
+};
+
+export type MonthlySummary = {
+  /** 月合計 実労働 (分) */
+  total_work: number;
+  /** 月合計 日次残業 (分) */
+  total_daily_overtime: number;
+  /**
+   * 月合計 週次残業 (週 40h 超過、分)。
+   * 日次残業と二重計上しないよう、各週で「週合計 - 週内日次残業合計」が 40h を超えた分のみ。
+   */
+  total_weekly_overtime: number;
+  /** 月合計 深夜残業 (分) */
+  total_midnight: number;
+  /** 月合計 法定休日労働 (分) */
+  total_holiday: number;
+  /** 有給日数 (record 数 — 半休等は呼出側で別管理) */
+  total_paid_leave_days: number;
+};
+
+// =====================================================================
+// 定数
+// =====================================================================
+
+const MIN_PER_HOUR = 60;
+const LEGAL_DAILY_LIMIT = 8 * MIN_PER_HOUR; // 480
+const LEGAL_WEEKLY_LIMIT = 40 * MIN_PER_HOUR; // 2400
+const MIDNIGHT_START_HOUR = 22; // 22:00
+const MIDNIGHT_END_HOUR = 5; // 翌 05:00
+const MIDNIGHT_START_MIN = MIDNIGHT_START_HOUR * MIN_PER_HOUR; // 1320
+const MIDNIGHT_END_MIN = MIDNIGHT_END_HOUR * MIN_PER_HOUR; // 300
+const DAY_MIN = 24 * MIN_PER_HOUR; // 1440
+
+// =====================================================================
+// 補助関数
+// =====================================================================
+
+/**
+ * "HH:mm" / "H:m" を { hour, minute } に分解。
+ * 不正値 (範囲外 / 形式不一致) は null。
+ *
+ * @example
+ * parseTime("09:00")  // => { hour: 9, minute: 0 }
+ * parseTime("9:5")    // => { hour: 9, minute: 5 }
+ * parseTime("24:00")  // => null  (hour は 0-23)
+ * parseTime("abc")    // => null
+ */
+export function parseTime(
+  s: string,
+): { hour: number; minute: number } | null {
+  if (typeof s !== "string") return null;
+  const m = /^(\d{1,2}):(\d{1,2})$/.exec(s.trim());
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour < 0 || hour > 23) return null;
+  if (minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+/**
+ * "HH:mm" の start と end の間の分数。end < start の場合は翌日跨ぎとして +24h 補正。
+ * パース失敗時は 0。
+ *
+ * @example
+ * minutesBetween("09:00", "18:00")  // => 540
+ * minutesBetween("22:00", "05:00")  // => 420 (翌日 5:00 まで = 7h)
+ * minutesBetween("18:00", "18:00")  // => 0
+ */
+export function minutesBetween(start: string, end: string): number {
+  const a = parseTime(start);
+  const b = parseTime(end);
+  if (!a || !b) return 0;
+  const s = a.hour * MIN_PER_HOUR + a.minute;
+  let e = b.hour * MIN_PER_HOUR + b.minute;
+  if (e < s) e += DAY_MIN;
+  return e - s;
+}
+
+/**
+ * 分を "H:MM" 形式に整形。負値は "-" prefix。
+ *
+ * @example
+ * formatHM(510)   // => "8:30"
+ * formatHM(60)    // => "1:00"
+ * formatHM(0)     // => "0:00"
+ * formatHM(-90)   // => "-1:30"
+ */
+export function formatHM(minutes: number): string {
+  if (!Number.isFinite(minutes)) return "0:00";
+  const sign = minutes < 0 ? "-" : "";
+  const abs = Math.abs(Math.trunc(minutes));
+  const h = Math.floor(abs / MIN_PER_HOUR);
+  const m = abs % MIN_PER_HOUR;
+  return `${sign}${h}:${String(m).padStart(2, "0")}`;
+}
+
+/**
+ * 指定日が週初日か判定。weekStartDay は 0=日曜 / 1=月曜 / ... / 6=土曜 (Date.getDay() に同じ)。
+ * デフォルトは 0 (日曜起算)。
+ *
+ * @example
+ * isWeekStart("2025-01-05")     // => true  (日曜)
+ * isWeekStart("2025-01-06", 1)  // => true  (月曜)
+ * isWeekStart("2025-01-05", 1)  // => false
+ */
+export function isWeekStart(date: string, weekStartDay: number = 0): boolean {
+  const dt = parseDateUTC(date);
+  if (!dt) return false;
+  return dt.getUTCDay() === weekStartDay;
+}
+
+/**
+ * YYYY-MM-DD を UTC Date に。不正値は null。
+ * (TZ ずれを避けるため UTC 基準で内部処理する。曜日判定は UTC.getUTCDay() で OK)
+ */
+function parseDateUTC(date: string): Date | null {
+  if (typeof date !== "string") return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(date.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12) return null;
+  if (d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  // 月跨ぎ正規化チェック (例: "2025-02-30" は別の月に流れる)
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== mo - 1 ||
+    dt.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return dt;
+}
+
+/**
+ * 指定日の「週キー」(= 週の起算日 YYYY-MM-DD) を返す。
+ * weekStartDay: 0=日曜 / 1=月曜 / ...
+ */
+function weekKeyOf(date: string, weekStartDay: number): string | null {
+  const dt = parseDateUTC(date);
+  if (!dt) return null;
+  const dow = dt.getUTCDay();
+  const diff = (dow - weekStartDay + 7) % 7;
+  const start = new Date(dt.getTime() - diff * DAY_MIN * 60 * 1000);
+  const y = start.getUTCFullYear();
+  const mo = String(start.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(start.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${d}`;
+}
+
+/**
+ * 指定の労働区間 [startMin, endMin) が深夜帯 (22:00-翌05:00) と重なる分数を計算。
+ * endMin は startMin より大きい (翌日跨ぎは呼出側で +1440 済み)。
+ * 深夜帯 = [1320, 1440) ∪ [1440, 1740) (= 翌 05:00 = 1440+300)
+ *
+ * 連勤 (24h 超) はこの簡易ロジックでは扱わない (= 1 日 1 record 前提)。
+ */
+function midnightOverlap(startMin: number, endMin: number): number {
+  if (endMin <= startMin) return 0;
+
+  // 深夜帯を 2 区間に展開して overlap を取る
+  // 区間 1: [22:00, 24:00) = [1320, 1440)
+  // 区間 2: [24:00, 29:00) = [1440, 1740)  ← 翌 05:00
+  // 翌々日まで跨ぐ場合は更に [1320+1440, 1440+1440)... も考慮すべきだが、
+  // 1 日 1 record 前提なので 1 日跨ぎまでの範囲で十分。
+
+  let overlap = 0;
+
+  // 当日 22:00 - 24:00
+  overlap += Math.max(
+    0,
+    Math.min(endMin, MIDNIGHT_START_MIN + (DAY_MIN - MIDNIGHT_START_MIN)) -
+      Math.max(startMin, MIDNIGHT_START_MIN),
+  );
+  // ↑ = min(endMin, 1440) - max(startMin, 1320) の正値部分
+
+  // 翌日 00:00 - 05:00
+  overlap += Math.max(
+    0,
+    Math.min(endMin, DAY_MIN + MIDNIGHT_END_MIN) - Math.max(startMin, DAY_MIN),
+  );
+
+  // 前日 22:00 起算で深夜にかかる開始 (= startMin が 0-5h 帯) を扱うケースもあるが、
+  // start_time は HH:mm 由来で 0-23h 内、end_time のみ +24h されるため不要。
+
+  return overlap;
+}
+
+// =====================================================================
+// 主要 API
+// =====================================================================
+
+/**
+ * 1 日分の attendance record から労働時間 / 残業 / 深夜 / 法定休日労働を計算。
+ *
+ * @example
+ * calcDaily({
+ *   work_date: "2025-01-15",
+ *   start_time: "09:00",
+ *   end_time: "20:30",
+ *   break_minutes: 60,
+ *   is_legal_holiday: false,
+ *   is_paid_leave: false,
+ * })
+ * // => { work_date: "2025-01-15", work_minutes: 630, daily_overtime: 150, midnight_overtime: 0, holiday_work: 0 }
+ *
+ * @example
+ * // 深夜跨ぎ: 22:00 - 翌 06:00、休憩 60 分
+ * calcDaily({
+ *   work_date: "2025-01-15",
+ *   start_time: "22:00",
+ *   end_time: "06:00",
+ *   break_minutes: 60,
+ *   is_legal_holiday: false,
+ *   is_paid_leave: false,
+ * })
+ * // work_minutes = 480 - 60 = 420
+ * // daily_overtime = 0 (8h 以内)
+ * // midnight_overtime = 7h = 420 (22:00-05:00)
+ */
+export function calcDaily(record: AttendanceRecord): DailyCalc {
+  const base: DailyCalc = {
+    work_date: record.work_date,
+    work_minutes: 0,
+    daily_overtime: 0,
+    midnight_overtime: 0,
+    holiday_work: 0,
+  };
+
+  if (record.start_time === null || record.end_time === null) return base;
+
+  const a = parseTime(record.start_time);
+  const b = parseTime(record.end_time);
+  if (!a || !b) return base;
+
+  const startMin = a.hour * MIN_PER_HOUR + a.minute;
+  let endMin = b.hour * MIN_PER_HOUR + b.minute;
+  if (endMin < startMin) endMin += DAY_MIN;
+
+  const grossMinutes = endMin - startMin;
+  const breakMin = Math.max(0, Math.floor(record.break_minutes ?? 0));
+  const workMinutes = Math.max(0, grossMinutes - breakMin);
+
+  // 深夜時間: 労働区間 ∩ 深夜帯。休憩を一律按分すると複雑なので、
+  // 「労働時間帯と深夜帯の overlap」から、休憩中に深夜帯と重なる分を差し引く簡易ロジックは
+  // 採らず、本 lib では「拘束時間 (= 区間) と深夜帯の overlap」を深夜時間とみなす。
+  // (実務上、休憩を深夜帯に固定で配置するケースは稀。厳密化が必要なら呼出側で記録)
+  const midnight = midnightOverlap(startMin, endMin);
+
+  if (record.is_legal_holiday) {
+    // 法定休日労働は work_minutes 全部を holiday_work に。daily_overtime は 0。
+    return {
+      work_date: record.work_date,
+      work_minutes: workMinutes,
+      daily_overtime: 0,
+      midnight_overtime: midnight,
+      holiday_work: workMinutes,
+    };
+  }
+
+  const dailyOvertime = Math.max(0, workMinutes - LEGAL_DAILY_LIMIT);
+
+  return {
+    work_date: record.work_date,
+    work_minutes: workMinutes,
+    daily_overtime: dailyOvertime,
+    midnight_overtime: midnight,
+    holiday_work: 0,
+  };
+}
+
+/**
+ * 月内 record 配列から MonthlySummary を計算。
+ * 週次残業は週合計 - 週内日次残業合計 - 法定 40h の正値部分 (二重計上回避)。
+ *
+ * weekStartDay は 0=日曜起算 (デフォルト)。月跨ぎ週は record 月内分のみで集計する。
+ *
+ * @example
+ * calcMonthlySummary([
+ *   { work_date: "2025-01-06", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 月 8h
+ *   { work_date: "2025-01-07", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 火 8h
+ *   { work_date: "2025-01-08", start_time: "09:00", end_time: "20:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 水 10h (日残 2h)
+ *   { work_date: "2025-01-09", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 木 8h
+ *   { work_date: "2025-01-10", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 金 8h
+ * ])
+ * // 週合計 42h、日残 2h、週次残業 = max(0, 42-2-40) = 0h
+ */
+export function calcMonthlySummary(
+  records: AttendanceRecord[],
+  weekStartDay: number = 0,
+): MonthlySummary {
+  const summary: MonthlySummary = {
+    total_work: 0,
+    total_daily_overtime: 0,
+    total_weekly_overtime: 0,
+    total_midnight: 0,
+    total_holiday: 0,
+    total_paid_leave_days: 0,
+  };
+
+  // 週キー → { work, dailyOvertime }
+  const weekAgg = new Map<string, { work: number; dailyOvertime: number }>();
+
+  for (const r of records) {
+    if (r.is_paid_leave) summary.total_paid_leave_days += 1;
+
+    const d = calcDaily(r);
+    summary.total_work += d.work_minutes;
+    summary.total_daily_overtime += d.daily_overtime;
+    summary.total_midnight += d.midnight_overtime;
+    summary.total_holiday += d.holiday_work;
+
+    const wk = weekKeyOf(r.work_date, weekStartDay);
+    if (wk) {
+      const cur = weekAgg.get(wk) ?? { work: 0, dailyOvertime: 0 };
+      // 法定休日労働は週次残業の母数からは除外する
+      // (法定休日労働は ×1.35 の独立割増、週次残業に二重計上しない)
+      if (!r.is_legal_holiday) {
+        cur.work += d.work_minutes;
+        cur.dailyOvertime += d.daily_overtime;
+      }
+      weekAgg.set(wk, cur);
+    }
+  }
+
+  // 週次残業: 各週で「週合計 - 週内日次残業 - 40h」の正値部分を加算
+  let weekly = 0;
+  for (const { work, dailyOvertime } of weekAgg.values()) {
+    const overWeekly = Math.max(
+      0,
+      work - dailyOvertime - LEGAL_WEEKLY_LIMIT,
+    );
+    weekly += overWeekly;
+  }
+  summary.total_weekly_overtime = weekly;
+
+  return summary;
+}
