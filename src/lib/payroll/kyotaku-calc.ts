@@ -88,6 +88,19 @@ export type YobouRecord = {
   yobou2_count: number;
 };
 
+/**
+ * 出勤簿 1 行 (kyotaku-attendance 由来)。
+ * 出張距離手当 計算で使う最小 view。
+ * - staff_name で staff を識別 (dashboard 側で employee_id → name に変換済)
+ * - work_date は YYYY-MM-DD
+ * - business_km は出張距離 (km)、NULL/未入力は 0 扱い
+ */
+export type KyotakuAttendanceRecord = {
+  staff_name: string;
+  work_date: string;
+  business_km: number | null;
+};
+
 export type SalaryBreakdown = {
   // base 構成要素 (UI 表示用に内訳保持)
   honnin: number; // 本人給
@@ -97,14 +110,23 @@ export type SalaryBreakdown = {
   base: number;
   // 独立加算 (total に直接足す)
   shikaku: number; // 資格手当
-  kotei: number; // 固定
+  kotei: number; // 固定 (ラベル表示は「勤続手当」、DB 列は kyotaku_kotei)
   tokutei: number; // 特定処遇改善
   // 件数連動
   plan: number; // プラン手当 (T+1 払い)
   kazan: number; // 加算手当 (T+1 払い、固定 10 円換算)
   chosei1: number; // 調整手当①(T+2 払い、late1 起源)
   chosei2: number; // 調整手当②(T+3 払い、late2 起源)
-  /** = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei */
+  /**
+   * 出張距離手当 (= 月合計 business_km × office.travel_unit_price)。
+   * 月固定で同月 (T+1) に支払う独立加算。NUMERIC 単価なので小数結果は呼び出し側で
+   * 必要に応じ丸める (本 calc は raw 値を返す)。
+   */
+  business_trip_teate: number;
+  /**
+   * = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei
+   *   + business_trip_teate
+   */
   total: number;
 };
 
@@ -117,6 +139,17 @@ export type CalcConfig = {
    * 同一 office の row だけを呼び出し側で絞り込んで渡す前提。
    */
   yobouRecords?: YobouRecord[];
+  /**
+   * 出勤簿 row (任意 / 省略時は出張距離手当 = 0)。同一 office の row だけを
+   * 呼び出し側で絞り込み、employee_id → staff_name 解決済の形で渡す前提。
+   */
+  attendanceRecords?: KyotakuAttendanceRecord[];
+  /**
+   * 出張距離手当の単価 (円/km、payroll_offices.travel_unit_price)。
+   * CalcConfig は office 単位で組み立てられる前提なので、配列ではなく単一値。
+   * NULL/未設定なら 0 (= 出張距離手当 0)。
+   */
+  officeTravelUnitPrice?: number | null;
 };
 
 export type CalcConfigWithConfirmations = CalcConfig & {
@@ -422,6 +455,37 @@ function calcKazan(
   return kazan;
 }
 
+/**
+ * 出張距離手当の月計算。
+ *
+ * serviceMonth (YYYY-MM-01) の staff_name の attendance rows を集計し、
+ * sum(business_km) × officeTravelUnitPrice を返す。
+ * - attendanceRecords が undefined / 空、または officeTravelUnitPrice が null/0 なら 0
+ * - work_date の YYYY-MM が serviceMonth の YYYY-MM と一致する行だけ集計
+ *
+ * 単価は NUMERIC(10,2) (整数 or 0.01 刻みの小数) なので、結果も小数になり得る。
+ * 丸めは呼び出し側の表示処理に委ねる (calc は raw 値を返す)。
+ */
+function calcBusinessTripTeate(
+  staffName: string,
+  serviceMonth: string,
+  config: CalcConfig,
+): number {
+  const att = config.attendanceRecords;
+  const rate = config.officeTravelUnitPrice ?? 0;
+  if (!att || att.length === 0 || !rate) return 0;
+  const ym = serviceMonth.slice(0, 7); // YYYY-MM
+  let kmSum = 0;
+  for (const r of att) {
+    if (r.staff_name !== staffName) continue;
+    if (!r.work_date) continue;
+    if (r.work_date.slice(0, 7) !== ym) continue;
+    const km = r.business_km ?? 0;
+    if (km > 0) kmSum += km;
+  }
+  return kmSum * rate;
+}
+
 // =====================================================================
 // 主要 API
 // =====================================================================
@@ -442,6 +506,11 @@ function calcKazan(
  *   chosei2 = max(0, inc2 - base) - max(0, inc1 - base)
  *
  * total = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei
+ *         + business_trip_teate
+ *
+ * 出張距離手当 (business_trip_teate, 2026-05-13 追加):
+ *   月合計 business_km × office.travel_unit_price (config.officeTravelUnitPrice)
+ *   月固定で同月 (T+1) に支払う独立加算。
  */
 export function calcSalary(
   records: KyotakuRecord[],
@@ -470,8 +539,22 @@ export function calcSalary(
 
   const kazan = calcKazan(records, staffName, serviceMonth, config.units);
 
+  const business_trip_teate = calcBusinessTripTeate(
+    staffName,
+    serviceMonth,
+    config,
+  );
+
   const total =
-    base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei;
+    base +
+    plan +
+    kazan +
+    chosei1 +
+    chosei2 +
+    shikaku +
+    kotei +
+    tokutei +
+    business_trip_teate;
   return {
     honnin,
     shokuno,
@@ -484,6 +567,7 @@ export function calcSalary(
     kazan,
     chosei1,
     chosei2,
+    business_trip_teate,
     total,
   };
 }
@@ -512,14 +596,42 @@ export function calcPaymentForMonth(
     }
   }
 
+  // attendance も pay_month に対応した提供月を漏らさず舐めるため、attendance だけが
+  // ある月 (records / yobou に出てこない月) も serviceMonths に取り込む。
+  if (config.attendanceRecords) {
+    for (const ar of config.attendanceRecords) {
+      if (ar.staff_name !== staffName) continue;
+      if (!ar.work_date) continue;
+      const ym = ar.work_date.slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+      serviceMonths.add(`${ym}-01`);
+    }
+  }
+
   let total = 0;
   for (const sm of serviceMonths) {
-    const { base, plan, kazan, chosei1, chosei2, shikaku, kotei, tokutei } =
-      calcSalary(records, staffName, sm, config);
+    const {
+      base,
+      plan,
+      kazan,
+      chosei1,
+      chosei2,
+      shikaku,
+      kotei,
+      tokutei,
+      business_trip_teate,
+    } = calcSalary(records, staffName, sm, config);
     // T+1 払い: base (= honnin+shokuno+kotei_zangyo) + plan + kazan
-    //          + 独立手当 (shikaku/kotei/tokutei) も月固定で同月に支払う
+    //          + 独立手当 (shikaku/kotei/tokutei/business_trip_teate) も月固定で同月に支払う
     if (addMonths(sm, 1) === payMonth)
-      total += base + plan + kazan + shikaku + kotei + tokutei;
+      total +=
+        base +
+        plan +
+        kazan +
+        shikaku +
+        kotei +
+        tokutei +
+        business_trip_teate;
     if (addMonths(sm, 2) === payMonth) total += chosei1;
     if (addMonths(sm, 3) === payMonth) total += chosei2;
   }
@@ -541,20 +653,37 @@ export function calcAdjustments(
   serviceMonth: string,
   config: CalcConfigWithConfirmations,
 ): { late_adj: number; sayi_adj: number } {
-  const { settings, units, rates, yobouRecords, confirmations } = config;
-  const baseConfig: CalcConfig = { settings, units, rates, yobouRecords };
+  const {
+    settings,
+    units,
+    rates,
+    yobouRecords,
+    attendanceRecords,
+    officeTravelUnitPrice,
+    confirmations,
+  } = config;
+  const baseConfig: CalcConfig = {
+    settings,
+    units,
+    rates,
+    yobouRecords,
+    attendanceRecords,
+    officeTravelUnitPrice,
+  };
 
   // 1) late_adj: T+1 へ流れる過去月の chosei
-  const { base, plan, kazan, shikaku, kotei, tokutei } = calcSalary(
-    records,
-    staffName,
-    serviceMonth,
-    baseConfig,
-  );
+  const { base, plan, kazan, shikaku, kotei, tokutei, business_trip_teate } =
+    calcSalary(records, staffName, serviceMonth, baseConfig);
   const payMonth = addMonths(serviceMonth, 1);
   const late_adj =
     calcPaymentForMonth(records, staffName, payMonth, baseConfig) -
-    (base + plan + kazan + shikaku + kotei + tokutei);
+    (base +
+      plan +
+      kazan +
+      shikaku +
+      kotei +
+      tokutei +
+      business_trip_teate);
 
   // 2) sayi_adj: 最新未確定月にのみ集約
   //    最新未確定月 = staff の全提供月を新しい順に走査し、
@@ -570,6 +699,16 @@ export function calcAdjustments(
       if (yr.staff_name === staffName && yr.service_month) {
         staffMonthsSet.add(yr.service_month);
       }
+    }
+  }
+  if (attendanceRecords) {
+    // attendance only ある月も sayi 計算対象に取り込む (出張距離手当 差異検出)
+    for (const ar of attendanceRecords) {
+      if (ar.staff_name !== staffName) continue;
+      if (!ar.work_date) continue;
+      const ym = ar.work_date.slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+      staffMonthsSet.add(`${ym}-01`);
     }
   }
   const staffMonths = Array.from(staffMonthsSet).sort();
@@ -606,7 +745,8 @@ export function calcAdjustments(
         prev.kazan +
         prev.shikaku +
         prev.kotei +
-        prev.tokutei -
+        prev.tokutei +
+        prev.business_trip_teate -
         prevPaid;
       sayi_adj += diff;
     }

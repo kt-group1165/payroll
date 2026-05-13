@@ -67,6 +67,8 @@ type AttendanceRow = {
   is_legal_holiday: boolean;
   is_paid_leave: boolean;
   note: string | null;
+  /** 出張距離 (km)。NULL/0 は出張なし */
+  business_km: number | null;
 };
 
 /** UI 上の 1 行 state (HH:mm 形式で保持) */
@@ -79,6 +81,8 @@ type RowState = {
   is_legal_holiday: boolean;
   is_paid_leave: boolean;
   note: string;
+  /** 出張距離 (km)、空 = NULL。文字列で保持して step=0.1 の入力を素直に通す */
+  business_km: string;
   dirty: boolean;
   existing_id: string | null;
 };
@@ -265,6 +269,7 @@ export function KyotakuAttendanceContent() {
       is_legal_holiday: false,
       is_paid_leave: false,
       note: "",
+      business_km: "",
       dirty: false,
       existing_id: null,
     }));
@@ -297,6 +302,13 @@ export function KyotakuAttendanceContent() {
       const merged = baseRows.map((br) => {
         const ex = byDate.get(br.work_date);
         if (!ex) return br;
+        // business_km は NUMERIC なので number / 文字列 両対応で取得
+        const rawKm = (ex as { business_km?: number | string | null }).business_km;
+        let businessKmStr = "";
+        if (rawKm !== null && rawKm !== undefined && rawKm !== "") {
+          const n = typeof rawKm === "string" ? parseFloat(rawKm) : rawKm;
+          if (Number.isFinite(n)) businessKmStr = String(n);
+        }
         return {
           ...br,
           start_time: toUiTime(ex.start_time),
@@ -305,6 +317,7 @@ export function KyotakuAttendanceContent() {
           is_legal_holiday: !!ex.is_legal_holiday,
           is_paid_leave: !!ex.is_paid_leave,
           note: ex.note ?? "",
+          business_km: businessKmStr,
           dirty: false,
           existing_id: ex.id ?? null,
         };
@@ -344,6 +357,17 @@ export function KyotakuAttendanceContent() {
     () => calcMonthlySummary(rows.map(toAttendanceRecord)),
     [rows],
   );
+  /** 月合計 出張距離 (km、小数 1 桁) */
+  const totalBusinessKm = useMemo(() => {
+    let sum = 0;
+    for (const r of rows) {
+      const trimmed = r.business_km.trim();
+      if (!trimmed) continue;
+      const n = parseFloat(trimmed);
+      if (Number.isFinite(n) && n > 0) sum += n;
+    }
+    return Math.round(sum * 10) / 10;
+  }, [rows]);
 
   // ---------------- 保存 ----------------
   const handleSave = async () => {
@@ -358,18 +382,30 @@ export function KyotakuAttendanceContent() {
     }
     setSaving(true);
     try {
-      const upsertRows: AttendanceRow[] = dirtyRows.map((r) => ({
-        tenant_id: TENANT_ID,
-        office_id: selectedOfficeId,
-        employee_id: selectedEmployeeId,
-        work_date: r.work_date,
-        start_time: toDbTime(r.start_time),
-        end_time: toDbTime(r.end_time),
-        break_minutes: Math.max(0, Math.floor(r.break_minutes || 0)),
-        is_legal_holiday: r.is_legal_holiday,
-        is_paid_leave: r.is_paid_leave,
-        note: r.note.trim() ? r.note : null,
-      }));
+      const upsertRows: AttendanceRow[] = dirtyRows.map((r) => {
+        // business_km は空 → NULL、数値 → 0 以上の number に丸めて保存 (NUMERIC(6,1))
+        let businessKm: number | null = null;
+        const trimmed = r.business_km.trim();
+        if (trimmed) {
+          const n = parseFloat(trimmed);
+          if (Number.isFinite(n) && n >= 0) {
+            businessKm = Math.round(n * 10) / 10;
+          }
+        }
+        return {
+          tenant_id: TENANT_ID,
+          office_id: selectedOfficeId,
+          employee_id: selectedEmployeeId,
+          work_date: r.work_date,
+          start_time: toDbTime(r.start_time),
+          end_time: toDbTime(r.end_time),
+          break_minutes: Math.max(0, Math.floor(r.break_minutes || 0)),
+          is_legal_holiday: r.is_legal_holiday,
+          is_paid_leave: r.is_paid_leave,
+          note: r.note.trim() ? r.note : null,
+          business_km: businessKm,
+        };
+      });
       const { error } = await supabase
         .from("payroll_kyotaku_attendance_records")
         .upsert(upsertRows, { onConflict: "employee_id,work_date" });
@@ -525,6 +561,7 @@ export function KyotakuAttendanceContent() {
                     <TableHead className="w-20 text-right">深夜</TableHead>
                     <TableHead className="w-16 text-center">法定休日</TableHead>
                     <TableHead className="w-14 text-center">有給</TableHead>
+                    <TableHead className="w-24 text-right">出張距離(km)</TableHead>
                     <TableHead>備考</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -609,6 +646,18 @@ export function KyotakuAttendanceContent() {
                             }
                           />
                         </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={row.business_km}
+                            onChange={(e) =>
+                              updateRow(idx, { business_km: e.target.value })
+                            }
+                            className="h-8 text-right"
+                          />
+                        </TableCell>
                         <TableCell>
                           <Input
                             type="text"
@@ -659,6 +708,12 @@ export function KyotakuAttendanceContent() {
                   有給{" "}
                   <span className="font-semibold tabular-nums">
                     {monthSummary.total_paid_leave_days}日
+                  </span>
+                </span>
+                <span>
+                  総距離{" "}
+                  <span className="font-semibold tabular-nums">
+                    {totalBusinessKm.toFixed(1)} km
                   </span>
                 </span>
               </div>

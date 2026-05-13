@@ -63,7 +63,7 @@ const INPUT_COLS: ReadonlyArray<{
   { key: "shokuno_kyu", label: "職能給 (円)", placeholder: "0" },
   { key: "kotei_zangyo", label: "固定残業手当 (円)", placeholder: "0" },
   { key: "shikaku_teate", label: "資格手当 (円)", placeholder: "0" },
-  { key: "kotei", label: "固定 (円)", placeholder: "0" },
+  { key: "kotei", label: "勤続手当 (円)", placeholder: "0" },
   { key: "tokutei_shogu", label: "特定処遇改善 (円)", placeholder: "0" },
   { key: "kaigo_rate", label: "要介護単価 (円/件)", placeholder: "0" },
   { key: "shien_rate", label: "要支援単価 (円/件)", placeholder: "0" },

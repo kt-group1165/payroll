@@ -23,6 +23,7 @@ import {
   type CalcConfig,
   type Confirmation,
   type EmployeeSetting,
+  type KyotakuAttendanceRecord,
   type KyotakuRecord,
   type RegionalRate,
   type ServiceUnit,
@@ -96,6 +97,16 @@ type YobouRow = YobouRecord & {
   office_number: string;
   source: "csv" | "manual";
   source_filename: string | null;
+};
+
+/**
+ * 出勤簿 row (出張距離手当 用、staff_name 解決済)。
+ * 元 row (payroll_kyotaku_attendance_records) は employee_id key だが、
+ * 給与計算は staff_name key なので payroll_employees の (id → name) で
+ * 変換した形で保持する。
+ */
+type AttendanceWithStaffName = KyotakuAttendanceRecord & {
+  office_number: string;
 };
 
 // =====================================================================
@@ -378,6 +389,12 @@ export function KyotakuPayrollDashboard({
   const [rates, setRates] = useState<RegionalRate[]>([]);
   const [confirmations, setConfirmations] = useState<ConfirmationRow[]>([]);
   const [yobouRows, setYobouRows] = useState<YobouRow[]>([]);
+  /** 出勤簿 row (staff_name 解決済)、出張距離手当 算出用 */
+  const [attendanceRows, setAttendanceRows] = useState<AttendanceWithStaffName[]>([]);
+  /** office_number → travel_unit_price (円/km)。出張距離手当 単価 */
+  const [officeTravelRateMap, setOfficeTravelRateMap] = useState<Map<string, number>>(
+    new Map(),
+  );
 
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   // 設定 modal は office_number 単位なので、開く時に対象 office を保持する
@@ -432,10 +449,12 @@ export function KyotakuPayrollDashboard({
         setRates([]);
         setConfirmations([]);
         setYobouRows([]);
+        setAttendanceRows([]);
+        setOfficeTravelRateMap(new Map());
         return;
       }
 
-      const [recs, setRes, unitRes, rateRes, confRes, yobouRes] = await Promise.all([
+      const [recs, setRes, unitRes, rateRes, confRes, yobouRes, attRes, officeRes] = await Promise.all([
         fetchAllPagesParallel<FullRecord>(
           () =>
             supabase
@@ -478,6 +497,23 @@ export function KyotakuPayrollDashboard({
         supabase
           .from("payroll_kyotaku_yobou_records")
           .select("*")
+          .in("office_number", officeNumbers),
+        // 出勤簿 (出張距離手当 算出用)。employee_id + work_date + business_km のみ。
+        // ~30 office × ~ケアマネ数 × ~日数 = 数千〜数万行になり得る。1000 行 PostgREST
+        // limit を超える前提なら fetchAllPagesParallel に切替が必要だが、まずは
+        // .limit(10000) で運用 (DB 未 apply 時は error 握り潰し → 空 fallback)。
+        // business_km は migration apply 前は列が無いので error になり得る → 同じく
+        // 空 fallback。
+        supabase
+          .from("payroll_kyotaku_attendance_records")
+          .select("employee_id, work_date, business_km, office_id")
+          .in("office_id", officeIds)
+          .not("business_km", "is", null)
+          .limit(10000),
+        // 事業所の出張距離単価 (NUMERIC 10,2)。office_number → travel_unit_price。
+        supabase
+          .from("payroll_offices")
+          .select("office_number, travel_unit_price")
           .in("office_number", officeNumbers),
       ]);
 
@@ -530,6 +566,65 @@ export function KyotakuPayrollDashboard({
       setRates((rateRes.data ?? []) as RegionalRate[]);
       setConfirmations((confRes.data ?? []) as ConfirmationRow[]);
       setYobouRows(yobouRes.error ? [] : ((yobouRes.data ?? []) as YobouRow[]));
+
+      // ── 出張距離手当 用 attendance + office travel rate を整形 ──────────────
+      // attendance は employee_id key だが計算は staff_name key。
+      // setRes.data (= 同じく居宅介護支援 office に限定された payroll_employees) で
+      // (id → name, office_number) の map を組み、attendance を staff_name 解決済の
+      // 形に flatten する。
+      type RawAttendanceRow = {
+        employee_id: string;
+        work_date: string | null;
+        business_km: number | string | null;
+        office_id: string;
+      };
+      type EmployeeIdMapEntry = { name: string; office_number: string };
+      const employeeIdMap = new Map<string, EmployeeIdMapEntry>();
+      for (const r of (setRes.data ?? []) as unknown as RawEmployeeRow[]) {
+        const officeNumber = r.office?.office_number ?? "";
+        if (!officeNumber || !officeNumberSet.has(officeNumber)) continue;
+        if (!r.name) continue;
+        employeeIdMap.set(r.id, { name: r.name, office_number: officeNumber });
+      }
+
+      const mappedAttendance: AttendanceWithStaffName[] = [];
+      if (!attRes.error) {
+        for (const ar of (attRes.data ?? []) as unknown as RawAttendanceRow[]) {
+          if (!ar.employee_id || !ar.work_date) continue;
+          if (ar.business_km === null || ar.business_km === undefined) continue;
+          const emp = employeeIdMap.get(ar.employee_id);
+          if (!emp) continue;
+          // NUMERIC は文字列で返ることがあるので Number 化
+          const km = typeof ar.business_km === "string"
+            ? parseFloat(ar.business_km)
+            : ar.business_km;
+          if (!Number.isFinite(km) || km <= 0) continue;
+          mappedAttendance.push({
+            staff_name: emp.name,
+            office_number: emp.office_number,
+            work_date: ar.work_date,
+            business_km: km,
+          });
+        }
+      }
+      setAttendanceRows(mappedAttendance);
+
+      // payroll_offices.travel_unit_price → Map<office_number, number>
+      type RawOfficeRow = {
+        office_number: string;
+        travel_unit_price: number | string | null;
+      };
+      const travelMap = new Map<string, number>();
+      if (!officeRes.error) {
+        for (const o of (officeRes.data ?? []) as unknown as RawOfficeRow[]) {
+          if (!o.office_number) continue;
+          const v = typeof o.travel_unit_price === "string"
+            ? parseFloat(o.travel_unit_price)
+            : (o.travel_unit_price ?? 0);
+          travelMap.set(o.office_number, Number.isFinite(v) ? v : 0);
+        }
+      }
+      setOfficeTravelRateMap(travelMap);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
@@ -575,6 +670,13 @@ export function KyotakuPayrollDashboard({
         ? yobouRows
         : yobouRows.filter((y) => y.office_number === filterOfficeNumber),
     [yobouRows, filterOfficeNumber],
+  );
+  const filteredAttendance = useMemo(
+    () =>
+      filterOfficeNumber === null
+        ? attendanceRows
+        : attendanceRows.filter((a) => a.office_number === filterOfficeNumber),
+    [attendanceRows, filterOfficeNumber],
   );
 
   // ----------------------- derived data -----------------------
@@ -646,6 +748,10 @@ export function KyotakuPayrollDashboard({
     () => partitionByOffice(filteredYobou),
     [filteredYobou],
   );
+  const attendanceByOffice = useMemo(
+    () => partitionByOffice(filteredAttendance),
+    [filteredAttendance],
+  );
 
   /** office_number → 該当 office の CalcConfig */
   const calcConfigByOffice = useMemo(() => {
@@ -656,10 +762,20 @@ export function KyotakuPayrollDashboard({
         units,
         rates,
         yobouRecords: yobouByOffice.get(o.office_number) ?? [],
+        attendanceRecords: attendanceByOffice.get(o.office_number) ?? [],
+        officeTravelUnitPrice: officeTravelRateMap.get(o.office_number) ?? 0,
       });
     }
     return m;
-  }, [allKyotakuOffices, settingsByOffice, units, rates, yobouByOffice]);
+  }, [
+    allKyotakuOffices,
+    settingsByOffice,
+    units,
+    rates,
+    yobouByOffice,
+    attendanceByOffice,
+    officeTravelRateMap,
+  ]);
 
   // staff × month の salary cache (key: officeNumber|staff|month)
   const salaryCache = useMemo(() => {
@@ -1084,9 +1200,11 @@ function formatStaffLabel(
 }
 
 // =====================================================================
-// Tab: 給与計算 (件数 8 行 + 給与 12 行 = 20 行 / staff)
+// Tab: 給与計算 (件数 8 行 + 給与 13 行 = 21 行 / staff)
 // 6 列分解 (2026-05-13): 基本給 1 行 → 本人給 / 職能給 / 固定残業手当 の 3 行に分解、
-// さらに資格手当 / 固定 / 特定処遇改善 の 3 独立加算行を追加。
+// さらに資格手当 / 勤続手当 / 特定処遇改善 の 3 独立加算行を追加。
+// 出張距離手当 (月合計 km × payroll_offices.travel_unit_price) を 2026-05-13 に追加。
+// (「固定」ラベルは「勤続手当」へ。DB 列名 kyotaku_kotei / sal.kotei は据え置き)
 // =====================================================================
 
 const SALARY_ROWS = [
@@ -1097,8 +1215,9 @@ const SALARY_ROWS = [
   "加算手当",
   "調整手当",
   "資格手当",
-  "固定",
+  "勤続手当",
   "特定処遇改善",
+  "出張距離手当",
   "合計額",
   "支給済み",
   "差異",
@@ -1196,9 +1315,16 @@ function StaffBlock({
     const paid = paidMap.get(`${officeNumber}|${staff}|${payMonth}`) ?? 0;
     const chosei = adj.late_adj + adj.sayi_adj;
     // total: base (= honnin+shokuno+kotei_zangyo) + plan + kazan + chosei
-    //        + 独立加算 (shikaku + kotei + tokutei)
+    //        + 独立加算 (shikaku + kotei + tokutei + business_trip_teate)
     const total = sal
-      ? sal.base + sal.plan + sal.kazan + chosei + sal.shikaku + sal.kotei + sal.tokutei
+      ? sal.base +
+        sal.plan +
+        sal.kazan +
+        chosei +
+        sal.shikaku +
+        sal.kotei +
+        sal.tokutei +
+        sal.business_trip_teate
       : 0;
     const diff = paid > 0 ? total - paid : null;
     return { m, sal, counts, chosei, total, paid, diff };
@@ -1245,8 +1371,9 @@ function StaffBlock({
             else if (label === "加算手当") v = pm.sal?.kazan ?? 0;
             else if (label === "調整手当") v = pm.chosei;
             else if (label === "資格手当") v = pm.sal?.shikaku ?? 0;
-            else if (label === "固定") v = pm.sal?.kotei ?? 0;
+            else if (label === "勤続手当") v = pm.sal?.kotei ?? 0;
             else if (label === "特定処遇改善") v = pm.sal?.tokutei ?? 0;
+            else if (label === "出張距離手当") v = pm.sal?.business_trip_teate ?? 0;
             else if (label === "合計額") v = pm.total;
             else if (label === "支給済み") v = pm.paid > 0 ? pm.paid : null;
             else if (label === "差異") v = pm.diff;
@@ -2206,13 +2333,15 @@ function SayiTab({
           const paid =
             paidMap.get(`${officeNumber}|${staff}|${addMonths(pm, 1)}`) ?? 0;
           // 過去月の確定差異: T+1 支払対象 = base + plan + kazan + 独立手当
+          //                                  + business_trip_teate
           const diff =
             sal.base +
             sal.plan +
             sal.kazan +
             sal.shikaku +
             sal.kotei +
-            sal.tokutei -
+            sal.tokutei +
+            sal.business_trip_teate -
             paid;
           if (diff === 0) continue;
           out.push({
