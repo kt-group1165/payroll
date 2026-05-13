@@ -35,23 +35,53 @@ type SettingRow = {
   employee_id: string;
   staff_name: string;
   /** 入力値 (空文字 NULL 化、null = 未設定で fallback) */
-  base_salary: number | null;
+  honnin_kyu: number | null;
+  shokuno_kyu: number | null;
+  kotei_zangyo: number | null;
+  shikaku_teate: number | null;
+  kotei: number | null;
+  tokutei_shogu: number | null;
   kaigo_rate: number | null;
   shien_rate: number | null;
 };
 
-const DEFAULT_BASE_SALARY = 250000;
+// 列定義: 入力 keys ＋ ラベル。リセット時に全 8 列 NULL に戻す対象でもある。
+const INPUT_COLS: ReadonlyArray<{
+  key:
+    | "honnin_kyu"
+    | "shokuno_kyu"
+    | "kotei_zangyo"
+    | "shikaku_teate"
+    | "kotei"
+    | "tokutei_shogu"
+    | "kaigo_rate"
+    | "shien_rate";
+  label: string;
+  placeholder: string;
+}> = [
+  { key: "honnin_kyu", label: "本人給 (円)", placeholder: "0" },
+  { key: "shokuno_kyu", label: "職能給 (円)", placeholder: "0" },
+  { key: "kotei_zangyo", label: "固定残業手当 (円)", placeholder: "0" },
+  { key: "shikaku_teate", label: "資格手当 (円)", placeholder: "0" },
+  { key: "kotei", label: "固定 (円)", placeholder: "0" },
+  { key: "tokutei_shogu", label: "特定処遇改善 (円)", placeholder: "0" },
+  { key: "kaigo_rate", label: "要介護単価 (円/件)", placeholder: "0" },
+  { key: "shien_rate", label: "要支援単価 (円/件)", placeholder: "0" },
+];
 
 /**
- * 居宅介護支援 ケアマネ別給与設定 modal
+ * 居宅介護支援 ケアマネ別給与設定 modal (6 列分解版)
  *
- * 仕様: apps/居宅給与計算/SPEC.md §2.2 (給与設定 sheet)
- * DB:   payroll_employees の kyotaku_base_salary / kyotaku_kaigo_rate / kyotaku_shien_rate
+ * DB: payroll_employees の kyotaku_honnin_kyu / kyotaku_shokuno_kyu /
+ *     kyotaku_kotei_zangyo / kyotaku_shikaku_teate / kyotaku_kotei /
+ *     kyotaku_tokutei_shogu / kyotaku_kaigo_rate / kyotaku_shien_rate
  *
- * - open 時に該当 office の payroll_employees row を全件 fetch
- * - 全員を 1 テーブルで表示、inline 編集
- * - 「リセット」: 該当 row の 3 列を NULL (未設定) に戻す
- * - 「保存」: 変更があった row のみ update
+ * 仕様: 集計.py の「給与設定」sheet を 8 列に拡張。
+ *   - base (プラン手当比較) = honnin + shokuno + kotei_zangyo
+ *   - shikaku / kotei / tokutei は total に独立加算
+ *   - 全 8 列 NULL の場合は base = DEFAULT_BASE_SALARY=250000 (旧仕様互換)
+ *
+ * 旧 kyotaku_base_salary は DB に残置 (rollback 用) するが UI では参照しない。
  */
 export function KyotakuSettingsModal({
   open,
@@ -83,7 +113,9 @@ export function KyotakuSettingsModal({
 
     const { data, error } = await supabase
       .from("payroll_employees")
-      .select("id, name, kyotaku_base_salary, kyotaku_kaigo_rate, kyotaku_shien_rate")
+      .select(
+        "id, name, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate",
+      )
       .eq("office_id", officeId)
       .order("name", { ascending: true });
 
@@ -98,7 +130,12 @@ export function KyotakuSettingsModal({
     type EmployeeRow = {
       id: string;
       name: string;
-      kyotaku_base_salary: number | null;
+      kyotaku_honnin_kyu: number | null;
+      kyotaku_shokuno_kyu: number | null;
+      kyotaku_kotei_zangyo: number | null;
+      kyotaku_shikaku_teate: number | null;
+      kyotaku_kotei: number | null;
+      kyotaku_tokutei_shogu: number | null;
       kyotaku_kaigo_rate: number | null;
       kyotaku_shien_rate: number | null;
     };
@@ -109,7 +146,12 @@ export function KyotakuSettingsModal({
       .map((e) => ({
         employee_id: e.id,
         staff_name: e.name,
-        base_salary: e.kyotaku_base_salary,
+        honnin_kyu: e.kyotaku_honnin_kyu,
+        shokuno_kyu: e.kyotaku_shokuno_kyu,
+        kotei_zangyo: e.kyotaku_kotei_zangyo,
+        shikaku_teate: e.kyotaku_shikaku_teate,
+        kotei: e.kyotaku_kotei,
+        tokutei_shogu: e.kyotaku_tokutei_shogu,
         kaigo_rate: e.kyotaku_kaigo_rate,
         shien_rate: e.kyotaku_shien_rate,
       }));
@@ -148,35 +190,43 @@ export function KyotakuSettingsModal({
     [],
   );
 
-  const parseInt = (s: string): number | null => {
+  const parseIntOrNull = (s: string): number | null => {
     if (s === "") return null;
     const n = Number(s);
     return Number.isFinite(n) ? Math.trunc(n) : null;
   };
 
+  const isRowUnset = (r: SettingRow): boolean =>
+    INPUT_COLS.every((c) => r[c.key] === null);
+
   const handleReset = useCallback((index: number) => {
     setRows((prev) => {
       const next = [...prev];
-      next[index] = {
+      const reset: SettingRow = {
         ...next[index],
-        base_salary: null,
+        honnin_kyu: null,
+        shokuno_kyu: null,
+        kotei_zangyo: null,
+        shikaku_teate: null,
+        kotei: null,
+        tokutei_shogu: null,
         kaigo_rate: null,
         shien_rate: null,
       };
+      next[index] = reset;
       return next;
     });
   }, []);
 
   const handleSave = useCallback(async () => {
-    // バリデーション
+    // バリデーション: 全 8 列、非 NULL なら 0 以上の整数
     for (const r of rows) {
-      for (const [k, v] of [
-        ["基本給", r.base_salary],
-        ["要介護単価", r.kaigo_rate],
-        ["要支援単価", r.shien_rate],
-      ] as const) {
+      for (const c of INPUT_COLS) {
+        const v = r[c.key];
         if (v !== null && (!Number.isFinite(v) || v < 0)) {
-          toast.error(`${r.staff_name}: ${k} は 0 以上の整数で入力してください`);
+          toast.error(
+            `${r.staff_name}: ${c.label} は 0 以上の整数で入力してください`,
+          );
           return;
         }
       }
@@ -189,11 +239,7 @@ export function KyotakuSettingsModal({
     const changed = rows.filter((r) => {
       const o = origMap.get(r.employee_id);
       if (!o) return true;
-      return (
-        o.base_salary !== r.base_salary ||
-        o.kaigo_rate !== r.kaigo_rate ||
-        o.shien_rate !== r.shien_rate
-      );
+      return INPUT_COLS.some((c) => o[c.key] !== r[c.key]);
     });
 
     if (changed.length === 0) {
@@ -209,7 +255,12 @@ export function KyotakuSettingsModal({
       const { error } = await supabase
         .from("payroll_employees")
         .update({
-          kyotaku_base_salary: r.base_salary,
+          kyotaku_honnin_kyu: r.honnin_kyu,
+          kyotaku_shokuno_kyu: r.shokuno_kyu,
+          kyotaku_kotei_zangyo: r.kotei_zangyo,
+          kyotaku_shikaku_teate: r.shikaku_teate,
+          kyotaku_kotei: r.kotei,
+          kyotaku_tokutei_shogu: r.tokutei_shogu,
           kyotaku_kaigo_rate: r.kaigo_rate,
           kyotaku_shien_rate: r.shien_rate,
         })
@@ -237,9 +288,9 @@ export function KyotakuSettingsModal({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
-          <DialogTitle>設定: ケアマネ別給与</DialogTitle>
+          <DialogTitle>設定: ケアマネ別給与 (6 列分解)</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -256,22 +307,26 @@ export function KyotakuSettingsModal({
               <Table className="text-sm">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-32">ケアマネ名</TableHead>
-                    <TableHead className="min-w-32">基本給 (円)</TableHead>
-                    <TableHead className="min-w-32">要介護単価 (円/件)</TableHead>
-                    <TableHead className="min-w-32">要支援単価 (円/件)</TableHead>
+                    <TableHead className="min-w-32 whitespace-nowrap">
+                      ケアマネ名
+                    </TableHead>
+                    {INPUT_COLS.map((c) => (
+                      <TableHead
+                        key={c.key}
+                        className="min-w-28 whitespace-nowrap"
+                      >
+                        {c.label}
+                      </TableHead>
+                    ))}
                     <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((row, index) => {
-                    const isUnset =
-                      row.base_salary === null &&
-                      row.kaigo_rate === null &&
-                      row.shien_rate === null;
+                    const isUnset = isRowUnset(row);
                     return (
                       <TableRow key={row.employee_id}>
-                        <TableCell className="font-medium">
+                        <TableCell className="font-medium whitespace-nowrap">
                           {row.staff_name}
                           {isUnset && (
                             <span className="ml-2 text-xs text-muted-foreground">
@@ -279,48 +334,22 @@ export function KyotakuSettingsModal({
                             </span>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={row.base_salary ?? ""}
-                            placeholder={String(DEFAULT_BASE_SALARY)}
-                            onChange={(e) =>
-                              updateRow(index, {
-                                base_salary: parseInt(e.target.value),
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={row.kaigo_rate ?? ""}
-                            placeholder="0"
-                            onChange={(e) =>
-                              updateRow(index, {
-                                kaigo_rate: parseInt(e.target.value),
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={row.shien_rate ?? ""}
-                            placeholder="0"
-                            onChange={(e) =>
-                              updateRow(index, {
-                                shien_rate: parseInt(e.target.value),
-                              })
-                            }
-                          />
-                        </TableCell>
+                        {INPUT_COLS.map((c) => (
+                          <TableCell key={c.key}>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={row[c.key] ?? ""}
+                              placeholder={c.placeholder}
+                              onChange={(e) =>
+                                updateRow(index, {
+                                  [c.key]: parseIntOrNull(e.target.value),
+                                })
+                              }
+                            />
+                          </TableCell>
+                        ))}
                         <TableCell>
                           {!isUnset && (
                             <Button

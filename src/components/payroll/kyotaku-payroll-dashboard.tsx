@@ -39,8 +39,10 @@ import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
  *
  * データソース:
  *   - payroll_kyotaku_records          国保連 CSV row (一覧)
- *   - payroll_employees                ケアマネ別 (kyotaku_base_salary / kyotaku_kaigo_rate / kyotaku_shien_rate)
- *                                       ※ 旧 payroll_kyotaku_settings から移行 (2026-05-13)
+ *   - payroll_employees                ケアマネ別 (6 列分解: kyotaku_honnin_kyu / shokuno_kyu /
+ *                                       kotei_zangyo / shikaku_teate / kotei / tokutei_shogu /
+ *                                       + kyotaku_kaigo_rate / kyotaku_shien_rate)
+ *                                       ※ 旧 kyotaku_base_salary は DB 残置 (rollback 用、参照しない)
  *   - payroll_kyotaku_service_units    項目別 単位数 (tenant 共通)
  *   - payroll_kyotaku_regional_rates   保険者 → 円/単位 (tenant 共通)
  *   - payroll_kyotaku_confirmations    支給済み (reverted_at IS NULL のみ active)
@@ -460,7 +462,7 @@ export function KyotakuPayrollDashboard({
         supabase
           .from("payroll_employees")
           .select(
-            "id, name, kyotaku_base_salary, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
+            "id, name, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
           )
           .in("office_id", officeIds),
         supabase.from("payroll_kyotaku_service_units").select("*"),
@@ -493,7 +495,12 @@ export function KyotakuPayrollDashboard({
       type RawEmployeeRow = {
         id: string;
         name: string;
-        kyotaku_base_salary: number | null;
+        kyotaku_honnin_kyu: number | null;
+        kyotaku_shokuno_kyu: number | null;
+        kyotaku_kotei_zangyo: number | null;
+        kyotaku_shikaku_teate: number | null;
+        kyotaku_kotei: number | null;
+        kyotaku_tokutei_shogu: number | null;
         kyotaku_kaigo_rate: number | null;
         kyotaku_shien_rate: number | null;
         office: { office_number: string | null } | null;
@@ -508,7 +515,12 @@ export function KyotakuPayrollDashboard({
           id: r.id,
           office_number: officeNumber,
           staff_name: r.name,
-          base_salary: r.kyotaku_base_salary,
+          honnin_kyu: r.kyotaku_honnin_kyu,
+          shokuno_kyu: r.kyotaku_shokuno_kyu,
+          kotei_zangyo: r.kyotaku_kotei_zangyo,
+          shikaku_teate: r.kyotaku_shikaku_teate,
+          kotei: r.kyotaku_kotei,
+          tokutei_shogu: r.kyotaku_tokutei_shogu,
           kaigo_rate: r.kyotaku_kaigo_rate,
           shien_rate: r.kyotaku_shien_rate,
         });
@@ -1072,14 +1084,21 @@ function formatStaffLabel(
 }
 
 // =====================================================================
-// Tab: 給与計算 (件数 8 行 + 給与 7 行 = 15 行 / staff)
+// Tab: 給与計算 (件数 8 行 + 給与 12 行 = 20 行 / staff)
+// 6 列分解 (2026-05-13): 基本給 1 行 → 本人給 / 職能給 / 固定残業手当 の 3 行に分解、
+// さらに資格手当 / 固定 / 特定処遇改善 の 3 独立加算行を追加。
 // =====================================================================
 
 const SALARY_ROWS = [
-  "基本給",
+  "本人給",
+  "職能給",
+  "固定残業手当",
   "プラン手当",
   "加算手当",
   "調整手当",
+  "資格手当",
+  "固定",
+  "特定処遇改善",
   "合計額",
   "支給済み",
   "差異",
@@ -1176,7 +1195,11 @@ function StaffBlock({
     const payMonth = addMonths(m, 1);
     const paid = paidMap.get(`${officeNumber}|${staff}|${payMonth}`) ?? 0;
     const chosei = adj.late_adj + adj.sayi_adj;
-    const total = sal ? sal.base + sal.plan + sal.kazan + chosei : 0;
+    // total: base (= honnin+shokuno+kotei_zangyo) + plan + kazan + chosei
+    //        + 独立加算 (shikaku + kotei + tokutei)
+    const total = sal
+      ? sal.base + sal.plan + sal.kazan + chosei + sal.shikaku + sal.kotei + sal.tokutei
+      : 0;
     const diff = paid > 0 ? total - paid : null;
     return { m, sal, counts, chosei, total, paid, diff };
   });
@@ -1215,10 +1238,15 @@ function StaffBlock({
           </TableCell>
           {perMonth.map((pm) => {
             let v: number | null = null;
-            if (label === "基本給") v = pm.sal?.base ?? 0;
+            if (label === "本人給") v = pm.sal?.honnin ?? 0;
+            else if (label === "職能給") v = pm.sal?.shokuno ?? 0;
+            else if (label === "固定残業手当") v = pm.sal?.kotei_zangyo ?? 0;
             else if (label === "プラン手当") v = pm.sal?.plan ?? 0;
             else if (label === "加算手当") v = pm.sal?.kazan ?? 0;
             else if (label === "調整手当") v = pm.chosei;
+            else if (label === "資格手当") v = pm.sal?.shikaku ?? 0;
+            else if (label === "固定") v = pm.sal?.kotei ?? 0;
+            else if (label === "特定処遇改善") v = pm.sal?.tokutei ?? 0;
             else if (label === "合計額") v = pm.total;
             else if (label === "支給済み") v = pm.paid > 0 ? pm.paid : null;
             else if (label === "差異") v = pm.diff;
@@ -2177,7 +2205,15 @@ function SayiTab({
           if (!sal) continue;
           const paid =
             paidMap.get(`${officeNumber}|${staff}|${addMonths(pm, 1)}`) ?? 0;
-          const diff = sal.base + sal.plan + sal.kazan - paid;
+          // 過去月の確定差異: T+1 支払対象 = base + plan + kazan + 独立手当
+          const diff =
+            sal.base +
+            sal.plan +
+            sal.kazan +
+            sal.shikaku +
+            sal.kotei +
+            sal.tokutei -
+            paid;
           if (diff === 0) continue;
           out.push({
             officeNumber,

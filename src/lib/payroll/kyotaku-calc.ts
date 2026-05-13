@@ -25,8 +25,18 @@ export type CareLevel =
 export type EmployeeSetting = {
   /** payroll_employees.name (= payroll_kyotaku_records.staff_name と完全一致 match) */
   staff_name: string;
-  /** payroll_employees.kyotaku_base_salary (NULL → DEFAULT_BASE_SALARY=250000 にフォールバック) */
-  base_salary: number | null;
+  /** 本人給 (base 構成要素) — payroll_employees.kyotaku_honnin_kyu */
+  honnin_kyu: number | null;
+  /** 職能給 (base 構成要素) — payroll_employees.kyotaku_shokuno_kyu */
+  shokuno_kyu: number | null;
+  /** 固定残業手当 (base 構成要素) — payroll_employees.kyotaku_kotei_zangyo */
+  kotei_zangyo: number | null;
+  /** 資格手当 (total に独立加算) — payroll_employees.kyotaku_shikaku_teate */
+  shikaku_teate: number | null;
+  /** 固定 (total に独立加算) — payroll_employees.kyotaku_kotei */
+  kotei: number | null;
+  /** 特定処遇改善 (total に独立加算) — payroll_employees.kyotaku_tokutei_shogu */
+  tokutei_shogu: number | null;
   /** payroll_employees.kyotaku_kaigo_rate (NULL → 0) */
   kaigo_rate: number | null;
   /** payroll_employees.kyotaku_shien_rate (NULL → 0) */
@@ -79,12 +89,23 @@ export type YobouRecord = {
 };
 
 export type SalaryBreakdown = {
+  // base 構成要素 (UI 表示用に内訳保持)
+  honnin: number; // 本人給
+  shokuno: number; // 職能給
+  kotei_zangyo: number; // 固定残業手当
+  /** = honnin + shokuno + kotei_zangyo (プラン手当との比較に使う base) */
   base: number;
+  // 独立加算 (total に直接足す)
+  shikaku: number; // 資格手当
+  kotei: number; // 固定
+  tokutei: number; // 特定処遇改善
+  // 件数連動
   plan: number; // プラン手当 (T+1 払い)
   kazan: number; // 加算手当 (T+1 払い、固定 10 円換算)
   chosei1: number; // 調整手当①(T+2 払い、late1 起源)
   chosei2: number; // 調整手当②(T+3 払い、late2 起源)
-  total: number; // 上記合計
+  /** = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei */
+  total: number;
 };
 
 export type CalcConfig = {
@@ -315,16 +336,49 @@ function countByDelay(
   return out;
 }
 
-/** 設定 lookup (見つからなければ default)。 */
+/**
+ * 設定 lookup (見つからなければ default)。
+ *
+ * base 仕様 (2026-05-13 6 列分解):
+ *   - 設定 row が存在し honnin/shokuno/kotei_zangyo のいずれかが非 NULL なら
+ *     base = (honnin ?? 0) + (shokuno ?? 0) + (kotei_zangyo ?? 0)
+ *   - 設定 row が無い or 3 列すべて NULL なら DEFAULT_BASE_SALARY=250000 へ fallback
+ *     (旧 base_salary 1 列時代の互換挙動)
+ *   - shikaku/kotei/tokutei は base に含まれない。total への独立加算用に別途返す。
+ */
 function resolveSetting(
   settings: EmployeeSetting[],
   staffName: string,
-): { base: number; ki: number; si: number } {
+): {
+  base: number;
+  ki: number;
+  si: number;
+  honnin: number;
+  shokuno: number;
+  koteiZ: number;
+  shikaku: number;
+  kotei: number;
+  tokutei: number;
+} {
   const s = settings.find((x) => x.staff_name === staffName);
+  const honnin = s?.honnin_kyu ?? 0;
+  const shokuno = s?.shokuno_kyu ?? 0;
+  const koteiZ = s?.kotei_zangyo ?? 0;
+  // 3 列すべて NULL の場合は fallback (= 設定 row 自体が無い or 全 NULL)
+  const allNull =
+    !s ||
+    (s.honnin_kyu === null && s.shokuno_kyu === null && s.kotei_zangyo === null);
+  const base = allNull ? DEFAULT_BASE_SALARY : honnin + shokuno + koteiZ;
   return {
-    base: s?.base_salary ?? DEFAULT_BASE_SALARY,
+    base,
     ki: s?.kaigo_rate ?? 0,
     si: s?.shien_rate ?? 0,
+    honnin,
+    shokuno,
+    koteiZ,
+    shikaku: s?.shikaku_teate ?? 0,
+    kotei: s?.kotei ?? 0,
+    tokutei: s?.tokutei_shogu ?? 0,
   };
 }
 
@@ -373,7 +427,12 @@ function calcKazan(
 // =====================================================================
 
 /**
- * 提供月 T の給与を 5 要素 (base / plan / kazan / chosei1 / chosei2) に分解。
+ * 提供月 T の給与を内訳に分解。
+ *
+ * 6 列分解 (2026-05-13):
+ *   base = honnin + shokuno + kotei_zangyo   (resolveSetting で算出済)
+ *   shikaku / kotei / tokutei は独立加算 (total に直接足す)
+ *
  * 3 段階調整 (SPEC §3.2):
  *   inc0 = (same + normal) * rate           // T+1 払いの基準
  *   inc1 = inc0 + late1 * rate              // T+2 払い込み
@@ -382,7 +441,7 @@ function calcKazan(
  *   chosei1 = max(0, inc1 - base) - max(0, inc0 - base)
  *   chosei2 = max(0, inc2 - base) - max(0, inc1 - base)
  *
- * total = base + plan + kazan + chosei1 + chosei2
+ * total = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei
  */
 export function calcSalary(
   records: KyotakuRecord[],
@@ -390,7 +449,8 @@ export function calcSalary(
   serviceMonth: string,
   config: CalcConfig,
 ): SalaryBreakdown {
-  const { base, ki, si } = resolveSetting(config.settings, staffName);
+  const { base, ki, si, honnin, shokuno, koteiZ, shikaku, kotei, tokutei } =
+    resolveSetting(config.settings, staffName);
   const c = countByDelay(records, staffName, serviceMonth, config.yobouRecords);
 
   const n_k = c.same_kaigo + c.normal_kaigo;
@@ -410,8 +470,22 @@ export function calcSalary(
 
   const kazan = calcKazan(records, staffName, serviceMonth, config.units);
 
-  const total = base + plan + kazan + chosei1 + chosei2;
-  return { base, plan, kazan, chosei1, chosei2, total };
+  const total =
+    base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei;
+  return {
+    honnin,
+    shokuno,
+    kotei_zangyo: koteiZ,
+    base,
+    shikaku,
+    kotei,
+    tokutei,
+    plan,
+    kazan,
+    chosei1,
+    chosei2,
+    total,
+  };
 }
 
 /**
@@ -440,13 +514,12 @@ export function calcPaymentForMonth(
 
   let total = 0;
   for (const sm of serviceMonths) {
-    const { base, plan, kazan, chosei1, chosei2 } = calcSalary(
-      records,
-      staffName,
-      sm,
-      config,
-    );
-    if (addMonths(sm, 1) === payMonth) total += base + plan + kazan;
+    const { base, plan, kazan, chosei1, chosei2, shikaku, kotei, tokutei } =
+      calcSalary(records, staffName, sm, config);
+    // T+1 払い: base (= honnin+shokuno+kotei_zangyo) + plan + kazan
+    //          + 独立手当 (shikaku/kotei/tokutei) も月固定で同月に支払う
+    if (addMonths(sm, 1) === payMonth)
+      total += base + plan + kazan + shikaku + kotei + tokutei;
     if (addMonths(sm, 2) === payMonth) total += chosei1;
     if (addMonths(sm, 3) === payMonth) total += chosei2;
   }
@@ -472,7 +545,7 @@ export function calcAdjustments(
   const baseConfig: CalcConfig = { settings, units, rates, yobouRecords };
 
   // 1) late_adj: T+1 へ流れる過去月の chosei
-  const { base, plan, kazan } = calcSalary(
+  const { base, plan, kazan, shikaku, kotei, tokutei } = calcSalary(
     records,
     staffName,
     serviceMonth,
@@ -481,7 +554,7 @@ export function calcAdjustments(
   const payMonth = addMonths(serviceMonth, 1);
   const late_adj =
     calcPaymentForMonth(records, staffName, payMonth, baseConfig) -
-    (base + plan + kazan);
+    (base + plan + kazan + shikaku + kotei + tokutei);
 
   // 2) sayi_adj: 最新未確定月にのみ集約
   //    最新未確定月 = staff の全提供月を新しい順に走査し、
@@ -527,7 +600,14 @@ export function calcAdjustments(
       const prevPaid = paidMap.get(prevPay) ?? 0;
       if (prevPaid === 0) continue;
       const prev = calcSalary(records, staffName, prevMonth, baseConfig);
-      const diff = prev.base + prev.plan + prev.kazan - prevPaid;
+      const diff =
+        prev.base +
+        prev.plan +
+        prev.kazan +
+        prev.shikaku +
+        prev.kotei +
+        prev.tokutei -
+        prevPaid;
       sayi_adj += diff;
     }
   }
