@@ -710,37 +710,20 @@ export function KyotakuPayrollDashboard({
   }
 
   const chipGroup = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        onClick={() => setFilterOfficeNumber(null)}
-        className={`px-3 py-1 rounded-full text-xs transition-colors ${
-          filterOfficeNumber === null
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted hover:bg-muted/80"
-        }`}
+    <div className="flex items-center gap-2">
+      <label className="text-xs text-muted-foreground whitespace-nowrap">事業所:</label>
+      <select
+        value={filterOfficeNumber ?? ""}
+        onChange={(e) => setFilterOfficeNumber(e.target.value === "" ? null : e.target.value)}
+        className="border rounded px-2 py-1 text-sm bg-background min-w-[200px]"
       >
-        全事業所
-        <span className="ml-1 opacity-70">{allKyotakuOffices.length}</span>
-      </button>
-      {allKyotakuOffices.map((o) => {
-        const active = filterOfficeNumber === o.office_number;
-        return (
-          <button
-            type="button"
-            key={o.office_number}
-            onClick={() => setFilterOfficeNumber(o.office_number)}
-            className={`px-3 py-1 rounded-full text-xs transition-colors ${
-              active
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted hover:bg-muted/80"
-            }`}
-            title={`${o.name} (${o.office_number})`}
-          >
+        <option value="">全事業所 ({allKyotakuOffices.length})</option>
+        {allKyotakuOffices.map((o) => (
+          <option key={o.office_number} value={o.office_number} title={`${o.name} (${o.office_number})`}>
             {o.short_name || o.name}
-          </button>
-        );
-      })}
+          </option>
+        ))}
+      </select>
     </div>
   );
 
