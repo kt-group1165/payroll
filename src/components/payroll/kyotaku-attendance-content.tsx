@@ -215,6 +215,61 @@ export function KyotakuAttendanceContent() {
   // CSV 取込用の hidden input ref
   const csvInputRef = useRef<HTMLInputElement>(null);
 
+  // ---------------- 未保存変更の離脱警告 ----------------
+  // dirty な row が 1 件でもあれば、tab close / refresh / 別 URL 入力 / sidebar link click で警告
+  const hasUnsavedChanges = useMemo(() => rows.some((r) => r.dirty), [rows]);
+
+  /** 同 page 内 (事業所/スタッフ/月) 切替時、未保存なら confirm。OK なら遷移を許可 */
+  const confirmIfDirty = useCallback((): boolean => {
+    if (!hasUnsavedChanges) return true;
+    return window.confirm(
+      "保存されていない変更があります。切り替えるとデータが失われます。よろしいですか？",
+    );
+  }, [hasUnsavedChanges]);
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const message = "保存されていない変更があります。離れるとデータが失われます。よろしいですか？";
+    // (1) ブラウザレベルのナビゲーション (refresh / close / 外部 URL 入力)
+    const handleBeforeUnload = (e: BeforeUnloadEvent): string => {
+      e.preventDefault();
+      // 仕様上 returnValue を文字列にセットすると標準ダイアログが表示される
+      // (現代ブラウザは内容を独自メッセージに置き換える)
+      e.returnValue = message;
+      return message;
+    };
+    // (2) 同 SPA 内の anchor (<a> / Next Link) クリック intercept
+    // capture phase で Next の onClick より先に発火し、拒否なら preventDefault で遷移を止める
+    const handleAnchorClick = (e: MouseEvent): void => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const anchor = target.closest("a") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute("href");
+      if (!href) return;
+      // ハッシュ内 link / 新規 tab はスキップ
+      if (href.startsWith("#")) return;
+      if (anchor.target === "_blank") return;
+      // 同 origin かつ現在 URL と異なる場合のみ確認 (= 真のナビゲーション)
+      try {
+        const dest = new URL(href, window.location.href);
+        if (dest.origin === window.location.origin && dest.href !== window.location.href) {
+          if (!window.confirm(message)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+      } catch {
+        // 不正な URL は無視
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("click", handleAnchorClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("click", handleAnchorClick, true);
+    };
+  }, [hasUnsavedChanges]);
+
   // ---------------- offices 初期 fetch ----------------
   useEffect(() => {
     let cancelled = false;
@@ -613,7 +668,10 @@ export function KyotakuAttendanceContent() {
               <select
                 className="rounded-md border bg-background px-3 py-2 text-sm min-w-[240px]"
                 value={selectedOfficeId}
-                onChange={(e) => setSelectedOfficeId(e.target.value)}
+                onChange={(e) => {
+                  if (!confirmIfDirty()) return;
+                  setSelectedOfficeId(e.target.value);
+                }}
                 disabled={officeLoading}
               >
                 <option value="">
@@ -632,7 +690,10 @@ export function KyotakuAttendanceContent() {
               <select
                 className="rounded-md border bg-background px-3 py-2 text-sm min-w-[200px]"
                 value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                onChange={(e) => {
+                  if (!confirmIfDirty()) return;
+                  setSelectedEmployeeId(e.target.value);
+                }}
                 disabled={!selectedOfficeId || employees.length === 0}
               >
                 <option value="">
@@ -656,7 +717,10 @@ export function KyotakuAttendanceContent() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setMonth((m) => shiftMonth(m, -1))}
+                  onClick={() => {
+                    if (!confirmIfDirty()) return;
+                    setMonth((m) => shiftMonth(m, -1));
+                  }}
                 >
                   ← 前月
                 </Button>
@@ -666,14 +730,20 @@ export function KyotakuAttendanceContent() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setMonth((m) => shiftMonth(m, 1))}
+                  onClick={() => {
+                    if (!confirmIfDirty()) return;
+                    setMonth((m) => shiftMonth(m, 1));
+                  }}
                 >
                   次月 →
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setMonth(currentMonth())}
+                  onClick={() => {
+                    if (!confirmIfDirty()) return;
+                    setMonth(currentMonth());
+                  }}
                 >
                   今月
                 </Button>
