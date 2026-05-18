@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MonthInputButton } from "@/components/ui/month-input-button";
 import { toast } from "sonner";
 import {
   calcDailyListWithWeekly,
@@ -873,9 +874,14 @@ export function KyotakuAttendanceContent() {
                 >
                   ← 前月
                 </Button>
-                <div className="text-sm font-medium min-w-[6em] text-center">
-                  {fmtMonthLabel(month)}
-                </div>
+                <MonthInputButton
+                  value={month}
+                  onChange={(next) => {
+                    if (!confirmIfDirty()) return;
+                    setMonth(next);
+                  }}
+                  formatLabel={fmtMonthLabel}
+                />
                 <Button
                   variant="outline"
                   size="sm"

@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLocalStorage } from "@/lib/use-local-storage";
 import { KyotakuSummarySection } from "@/components/payroll/kyotaku-summary-section";
+import { MonthInputButton } from "@/components/ui/month-input-button";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
@@ -512,9 +513,11 @@ export default function PayrollSummaryPage() {
               <Button variant="outline" size="sm" onClick={() => setMonth((m) => shiftYM(m, -1))}>
                 ← 前月
               </Button>
-              <div className="text-sm font-medium min-w-[6em] text-center">
-                {fmtMonth(month)}
-              </div>
+              <MonthInputButton
+                value={month}
+                onChange={(next) => setMonth(next)}
+                formatLabel={fmtMonth}
+              />
               <Button variant="outline" size="sm" onClick={() => setMonth((m) => shiftYM(m, 1))}>
                 次月 →
               </Button>
