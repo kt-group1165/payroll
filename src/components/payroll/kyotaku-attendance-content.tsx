@@ -33,6 +33,7 @@ import {
   minutesBetween,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
+import { isJapaneseHoliday } from "@/lib/payroll/japan-holidays";
 import {
   exportKyotakuAttendanceCsv,
   parseKyotakuAttendanceCsv,
@@ -1003,7 +1004,11 @@ export function KyotakuAttendanceContent() {
                   {rows.map((row, idx) => {
                     const day = parseInt(row.work_date.slice(8, 10), 10);
                     const calc = dailyCalcs[idx];
-                    const dowColor = DOW_COLOR[row.dow] ?? "";
+                    // 祝日は曜日に関わらず赤、その他は曜日ベースの色 (日=赤 / 土=青)
+                    const isHoliday = isJapaneseHoliday(row.work_date);
+                    const dowColor = isHoliday
+                      ? "text-red-600"
+                      : DOW_COLOR[row.dow] ?? "";
                     // 休み判定: 実労働 0 分 (= 出勤/退勤 未入力 or 同時刻)
                     // 表示: dirty (未保存) は amber 優先、それ以外で休みなら明確に gray-out
                     const isRest = calc.work_minutes === 0;
@@ -1014,9 +1019,15 @@ export function KyotakuAttendanceContent() {
                         : "";
                     return (
                       <TableRow key={row.work_date} className={rowClass}>
-                        <TableCell className="text-center">{day}</TableCell>
-                        <TableCell className={`text-center ${dowColor}`}>
+                        <TableCell className={`text-center ${dowColor}`}>{day}</TableCell>
+                        <TableCell
+                          className={`text-center ${dowColor}`}
+                          title={isHoliday ? "祝日" : undefined}
+                        >
                           {WEEK_DAY_LABELS[row.dow]}
+                          {isHoliday && (
+                            <span className="ml-0.5 text-[9px] align-top">祝</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Input
