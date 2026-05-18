@@ -2204,17 +2204,34 @@ function RiyoshaTab({
             ) : groups.map((g) => {
               const first = g.rows[0];
               const officeName = officeShortLabel(officeMap, first.office_number);
+              // 連続する同値セルを空欄化するため、前 row の利用者識別子を保持
+              let prevClient: string | null = null;
               return (
                 <Fragment key={g.key}>
-                  {g.rows.map((r) => {
+                  {g.rows.map((r, rowIdx) => {
                     const resolved = resolveRecordUnit(r, units);
+                    // 事業所 / 担当ケアマネ は group 内で一定なので先頭行だけ表示
+                    const showOffice = rowIdx === 0;
+                    const showStaff = rowIdx === 0;
+                    // 利用者単位で 介護度 / 保険者 は同値が続くため、利用者切替時のみ表示
+                    const clientKey = r.client_number ?? r.insured_number ?? r.insured_name ?? "";
+                    const isNewClient = clientKey !== prevClient;
+                    prevClient = clientKey;
                     return (
                       <TableRow key={r.id}>
-                        <TableCell>{officeShortLabel(officeMap, r.office_number)}</TableCell>
-                        <TableCell>{r.staff_name}</TableCell>
-                        <TableCell>{r.insured_name ?? ""}</TableCell>
-                        <TableCell>{r.care_level ?? ""}</TableCell>
-                        <TableCell>{r.insurer_name ?? ""}</TableCell>
+                        <TableCell className="text-muted-foreground/70">
+                          {showOffice ? officeShortLabel(officeMap, r.office_number) : ""}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground/70">
+                          {showStaff ? r.staff_name : ""}
+                        </TableCell>
+                        <TableCell>{isNewClient ? (r.insured_name ?? "") : ""}</TableCell>
+                        <TableCell className="text-muted-foreground/70">
+                          {isNewClient ? (r.care_level ?? "") : ""}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground/70">
+                          {isNewClient ? (r.insurer_name ?? "") : ""}
+                        </TableCell>
                         <TableCell>{r.service_name ?? ""}</TableCell>
                         <TableCell className="text-right tabular-nums">
                           {resolved ? resolved.unit.toLocaleString("ja-JP") : ""}
