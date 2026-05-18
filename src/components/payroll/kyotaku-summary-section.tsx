@@ -1,25 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useState } from "react";
+import { formatHM } from "@/lib/payroll/attendance-calc";
+import type { SalaryBreakdown } from "@/lib/payroll/kyotaku-calc";
 import {
-  calcDailyListWithWeekly,
-  calcMonthlySummary,
-  extendedMonthRange,
-  formatHM,
-  type AttendanceRecord,
-} from "@/lib/payroll/attendance-calc";
-import {
-  calcSalary,
-  type CalcConfig,
-  type EmployeeSetting,
-  type KyotakuAttendanceRecord,
-  type KyotakuRecord,
-  type RegionalRate,
-  type SalaryBreakdown,
-  type ServiceUnit,
-  type YobouRecord,
-} from "@/lib/payroll/kyotaku-calc";
+  useKyotakuSummary,
+  type SummaryRow,
+} from "@/lib/swr/use-kyotaku-summary";
 import {
   KyotakuSalaryFormulaModal,
   type SalaryItemKey,
@@ -52,104 +39,12 @@ type Props = {
   weekStart: number;
 };
 
-type EmployeeRow = {
-  id: string;
-  employee_number: string | null;
-  name: string;
-  role_type: string | null;
-  /** 本人給 (月給) */
-  kyotaku_honnin_kyu: number | null;
-  /** 職能給 */
-  kyotaku_shokuno_kyu: number | null;
-  /** 固定残業手当 */
-  kyotaku_kotei_zangyo: number | null;
-  /** 資格手当 */
-  kyotaku_shikaku_teate: number | null;
-  /** 勤続手当 (kotei) */
-  kyotaku_kotei: number | null;
-  /** 特定処遇改善 */
-  kyotaku_tokutei_shogu: number | null;
-  /** 介護費 単価 (円/単位)。プラン手当の base 計算用 */
-  kyotaku_kaigo_rate: number | null;
-  /** 予防支援費 単価 (円/単位) */
-  kyotaku_shien_rate: number | null;
-};
-
-type AttendanceDbRow = {
-  employee_id: string;
-  work_date: string;
-  start_time: string | null;
-  end_time: string | null;
-  break_minutes: number;
-  is_legal_holiday: boolean;
-  paid_leave_type: "full" | "half" | null;
-  is_paid_leave?: boolean | null; // legacy fallback
-  business_km: number | string | null;
-  substitute_for_date: string | null;
-};
-
-type SummaryRow = {
-  employee_id: string;
-  employee_number: string;
-  name: string;
-  role_type: string;
-  // 出勤簿集計
-  workDays: number;
-  workMin: number;
-  dailyOvertimeMin: number;
-  weeklyOvertimeMin: number;
-  midnightMin: number;
-  holidayWorkMin: number;
-  absenceMin: number;
-  paidLeaveDays: number;
-  businessKmTotal: number;
-  // 給与 (基本給 + 手当)
-  honnin: number;
-  shokuno: number;
-  kotei_zangyo: number;
-  shikaku: number;
-  kotei: number;
-  tokutei: number;
-  // プラン/加算/調整 (kyotaku-calc.calcSalary 由来)
-  plan: number;
-  kazan: number;
-  chosei1: number;
-  chosei2: number;
-  business_trip_teate: number;
-  /** 給与合計 (= 基本給 + 各種手当 + プラン + 加算 + 調整 + 出張手当) */
-  total: number;
-  /** モーダル詳細表示用に元の breakdown を保持 */
-  breakdown: SalaryBreakdown;
-};
+// SummaryRow / fetch ロジックは @/lib/swr/use-kyotaku-summary に集約。
+// SWR を撤去するときは hook 内部を useEffect+useState に書き換えるだけで OK。
 
 // =====================================================================
 // 補助関数
 // =====================================================================
-
-function toUiTime(s: string | null): string | null {
-  if (!s) return null;
-  const m = /^(\d{1,2}):(\d{1,2})/.exec(s);
-  if (!m) return null;
-  return `${String(parseInt(m[1], 10)).padStart(2, "0")}:${String(parseInt(m[2], 10)).padStart(2, "0")}`;
-}
-
-function dbToAttendanceRecord(r: AttendanceDbRow): AttendanceRecord {
-  const paidLeaveType: "full" | "half" | null =
-    r.paid_leave_type === "full" || r.paid_leave_type === "half"
-      ? r.paid_leave_type
-      : r.is_paid_leave
-        ? "full"
-        : null;
-  return {
-    work_date: r.work_date,
-    start_time: toUiTime(r.start_time),
-    end_time: toUiTime(r.end_time),
-    break_minutes: r.break_minutes ?? 0,
-    is_legal_holiday: !!r.is_legal_holiday,
-    paid_leave_type: paidLeaveType,
-    substitute_for_date: r.substitute_for_date ?? null,
-  };
-}
 
 function yen(n: number): string {
   return n > 0 ? `${n.toLocaleString("ja-JP")}円` : "—";
@@ -212,9 +107,10 @@ function hm(n: number): string {
 // =====================================================================
 
 export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
-  const [rows, setRows] = useState<SummaryRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  // SWR 経由でデータ取得 (再訪時は cache から即表示、背景で revalidate)
+  const { rows, isLoading, error } = useKyotakuSummary(officeId, month, weekStart);
+  const loading = isLoading;
+  const err = error ? `集計の取得に失敗: ${error.message}` : null;
 
   // 給与項目モーダル: itemKey + mode (formula or detail) + staffName + breakdown
   type ModalState =
@@ -242,202 +138,6 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
       breakdown: row.breakdown,
     });
   };
-
-  // ─── 集計 fetch (officeId / month が変わるたび) ───
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- office/month 切替の async fetch */
-    if (!officeId) {
-      setRows([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setErr(null);
-      try {
-        // 1a) 先に office_number と travel_unit_price を取得 (kyotaku_records / yobou を office_number で DB-level filter するため)
-        const officeRes = await supabase
-          .from("payroll_offices")
-          .select("office_number, travel_unit_price")
-          .eq("id", officeId)
-          .single();
-        if (cancelled) return;
-        if (officeRes.error) throw officeRes.error;
-        const officeNumber =
-          (officeRes.data as { office_number?: string | null } | null)?.office_number ?? "";
-        const travelRate = (() => {
-          const v = (officeRes.data as { travel_unit_price?: number | string | null } | null)?.travel_unit_price;
-          if (v === null || v === undefined) return 0;
-          const n = typeof v === "string" ? parseFloat(v) : v;
-          return Number.isFinite(n) ? n : 0;
-        })();
-
-        // 1b) employees / kyotaku_records (office filter) / master / yobou を並列 fetch
-        const [empRes, recRes, unitRes, rateRes, yobouRes] = await Promise.all([
-          supabase
-            .from("payroll_employees")
-            .select(
-              "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate",
-            )
-            .eq("office_id", officeId)
-            .order("name"),
-          supabase
-            .from("payroll_kyotaku_records")
-            .select("*")
-            .eq("office_number", officeNumber)
-            .limit(10000),
-          supabase.from("payroll_kyotaku_service_units").select("*"),
-          supabase.from("payroll_kyotaku_regional_rates").select("*"),
-          supabase
-            .from("payroll_kyotaku_yobou_records")
-            .select("*")
-            .eq("office_number", officeNumber),
-        ]);
-        if (cancelled) return;
-        if (empRes.error) throw empRes.error;
-        const employees = (empRes.data ?? []) as EmployeeRow[];
-        if (employees.length === 0) {
-          setRows([]);
-          return;
-        }
-        const empIds = employees.map((e) => e.id);
-
-        // 2) 月跨ぎ週も含めて拡張範囲で出勤簿 fetch (週次残業を正しく計算)
-        const { start: extStart, end: extEnd } = extendedMonthRange(month, weekStart);
-        const { data: attData, error: attErr } = await supabase
-          .from("payroll_kyotaku_attendance_records")
-          .select(
-            "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, business_km, substitute_for_date",
-          )
-          .in("employee_id", empIds)
-          .gte("work_date", extStart)
-          .lte("work_date", extEnd);
-        if (cancelled) return;
-        if (attErr) throw attErr;
-        const attRows = (attData ?? []) as AttendanceDbRow[];
-
-        // 3) employee_id → 出勤 record list でグルーピング
-        const byEmp = new Map<string, AttendanceDbRow[]>();
-        for (const r of attRows) {
-          if (!byEmp.has(r.employee_id)) byEmp.set(r.employee_id, []);
-          byEmp.get(r.employee_id)!.push(r);
-        }
-
-        // 4) calcSalary 用 config を構築
-        //    settings: EmployeeSetting[] (staff_name で引く)
-        const settings: EmployeeSetting[] = employees.map((e) => ({
-          staff_name: e.name,
-          honnin_kyu: e.kyotaku_honnin_kyu,
-          shokuno_kyu: e.kyotaku_shokuno_kyu,
-          kotei_zangyo: e.kyotaku_kotei_zangyo,
-          shikaku_teate: e.kyotaku_shikaku_teate,
-          kotei: e.kyotaku_kotei,
-          tokutei_shogu: e.kyotaku_tokutei_shogu,
-          kaigo_rate: e.kyotaku_kaigo_rate,
-          shien_rate: e.kyotaku_shien_rate,
-        }));
-
-        // kyotaku_records / yobou は DB-level で office_number で filter 済
-        const allKyotakuRecords = (recRes.data ?? []) as KyotakuRecord[];
-        const allYobou = (yobouRes.error ? [] : (yobouRes.data ?? [])) as YobouRecord[];
-
-        // calcSalary に渡す attendance は staff_name 付き (= employee_id → name 解決済)
-        // 当該 office の全 employee 分まとめて。
-        const attendanceForCalc: KyotakuAttendanceRecord[] = [];
-        for (const ar of attRows) {
-          const emp = employees.find((e) => e.id === ar.employee_id);
-          if (!emp) continue;
-          const km =
-            typeof ar.business_km === "string"
-              ? parseFloat(ar.business_km)
-              : ar.business_km;
-          if (km === null || km === undefined || !Number.isFinite(km) || km <= 0) continue;
-          attendanceForCalc.push({
-            staff_name: emp.name,
-            work_date: ar.work_date,
-            business_km: km,
-          });
-        }
-
-        const calcConfig: CalcConfig = {
-          settings,
-          units: (unitRes.data ?? []) as ServiceUnit[],
-          rates: (rateRes.data ?? []) as RegionalRate[],
-          yobouRecords: allYobou,
-          attendanceRecords: attendanceForCalc,
-          officeTravelUnitPrice: travelRate,
-        };
-
-        // 5) 各 employee で集計 (出勤簿 + 給与計算)
-        const result: SummaryRow[] = employees.map((emp) => {
-          const empAttRows = byEmp.get(emp.id) ?? [];
-          const records = empAttRows.map(dbToAttendanceRecord);
-          const dailies = calcDailyListWithWeekly(records, weekStart);
-          const summary = calcMonthlySummary(records, weekStart, month);
-          const workDays = dailies.filter(
-            (d) => d.work_minutes > 0 && d.work_date.startsWith(month),
-          ).length;
-          let businessKmTotal = 0;
-          for (const r of empAttRows) {
-            if (!r.work_date.startsWith(month)) continue;
-            const km = r.business_km;
-            if (km === null || km === undefined || km === "") continue;
-            const n = typeof km === "string" ? parseFloat(km) : km;
-            if (Number.isFinite(n) && n > 0) businessKmTotal += n;
-          }
-          businessKmTotal = Math.round(businessKmTotal * 10) / 10;
-
-          // 給与計算 (kyotaku-calc)
-          // payroll_kyotaku_records.service_month は DATE 型 (= "YYYY-MM-01" 文字列で返る)。
-          // countByDelay 内の string 比較で揃えるため "YYYY-MM-01" 形式で渡す。
-          const serviceMonth = `${month}-01`;
-          const breakdown = calcSalary(allKyotakuRecords, emp.name, serviceMonth, calcConfig);
-
-          return {
-            employee_id: emp.id,
-            employee_number: emp.employee_number ?? "",
-            name: emp.name,
-            role_type: emp.role_type ?? "",
-            workDays,
-            workMin: summary.total_work,
-            dailyOvertimeMin: summary.total_daily_overtime,
-            weeklyOvertimeMin: summary.total_weekly_overtime,
-            midnightMin: summary.total_midnight,
-            holidayWorkMin: summary.total_holiday,
-            absenceMin: summary.total_absence,
-            paidLeaveDays: summary.total_paid_leave_days,
-            businessKmTotal,
-            honnin: breakdown.honnin,
-            shokuno: breakdown.shokuno,
-            kotei_zangyo: breakdown.kotei_zangyo,
-            shikaku: breakdown.shikaku,
-            kotei: breakdown.kotei,
-            tokutei: breakdown.tokutei,
-            plan: breakdown.plan,
-            kazan: breakdown.kazan,
-            chosei1: breakdown.chosei1,
-            chosei2: breakdown.chosei2,
-            business_trip_teate: breakdown.business_trip_teate,
-            total: breakdown.total,
-            breakdown,
-          };
-        });
-        if (!cancelled) setRows(result);
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : String(e);
-          setErr(`集計の取得に失敗: ${msg}`);
-          setRows([]);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [officeId, month, weekStart]);
 
   // 合計
   const grandTotal = rows.reduce((s, r) => s + r.total, 0);
