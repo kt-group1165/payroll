@@ -206,6 +206,7 @@ export function KyotakuAttendanceContent() {
   const [rows, setRows] = useState<RowState[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   // 振替 date picker modal: 編集対象 row index と一時 date state
@@ -545,6 +546,44 @@ export function KyotakuAttendanceContent() {
     }
   };
 
+  // ---------------- 削除 (選択スタッフの当月分を全削除) ----------------
+  const handleDelete = async (): Promise<void> => {
+    if (!selectedOfficeId || !selectedEmployeeId) {
+      toast.error("事業所とスタッフを選択してください");
+      return;
+    }
+    if (dates.length === 0) return;
+    const empName = employees.find((e) => e.id === selectedEmployeeId)?.name ?? "(未選択)";
+    const monthLabel = fmtMonthLabel(month);
+    if (
+      !window.confirm(
+        `${empName} さんの ${monthLabel} の出勤簿データを削除します。\nこの操作は取り消せません。よろしいですか？`,
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const monthStart = dates[0].date;
+      const monthEnd = dates[dates.length - 1].date;
+      const { error, count } = await supabase
+        .from("payroll_kyotaku_attendance_records")
+        .delete({ count: "exact" })
+        .eq("employee_id", selectedEmployeeId)
+        .gte("work_date", monthStart)
+        .lte("work_date", monthEnd);
+      if (error) throw error;
+      toast.success(`${count ?? 0} 件 削除しました`);
+      // 削除後は再 loadRows() で空 baseRows に戻す
+      await loadRows();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`削除に失敗: ${msg}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   // ---------------- CSV 出力 ----------------
   const selectedEmployee = useMemo(
     () => employees.find((e) => e.id === selectedEmployeeId) ?? null,
@@ -796,12 +835,23 @@ export function KyotakuAttendanceContent() {
               </span>
             )}
           </CardTitle>
-          <Button
-            onClick={handleSave}
-            disabled={saving || !selectedEmployeeId || rows.every((r) => !r.dirty)}
-          >
-            {saving ? "保存中..." : "保存"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleDelete}
+              disabled={deleting || saving || !selectedEmployeeId}
+              className="text-destructive border-destructive/40 hover:bg-destructive/10"
+              title="選択スタッフ・対象月の出勤簿データを DB から削除します"
+            >
+              {deleting ? "削除中..." : "削除"}
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={saving || deleting || !selectedEmployeeId || rows.every((r) => !r.dirty)}
+            >
+              {saving ? "保存中..." : "保存"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loading && (
