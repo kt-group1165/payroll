@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useLocalStorage } from "@/lib/use-local-storage";
+import { KyotakuSummarySection } from "@/components/payroll/kyotaku-summary-section";
 
 // ─── 型 ──────────────────────────────────────────────
 
@@ -464,6 +465,9 @@ export default function PayrollSummaryPage() {
           )}
         </>
       )}
+
+      {/* 居宅介護支援セクション (訪問介護とは独立、常時表示。事業所+月を選ぶと出勤簿集計 + 給与基本額を表示) */}
+      <KyotakuSummarySection />
     </div>
   );
 }
