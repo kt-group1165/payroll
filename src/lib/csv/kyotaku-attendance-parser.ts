@@ -45,7 +45,8 @@ export type KyotakuAttendanceCsvRow = {
   /** 休憩 分 (0 以上の整数) */
   break_minutes: number;
   is_legal_holiday: boolean;
-  is_paid_leave: boolean;
+  /** 有給種別: null=なし / "full"=全有給 / "half"=半有給 */
+  paid_leave_type: "full" | "half" | null;
   /** 備考 (空文字可) */
   note: string;
   /** 出張距離 km。空 = "" (= データなし)。文字列保持で UI と整合 */
@@ -218,7 +219,8 @@ export function serializeKyotakuAttendanceCsv(
       breakHm,
       normalizeKm(r.business_km),
       boolToFlag(r.is_legal_holiday),
-      boolToFlag(r.is_paid_leave),
+      // 有給: 全=○, 半=半, なし=空
+      r.paid_leave_type === "full" ? "○" : r.paid_leave_type === "half" ? "半" : "",
       r.note ?? "",
     ]
       .map(quoteField)
@@ -360,7 +362,13 @@ export async function parseKyotakuAttendanceCsv(
       const breakMinutes = hmToMinutes((r[4] ?? "").trim());
       const businessKm = normalizeKm((r[5] ?? "").trim());
       const isLegalHoliday = flagToBool((r[6] ?? "").trim());
-      const isPaidLeave = flagToBool((r[7] ?? "").trim());
+      // 有給: "半"=half / "○"|"true"|"1"|"全"=full / その他=null
+      const paidLeaveRaw = (r[7] ?? "").trim();
+      const paidLeaveType: "full" | "half" | null = /^半$/.test(paidLeaveRaw)
+        ? "half"
+        : flagToBool(paidLeaveRaw) || /^全$/.test(paidLeaveRaw)
+          ? "full"
+          : null;
       const note = (r[8] ?? "").trim();
 
       out.push({
@@ -369,7 +377,7 @@ export async function parseKyotakuAttendanceCsv(
         end_time: endTime,
         break_minutes: breakMinutes,
         is_legal_holiday: isLegalHoliday,
-        is_paid_leave: isPaidLeave,
+        paid_leave_type: paidLeaveType,
         note,
         business_km: businessKm,
       });

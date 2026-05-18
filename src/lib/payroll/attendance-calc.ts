@@ -31,8 +31,13 @@ export type AttendanceRecord = {
   break_minutes: number;
   /** 法定休日労働か (= シフト上の所定休日とは区別)。true なら全労働時間が holiday_work に積まれる */
   is_legal_holiday: boolean;
-  /** 有給休暇取得日か (月集計の total_paid_leave_days に加算) */
-  is_paid_leave: boolean;
+  /**
+   * 有給休暇取得日種別:
+   *   null = 有給なし
+   *   "full" = 全有給 (月集計に +1 日)
+   *   "half" = 半有給 (月集計に +0.5 日)
+   */
+  paid_leave_type: "full" | "half" | null;
 };
 
 export type DailyCalc = {
@@ -67,7 +72,7 @@ export type MonthlySummary = {
   total_midnight: number;
   /** 月合計 法定休日労働 (分) */
   total_holiday: number;
-  /** 有給日数 (record 数 — 半休等は呼出側で別管理) */
+  /** 有給日数 (全=1 / 半=0.5 で合算)。0.5 刻みの小数を含む */
   total_paid_leave_days: number;
 };
 
@@ -257,7 +262,7 @@ function midnightOverlap(startMin: number, endMin: number): number {
  *   end_time: "20:30",
  *   break_minutes: 60,
  *   is_legal_holiday: false,
- *   is_paid_leave: false,
+ *   paid_leave_type: null,
  * })
  * // => { work_date: "2025-01-15", work_minutes: 630, daily_overtime: 150, midnight_overtime: 0, holiday_work: 0 }
  *
@@ -269,7 +274,7 @@ function midnightOverlap(startMin: number, endMin: number): number {
  *   end_time: "06:00",
  *   break_minutes: 60,
  *   is_legal_holiday: false,
- *   is_paid_leave: false,
+ *   paid_leave_type: null,
  * })
  * // work_minutes = 480 - 60 = 420
  * // daily_overtime = 0 (8h 以内)
@@ -420,11 +425,11 @@ export function calcDailyListWithWeekly(
  *
  * @example
  * calcMonthlySummary([
- *   { work_date: "2025-01-06", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 月 8h
- *   { work_date: "2025-01-07", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 火 8h
- *   { work_date: "2025-01-08", start_time: "09:00", end_time: "20:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 水 10h (日残 2h)
- *   { work_date: "2025-01-09", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 木 8h
- *   { work_date: "2025-01-10", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, is_paid_leave: false }, // 金 8h
+ *   { work_date: "2025-01-06", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, paid_leave_type: null }, // 月 8h
+ *   { work_date: "2025-01-07", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, paid_leave_type: null }, // 火 8h
+ *   { work_date: "2025-01-08", start_time: "09:00", end_time: "20:00", break_minutes: 60, is_legal_holiday: false, paid_leave_type: null }, // 水 10h (日残 2h)
+ *   { work_date: "2025-01-09", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, paid_leave_type: null }, // 木 8h
+ *   { work_date: "2025-01-10", start_time: "09:00", end_time: "18:00", break_minutes: 60, is_legal_holiday: false, paid_leave_type: null }, // 金 8h
  * ])
  * // 週合計 42h、日残 2h、週次残業 = max(0, 42-2-40) = 0h
  */
@@ -448,7 +453,8 @@ export function calcMonthlySummary(
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
     const d = dailies[i];
-    if (r.is_paid_leave) summary.total_paid_leave_days += 1;
+    if (r.paid_leave_type === "full") summary.total_paid_leave_days += 1;
+    else if (r.paid_leave_type === "half") summary.total_paid_leave_days += 0.5;
     summary.total_work += d.work_minutes;
     summary.total_daily_overtime += d.daily_overtime;
     summary.total_weekly_overtime += d.weekly_overtime;

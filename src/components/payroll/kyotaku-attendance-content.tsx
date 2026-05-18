@@ -81,7 +81,8 @@ type AttendanceRow = {
   end_time: string | null;
   break_minutes: number;
   is_legal_holiday: boolean;
-  is_paid_leave: boolean;
+  is_paid_leave: boolean;  // legacy: paid_leave_type IS NOT NULL と同義。save 時に同期
+  paid_leave_type: "full" | "half" | null;
   note: string | null;
   /** 出張距離 (km)。NULL/0 は出張なし */
   business_km: number | null;
@@ -97,7 +98,8 @@ type RowState = {
   end_time: string;         // "HH:mm" or ""
   break_minutes: number;
   is_legal_holiday: boolean;
-  is_paid_leave: boolean;
+  /** 有給種別: null=なし / "full"=全 / "half"=半 */
+  paid_leave_type: "full" | "half" | null;
   note: string;
   /** 出張距離 (km)、空 = NULL。文字列で保持して step=0.1 の入力を素直に通す */
   business_km: string;
@@ -185,7 +187,7 @@ function toAttendanceRecord(row: RowState): AttendanceRecord {
     end_time: row.end_time || null,
     break_minutes: row.break_minutes,
     is_legal_holiday: row.is_legal_holiday,
-    is_paid_leave: row.is_paid_leave,
+    paid_leave_type: row.paid_leave_type,
   };
 }
 
@@ -352,7 +354,7 @@ export function KyotakuAttendanceContent() {
       end_time: "",
       break_minutes: 0,
       is_legal_holiday: false,
-      is_paid_leave: false,
+      paid_leave_type: null,
       note: "",
       business_km: "",
       substitute_for_date: "",
@@ -395,13 +397,20 @@ export function KyotakuAttendanceContent() {
           const n = typeof rawKm === "string" ? parseFloat(rawKm) : rawKm;
           if (Number.isFinite(n)) businessKmStr = String(n);
         }
+        // paid_leave_type が NULL かつ is_paid_leave=true なら legacy (backfill 前) として "full" 扱い
+        const paidLeaveType: "full" | "half" | null =
+          ex.paid_leave_type === "full" || ex.paid_leave_type === "half"
+            ? ex.paid_leave_type
+            : ex.is_paid_leave
+              ? "full"
+              : null;
         return {
           ...br,
           start_time: toUiTime(ex.start_time),
           end_time: toUiTime(ex.end_time),
           break_minutes: ex.break_minutes ?? 0,
           is_legal_holiday: !!ex.is_legal_holiday,
-          is_paid_leave: !!ex.is_paid_leave,
+          paid_leave_type: paidLeaveType,
           note: ex.note ?? "",
           business_km: businessKmStr,
           substitute_for_date: ex.substitute_for_date ?? "",
@@ -525,7 +534,9 @@ export function KyotakuAttendanceContent() {
           end_time: toDbTime(r.end_time),
           break_minutes: Math.max(0, Math.floor(r.break_minutes || 0)),
           is_legal_holiday: r.is_legal_holiday,
-          is_paid_leave: r.is_paid_leave,
+          // legacy is_paid_leave は paid_leave_type IS NOT NULL と同義に保つ
+          is_paid_leave: r.paid_leave_type !== null,
+          paid_leave_type: r.paid_leave_type,
           note: r.note.trim() ? r.note : null,
           business_km: businessKm,
           substitute_for_date: r.substitute_for_date || null,
@@ -606,7 +617,7 @@ export function KyotakuAttendanceContent() {
         end_time: r.end_time,
         break_minutes: r.break_minutes,
         is_legal_holiday: r.is_legal_holiday,
-        is_paid_leave: r.is_paid_leave,
+        paid_leave_type: r.paid_leave_type,
         note: r.note,
         business_km: r.business_km,
       }));
@@ -666,7 +677,7 @@ export function KyotakuAttendanceContent() {
             end_time: hit.end_time,
             break_minutes: hit.break_minutes,
             is_legal_holiday: hit.is_legal_holiday,
-            is_paid_leave: hit.is_paid_leave,
+            paid_leave_type: hit.paid_leave_type,
             note: hit.note,
             business_km: hit.business_km,
             dirty: true,
@@ -1019,13 +1030,22 @@ export function KyotakuAttendanceContent() {
                           })()}
                         </TableCell>
                         <TableCell className="text-center">
-                          <input
-                            type="checkbox"
-                            checked={row.is_paid_leave}
-                            onChange={(e) =>
-                              updateRow(idx, { is_paid_leave: e.target.checked })
-                            }
-                          />
+                          <select
+                            className="h-8 rounded-md border bg-background px-1 text-xs"
+                            value={row.paid_leave_type ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateRow(idx, {
+                                paid_leave_type:
+                                  v === "full" ? "full" : v === "half" ? "half" : null,
+                              });
+                            }}
+                            title="有給種別 (なし / 全 / 半)"
+                          >
+                            <option value="">—</option>
+                            <option value="full">全</option>
+                            <option value="half">半</option>
+                          </select>
                         </TableCell>
                         <TableCell className="text-right">
                           <Input
@@ -1088,7 +1108,7 @@ export function KyotakuAttendanceContent() {
                 <span>
                   有給{" "}
                   <span className="font-semibold tabular-nums">
-                    {monthSummary.total_paid_leave_days}日
+                    {monthSummary.total_paid_leave_days.toFixed(1).replace(/\.0$/, "")}日
                   </span>
                 </span>
                 <span>
