@@ -407,6 +407,10 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
  *   - 各日の「非日次残業基準時間」(= min(work_minutes, 8h) — 法定休日除く) を累積
  *   - 累積 > 40h になった日に、その超過分を weekly_overtime として加算
  *   - 同日に既に daily_overtime がある場合は、その分は週次累積に含めない (= 二重計上回避)
+ *   - 欠勤 (per-day raw): max(0, 所定 - 実労働)。所定は曜日 / 祝日 / 振替 / 有給 で判定
+ *   - 欠勤 (週次調整): min(Σ raw 欠勤, max(0, 40h - Σ min(work, 8h)))
+ *     週合計が40hに達していれば、early-week の欠勤は補填されて 0 に引き下げる。
+ *     1日8h超の daily OT 分は補填プールに含まれない (法休 work は含む)。
  *
  * @param weekStartDay 0=日曜起算 / 1=月曜起算 / ... / 6=土曜起算 (payroll_offices.work_week_start)
  * @returns calcDaily と同じ順序 (= records の元順序) で結果配列を返す
@@ -431,6 +435,14 @@ export function calcDailyListWithWeekly(
     if (!wk) continue;
     if (!weekGroups.has(wk)) weekGroups.set(wk, []);
     weekGroups.get(wk)!.push(it);
+  }
+
+  // 振替先 (= 他の日から休日を振り替えられた日) を pre-build (per-week 処理で必要)
+  const substituteTargetDates = new Set<string>();
+  for (const it of items) {
+    if (it.r.substitute_for_date) {
+      substituteTargetDates.add(it.r.substitute_for_date);
+    }
   }
 
   for (const list of weekGroups.values()) {
@@ -468,56 +480,72 @@ export function calcDailyListWithWeekly(
       }
       cumulativeBase = newCumulative;
     }
-  }
 
-  // ─── 欠勤計算 ───
-  // 所定労働日の判定:
-  //   - 平日 (月-金) かつ 祝日でない → 所定日 (= 8h)
-  //   - 振替出勤日 (substitute_for_date が set) → 強制で所定日 (= 8h)
-  //   - 振替先 (= 他の record の substitute_for_date が この日) → 所定日でなくなる (= 0h)
-  //   - 全有給 → 所定日でなくなる (= 0h)
-  //   - 半有給 → 所定時間 4h
-  //   - 法定休日労働日 (manual/auto) → 所定日でない (= 0h)、欠勤判定対象外
-  //
-  // 欠勤時間 = max(0, scheduled_minutes - work_minutes)
-  const substituteTargetDates = new Set<string>();
-  for (const it of items) {
-    if (it.r.substitute_for_date) {
-      substituteTargetDates.add(it.r.substitute_for_date);
+    // ─── 欠勤 (raw per-day) ───
+    // 所定労働日の判定:
+    //   - 平日 (月-金) かつ 祝日でない → 所定日 (= 8h)
+    //   - 振替出勤日 (substitute_for_date が set) → 強制で所定日 (= 8h)
+    //   - 振替先 (= 他の record の substitute_for_date が この日) → 所定日でなくなる (= 0h)
+    //   - 全有給 → 所定日でなくなる (= 0h)
+    //   - 半有給 → 所定時間 4h
+    //   - 法定休日労働日 (manual/auto) → 所定日でない (= 0h)、欠勤判定対象外
+    // raw 欠勤時間 = max(0, scheduled_minutes - work_minutes)
+    for (const it of list) {
+      if (it.r.is_legal_holiday || it.autoLegalHoliday) {
+        it.daily.scheduled_minutes = 0;
+        it.daily.absence_minutes = 0;
+        continue;
+      }
+      if (it.r.paid_leave_type === "full") {
+        it.daily.scheduled_minutes = 0;
+        it.daily.absence_minutes = 0;
+        continue;
+      }
+      if (substituteTargetDates.has(it.r.work_date)) {
+        it.daily.scheduled_minutes = 0;
+        it.daily.absence_minutes = 0;
+        continue;
+      }
+      const isSubstituteWorkDay = it.r.substitute_for_date !== null;
+      const dt = parseDateUTC(it.r.work_date);
+      const dow = dt ? dt.getUTCDay() : 0;
+      const isWeekday = dow >= 1 && dow <= 5;
+      const isHoliday = isJapaneseHoliday(it.r.work_date);
+      const isScheduledDay = isSubstituteWorkDay || (isWeekday && !isHoliday);
+      if (!isScheduledDay) {
+        it.daily.scheduled_minutes = 0;
+        it.daily.absence_minutes = 0;
+        continue;
+      }
+      const scheduled = it.r.paid_leave_type === "half" ? 4 * MIN_PER_HOUR : LEGAL_DAILY_LIMIT;
+      it.daily.scheduled_minutes = scheduled;
+      it.daily.absence_minutes = Math.max(0, scheduled - it.daily.work_minutes);
     }
-  }
-  for (const it of items) {
-    if (it.r.is_legal_holiday || it.autoLegalHoliday) {
-      it.daily.scheduled_minutes = 0;
-      it.daily.absence_minutes = 0;
-      continue;
+
+    // ─── 欠勤 週次調整 ───
+    // 週の欠勤 = min(
+    //   Σ raw 欠勤,
+    //   max(0, 40h - Σ min(work_minutes, 8h))    ← 1日8h超を除いた週合計の40h不足分
+    // )
+    // 法休 work は仕様により週合計 (40h プール) に含める。
+    // 補填があれば日付昇順で raw 欠勤を 0 まで引き下げる (sum=月計と一致)。
+    const rawAbsSum = list.reduce((s, it) => s + it.daily.absence_minutes, 0);
+    const cappedWorkSum = list.reduce(
+      (s, it) => s + Math.min(it.daily.work_minutes, LEGAL_DAILY_LIMIT),
+      0,
+    );
+    const weeklyShortfall = Math.max(0, LEGAL_WEEKLY_LIMIT - cappedWorkSum);
+    const weeklyAbsence = Math.min(rawAbsSum, weeklyShortfall);
+    if (weeklyAbsence < rawAbsSum) {
+      let reductionNeeded = rawAbsSum - weeklyAbsence;
+      for (const it of list) {
+        if (reductionNeeded <= 0) break;
+        if (it.daily.absence_minutes <= 0) continue;
+        const reduce = Math.min(it.daily.absence_minutes, reductionNeeded);
+        it.daily.absence_minutes -= reduce;
+        reductionNeeded -= reduce;
+      }
     }
-    if (it.r.paid_leave_type === "full") {
-      it.daily.scheduled_minutes = 0;
-      it.daily.absence_minutes = 0;
-      continue;
-    }
-    if (substituteTargetDates.has(it.r.work_date)) {
-      // 他の日からこの日に休日が振り替えられた → この日は休日
-      it.daily.scheduled_minutes = 0;
-      it.daily.absence_minutes = 0;
-      continue;
-    }
-    const isSubstituteWorkDay = it.r.substitute_for_date !== null;
-    const dt = parseDateUTC(it.r.work_date);
-    const dow = dt ? dt.getUTCDay() : 0;
-    const isWeekday = dow >= 1 && dow <= 5;
-    const isHoliday = isJapaneseHoliday(it.r.work_date);
-    const isScheduledDay = isSubstituteWorkDay || (isWeekday && !isHoliday);
-    if (!isScheduledDay) {
-      it.daily.scheduled_minutes = 0;
-      it.daily.absence_minutes = 0;
-      continue;
-    }
-    // 半有給日は所定 4h
-    const scheduled = it.r.paid_leave_type === "half" ? 4 * MIN_PER_HOUR : LEGAL_DAILY_LIMIT;
-    it.daily.scheduled_minutes = scheduled;
-    it.daily.absence_minutes = Math.max(0, scheduled - it.daily.work_minutes);
   }
 
   // 元順に戻して返す
