@@ -768,12 +768,12 @@ export function KyotakuAttendanceContent() {
                     const calc = dailyCalcs[idx];
                     const dowColor = DOW_COLOR[row.dow] ?? "";
                     // 休み判定: 実労働 0 分 (= 出勤/退勤 未入力 or 同時刻)
-                    // 表示: dirty (未保存) は amber 優先、それ以外で休みなら gray-out
+                    // 表示: dirty (未保存) は amber 優先、それ以外で休みなら明確に gray-out
                     const isRest = calc.work_minutes === 0;
                     const rowClass = row.dirty
                       ? "bg-amber-50"
                       : isRest
-                        ? "bg-gray-100/70 text-muted-foreground"
+                        ? "bg-slate-200/80 text-slate-500"
                         : "";
                     return (
                       <TableRow key={row.work_date} className={rowClass}>
