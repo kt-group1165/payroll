@@ -6,6 +6,7 @@ import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MonthInputButton } from "@/components/ui/month-input-button";
 import {
   Table,
   TableBody,
@@ -2135,9 +2136,15 @@ function RiyoshaTab({
   const monthControl = (
     <div className="flex items-center gap-3 px-1">
       <Button onClick={goPrev} disabled={monthIdx <= 0} size="sm" variant="outline">← 前月</Button>
-      <span className="text-sm font-medium min-w-[110px] text-center">
-        {selectedMonth ? fmtMonthLabel(selectedMonth) : "—"}
-      </span>
+      {selectedMonth ? (
+        <MonthInputButton
+          value={selectedMonth.slice(0, 7)}
+          onChange={(next) => setSelectedMonth(`${next}-01`)}
+          formatLabel={(ym) => fmtMonthLabel(`${ym}-01`)}
+        />
+      ) : (
+        <span className="text-sm font-medium min-w-[110px] text-center">—</span>
+      )}
       <Button onClick={goNext} disabled={monthIdx < 0 || monthIdx >= allMonths.length - 1} size="sm" variant="outline">次月 →</Button>
       <span className="text-xs text-muted-foreground ml-2">
         ({sorted.length} 件)
@@ -2824,9 +2831,15 @@ function YobouTab({
         <Button onClick={goPrev} disabled={!selectedMonth} size="sm" variant="outline">
           ← 前月
         </Button>
-        <span className="text-sm font-medium min-w-[110px] text-center">
-          提供月: {selectedMonth ? fmtMonthLabel(selectedMonth) : "—"}
-        </span>
+        {selectedMonth ? (
+          <MonthInputButton
+            value={selectedMonth.slice(0, 7)}
+            onChange={(next) => setSelectedMonth(`${next}-01`)}
+            formatLabel={(ym) => `提供月: ${fmtMonthLabel(`${ym}-01`)}`}
+          />
+        ) : (
+          <span className="text-sm font-medium min-w-[110px] text-center">提供月: —</span>
+        )}
         <Button onClick={goNext} disabled={!selectedMonth} size="sm" variant="outline">
           次月 →
         </Button>
