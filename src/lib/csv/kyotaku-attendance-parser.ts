@@ -114,6 +114,36 @@ function normalizeHm(s: string): string {
   return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
+/**
+ * 日付文字列を YYYY-MM-DD 形式に正規化。受け付ける形式:
+ *   - YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD (0 padded)
+ *   - YYYY-M-D / YYYY/M/D / YYYY.M.D (no padding)
+ *   - YYYY年M月D日 (和暦は別途、令和の対応は将来検討)
+ * 不正なら null を返す。
+ */
+function normalizeDate(raw: string): string | null {
+  if (!raw) return null;
+  // 全角数字を半角化
+  const s = raw.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).trim();
+  // YYYY[-/.]M[-/.]D (区切り: ハイフン / スラッシュ / ピリオド)
+  let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(s);
+  if (!m) {
+    // YYYY年M月D日 (西暦のみ、和暦は未対応)
+    m = /^(\d{4})年(\d{1,2})月(\d{1,2})日?$/.exec(s);
+  }
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  if (!Number.isFinite(y) || y < 1900 || y > 2999) return null;
+  if (!Number.isFinite(mo) || mo < 1 || mo > 12) return null;
+  if (!Number.isFinite(d) || d < 1 || d > 31) return null;
+  // 月末日 validity (例: 2月31日 を弾く)
+  const dim = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  if (d > dim) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 /** YYYY-MM-DD → 曜日 index (UTC 計算で TZ 揺れ回避) */
 function dowOf(date: string): number {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
@@ -310,9 +340,10 @@ export async function parseKyotakuAttendanceCsv(
     for (let i = 0; i < dataRows.length; i++) {
       const r = dataRows[i];
       const rowNo = i + 2; // CSV 行番号 (1-origin、header が 1 行目)
-      const workDate = (r[0] ?? "").trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) {
-        errors.push(`行 ${rowNo}: 日付フォーマットが不正 "${workDate}" (YYYY-MM-DD 必須)`);
+      const rawDate = (r[0] ?? "").trim();
+      const workDate = normalizeDate(rawDate);
+      if (!workDate) {
+        errors.push(`行 ${rowNo}: 日付フォーマットが不正 "${rawDate}" (例: 2025-01-01 / 2025/1/1)`);
         continue;
       }
       const ym = monthOf(workDate);
