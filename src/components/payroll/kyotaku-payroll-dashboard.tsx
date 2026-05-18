@@ -412,17 +412,30 @@ export function KyotakuPayrollDashboard({
   // 全居宅介護支援 office の records を一括 fetch (RLS は authenticated_all なので OK)。
   // 絞り込みは memo 段階で行う (記録の二重 fetch 回避)。
 
+  // filterOfficeNumber が set されていたらその 1 office に絞る (= fetch 量を大幅削減)。
+  // null (全社 mode) なら従来通り全 kyotaku office を fetch。
   const officeNumbers = useMemo(
-    () => allKyotakuOffices.map((o) => o.office_number),
-    [allKyotakuOffices],
+    () =>
+      filterOfficeNumber
+        ? allKyotakuOffices
+            .filter((o) => o.office_number === filterOfficeNumber)
+            .map((o) => o.office_number)
+        : allKyotakuOffices.map((o) => o.office_number),
+    [allKyotakuOffices, filterOfficeNumber],
   );
 
   // payroll_employees.office_id (= payroll_offices.id) で絞り込むために UUID list を作る。
   // 1000 行 PostgREST default limit 対策: 全 employees fetch (~数千件) は limit に
   // 引っ掛かるが、居宅介護支援 office (~30 件) だけに絞れば数百件で完結する。
+  // filterOfficeNumber set 時はさらに 1 office に縮約。
   const officeIds = useMemo(
-    () => allKyotakuOffices.map((o) => o.id),
-    [allKyotakuOffices],
+    () =>
+      filterOfficeNumber
+        ? allKyotakuOffices
+            .filter((o) => o.office_number === filterOfficeNumber)
+            .map((o) => o.id)
+        : allKyotakuOffices.map((o) => o.id),
+    [allKyotakuOffices, filterOfficeNumber],
   );
 
   // office_number → office (short_name 解決) の lookup
