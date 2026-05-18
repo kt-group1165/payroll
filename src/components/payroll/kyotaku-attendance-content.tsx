@@ -28,6 +28,7 @@ import {
   calcDailyListWithWeekly,
   calcMonthlySummary,
   formatHM,
+  minutesBetween,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
 import {
@@ -443,6 +444,31 @@ export function KyotakuAttendanceContent() {
       next[idx] = { ...next[idx], ...patch, dirty: true };
       return next;
     });
+  };
+
+  /**
+   * 出勤/退勤を変更したときの patch を組み立てる helper。
+   * 「両方の時刻が初めて揃った瞬間」だけ休憩のデフォルトを適用:
+   *   - 拘束時間 (gross) >= 6h → break_minutes = 60 (1時間休憩前提)
+   *   - 拘束時間 < 6h           → break_minutes = 0
+   * 既に片方が入力済の状態で他方を変更しても休憩には触れない (= 手動設定を尊重)
+   */
+  const buildTimePatch = (
+    row: RowState,
+    field: "start_time" | "end_time",
+    newValue: string,
+  ): Partial<RowState> => {
+    const patch: Partial<RowState> = { [field]: newValue };
+    const oldValue = row[field];
+    const newStart = field === "start_time" ? newValue : row.start_time;
+    const newEnd = field === "end_time" ? newValue : row.end_time;
+    // 初回 (両方の時刻が揃った瞬間) かつ 当該 field が空 → 空 だけでなく、
+    // 「変更前 field が空文字」かつ「両方の新値が non-empty」のときだけ default 休憩を適用
+    if (!oldValue && newValue && newStart && newEnd) {
+      const grossMin = minutesBetween(newStart, newEnd);
+      patch.break_minutes = grossMin >= 6 * 60 ? 60 : 0;
+    }
+    return patch;
   };
 
   // ---------------- 振替 modal handler ----------------
@@ -919,7 +945,7 @@ export function KyotakuAttendanceContent() {
                             type="time"
                             value={row.start_time}
                             onChange={(e) =>
-                              updateRow(idx, { start_time: e.target.value })
+                              updateRow(idx, buildTimePatch(row, "start_time", e.target.value))
                             }
                             className="h-8"
                           />
@@ -929,7 +955,7 @@ export function KyotakuAttendanceContent() {
                             type="time"
                             value={row.end_time}
                             onChange={(e) =>
-                              updateRow(idx, { end_time: e.target.value })
+                              updateRow(idx, buildTimePatch(row, "end_time", e.target.value))
                             }
                             className="h-8"
                           />
