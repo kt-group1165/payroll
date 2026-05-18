@@ -15,6 +15,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   calcDailyListWithWeekly,
@@ -77,6 +85,8 @@ type AttendanceRow = {
   note: string | null;
   /** 出張距離 (km)。NULL/0 は出張なし */
   business_km: number | null;
+  /** 振替元日付 (YYYY-MM-DD)。NULL = 振替ではない通常の出勤 */
+  substitute_for_date: string | null;
 };
 
 /** UI 上の 1 行 state (HH:mm 形式で保持) */
@@ -91,6 +101,8 @@ type RowState = {
   note: string;
   /** 出張距離 (km)、空 = NULL。文字列で保持して step=0.1 の入力を素直に通す */
   business_km: string;
+  /** 振替元日付 ("YYYY-MM-DD" or "")。空 = 振替ではない通常の出勤 */
+  substitute_for_date: string;
   dirty: boolean;
   existing_id: string | null;
 };
@@ -196,6 +208,10 @@ export function KyotakuAttendanceContent() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // 振替 date picker modal: 編集対象 row index と一時 date state
+  const [substituteModalIdx, setSubstituteModalIdx] = useState<number | null>(null);
+  const [substituteModalDate, setSubstituteModalDate] = useState<string>("");
+
   // CSV 取込用の hidden input ref
   const csvInputRef = useRef<HTMLInputElement>(null);
 
@@ -283,6 +299,7 @@ export function KyotakuAttendanceContent() {
       is_paid_leave: false,
       note: "",
       business_km: "",
+      substitute_for_date: "",
       dirty: false,
       existing_id: null,
     }));
@@ -331,6 +348,7 @@ export function KyotakuAttendanceContent() {
           is_paid_leave: !!ex.is_paid_leave,
           note: ex.note ?? "",
           business_km: businessKmStr,
+          substitute_for_date: ex.substitute_for_date ?? "",
           dirty: false,
           existing_id: ex.id ?? null,
         };
@@ -359,6 +377,35 @@ export function KyotakuAttendanceContent() {
       next[idx] = { ...next[idx], ...patch, dirty: true };
       return next;
     });
+  };
+
+  // ---------------- 振替 modal handler ----------------
+  /** 振替 checkbox toggle handler: ON で modal を開く / OFF で日付をクリア */
+  const handleSubstituteToggle = (idx: number, checked: boolean): void => {
+    if (checked) {
+      // ON: 既存の値を modal の初期値に
+      setSubstituteModalDate(rows[idx]?.substitute_for_date ?? "");
+      setSubstituteModalIdx(idx);
+    } else {
+      // OFF: 振替 date を消す
+      updateRow(idx, { substitute_for_date: "" });
+    }
+  };
+  /** modal で日付確定 */
+  const handleSubstituteConfirm = (): void => {
+    if (substituteModalIdx === null) return;
+    if (!substituteModalDate) {
+      toast.error("日付を選択してください");
+      return;
+    }
+    updateRow(substituteModalIdx, { substitute_for_date: substituteModalDate });
+    setSubstituteModalIdx(null);
+    setSubstituteModalDate("");
+  };
+  /** modal cancel: 既存の値が無ければ checkbox も結果的に off に戻る */
+  const handleSubstituteCancel = (): void => {
+    setSubstituteModalIdx(null);
+    setSubstituteModalDate("");
   };
 
   // ---------------- 表示用 計算済 list ----------------
@@ -425,6 +472,7 @@ export function KyotakuAttendanceContent() {
           is_paid_leave: r.is_paid_leave,
           note: r.note.trim() ? r.note : null,
           business_km: businessKm,
+          substitute_for_date: r.substitute_for_date || null,
         };
       });
       const { error } = await supabase
@@ -707,8 +755,8 @@ export function KyotakuAttendanceContent() {
                     <TableHead className="w-20 text-right">実労働</TableHead>
                     <TableHead className="w-20 text-right">残業</TableHead>
                     <TableHead className="w-20 text-right">深夜</TableHead>
-                    <TableHead className="w-16 text-center">法休</TableHead>
-                    <TableHead className="w-20 text-right" title="法定休日出勤時間 (法休✓ 時のみ集計)">法休勤務</TableHead>
+                    <TableHead className="w-28 text-center" title="振替出勤 (チェックすると振替元日付を選択するモーダルが開きます)">振替</TableHead>
+                    <TableHead className="w-20 text-right" title="法定休日出勤時間 (週内に休み無し時の最終日を自動判定)">法休勤務</TableHead>
                     <TableHead className="w-14 text-center">有給</TableHead>
                     <TableHead className="w-24 text-right">出張距離(km)</TableHead>
                     <TableHead>備考</TableHead>
@@ -802,33 +850,45 @@ export function KyotakuAttendanceContent() {
                             : "—"}
                         </TableCell>
                         <TableCell className="text-center">
-                          <input
-                            type="checkbox"
-                            checked={row.is_legal_holiday}
-                            onChange={(e) =>
-                              updateRow(idx, { is_legal_holiday: e.target.checked })
-                            }
-                          />
+                          {/* 振替: checkbox ON で modal → 日付選択 → 表示 */}
+                          <div className="flex flex-col items-center gap-0.5">
+                            <input
+                              type="checkbox"
+                              checked={!!row.substitute_for_date}
+                              onChange={(e) =>
+                                handleSubstituteToggle(idx, e.target.checked)
+                              }
+                              title={
+                                row.substitute_for_date
+                                  ? `${row.substitute_for_date} の振替`
+                                  : "チェックで振替元日付を選択"
+                              }
+                            />
+                            {row.substitute_for_date && (
+                              <button
+                                type="button"
+                                onClick={() => handleSubstituteToggle(idx, true)}
+                                className="text-[10px] leading-tight text-blue-700 underline-offset-2 hover:underline"
+                                title="クリックで日付を変更"
+                              >
+                                {row.substitute_for_date.slice(5).replace("-", "/")}
+                                <span className="ml-0.5 text-muted-foreground">の振替</span>
+                              </button>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {(() => {
-                            // 法休勤務: manual ✓ or auto-detect (週内に休み無し = 最終日)。
-                            // auto-detect の場合は ✓ off でも holiday_work が積まれているので
-                            // 「(自動)」マークを付けて区別する。
+                            // 法休勤務: auto-detect (週内に休み無し = 最終日) で自動算出。
+                            // 振替出勤の場合は 法休 ではなく通常の労働時間扱い (auto-detect でも除外したいが、
+                            // 現状は calc 側で auto-detect しているので一旦そのまま表示する)
                             if (calc.holiday_work <= 0) return "—";
-                            const isAuto = !row.is_legal_holiday;
                             return (
                               <span
-                                title={
-                                  isAuto
-                                    ? "週内に休み無し → 労基§35 により最終日を法定休日扱い (自動判定)"
-                                    : "法定休日出勤 (チェック指定)"
-                                }
+                                title="週内に休み無し → 労基§35 により最終日を法定休日扱い (自動判定)"
                               >
                                 {formatHM(calc.holiday_work)}
-                                {isAuto && (
-                                  <span className="ml-0.5 text-[10px] text-orange-600 align-top">自動</span>
-                                )}
+                                <span className="ml-0.5 text-[10px] text-orange-600 align-top">自動</span>
                               </span>
                             );
                           })()}
@@ -917,6 +977,48 @@ export function KyotakuAttendanceContent() {
           )}
         </CardContent>
       </Card>
+
+      {/* 振替元日付 選択 modal */}
+      <Dialog
+        open={substituteModalIdx !== null}
+        onOpenChange={(open) => {
+          if (!open) handleSubstituteCancel();
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>振替元日付の選択</DialogTitle>
+            <DialogDescription>
+              {substituteModalIdx !== null && rows[substituteModalIdx]
+                ? `${rows[substituteModalIdx].work_date} (${WEEK_DAY_LABELS[rows[substituteModalIdx].dow]}) はいつの振り替えですか？`
+                : "いつの振り替えですか？"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <label className="text-xs text-muted-foreground block mb-1">
+              振替元の日付
+            </label>
+            <Input
+              type="date"
+              value={substituteModalDate}
+              onChange={(e) => setSubstituteModalDate(e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground mt-2">
+              ※ 例: 1月5日(日) の休日を 1月12日(日) に振替えて 1月5日 に出勤した場合、
+              この日 (出勤日) に「1月12日」を入力します。
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleSubstituteCancel}>
+              キャンセル
+            </Button>
+            <Button onClick={handleSubstituteConfirm} disabled={!substituteModalDate}>
+              確定
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
