@@ -16,6 +16,8 @@
 //
 // 入出力単位は分 (minute)。出力 field は全て非負整数を期待する。
 
+import { isJapaneseHoliday } from "./japan-holidays";
+
 // =====================================================================
 // Type 定義
 // =====================================================================
@@ -34,10 +36,16 @@ export type AttendanceRecord = {
   /**
    * 有給休暇取得日種別:
    *   null = 有給なし
-   *   "full" = 全有給 (月集計に +1 日)
-   *   "half" = 半有給 (月集計に +0.5 日)
+   *   "full" = 全有給 (月集計に +1 日、所定労働日扱いから外れる)
+   *   "half" = 半有給 (月集計に +0.5 日、所定労働時間が 4h に減る)
    */
   paid_leave_type: "full" | "half" | null;
+  /**
+   * 振替元日付 (YYYY-MM-DD)。null = 振替ではない通常の出勤。
+   * NOT NULL の場合、この record の work_date が振替出勤日 (= 所定労働日)、
+   * substitute_for_date は振替先の休日 (= 所定労働日でなくなる)。
+   */
+  substitute_for_date: string | null;
 };
 
 export type DailyCalc = {
@@ -56,6 +64,14 @@ export type DailyCalc = {
   midnight_overtime: number;
   /** 法定休日労働 (is_legal_holiday=true なら work_minutes 全部、分) */
   holiday_work: number;
+  /**
+   * 欠勤時間 (分)。所定労働時間に対する不足分。
+   * calcDaily 単独では 0、calcDailyListWithWeekly() を使うと
+   * 全月の振替先判定 + 祝日判定で計算される。
+   */
+  absence_minutes: number;
+  /** その日の所定労働時間 (分)。0 なら所定労働日でない */
+  scheduled_minutes: number;
 };
 
 export type MonthlySummary = {
@@ -72,6 +88,8 @@ export type MonthlySummary = {
   total_midnight: number;
   /** 月合計 法定休日労働 (分) */
   total_holiday: number;
+  /** 月合計 欠勤時間 (分) */
+  total_absence: number;
   /** 有給日数 (全=1 / 半=0.5 で合算)。0.5 刻みの小数を含む */
   total_paid_leave_days: number;
 };
@@ -288,6 +306,8 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
     weekly_overtime: 0,
     midnight_overtime: 0,
     holiday_work: 0,
+    absence_minutes: 0,
+    scheduled_minutes: 0,
   };
 
   if (record.start_time === null || record.end_time === null) return base;
@@ -319,6 +339,8 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
       weekly_overtime: 0,
       midnight_overtime: midnight,
       holiday_work: workMinutes,
+      absence_minutes: 0,
+      scheduled_minutes: 0,
     };
   }
 
@@ -331,6 +353,8 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
     weekly_overtime: 0,
     midnight_overtime: midnight,
     holiday_work: 0,
+    absence_minutes: 0,
+    scheduled_minutes: 0,
   };
 }
 
@@ -410,6 +434,56 @@ export function calcDailyListWithWeekly(
     }
   }
 
+  // ─── 欠勤計算 ───
+  // 所定労働日の判定:
+  //   - 平日 (月-金) かつ 祝日でない → 所定日 (= 8h)
+  //   - 振替出勤日 (substitute_for_date が set) → 強制で所定日 (= 8h)
+  //   - 振替先 (= 他の record の substitute_for_date が この日) → 所定日でなくなる (= 0h)
+  //   - 全有給 → 所定日でなくなる (= 0h)
+  //   - 半有給 → 所定時間 4h
+  //   - 法定休日労働日 (manual/auto) → 所定日でない (= 0h)、欠勤判定対象外
+  //
+  // 欠勤時間 = max(0, scheduled_minutes - work_minutes)
+  const substituteTargetDates = new Set<string>();
+  for (const it of items) {
+    if (it.r.substitute_for_date) {
+      substituteTargetDates.add(it.r.substitute_for_date);
+    }
+  }
+  for (const it of items) {
+    if (it.r.is_legal_holiday || it.autoLegalHoliday) {
+      it.daily.scheduled_minutes = 0;
+      it.daily.absence_minutes = 0;
+      continue;
+    }
+    if (it.r.paid_leave_type === "full") {
+      it.daily.scheduled_minutes = 0;
+      it.daily.absence_minutes = 0;
+      continue;
+    }
+    if (substituteTargetDates.has(it.r.work_date)) {
+      // 他の日からこの日に休日が振り替えられた → この日は休日
+      it.daily.scheduled_minutes = 0;
+      it.daily.absence_minutes = 0;
+      continue;
+    }
+    const isSubstituteWorkDay = it.r.substitute_for_date !== null;
+    const dt = parseDateUTC(it.r.work_date);
+    const dow = dt ? dt.getUTCDay() : 0;
+    const isWeekday = dow >= 1 && dow <= 5;
+    const isHoliday = isJapaneseHoliday(it.r.work_date);
+    const isScheduledDay = isSubstituteWorkDay || (isWeekday && !isHoliday);
+    if (!isScheduledDay) {
+      it.daily.scheduled_minutes = 0;
+      it.daily.absence_minutes = 0;
+      continue;
+    }
+    // 半有給日は所定 4h
+    const scheduled = it.r.paid_leave_type === "half" ? 4 * MIN_PER_HOUR : LEGAL_DAILY_LIMIT;
+    it.daily.scheduled_minutes = scheduled;
+    it.daily.absence_minutes = Math.max(0, scheduled - it.daily.work_minutes);
+  }
+
   // 元順に戻して返す
   return items
     .sort((a, b) => a.idx - b.idx)
@@ -443,6 +517,7 @@ export function calcMonthlySummary(
     total_weekly_overtime: 0,
     total_midnight: 0,
     total_holiday: 0,
+    total_absence: 0,
     total_paid_leave_days: 0,
   };
 
@@ -460,6 +535,7 @@ export function calcMonthlySummary(
     summary.total_weekly_overtime += d.weekly_overtime;
     summary.total_midnight += d.midnight_overtime;
     summary.total_holiday += d.holiday_work;
+    summary.total_absence += d.absence_minutes;
   }
 
   return summary;

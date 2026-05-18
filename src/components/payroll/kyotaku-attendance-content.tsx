@@ -188,6 +188,7 @@ function toAttendanceRecord(row: RowState): AttendanceRecord {
     break_minutes: row.break_minutes,
     is_legal_holiday: row.is_legal_holiday,
     paid_leave_type: row.paid_leave_type,
+    substitute_for_date: row.substitute_for_date || null,
   };
 }
 
@@ -889,6 +890,7 @@ export function KyotakuAttendanceContent() {
                     <TableHead className="w-28 text-center" title="振替出勤 (チェックすると振替元日付を選択するモーダルが開きます)">振替</TableHead>
                     <TableHead className="w-20 text-right" title="法定休日出勤時間 (週内に休み無し時の最終日を自動判定)">法休勤務</TableHead>
                     <TableHead className="w-14 text-center">有給</TableHead>
+                    <TableHead className="w-20 text-right" title="所定労働時間 - 実労働 (土日祝/全有給は 0、半有給日は所定 4h で判定)">欠勤</TableHead>
                     <TableHead className="w-24 text-right">出張距離(km)</TableHead>
                     <TableHead>備考</TableHead>
                   </TableRow>
@@ -1047,6 +1049,18 @@ export function KyotakuAttendanceContent() {
                             <option value="half">半</option>
                           </select>
                         </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {calc.absence_minutes > 0 ? (
+                            <span
+                              className="text-rose-600 font-medium"
+                              title={`所定 ${formatHM(calc.scheduled_minutes)} - 実労働 ${formatHM(calc.work_minutes)}`}
+                            >
+                              {formatHM(calc.absence_minutes)}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">
                           <Input
                             type="number"
@@ -1109,6 +1123,14 @@ export function KyotakuAttendanceContent() {
                   有給{" "}
                   <span className="font-semibold tabular-nums">
                     {monthSummary.total_paid_leave_days.toFixed(1).replace(/\.0$/, "")}日
+                  </span>
+                </span>
+                <span>
+                  欠勤{" "}
+                  <span
+                    className={`font-semibold tabular-nums ${monthSummary.total_absence > 0 ? "text-rose-600" : ""}`}
+                  >
+                    {formatHM(monthSummary.total_absence)}
                   </span>
                 </span>
                 <span>
