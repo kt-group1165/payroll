@@ -41,6 +41,12 @@ export type DailyCalc = {
   work_minutes: number;
   /** 日次残業 (1 日 8h 超過、分)。法定休日労働日は 0 (= holiday_work で別計上) */
   daily_overtime: number;
+  /**
+   * 週次残業 按分 (週 40h 超過のうち、この日に按分される分、分)。
+   * calcDaily 単独では 0、calcDailyListWithWeekly() を使うと週累積で計算される。
+   * 日次残業との二重計上は無し (非 OT 基準時間に対してのみ累積判定)。
+   */
+  weekly_overtime: number;
   /** 深夜残業 (22:00 - 翌 05:00 の労働、分) */
   midnight_overtime: number;
   /** 法定休日労働 (is_legal_holiday=true なら work_minutes 全部、分) */
@@ -274,6 +280,7 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
     work_date: record.work_date,
     work_minutes: 0,
     daily_overtime: 0,
+    weekly_overtime: 0,
     midnight_overtime: 0,
     holiday_work: 0,
   };
@@ -304,6 +311,7 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
       work_date: record.work_date,
       work_minutes: workMinutes,
       daily_overtime: 0,
+      weekly_overtime: 0,
       midnight_overtime: midnight,
       holiday_work: workMinutes,
     };
@@ -315,9 +323,61 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
     work_date: record.work_date,
     work_minutes: workMinutes,
     daily_overtime: dailyOvertime,
+    weekly_overtime: 0,
     midnight_overtime: midnight,
     holiday_work: 0,
   };
+}
+
+/**
+ * 月内 record 配列を順次処理し、各日に week 累積を基に weekly_overtime を按分する。
+ * UI で行ごとに「週次残業」を表示するために使用。
+ *
+ * アルゴリズム:
+ *   - 各週 (weekStartDay 起算) について、日付昇順に iterate
+ *   - 各日の「非日次残業基準時間」(= min(work_minutes, 8h) — 法定休日除く) を累積
+ *   - 累積 > 40h になった日に、その超過分を weekly_overtime として加算
+ *   - 同日に既に daily_overtime がある場合は、その分は週次累積に含めない (= 二重計上回避)
+ *
+ * @returns calcDaily と同じ順序 (= records の元順序) で結果配列を返す
+ */
+export function calcDailyListWithWeekly(
+  records: AttendanceRecord[],
+  weekStartDay: number = 0,
+): DailyCalc[] {
+  // 元順を保持するため index 付き
+  const items = records.map((r, idx) => ({ idx, r, daily: calcDaily(r) }));
+
+  // 週ごとに分類
+  const weekGroups = new Map<string, typeof items>();
+  for (const it of items) {
+    const wk = weekKeyOf(it.r.work_date, weekStartDay);
+    if (!wk) continue;
+    if (!weekGroups.has(wk)) weekGroups.set(wk, []);
+    weekGroups.get(wk)!.push(it);
+  }
+
+  // 各週内で work_date 昇順に並べ、累積判定で weekly_overtime を按分
+  for (const list of weekGroups.values()) {
+    list.sort((a, b) => a.r.work_date.localeCompare(b.r.work_date));
+    let cumulativeBase = 0; // 週累積 (基準時間、日次OT除く、法定休日除く)
+    for (const it of list) {
+      if (it.r.is_legal_holiday) continue; // 法定休日は週累積に含めない
+      const baseHours = Math.max(0, it.daily.work_minutes - it.daily.daily_overtime);
+      const newCumulative = cumulativeBase + baseHours;
+      if (newCumulative > LEGAL_WEEKLY_LIMIT) {
+        const excess = newCumulative - LEGAL_WEEKLY_LIMIT;
+        // この日の baseHours のうち、超過した分が weekly_overtime
+        it.daily.weekly_overtime = Math.min(baseHours, excess);
+      }
+      cumulativeBase = newCumulative;
+    }
+  }
+
+  // 元順に戻して返す
+  return items
+    .sort((a, b) => a.idx - b.idx)
+    .map((it) => it.daily);
 }
 
 /**

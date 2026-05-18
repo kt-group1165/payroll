@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import {
-  calcDaily,
+  calcDailyListWithWeekly,
   calcMonthlySummary,
   formatHM,
   type AttendanceRecord,
@@ -358,8 +358,9 @@ export function KyotakuAttendanceContent() {
   };
 
   // ---------------- 表示用 計算済 list ----------------
+  // 週次残業按分込みで日次残業 + 週次残業を行に表示できるよう calcDailyListWithWeekly を使用
   const dailyCalcs = useMemo(
-    () => rows.map((r) => calcDaily(toAttendanceRecord(r))),
+    () => calcDailyListWithWeekly(rows.map(toAttendanceRecord)),
     [rows],
   );
   const monthSummary = useMemo(
@@ -761,9 +762,27 @@ export function KyotakuAttendanceContent() {
                           {calc.work_minutes > 0 ? formatHM(calc.work_minutes) : "—"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {calc.daily_overtime > 0
-                            ? formatHM(calc.daily_overtime)
-                            : "—"}
+                          {(() => {
+                            const d = calc.daily_overtime;
+                            const w = calc.weekly_overtime;
+                            const total = d + w;
+                            if (total === 0) return "—";
+                            // 日次/週次の内訳を tooltip で示し、表示は合計
+                            const breakdown =
+                              d > 0 && w > 0
+                                ? `日次 ${formatHM(d)} + 週次 ${formatHM(w)}`
+                                : d > 0
+                                ? `日次残業`
+                                : `週次残業 (週40h超過按分)`;
+                            return (
+                              <span title={breakdown}>
+                                {formatHM(total)}
+                                {w > 0 && (
+                                  <span className="ml-0.5 text-[10px] text-purple-600 align-top">週</span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {calc.midnight_overtime > 0
