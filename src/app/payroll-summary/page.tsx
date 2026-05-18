@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
@@ -8,6 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLocalStorage } from "@/lib/use-local-storage";
 import { KyotakuSummarySection } from "@/components/payroll/kyotaku-summary-section";
+import { supabase } from "@/lib/supabase";
+import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
 // ─── 型 ──────────────────────────────────────────────
 
@@ -218,10 +220,53 @@ function defaultVisibleKeys<T>(cols: ColDef<T>[]): string[] {
 }
 
 function fmtMonth(m: string) {
-  return `${m.slice(0, 4)}年${parseInt(m.slice(4, 6), 10)}月`;
+  // YYYYMM and YYYY-MM 両対応
+  const compact = m.replace("-", "");
+  if (compact.length < 6) return m;
+  return `${compact.slice(0, 4)}年${parseInt(compact.slice(4, 6), 10)}月`;
 }
 
+/** YYYY-MM の前月/次月 */
+function shiftYM(ym: string, delta: number): string {
+  const [yStr, mStr] = ym.split("-");
+  const y = parseInt(yStr, 10);
+  const m = parseInt(mStr, 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return ym;
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** 当月 YYYY-MM */
+function currentYM(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** YYYY-MM → YYYYMM */
+function ymToCompact(ym: string): string {
+  return ym.replace("-", "");
+}
+
+// ─── 業種定義 ──────────────────────────────────────────
+
+/** UI 上の業種 → DB 上の payroll_offices.office_type 値 */
+const BUSINESS_TYPE_OPTIONS: { value: string; label: string; types: string[] }[] = [
+  // 訪問介護系: 訪問介護 / 居宅 (= 自社内では 訪問介護 / 居宅介護 のいずれか) / 重度訪問介護等
+  // 既存の payroll_offices.office_type は "訪問介護" "居宅介護支援" "福祉用具" 等
+  { value: "houmon_kaigo", label: "訪問介護", types: ["訪問介護"] },
+  { value: "kyotaku", label: "居宅介護支援", types: ["居宅介護支援"] },
+];
+
 // ─── 本体 ────────────────────────────────────────────
+
+type OfficeForPayroll = {
+  id: string;
+  office_number: string;
+  short_name: string;
+  name: string;
+  office_type: string;
+  work_week_start: number;
+};
 
 export default function PayrollSummaryPage() {
   // useLocalStorage で SSR-safe に hydrate (setState-in-effect 不要)
@@ -235,9 +280,74 @@ export default function PayrollSummaryPage() {
     },
     JSON.stringify,
   );
-  // selectedKey は user override or default to index[0] の派生値
-  const [userSelectedKey, setUserSelectedKey] = useState<string | null>(null);
-  const selectedKey = userSelectedKey ?? index[0]?.key ?? "";
+
+  // ─── 業種・事業所・月 selector (出勤簿と同じレイアウト) ───
+  const [businessType, setBusinessType] = useState<string>("kyotaku");
+  const [selectedOfficeId, setSelectedOfficeId] = useState<string>("");
+  const [month, setMonth] = useState<string>(() => currentYM());
+
+  // 全 office (業種選択肢に応じて filter)
+  const [allOffices, setAllOffices] = useState<OfficeForPayroll[]>([]);
+  const [officesLoading, setOfficesLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setOfficesLoading(true);
+      const { data, error } = await supabase
+        .from("payroll_offices")
+        .select(`id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`);
+      if (cancelled) return;
+      if (error) {
+        setAllOffices([]);
+      } else {
+        const flat = flattenOfficeMaster(data as never) as unknown as OfficeForPayroll[];
+        flat.sort((a, b) => a.office_number.localeCompare(b.office_number));
+        setAllOffices(flat);
+      }
+      setOfficesLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const businessTypeMatchTypes = useMemo(
+    () => BUSINESS_TYPE_OPTIONS.find((o) => o.value === businessType)?.types ?? [],
+    [businessType],
+  );
+  const filteredOffices = useMemo(
+    () => allOffices.filter((o) => businessTypeMatchTypes.includes(o.office_type)),
+    [allOffices, businessTypeMatchTypes],
+  );
+  const selectedOffice = useMemo(
+    () => filteredOffices.find((o) => o.id === selectedOfficeId) ?? null,
+    [filteredOffices, selectedOfficeId],
+  );
+
+  // 業種が切り替わったら、現在 office が新業種に居なければクリア
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- 業種切替時の整合性確保 */
+    if (selectedOfficeId && !filteredOffices.some((o) => o.id === selectedOfficeId)) {
+      setSelectedOfficeId("");
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [filteredOffices, selectedOfficeId]);
+
+  // 訪問介護モード: 選択中 office + 月 に対応する index entry を検索 (= 計算済 snapshot)
+  // 同一 office+月 の calc が複数あれば最新を選ぶ
+  const matchingIndexEntry = useMemo<IndexEntry | null>(() => {
+    if (businessType !== "houmon_kaigo") return null;
+    if (!selectedOffice) return null;
+    const target = ymToCompact(month);
+    const candidates = index.filter(
+      (e) => e.office_number === selectedOffice.office_number && e.processing_month === target,
+    );
+    if (candidates.length === 0) return null;
+    // index は計算時刻 desc でソート済 (useLocalStorage parse 内)
+    return candidates[0];
+  }, [businessType, selectedOffice, month, index]);
+
+  const selectedKey = matchingIndexEntry?.key ?? "";
 
   const [visibleHourly, setVisibleHourly] = useLocalStorage<string[]>(
     HOURLY_COL_STORAGE,
@@ -352,122 +462,184 @@ export default function PayrollSummaryPage() {
         </div>
       </div>
       <p className="text-sm text-muted-foreground mb-4">
-        直近の給与計算結果を事業所・月ごとに一覧できます。再計算は <Link href="/payroll" className="underline">給与計算</Link> から。
+        業種・事業所・月を選んで集計を表示します。訪問介護の再計算は <Link href="/payroll" className="underline">給与計算</Link> から。
       </p>
 
-      {index.length === 0 ? (
-        <div className="border rounded-md p-6 text-center text-muted-foreground">
-          まだ計算結果がありません。<Link href="/payroll" className="underline ml-1">給与計算</Link> を実行してください。
-        </div>
-      ) : (
-        <>
-          <div className="flex items-center gap-3 mb-4 flex-wrap">
-            <label className="text-sm font-medium">計算履歴</label>
+      {/* ─── 業種 / 事業所 / 月 selector (出勤簿と同じレイアウト) ─── */}
+      <div className="border rounded-md p-3 mb-4 bg-muted/10">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">業種</label>
             <select
-              className="border rounded px-3 py-1.5 text-sm bg-background min-w-[360px]"
-              value={selectedKey}
-              onChange={(e) => setUserSelectedKey(e.target.value)}
+              className="rounded-md border bg-background px-3 py-2 text-sm min-w-[180px]"
+              value={businessType}
+              onChange={(e) => setBusinessType(e.target.value)}
             >
-              {index.map((e) => (
-                <option key={e.key} value={e.key}>
-                  {e.office_name} / {fmtMonth(e.processing_month)} （{new Date(e.calculated_at).toLocaleString("ja-JP")} 計算）
+              {BUSINESS_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
                 </option>
               ))}
             </select>
           </div>
 
-          {summary && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-                <div className="border rounded-md p-4">
-                  <p className="text-xs text-muted-foreground">時給者 合計</p>
-                  <p className="text-2xl font-bold">{hourlyTotal.toLocaleString("ja-JP")}円</p>
-                  <p className="text-xs text-muted-foreground mt-1">{summary.hourly.length}名</p>
-                </div>
-                <div className="border rounded-md p-4">
-                  <p className="text-xs text-muted-foreground">月給者 合計</p>
-                  <p className="text-2xl font-bold">{monthlyTotal.toLocaleString("ja-JP")}円</p>
-                  <p className="text-xs text-muted-foreground mt-1">{summary.monthly.length}名</p>
-                </div>
-                <div className="border rounded-md p-4 bg-primary/5">
-                  <p className="text-xs text-muted-foreground">総合計</p>
-                  <p className="text-2xl font-bold text-primary">{(hourlyTotal + monthlyTotal).toLocaleString("ja-JP")}円</p>
-                  <p className="text-xs text-muted-foreground mt-1">{summary.hourly.length + summary.monthly.length}名</p>
-                </div>
-              </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">事業所</label>
+            <select
+              className="rounded-md border bg-background px-3 py-2 text-sm min-w-[240px]"
+              value={selectedOfficeId}
+              onChange={(e) => setSelectedOfficeId(e.target.value)}
+              disabled={officesLoading || filteredOffices.length === 0}
+            >
+              <option value="">
+                {officesLoading
+                  ? "読み込み中..."
+                  : filteredOffices.length === 0
+                    ? "対象事業所なし"
+                    : "事業所を選択"}
+              </option>
+              {filteredOffices.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.short_name || o.name || o.office_number}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              {/* 時給者テーブル */}
-              <div className="border rounded-md overflow-hidden mb-6">
-                <div className="bg-muted/40 px-3 py-2 text-sm font-medium">時給者（{summary.hourly.length}名）</div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs whitespace-nowrap">
-                    <thead className="bg-muted/20 border-b">
-                      <tr>
-                        {hourlyVisibleCols.map((c) => (
-                          <th key={c.key} className={`px-3 py-2 font-medium ${c.align === "right" ? "text-right" : "text-left"}`}>
-                            {c.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summary.hourly.length === 0 ? (
-                        <tr><td colSpan={hourlyVisibleCols.length} className="text-center text-muted-foreground py-4">データなし</td></tr>
-                      ) : (
-                        summary.hourly.map((h) => (
-                          <tr key={h.employee_number} className="border-b last:border-b-0">
-                            {hourlyVisibleCols.map((c) => (
-                              <td key={c.key} className={`px-3 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
-                                {c.render(h)}
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">対象月</label>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setMonth((m) => shiftYM(m, -1))}>
+                ← 前月
+              </Button>
+              <div className="text-sm font-medium min-w-[6em] text-center">
+                {fmtMonth(month)}
               </div>
+              <Button variant="outline" size="sm" onClick={() => setMonth((m) => shiftYM(m, 1))}>
+                次月 →
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setMonth(currentYM())}>
+                今月
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-              {/* 月給者テーブル */}
-              <div className="border rounded-md overflow-hidden">
-                <div className="bg-muted/40 px-3 py-2 text-sm font-medium">月給者（{summary.monthly.length}名）</div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs whitespace-nowrap">
-                    <thead className="bg-muted/20 border-b">
-                      <tr>
-                        {monthlyVisibleCols.map((c) => (
-                          <th key={c.key} className={`px-3 py-2 font-medium ${c.align === "right" ? "text-right" : "text-left"}`}>
-                            {c.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {summary.monthly.length === 0 ? (
-                        <tr><td colSpan={monthlyVisibleCols.length} className="text-center text-muted-foreground py-4">データなし</td></tr>
-                      ) : (
-                        summary.monthly.map((m) => (
-                          <tr key={m.employee_id} className="border-b last:border-b-0">
-                            {monthlyVisibleCols.map((c) => (
-                              <td key={c.key} className={`px-3 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
-                                {c.render(m)}
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+      {/* ─── 業種に応じた表示 ─── */}
+      {businessType === "houmon_kaigo" && (
+        <>
+          {!selectedOfficeId ? (
+            <div className="border rounded-md p-6 text-center text-muted-foreground">
+              事業所を選択してください
+            </div>
+          ) : !matchingIndexEntry ? (
+            <div className="border rounded-md p-6 text-center text-muted-foreground">
+              {selectedOffice?.short_name ?? ""} の {fmtMonth(month)} の計算結果はありません。
+              <Link href="/payroll" className="underline ml-1">給与計算</Link> を実行してください。
+            </div>
+          ) : (
+            summary && (
+              <>
+                <div className="text-xs text-muted-foreground mb-3">
+                  {new Date(matchingIndexEntry.calculated_at).toLocaleString("ja-JP")} 計算
                 </div>
-              </div>
-            </>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+                  <div className="border rounded-md p-4">
+                    <p className="text-xs text-muted-foreground">時給者 合計</p>
+                    <p className="text-2xl font-bold">{hourlyTotal.toLocaleString("ja-JP")}円</p>
+                    <p className="text-xs text-muted-foreground mt-1">{summary.hourly.length}名</p>
+                  </div>
+                  <div className="border rounded-md p-4">
+                    <p className="text-xs text-muted-foreground">月給者 合計</p>
+                    <p className="text-2xl font-bold">{monthlyTotal.toLocaleString("ja-JP")}円</p>
+                    <p className="text-xs text-muted-foreground mt-1">{summary.monthly.length}名</p>
+                  </div>
+                  <div className="border rounded-md p-4 bg-primary/5">
+                    <p className="text-xs text-muted-foreground">総合計</p>
+                    <p className="text-2xl font-bold text-primary">{(hourlyTotal + monthlyTotal).toLocaleString("ja-JP")}円</p>
+                    <p className="text-xs text-muted-foreground mt-1">{summary.hourly.length + summary.monthly.length}名</p>
+                  </div>
+                </div>
+
+                {/* 時給者テーブル */}
+                <div className="border rounded-md overflow-hidden mb-6">
+                  <div className="bg-muted/40 px-3 py-2 text-sm font-medium">時給者（{summary.hourly.length}名）</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs whitespace-nowrap">
+                      <thead className="bg-muted/20 border-b">
+                        <tr>
+                          {hourlyVisibleCols.map((c) => (
+                            <th key={c.key} className={`px-3 py-2 font-medium ${c.align === "right" ? "text-right" : "text-left"}`}>
+                              {c.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.hourly.length === 0 ? (
+                          <tr><td colSpan={hourlyVisibleCols.length} className="text-center text-muted-foreground py-4">データなし</td></tr>
+                        ) : (
+                          summary.hourly.map((h) => (
+                            <tr key={h.employee_number} className="border-b last:border-b-0">
+                              {hourlyVisibleCols.map((c) => (
+                                <td key={c.key} className={`px-3 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
+                                  {c.render(h)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 月給者テーブル */}
+                <div className="border rounded-md overflow-hidden">
+                  <div className="bg-muted/40 px-3 py-2 text-sm font-medium">月給者（{summary.monthly.length}名）</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs whitespace-nowrap">
+                      <thead className="bg-muted/20 border-b">
+                        <tr>
+                          {monthlyVisibleCols.map((c) => (
+                            <th key={c.key} className={`px-3 py-2 font-medium ${c.align === "right" ? "text-right" : "text-left"}`}>
+                              {c.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.monthly.length === 0 ? (
+                          <tr><td colSpan={monthlyVisibleCols.length} className="text-center text-muted-foreground py-4">データなし</td></tr>
+                        ) : (
+                          summary.monthly.map((m) => (
+                            <tr key={m.employee_id} className="border-b last:border-b-0">
+                              {monthlyVisibleCols.map((c) => (
+                                <td key={c.key} className={`px-3 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
+                                  {c.render(m)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )
           )}
         </>
       )}
 
-      {/* 居宅介護支援セクション (訪問介護とは独立、常時表示。事業所+月を選ぶと出勤簿集計 + 給与基本額を表示) */}
-      <KyotakuSummarySection />
+      {businessType === "kyotaku" && (
+        <KyotakuSummarySection
+          officeId={selectedOfficeId}
+          month={month}
+          weekStart={selectedOffice?.work_week_start ?? 0}
+        />
+      )}
     </div>
   );
 }

@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
-import { Button } from "@/components/ui/button";
 import {
   calcDailyListWithWeekly,
   calcMonthlySummary,
@@ -15,28 +13,27 @@ import {
 /**
  * 居宅介護支援 総括表セクション
  *
- * 表示するもの (Phase 1):
- *   - 事業所 + 月 selector
- *   - その事業所 / 月のケアマネ全員について 出勤簿集計を一覧表示:
- *     - 出勤日数 (実労働>0 の日数)
- *     - 実労働時間 / 残業 (日次+週次) / 深夜 / 法休勤務 / 欠勤
- *     - 有給 (全=1.0 / 半=0.5 で合算)
- *     - 出張距離 (km)
- *   - 給与計算 (本人給/手当/合計) は Phase 2 で統合予定 — 現状は 0 表示
+ * Props で officeId + month + weekStart を受け取り、対応する出勤簿集計を表示する。
+ * 事業所/月 selector は親 page に統一されているのでこの section 内には持たない。
  *
- * データソース: live (DB 都度集計)。snapshot化は将来検討。
+ * 表示:
+ *   - ケアマネ全員について出勤簿集計 (日数・時間・出張km)
+ *   - 給与: payroll_employees の本人給/職能給/固定残業/資格/勤続/特定処遇 を直接表示
+ *
+ * データソース: live (DB 都度集計)。
  */
 
 // =====================================================================
 // 型
 // =====================================================================
 
-type KyotakuOffice = {
-  id: string;
-  office_number: string;
-  short_name: string;
-  name: string;
-  work_week_start: number;
+type Props = {
+  /** 選択中の office id (payroll_offices.id)。空文字なら "事業所未選択" 表示 */
+  officeId: string;
+  /** 対象月 YYYY-MM */
+  month: string;
+  /** 週起算曜日 (0=日, ..., 6=土)。office.work_week_start を親から渡す */
+  weekStart: number;
 };
 
 type EmployeeRow = {
@@ -101,26 +98,6 @@ type SummaryRow = {
 // 補助関数
 // =====================================================================
 
-function currentMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function fmtMonthLabel(ym: string): string {
-  const m = /^(\d{4})-(\d{2})$/.exec(ym);
-  if (!m) return ym;
-  return `${m[1]}年${m[2]}月`;
-}
-
-function shiftMonth(ym: string, delta: number): string {
-  const [yStr, mStr] = ym.split("-");
-  const y = parseInt(yStr, 10);
-  const m = parseInt(mStr, 10);
-  if (!Number.isFinite(y) || !Number.isFinite(m)) return ym;
-  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
 function toUiTime(s: string | null): string | null {
   if (!s) return null;
   const m = /^(\d{1,2}):(\d{1,2})/.exec(s);
@@ -162,52 +139,15 @@ function hm(n: number): string {
 // Component
 // =====================================================================
 
-export function KyotakuSummarySection() {
-  const [offices, setOffices] = useState<KyotakuOffice[]>([]);
-  const [officeLoading, setOfficeLoading] = useState(true);
-  const [selectedOfficeId, setSelectedOfficeId] = useState<string>("");
-  const [month, setMonth] = useState<string>(() => currentMonth());
+export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
   const [rows, setRows] = useState<SummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // offices 初期 fetch
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setOfficeLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("payroll_offices")
-          .select(`id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`)
-          .eq("office_type", "居宅介護支援");
-        if (cancelled) return;
-        if (error) throw error;
-        const flat = flattenOfficeMaster(data as never) as unknown as KyotakuOffice[];
-        flat.sort((a, b) => a.office_number.localeCompare(b.office_number));
-        setOffices(flat);
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : String(e);
-          setErr(`事業所一覧の取得に失敗: ${msg}`);
-        }
-      } finally {
-        if (!cancelled) setOfficeLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // 選択中 office (find は cheap、useMemo 不要)
-  const selectedOffice = offices.find((o) => o.id === selectedOfficeId) ?? null;
-  const weekStart = selectedOffice?.work_week_start ?? 0;
-
-  // ─── 集計 fetch (selectedOfficeId / month が変わるたび、または offices 初期 fetch 完了時) ───
+  // ─── 集計 fetch (officeId / month が変わるたび) ───
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- office/month 切替の async fetch */
-    if (!selectedOfficeId) {
+    if (!officeId) {
       setRows([]);
       return;
     }
@@ -222,7 +162,7 @@ export function KyotakuSummarySection() {
           .select(
             "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
           )
-          .eq("office_id", selectedOfficeId)
+          .eq("office_id", officeId)
           .order("name");
         if (cancelled) return;
         if (empErr) throw empErr;
@@ -320,42 +260,15 @@ export function KyotakuSummarySection() {
       cancelled = true;
     };
     /* eslint-enable react-hooks/set-state-in-effect */
-    // weekStart は selectedOffice 由来 = offices + selectedOfficeId 由来。両方 deps に入れる
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedOfficeId, month]);
+  }, [officeId, month, weekStart]);
 
   // 合計
-  const grandTotal = useMemo(() => rows.reduce((s, r) => s + r.total, 0), [rows]);
+  const grandTotal = rows.reduce((s, r) => s + r.total, 0);
 
   return (
     <div className="border rounded-md overflow-hidden mb-6">
-      <div className="bg-muted/40 px-3 py-2 text-sm font-medium flex items-center justify-between flex-wrap gap-2">
-        <span>居宅介護支援 ({rows.length}名)</span>
-        <div className="flex items-center gap-2 flex-wrap">
-          <select
-            className="rounded-md border bg-background px-2 py-1 text-xs min-w-[200px]"
-            value={selectedOfficeId}
-            onChange={(e) => setSelectedOfficeId(e.target.value)}
-            disabled={officeLoading}
-          >
-            <option value="">{officeLoading ? "読み込み中..." : "事業所を選択"}</option>
-            {offices.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.short_name || o.name || o.office_number}
-              </option>
-            ))}
-          </select>
-          <Button variant="outline" size="sm" onClick={() => setMonth((m) => shiftMonth(m, -1))}>
-            ← 前月
-          </Button>
-          <span className="text-sm font-medium min-w-[6em] text-center">{fmtMonthLabel(month)}</span>
-          <Button variant="outline" size="sm" onClick={() => setMonth((m) => shiftMonth(m, 1))}>
-            次月 →
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setMonth(currentMonth())}>
-            今月
-          </Button>
-        </div>
+      <div className="bg-muted/40 px-3 py-2 text-sm font-medium">
+        居宅介護支援 ({rows.length}名)
       </div>
 
       {err && (
@@ -390,7 +303,7 @@ export function KyotakuSummarySection() {
             </tr>
           </thead>
           <tbody>
-            {!selectedOfficeId ? (
+            {!officeId ? (
               <tr>
                 <td colSpan={19} className="text-center text-muted-foreground py-4">
                   事業所を選択してください
