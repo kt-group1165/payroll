@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
   calcDailyListWithWeekly,
   calcMonthlySummary,
+  extendedMonthRange,
   formatHM,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
@@ -118,17 +119,6 @@ function shiftMonth(ym: string, delta: number): string {
   if (!Number.isFinite(y) || !Number.isFinite(m)) return ym;
   const d = new Date(Date.UTC(y, m - 1 + delta, 1));
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthRange(ym: string): { start: string; end: string } {
-  const [yStr, mStr] = ym.split("-");
-  const y = parseInt(yStr, 10);
-  const m = parseInt(mStr, 10);
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return {
-    start: `${y}-${String(m).padStart(2, "0")}-01`,
-    end: `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-  };
 }
 
 function toUiTime(s: string | null): string | null {
@@ -243,16 +233,16 @@ export function KyotakuSummarySection() {
         }
         const empIds = employees.map((e) => e.id);
 
-        // 2) 当月の出勤簿 record
-        const { start, end } = monthRange(month);
+        // 2) 月跨ぎ週も含めて拡張範囲で fetch (週次残業を正しく計算)
+        const { start: extStart, end: extEnd } = extendedMonthRange(month, weekStart);
         const { data: attData, error: attErr } = await supabase
           .from("payroll_kyotaku_attendance_records")
           .select(
             "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, business_km, substitute_for_date",
           )
           .in("employee_id", empIds)
-          .gte("work_date", start)
-          .lte("work_date", end);
+          .gte("work_date", extStart)
+          .lte("work_date", extEnd);
         if (cancelled) return;
         if (attErr) throw attErr;
         const attRows = (attData ?? []) as AttendanceDbRow[];
@@ -264,15 +254,19 @@ export function KyotakuSummarySection() {
           byEmp.get(r.employee_id)!.push(r);
         }
 
-        // 4) 各 employee で集計
+        // 4) 各 employee で集計 (extended range で計算、当月分のみ summary に積算)
         const result: SummaryRow[] = employees.map((emp) => {
           const empRows = byEmp.get(emp.id) ?? [];
           const records = empRows.map(dbToAttendanceRecord);
           const dailies = calcDailyListWithWeekly(records, weekStart);
-          const summary = calcMonthlySummary(records, weekStart);
-          const workDays = dailies.filter((d) => d.work_minutes > 0).length;
+          const summary = calcMonthlySummary(records, weekStart, month);
+          // 出勤日数 / 出張km は当月分のみカウント (週次残業の按分は extended で済）
+          const workDays = dailies.filter(
+            (d) => d.work_minutes > 0 && d.work_date.startsWith(month),
+          ).length;
           let businessKmTotal = 0;
           for (const r of empRows) {
+            if (!r.work_date.startsWith(month)) continue;
             const km = r.business_km;
             if (km === null || km === undefined || km === "") continue;
             const n = typeof km === "string" ? parseFloat(km) : km;

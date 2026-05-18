@@ -173,6 +173,42 @@ export function formatHM(minutes: number): string {
 }
 
 /**
+ * 月 (YYYY-MM) に対し、月跨ぎ週も完全に含めた拡張日付範囲を返す。
+ *
+ * - start: 月初日が属する週の起算日 (前月にまたがる場合あり)
+ * - end:   月末日が属する週の終了日 (翌月にまたがる場合あり)
+ *
+ * 週次残業の月跨ぎ計算で extended records を取得する用途。
+ *
+ * @example
+ * extendedMonthRange("2025-02", 0)  // Feb1=土 → start=2025-01-26(日), end=2025-03-01(土)
+ * extendedMonthRange("2025-01", 0)  // Jan1=水 → start=2024-12-29(日), end=2025-02-01(土)
+ */
+export function extendedMonthRange(
+  monthYM: string,
+  weekStartDay: number = 0,
+): { start: string; end: string } {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(monthYM);
+  if (!m) return { start: "", end: "" };
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const monthStart = new Date(Date.UTC(y, mo - 1, 1));
+  const monthEnd = new Date(Date.UTC(y, mo, 0)); // 月末日
+  // 月初が属する週の起算日: 月初 dow からの差分日数だけ巻き戻す
+  const startDow = monthStart.getUTCDay();
+  const daysBack = (startDow - weekStartDay + 7) % 7;
+  const extStart = new Date(monthStart.getTime() - daysBack * DAY_MIN * 60 * 1000);
+  // 月末が属する週の終了日: 週末 dow = (weekStartDay + 6) % 7
+  const endDow = monthEnd.getUTCDay();
+  const weekEndDow = (weekStartDay + 6) % 7;
+  const daysFwd = (weekEndDow - endDow + 7) % 7;
+  const extEnd = new Date(monthEnd.getTime() + daysFwd * DAY_MIN * 60 * 1000);
+  const ymd = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  return { start: ymd(extStart), end: ymd(extEnd) };
+}
+
+/**
  * 指定日が週初日か判定。weekStartDay は 0=日曜 / 1=月曜 / ... / 6=土曜 (Date.getDay() に同じ)。
  * デフォルトは 0 (日曜起算)。
  *
@@ -495,7 +531,14 @@ export function calcDailyListWithWeekly(
  * calcDailyListWithWeekly に集計を委ねるため、法定休日 auto-detect (労基 §35)
  * と週次残業按分は行ごとの計算と完全に一致する。
  *
- * weekStartDay は 0=日曜起算 (デフォルト)。月跨ぎ週は record 月内分のみで集計する。
+ * weekStartDay は 0=日曜起算 (デフォルト)。
+ *
+ * 月跨ぎ週の対応:
+ *   - 呼出側が extended range (月またぎ週の前後を含む records) を渡す場合、
+ *     第 3 引数 monthFilter ("YYYY-MM") を指定すると、当該月の record のみを
+ *     summary に積算する。週次残業按分は extended records 全体で正しく計算され、
+ *     当該月に該当する日の weekly_overtime のみが total に乗る。
+ *   - monthFilter を省略すると従来通り (records 全部を summary に積算)。
  *
  * @example
  * calcMonthlySummary([
@@ -510,6 +553,7 @@ export function calcDailyListWithWeekly(
 export function calcMonthlySummary(
   records: AttendanceRecord[],
   weekStartDay: number = 0,
+  monthFilter?: string,
 ): MonthlySummary {
   const summary: MonthlySummary = {
     total_work: 0,
@@ -522,11 +566,13 @@ export function calcMonthlySummary(
   };
 
   // calcDailyListWithWeekly 経由で集計 — 法定休日 auto-detect + 週次按分が
-  // 行表示と一致する。
+  // 行表示と一致する。月跨ぎ週の正しい按分のため、records は extended 範囲で
+  // 渡される想定でも OK (monthFilter で当該月の day だけ積算)。
   const dailies = calcDailyListWithWeekly(records, weekStartDay);
 
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
+    if (monthFilter && !r.work_date.startsWith(monthFilter)) continue;
     const d = dailies[i];
     if (r.paid_leave_type === "full") summary.total_paid_leave_days += 1;
     else if (r.paid_leave_type === "half") summary.total_paid_leave_days += 0.5;

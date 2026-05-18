@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import {
   calcDailyListWithWeekly,
   calcMonthlySummary,
+  extendedMonthRange,
   formatHM,
   minutesBetween,
   type AttendanceRecord,
@@ -208,6 +209,11 @@ export function KyotakuAttendanceContent() {
   const [month, setMonth] = useState<string>(() => currentMonth());
 
   const [rows, setRows] = useState<RowState[]>([]);
+  /**
+   * 月跨ぎ週の正しい週次残業計算のため、当月の前後の週に該当する隣接月の record を
+   * 別途保持する (rows = 当月分のみ、UI 表示は当月のみ)。
+   */
+  const [neighborRecords, setNeighborRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -345,6 +351,12 @@ export function KyotakuAttendanceContent() {
   // ---------------- 月 row build + DB 読み込み ----------------
   const dates = useMemo(() => monthDates(month), [month]);
 
+  // 選択中 office の週起算曜日 (loadRows + 計算 両方で使用)
+  const selectedOfficeWeekStart = useMemo(() => {
+    const o = offices.find((x) => x.id === selectedOfficeId);
+    return o?.work_week_start ?? 0;
+  }, [offices, selectedOfficeId]);
+
   const loadRows = useCallback(async () => {
     // 月の全日空 row を必ず作る (DB 未登録でも入力可能)
     // is_legal_holiday は user の checkbox 操作 or calcDailyListWithWeekly の
@@ -366,6 +378,7 @@ export function KyotakuAttendanceContent() {
 
     if (!selectedEmployeeId || dates.length === 0) {
       setRows(baseRows);
+      setNeighborRecords([]);
       return;
     }
 
@@ -374,21 +387,47 @@ export function KyotakuAttendanceContent() {
     try {
       const monthStart = dates[0].date;
       const monthEnd = dates[dates.length - 1].date;
+      // 月跨ぎ週の週次残業計算のため拡張範囲で fetch
+      const { start: extStart, end: extEnd } = extendedMonthRange(month, selectedOfficeWeekStart);
       const { data, error } = await supabase
         .from("payroll_kyotaku_attendance_records")
         .select("*")
         .eq("employee_id", selectedEmployeeId)
-        .gte("work_date", monthStart)
-        .lte("work_date", monthEnd);
+        .gte("work_date", extStart || monthStart)
+        .lte("work_date", extEnd || monthEnd);
       // table 未 apply 時は error 握り潰し → 空 fallback
       if (error) {
         setRows(baseRows);
+        setNeighborRecords([]);
         return;
       }
+      const allRows = (data ?? []) as AttendanceRow[];
+      // 当月分のみ byDate に、隣接月分は neighborRecords に分ける
       const byDate = new Map<string, AttendanceRow>();
-      for (const r of (data ?? []) as AttendanceRow[]) {
-        byDate.set(r.work_date, r);
+      const neighbors: AttendanceRecord[] = [];
+      for (const r of allRows) {
+        if (r.work_date >= monthStart && r.work_date <= monthEnd) {
+          byDate.set(r.work_date, r);
+        } else {
+          // 隣接月の records は calc 用に AttendanceRecord 形式に変換 (UI 表示しない)
+          const paidLeaveType: "full" | "half" | null =
+            r.paid_leave_type === "full" || r.paid_leave_type === "half"
+              ? r.paid_leave_type
+              : r.is_paid_leave
+                ? "full"
+                : null;
+          neighbors.push({
+            work_date: r.work_date,
+            start_time: toUiTime(r.start_time) || null,
+            end_time: toUiTime(r.end_time) || null,
+            break_minutes: r.break_minutes ?? 0,
+            is_legal_holiday: !!r.is_legal_holiday,
+            paid_leave_type: paidLeaveType,
+            substitute_for_date: r.substitute_for_date ?? null,
+          });
+        }
       }
+      setNeighborRecords(neighbors);
       const merged = baseRows.map((br) => {
         const ex = byDate.get(br.work_date);
         if (!ex) return br;
@@ -426,10 +465,11 @@ export function KyotakuAttendanceContent() {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(`出勤データの取得に失敗: ${msg}`);
       setRows(baseRows);
+      setNeighborRecords([]);
     } finally {
       setLoading(false);
     }
-  }, [selectedEmployeeId, dates]);
+  }, [selectedEmployeeId, dates, month, selectedOfficeWeekStart]);
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- employee/month 切替の async fetch */
@@ -502,20 +542,52 @@ export function KyotakuAttendanceContent() {
 
   // ---------------- 表示用 計算済 list ----------------
   // 週次残業按分 + 法定休日 auto-detect (労基 §35) には事業所の週起算曜日が必要。
-  // 未選択 / 未取得時は 0 (日曜起算) を default にする。
-  const selectedOfficeWeekStart = useMemo(() => {
-    const o = offices.find((x) => x.id === selectedOfficeId);
-    return o?.work_week_start ?? 0;
-  }, [offices, selectedOfficeId]);
+  // 月跨ぎ週も完全計算するため、当月の rows と隣接月の neighborRecords を結合して
+  // calcDailyListWithWeekly に渡す。出力は当月 row の work_date で引き直して使う。
+  const combinedRecords = useMemo<AttendanceRecord[]>(() => {
+    const main = rows.map(toAttendanceRecord);
+    return [...neighborRecords, ...main].sort((a, b) =>
+      a.work_date.localeCompare(b.work_date),
+    );
+  }, [rows, neighborRecords]);
 
-  // 週次残業按分込みで日次残業 + 週次残業を行に表示できるよう calcDailyListWithWeekly を使用
-  const dailyCalcs = useMemo(
-    () => calcDailyListWithWeekly(rows.map(toAttendanceRecord), selectedOfficeWeekStart),
-    [rows, selectedOfficeWeekStart],
+  const allDailyCalcs = useMemo(
+    () => calcDailyListWithWeekly(combinedRecords, selectedOfficeWeekStart),
+    [combinedRecords, selectedOfficeWeekStart],
   );
+
+  // 当月分の row index → daily calc を date 引きで対応付け
+  const dailyCalcByDate = useMemo(() => {
+    const m = new Map<string, (typeof allDailyCalcs)[number]>();
+    for (let i = 0; i < combinedRecords.length; i++) {
+      m.set(combinedRecords[i].work_date, allDailyCalcs[i]);
+    }
+    return m;
+  }, [combinedRecords, allDailyCalcs]);
+
+  /** rows と同じ順 = 当月日数分の DailyCalc 配列 (UI 行表示で index で参照) */
+  const dailyCalcs = useMemo(
+    () =>
+      rows.map(
+        (r) =>
+          dailyCalcByDate.get(r.work_date) ?? {
+            work_date: r.work_date,
+            work_minutes: 0,
+            daily_overtime: 0,
+            weekly_overtime: 0,
+            midnight_overtime: 0,
+            holiday_work: 0,
+            absence_minutes: 0,
+            scheduled_minutes: 0,
+          },
+      ),
+    [rows, dailyCalcByDate],
+  );
+
   const monthSummary = useMemo(
-    () => calcMonthlySummary(rows.map(toAttendanceRecord), selectedOfficeWeekStart),
-    [rows, selectedOfficeWeekStart],
+    () =>
+      calcMonthlySummary(combinedRecords, selectedOfficeWeekStart, month),
+    [combinedRecords, selectedOfficeWeekStart, month],
   );
   /** 月合計 出張距離 (km、小数 1 桁) */
   const totalBusinessKm = useMemo(() => {
