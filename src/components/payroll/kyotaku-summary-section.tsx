@@ -310,7 +310,10 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
           businessKmTotal = Math.round(businessKmTotal * 10) / 10;
 
           // 給与計算 (kyotaku-calc)
-          const breakdown = calcSalary(allKyotakuRecords, emp.name, month, calcConfig);
+          // payroll_kyotaku_records.service_month は DATE 型 (= "YYYY-MM-01" 文字列で返る)。
+          // countByDelay 内の string 比較で揃えるため "YYYY-MM-01" 形式で渡す。
+          const serviceMonth = `${month}-01`;
+          const breakdown = calcSalary(allKyotakuRecords, emp.name, serviceMonth, calcConfig);
 
           return {
             employee_id: emp.id,
