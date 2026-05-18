@@ -1248,14 +1248,14 @@ function KyuyoTab({
       <Table className="text-xs">
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky left-0 z-10 bg-background min-w-24">
+            <TableHead className="sticky left-0 z-10 bg-background min-w-20">
               担当ケアマネ
             </TableHead>
-            <TableHead className="sticky left-24 z-10 bg-background min-w-44">
+            <TableHead className="sticky left-20 z-10 bg-background min-w-32">
               項目
             </TableHead>
             {allMonths.map((m) => (
-              <TableHead key={m} className="text-right min-w-24">
+              <TableHead key={m} className="text-right min-w-20">
                 {fmtMonthLabel(m)}
               </TableHead>
             ))}
@@ -1345,7 +1345,7 @@ function StaffBlock({
               {label}
             </TableCell>
           ) : null}
-          <TableCell className="sticky left-24 z-10 bg-background border-r">
+          <TableCell className="sticky left-20 z-10 bg-background border-r">
             {row.label}
           </TableCell>
           {perMonth.map((pm) => (
@@ -1360,7 +1360,7 @@ function StaffBlock({
           key={`${officeNumber}|${staff}|salary|${label}`}
           className="bg-muted/30"
         >
-          <TableCell className="sticky left-24 z-10 bg-muted/50 border-r font-medium">
+          <TableCell className="sticky left-20 z-10 bg-muted/50 border-r font-medium">
             {label}
           </TableCell>
           {perMonth.map((pm) => {
@@ -1484,14 +1484,14 @@ function PaymentTab({
       <Table className="text-xs">
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky left-0 z-10 bg-background min-w-24">
+            <TableHead className="sticky left-0 z-10 bg-background min-w-20">
               担当ケアマネ
             </TableHead>
-            <TableHead className="sticky left-24 z-10 bg-background min-w-32">
+            <TableHead className="sticky left-20 z-10 bg-background min-w-28">
               支払種別
             </TableHead>
             {allPayMonths.map((pm) => (
-              <TableHead key={pm} className="text-right min-w-32">
+              <TableHead key={pm} className="text-right min-w-24">
                 {fmtMonthLabel(pm)}
               </TableHead>
             ))}
@@ -1649,7 +1649,7 @@ function PaymentStaffBlock({
               {label}
             </TableCell>
           ) : null}
-          <TableCell className="sticky left-24 z-10 bg-background border-r">
+          <TableCell className="sticky left-20 z-10 bg-background border-r">
             {rowLabel}
           </TableCell>
           {allPayMonths.map((pm) => {
@@ -1824,14 +1824,14 @@ function UriageTab({
       <Table className="text-xs">
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky left-0 z-10 bg-background min-w-24">
+            <TableHead className="sticky left-0 z-10 bg-background min-w-20">
               担当ケアマネ
             </TableHead>
-            <TableHead className="sticky left-24 z-10 bg-background min-w-44">
+            <TableHead className="sticky left-20 z-10 bg-background min-w-32">
               項目
             </TableHead>
             {allMonths.map((m) => (
-              <TableHead key={m} className="text-right min-w-24">
+              <TableHead key={m} className="text-right min-w-20">
                 {fmtMonthLabel(m)}
               </TableHead>
             ))}
@@ -1947,7 +1947,7 @@ function UriageStaffBlock({
               {label}
             </TableCell>
           ) : null}
-          <TableCell className="sticky left-24 z-10 bg-background border-r">
+          <TableCell className="sticky left-20 z-10 bg-background border-r">
             {item.item_name}
           </TableCell>
           {allMonths.map((m) => {
@@ -1961,7 +1961,7 @@ function UriageStaffBlock({
         </TableRow>
       ))}
       <TableRow className="bg-muted/30 font-medium border-b-2">
-        <TableCell className="sticky left-24 z-10 bg-muted/40 border-r">
+        <TableCell className="sticky left-20 z-10 bg-muted/40 border-r">
           個人合計
         </TableCell>
         {allMonths.map((m) => (
