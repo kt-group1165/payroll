@@ -52,6 +52,8 @@ type KyotakuOffice = {
   office_number: string;
   short_name: string;
   name: string;
+  /** 1週間の起算曜日 (0=日, 1=月, ..., 6=土)。法定休日 auto-detect と週次残業の週境界に使用 */
+  work_week_start: number;
 };
 
 type EmployeeRow = {
@@ -205,7 +207,7 @@ export function KyotakuAttendanceContent() {
       try {
         const { data, error } = await supabase
           .from("payroll_offices")
-          .select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`)
+          .select(`id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`)
           .eq("office_type", "居宅介護支援");
         if (cancelled) return;
         if (error) throw error;
@@ -269,16 +271,15 @@ export function KyotakuAttendanceContent() {
 
   const loadRows = useCallback(async () => {
     // 月の全日空 row を必ず作る (DB 未登録でも入力可能)
-    // 日曜は労基§35「週1日の休日」のデフォルトとして is_legal_holiday=true で初期化
-    //   (=出勤すると自動で 法定休日労働 ×1.35 扱いに)
-    //   ユーザが別曜日を法定休日にしたい場合は checkbox で個別調整可
+    // is_legal_holiday は user の checkbox 操作 or calcDailyListWithWeekly の
+    // 「週内に休みが 1 日も無い時 = 最終労働日が法定休日扱い」自動判定で決まる。
     const baseRows: RowState[] = dates.map(({ date, dow }) => ({
       work_date: date,
       dow,
       start_time: "",
       end_time: "",
       break_minutes: 0,
-      is_legal_holiday: dow === 0, // 日曜は default で 法定休日 扱い
+      is_legal_holiday: false,
       is_paid_leave: false,
       note: "",
       business_km: "",
@@ -361,14 +362,21 @@ export function KyotakuAttendanceContent() {
   };
 
   // ---------------- 表示用 計算済 list ----------------
+  // 週次残業按分 + 法定休日 auto-detect (労基 §35) には事業所の週起算曜日が必要。
+  // 未選択 / 未取得時は 0 (日曜起算) を default にする。
+  const selectedOfficeWeekStart = useMemo(() => {
+    const o = offices.find((x) => x.id === selectedOfficeId);
+    return o?.work_week_start ?? 0;
+  }, [offices, selectedOfficeId]);
+
   // 週次残業按分込みで日次残業 + 週次残業を行に表示できるよう calcDailyListWithWeekly を使用
   const dailyCalcs = useMemo(
-    () => calcDailyListWithWeekly(rows.map(toAttendanceRecord)),
-    [rows],
+    () => calcDailyListWithWeekly(rows.map(toAttendanceRecord), selectedOfficeWeekStart),
+    [rows, selectedOfficeWeekStart],
   );
   const monthSummary = useMemo(
-    () => calcMonthlySummary(rows.map(toAttendanceRecord)),
-    [rows],
+    () => calcMonthlySummary(rows.map(toAttendanceRecord), selectedOfficeWeekStart),
+    [rows, selectedOfficeWeekStart],
   );
   /** 月合計 出張距離 (km、小数 1 桁) */
   const totalBusinessKm = useMemo(() => {
@@ -803,9 +811,27 @@ export function KyotakuAttendanceContent() {
                           />
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {calc.holiday_work > 0
-                            ? formatHM(calc.holiday_work)
-                            : "—"}
+                          {(() => {
+                            // 法休勤務: manual ✓ or auto-detect (週内に休み無し = 最終日)。
+                            // auto-detect の場合は ✓ off でも holiday_work が積まれているので
+                            // 「(自動)」マークを付けて区別する。
+                            if (calc.holiday_work <= 0) return "—";
+                            const isAuto = !row.is_legal_holiday;
+                            return (
+                              <span
+                                title={
+                                  isAuto
+                                    ? "週内に休み無し → 労基§35 により最終日を法定休日扱い (自動判定)"
+                                    : "法定休日出勤 (チェック指定)"
+                                }
+                              >
+                                {formatHM(calc.holiday_work)}
+                                {isAuto && (
+                                  <span className="ml-0.5 text-[10px] text-orange-600 align-top">自動</span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-center">
                           <input

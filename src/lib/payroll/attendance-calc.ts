@@ -335,10 +335,15 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
  *
  * アルゴリズム:
  *   - 各週 (weekStartDay 起算) について、日付昇順に iterate
+ *   - 法定休日 auto-detect (労基 §35): 1 週間に休み (work_minutes=0) が 1 日も無い場合、
+ *     その週の最終日を法定休日労働扱いにする (work_minutes 全部を holiday_work に移動)。
+ *     月跨ぎ週 (record < 7 件) は保守的にスキップ。ユーザー manual で is_legal_holiday=true
+ *     済みの場合は manual 指定を優先 (auto は何もしない)。
  *   - 各日の「非日次残業基準時間」(= min(work_minutes, 8h) — 法定休日除く) を累積
  *   - 累積 > 40h になった日に、その超過分を weekly_overtime として加算
  *   - 同日に既に daily_overtime がある場合は、その分は週次累積に含めない (= 二重計上回避)
  *
+ * @param weekStartDay 0=日曜起算 / 1=月曜起算 / ... / 6=土曜起算 (payroll_offices.work_week_start)
  * @returns calcDaily と同じ順序 (= records の元順序) で結果配列を返す
  */
 export function calcDailyListWithWeekly(
@@ -346,7 +351,13 @@ export function calcDailyListWithWeekly(
   weekStartDay: number = 0,
 ): DailyCalc[] {
   // 元順を保持するため index 付き
-  const items = records.map((r, idx) => ({ idx, r, daily: calcDaily(r) }));
+  // autoLegalHoliday: 週内に休み無し → 自動で法定休日扱いになった日 (manual 指定とは別 flag)
+  const items = records.map((r, idx) => ({
+    idx,
+    r,
+    daily: calcDaily(r),
+    autoLegalHoliday: false,
+  }));
 
   // 週ごとに分類
   const weekGroups = new Map<string, typeof items>();
@@ -357,12 +368,32 @@ export function calcDailyListWithWeekly(
     weekGroups.get(wk)!.push(it);
   }
 
-  // 各週内で work_date 昇順に並べ、累積判定で weekly_overtime を按分
   for (const list of weekGroups.values()) {
     list.sort((a, b) => a.r.work_date.localeCompare(b.r.work_date));
+
+    // ─── 法定休日労働 auto-detect (労基 §35) ───
+    // 7 日揃った週で全日 work_minutes>0 (= 休み無し) なら、最終日を法定休日労働扱いに。
+    // ユーザーが既に該当日を manual 法休指定済みの場合は何もしない (manual 優先)。
+    if (list.length === 7 && list.every((it) => it.daily.work_minutes > 0)) {
+      const last = list[list.length - 1];
+      if (!last.r.is_legal_holiday) {
+        // holiday_work に work_minutes 全部を移動、日次/週次残業はリセット
+        // (calcDaily の is_legal_holiday=true と同じ扱い。深夜は別割増として残す)
+        last.daily = {
+          ...last.daily,
+          holiday_work: last.daily.work_minutes,
+          daily_overtime: 0,
+          weekly_overtime: 0,
+        };
+        last.autoLegalHoliday = true;
+      }
+    }
+
+    // ─── 週次残業按分 (週 40h 超過分を該当日に分配) ───
     let cumulativeBase = 0; // 週累積 (基準時間、日次OT除く、法定休日除く)
     for (const it of list) {
-      if (it.r.is_legal_holiday) continue; // 法定休日は週累積に含めない
+      // 法定休日 (manual or auto) は週累積に含めない
+      if (it.r.is_legal_holiday || it.autoLegalHoliday) continue;
       const baseHours = Math.max(0, it.daily.work_minutes - it.daily.daily_overtime);
       const newCumulative = cumulativeBase + baseHours;
       if (newCumulative > LEGAL_WEEKLY_LIMIT) {
@@ -382,7 +413,8 @@ export function calcDailyListWithWeekly(
 
 /**
  * 月内 record 配列から MonthlySummary を計算。
- * 週次残業は週合計 - 週内日次残業合計 - 法定 40h の正値部分 (二重計上回避)。
+ * calcDailyListWithWeekly に集計を委ねるため、法定休日 auto-detect (労基 §35)
+ * と週次残業按分は行ごとの計算と完全に一致する。
  *
  * weekStartDay は 0=日曜起算 (デフォルト)。月跨ぎ週は record 月内分のみで集計する。
  *
@@ -409,41 +441,20 @@ export function calcMonthlySummary(
     total_paid_leave_days: 0,
   };
 
-  // 週キー → { work, dailyOvertime }
-  const weekAgg = new Map<string, { work: number; dailyOvertime: number }>();
+  // calcDailyListWithWeekly 経由で集計 — 法定休日 auto-detect + 週次按分が
+  // 行表示と一致する。
+  const dailies = calcDailyListWithWeekly(records, weekStartDay);
 
-  for (const r of records) {
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    const d = dailies[i];
     if (r.is_paid_leave) summary.total_paid_leave_days += 1;
-
-    const d = calcDaily(r);
     summary.total_work += d.work_minutes;
     summary.total_daily_overtime += d.daily_overtime;
+    summary.total_weekly_overtime += d.weekly_overtime;
     summary.total_midnight += d.midnight_overtime;
     summary.total_holiday += d.holiday_work;
-
-    const wk = weekKeyOf(r.work_date, weekStartDay);
-    if (wk) {
-      const cur = weekAgg.get(wk) ?? { work: 0, dailyOvertime: 0 };
-      // 法定休日労働は週次残業の母数からは除外する
-      // (法定休日労働は ×1.35 の独立割増、週次残業に二重計上しない)
-      if (!r.is_legal_holiday) {
-        cur.work += d.work_minutes;
-        cur.dailyOvertime += d.daily_overtime;
-      }
-      weekAgg.set(wk, cur);
-    }
   }
-
-  // 週次残業: 各週で「週合計 - 週内日次残業 - 40h」の正値部分を加算
-  let weekly = 0;
-  for (const { work, dailyOvertime } of weekAgg.values()) {
-    const overWeekly = Math.max(
-      0,
-      work - dailyOvertime - LEGAL_WEEKLY_LIMIT,
-    );
-    weekly += overWeekly;
-  }
-  summary.total_weekly_overtime = weekly;
 
   return summary;
 }
