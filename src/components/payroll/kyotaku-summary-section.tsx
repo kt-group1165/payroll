@@ -16,9 +16,14 @@ import {
   type KyotakuAttendanceRecord,
   type KyotakuRecord,
   type RegionalRate,
+  type SalaryBreakdown,
   type ServiceUnit,
   type YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
+import {
+  KyotakuSalaryFormulaModal,
+  type SalaryItemKey,
+} from "./kyotaku-salary-formula-modal";
 
 /**
  * 居宅介護支援 総括表セクション
@@ -113,6 +118,8 @@ type SummaryRow = {
   business_trip_teate: number;
   /** 給与合計 (= 基本給 + 各種手当 + プラン + 加算 + 調整 + 出張手当) */
   total: number;
+  /** モーダル詳細表示用に元の breakdown を保持 */
+  breakdown: SalaryBreakdown;
 };
 
 // =====================================================================
@@ -152,6 +159,50 @@ function num(n: number): string {
   return n > 0 ? n.toLocaleString("ja-JP") : "—";
 }
 
+// クリック可能な給与項目ヘッダー (formula モーダルを開く)
+function SalaryHead({
+  itemKey,
+  onOpen,
+  children,
+}: {
+  itemKey: SalaryItemKey;
+  onOpen: (k: SalaryItemKey) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <th
+      className="px-3 py-2 font-medium text-right cursor-help underline decoration-dotted decoration-muted-foreground/40 hover:bg-muted/40"
+      onClick={() => onOpen(itemKey)}
+      title="クリックで計算式を表示"
+    >
+      {children}
+    </th>
+  );
+}
+
+// クリック可能な給与セル (detail モーダルを開く)
+function SalaryCell({
+  itemKey,
+  amount,
+  row,
+  onOpen,
+}: {
+  itemKey: SalaryItemKey;
+  amount: number;
+  row: SummaryRow;
+  onOpen: (k: SalaryItemKey, r: SummaryRow) => void;
+}) {
+  return (
+    <td
+      className="px-3 py-1.5 text-right cursor-pointer hover:bg-muted/40"
+      onClick={() => onOpen(itemKey, row)}
+      title="クリックで計算内訳を表示"
+    >
+      {yen(amount)}
+    </td>
+  );
+}
+
 function hm(n: number): string {
   return n > 0 ? formatHM(n) : "—";
 }
@@ -164,6 +215,33 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
   const [rows, setRows] = useState<SummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // 給与項目モーダル: itemKey + mode (formula or detail) + staffName + breakdown
+  type ModalState =
+    | { open: false }
+    | {
+        open: true;
+        itemKey: SalaryItemKey;
+        mode: "formula" | "detail";
+        staffName?: string;
+        breakdown?: SalaryBreakdown;
+      };
+  const [modal, setModal] = useState<ModalState>({ open: false });
+  const openFormulaModal = (itemKey: SalaryItemKey) => {
+    setModal({ open: true, itemKey, mode: "formula" });
+  };
+  const openDetailModal = (
+    itemKey: SalaryItemKey,
+    row: SummaryRow,
+  ) => {
+    setModal({
+      open: true,
+      itemKey,
+      mode: "detail",
+      staffName: row.name,
+      breakdown: row.breakdown,
+    });
+  };
 
   // ─── 集計 fetch (officeId / month が変わるたび) ───
   useEffect(() => {
@@ -341,6 +419,7 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
             chosei2: breakdown.chosei2,
             business_trip_teate: breakdown.business_trip_teate,
             total: breakdown.total,
+            breakdown,
           };
         });
         if (!cancelled) setRows(result);
@@ -391,17 +470,17 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
               <th className="px-3 py-2 font-medium text-right">欠勤</th>
               <th className="px-3 py-2 font-medium text-right">有給</th>
               <th className="px-3 py-2 font-medium text-right">出張km</th>
-              <th className="px-3 py-2 font-medium text-right">本人給</th>
-              <th className="px-3 py-2 font-medium text-right">職能給</th>
-              <th className="px-3 py-2 font-medium text-right">固定残業</th>
-              <th className="px-3 py-2 font-medium text-right">資格手当</th>
-              <th className="px-3 py-2 font-medium text-right">勤続手当</th>
-              <th className="px-3 py-2 font-medium text-right">特定処遇</th>
-              <th className="px-3 py-2 font-medium text-right" title="プラン手当 (件数連動、T+1 払い)">プラン</th>
-              <th className="px-3 py-2 font-medium text-right" title="加算手当 (件数連動、T+1 払い)">加算</th>
-              <th className="px-3 py-2 font-medium text-right" title="調整手当① (late1 起源、T+2 払い)">調整①</th>
-              <th className="px-3 py-2 font-medium text-right" title="調整手当② (late2 起源、T+3 払い)">調整②</th>
-              <th className="px-3 py-2 font-medium text-right" title="出張距離手当 (= 出張km合計 × office.travel_unit_price)">出張手当</th>
+              <SalaryHead itemKey="honnin" onOpen={openFormulaModal}>本人給</SalaryHead>
+              <SalaryHead itemKey="shokuno" onOpen={openFormulaModal}>職能給</SalaryHead>
+              <SalaryHead itemKey="kotei_zangyo" onOpen={openFormulaModal}>固定残業</SalaryHead>
+              <SalaryHead itemKey="shikaku" onOpen={openFormulaModal}>資格手当</SalaryHead>
+              <SalaryHead itemKey="kotei" onOpen={openFormulaModal}>勤続手当</SalaryHead>
+              <SalaryHead itemKey="tokutei" onOpen={openFormulaModal}>特定処遇</SalaryHead>
+              <SalaryHead itemKey="plan" onOpen={openFormulaModal}>プラン</SalaryHead>
+              <SalaryHead itemKey="kazan" onOpen={openFormulaModal}>加算</SalaryHead>
+              <SalaryHead itemKey="chosei1" onOpen={openFormulaModal}>調整①</SalaryHead>
+              <SalaryHead itemKey="chosei2" onOpen={openFormulaModal}>調整②</SalaryHead>
+              <SalaryHead itemKey="business_trip_teate" onOpen={openFormulaModal}>出張手当</SalaryHead>
               <th className="px-3 py-2 font-medium text-right">支給合計</th>
             </tr>
           </thead>
@@ -446,17 +525,17 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
                     <td className="px-3 py-1.5 text-right tabular-nums">
                       {r.businessKmTotal > 0 ? `${r.businessKmTotal.toFixed(1)}km` : "—"}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.honnin)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.shokuno)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.kotei_zangyo)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.shikaku)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.kotei)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.tokutei)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.plan)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.kazan)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.chosei1)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.chosei2)}</td>
-                    <td className="px-3 py-1.5 text-right">{yen(r.business_trip_teate)}</td>
+                    <SalaryCell itemKey="honnin" amount={r.honnin} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="shokuno" amount={r.shokuno} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="kotei_zangyo" amount={r.kotei_zangyo} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="shikaku" amount={r.shikaku} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="kotei" amount={r.kotei} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="tokutei" amount={r.tokutei} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="plan" amount={r.plan} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="kazan" amount={r.kazan} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="chosei1" amount={r.chosei1} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="chosei2" amount={r.chosei2} row={r} onOpen={openDetailModal} />
+                    <SalaryCell itemKey="business_trip_teate" amount={r.business_trip_teate} row={r} onOpen={openDetailModal} />
                     <td className="px-3 py-1.5 text-right font-bold">{r.total.toLocaleString("ja-JP")}円</td>
                   </tr>
                 ))}
@@ -473,7 +552,20 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
         ※ 支給合計 = 本人給 + 職能給 + 固定残業 + 資格 + 勤続 + 特定処遇
         + プラン + 加算 + 調整① + 調整② + 出張手当 (kyotaku-calc.calcSalary 由来)。
         対象月 = サービス提供月。プラン/加算/調整の確定は給与計算ページから。
+        各給与項目のヘッダーをクリックで計算式、セルをクリックで内訳を表示。
       </div>
+
+      {/* 給与項目モーダル (ヘッダー click = formula / セル click = detail) */}
+      <KyotakuSalaryFormulaModal
+        open={modal.open}
+        onOpenChange={(o) => {
+          if (!o) setModal({ open: false });
+        }}
+        itemKey={modal.open ? modal.itemKey : null}
+        mode={modal.open ? modal.mode : "formula"}
+        staffName={modal.open ? modal.staffName : undefined}
+        breakdown={modal.open ? modal.breakdown : undefined}
+      />
     </div>
   );
 }

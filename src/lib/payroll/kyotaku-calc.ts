@@ -128,6 +128,37 @@ export type SalaryBreakdown = {
    *   + business_trip_teate
    */
   total: number;
+  /**
+   * UI モーダル等での内訳表示用の中間値。集計結果に影響しない情報を持つ。
+   */
+  details: {
+    /** 介護費 単価 (円/単位、staff の kaigo_rate) */
+    ki: number;
+    /** 予防支援費 単価 (si) */
+    si: number;
+    /** 同月請求 (= service_month と billing_month が同月、または前月) 件数 (要介護) */
+    normal_kaigo: number;
+    /** 同月請求 件数 (要支援、yobou も含む) */
+    normal_shien: number;
+    /** 1ヶ月遅れ請求 件数 (要介護) */
+    late1_kaigo: number;
+    /** 1ヶ月遅れ請求 件数 (要支援) */
+    late1_shien: number;
+    /** 2ヶ月遅れ請求 件数 (要介護) */
+    late2_kaigo: number;
+    /** 2ヶ月遅れ請求 件数 (要支援) */
+    late2_shien: number;
+    /** = normal_kaigo*ki + normal_shien*si (T+1 払いの基礎額) */
+    inc0: number;
+    /** = inc0 + late1_kaigo*ki + late1_shien*si */
+    inc1: number;
+    /** = inc1 + late2_kaigo*ki + late2_shien*si */
+    inc2: number;
+    /** その月の business_km 合計 */
+    business_km_total: number;
+    /** 出張単価 (円/km) */
+    travel_unit_price: number;
+  };
 };
 
 export type CalcConfig = {
@@ -545,6 +576,21 @@ export function calcSalary(
     config,
   );
 
+  // details: 出張km 合計 を再計算 (calcBusinessTripTeate 内では rate と掛け算済の値しか返らないため)
+  const att = config.attendanceRecords;
+  const ym = serviceMonth.slice(0, 7);
+  let kmSum = 0;
+  if (att) {
+    for (const r of att) {
+      if (r.staff_name !== staffName) continue;
+      if (!r.work_date) continue;
+      if (r.work_date.slice(0, 7) !== ym) continue;
+      const km = r.business_km ?? 0;
+      if (km > 0) kmSum += km;
+    }
+  }
+  const travelRate = config.officeTravelUnitPrice ?? 0;
+
   const total =
     base +
     plan +
@@ -569,6 +615,21 @@ export function calcSalary(
     chosei2,
     business_trip_teate,
     total,
+    details: {
+      ki,
+      si,
+      normal_kaigo: n_k,
+      normal_shien: n_s,
+      late1_kaigo: l1_k,
+      late1_shien: l1_s,
+      late2_kaigo: l2_k,
+      late2_shien: l2_s,
+      inc0,
+      inc1,
+      inc2,
+      business_km_total: kmSum,
+      travel_unit_price: travelRate,
+    },
   };
 }
 
