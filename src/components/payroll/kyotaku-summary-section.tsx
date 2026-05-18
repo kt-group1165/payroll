@@ -9,6 +9,16 @@ import {
   formatHM,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
+import {
+  calcSalary,
+  type CalcConfig,
+  type EmployeeSetting,
+  type KyotakuAttendanceRecord,
+  type KyotakuRecord,
+  type RegionalRate,
+  type ServiceUnit,
+  type YobouRecord,
+} from "@/lib/payroll/kyotaku-calc";
 
 /**
  * 居宅介護支援 総括表セクション
@@ -18,7 +28,8 @@ import {
  *
  * 表示:
  *   - ケアマネ全員について出勤簿集計 (日数・時間・出張km)
- *   - 給与: payroll_employees の本人給/職能給/固定残業/資格/勤続/特定処遇 を直接表示
+ *   - 給与: kyotaku-calc.calcSalary で計算した本人給/職能給/固定残業/資格/勤続/特定処遇
+ *     + プラン/加算/調整①②/出張手当 + 支給合計を表示
  *
  * データソース: live (DB 都度集計)。
  */
@@ -53,6 +64,10 @@ type EmployeeRow = {
   kyotaku_kotei: number | null;
   /** 特定処遇改善 */
   kyotaku_tokutei_shogu: number | null;
+  /** 介護費 単価 (円/単位)。プラン手当の base 計算用 */
+  kyotaku_kaigo_rate: number | null;
+  /** 予防支援費 単価 (円/単位) */
+  kyotaku_shien_rate: number | null;
 };
 
 type AttendanceDbRow = {
@@ -90,7 +105,13 @@ type SummaryRow = {
   shikaku: number;
   kotei: number;
   tokutei: number;
-  /** 給与合計 (= honnin + shokuno + kotei_zangyo + shikaku + kotei + tokutei) */
+  // プラン/加算/調整 (kyotaku-calc.calcSalary 由来)
+  plan: number;
+  kazan: number;
+  chosei1: number;
+  chosei2: number;
+  business_trip_teate: number;
+  /** 給与合計 (= 基本給 + 各種手当 + プラン + 加算 + 調整 + 出張手当) */
   total: number;
 };
 
@@ -156,24 +177,56 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
       setLoading(true);
       setErr(null);
       try {
-        // 1) office の employee 一覧
-        const { data: empData, error: empErr } = await supabase
-          .from("payroll_employees")
-          .select(
-            "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
-          )
-          .eq("office_id", officeId)
-          .order("name");
+        // 1) office の employee 一覧 + 国保連 records + master 系 + 予防支援 + 出張単価
+        // 国保連 records (plan/kazan/chosei の計算には service_month 全期間が必要)
+        // service_units / regional_rates は tenant 共通
+        // yobou_records は予防支援件数 (オプション)
+        // office travel_unit_price は出張距離手当の単価
+        const [empRes, recRes, unitRes, rateRes, yobouRes, officeRes] = await Promise.all([
+          supabase
+            .from("payroll_employees")
+            .select(
+              "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
+            )
+            .eq("office_id", officeId)
+            .order("name"),
+          supabase
+            .from("payroll_kyotaku_records")
+            .select("*")
+            .limit(10000),
+          supabase.from("payroll_kyotaku_service_units").select("*"),
+          supabase.from("payroll_kyotaku_regional_rates").select("*"),
+          supabase
+            .from("payroll_kyotaku_yobou_records")
+            .select("*"),
+          supabase
+            .from("payroll_offices")
+            .select("office_number, travel_unit_price")
+            .eq("id", officeId)
+            .single(),
+        ]);
         if (cancelled) return;
-        if (empErr) throw empErr;
-        const employees = (empData ?? []) as EmployeeRow[];
+        if (empRes.error) throw empRes.error;
+        type RawEmployee = EmployeeRow & {
+          office?: { office_number: string | null } | null;
+        };
+        const rawEmployees = (empRes.data ?? []) as unknown as RawEmployee[];
+        const employees: EmployeeRow[] = rawEmployees;
         if (employees.length === 0) {
           setRows([]);
           return;
         }
         const empIds = employees.map((e) => e.id);
+        const officeNumber =
+          (officeRes.data as { office_number?: string | null } | null)?.office_number ?? "";
+        const travelRate = (() => {
+          const v = (officeRes.data as { travel_unit_price?: number | string | null } | null)?.travel_unit_price;
+          if (v === null || v === undefined) return 0;
+          const n = typeof v === "string" ? parseFloat(v) : v;
+          return Number.isFinite(n) ? n : 0;
+        })();
 
-        // 2) 月跨ぎ週も含めて拡張範囲で fetch (週次残業を正しく計算)
+        // 2) 月跨ぎ週も含めて拡張範囲で出勤簿 fetch (週次残業を正しく計算)
         const { start: extStart, end: extEnd } = extendedMonthRange(month, weekStart);
         const { data: attData, error: attErr } = await supabase
           .from("payroll_kyotaku_attendance_records")
@@ -187,25 +240,73 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
         if (attErr) throw attErr;
         const attRows = (attData ?? []) as AttendanceDbRow[];
 
-        // 3) employee_id → record list でグルーピング
+        // 3) employee_id → 出勤 record list でグルーピング
         const byEmp = new Map<string, AttendanceDbRow[]>();
         for (const r of attRows) {
           if (!byEmp.has(r.employee_id)) byEmp.set(r.employee_id, []);
           byEmp.get(r.employee_id)!.push(r);
         }
 
-        // 4) 各 employee で集計 (extended range で計算、当月分のみ summary に積算)
+        // 4) calcSalary 用 config を構築
+        //    settings: EmployeeSetting[] (staff_name で引く)
+        const settings: EmployeeSetting[] = employees.map((e) => ({
+          staff_name: e.name,
+          honnin_kyu: e.kyotaku_honnin_kyu,
+          shokuno_kyu: e.kyotaku_shokuno_kyu,
+          kotei_zangyo: e.kyotaku_kotei_zangyo,
+          shikaku_teate: e.kyotaku_shikaku_teate,
+          kotei: e.kyotaku_kotei,
+          tokutei_shogu: e.kyotaku_tokutei_shogu,
+          kaigo_rate: e.kyotaku_kaigo_rate,
+          shien_rate: e.kyotaku_shien_rate,
+        }));
+
+        // kyotaku_records / yobou は当該 office に絞る (limit ガード)
+        const allKyotakuRecords = ((recRes.data ?? []) as unknown[]).filter(
+          (r) => (r as { office_number?: string }).office_number === officeNumber,
+        ) as KyotakuRecord[];
+        const allYobou = ((yobouRes.error ? [] : yobouRes.data) ?? []).filter(
+          (r) => (r as { office_number?: string }).office_number === officeNumber,
+        ) as YobouRecord[];
+
+        // calcSalary に渡す attendance は staff_name 付き (= employee_id → name 解決済)
+        // 当該 office の全 employee 分まとめて。
+        const attendanceForCalc: KyotakuAttendanceRecord[] = [];
+        for (const ar of attRows) {
+          const emp = employees.find((e) => e.id === ar.employee_id);
+          if (!emp) continue;
+          const km =
+            typeof ar.business_km === "string"
+              ? parseFloat(ar.business_km)
+              : ar.business_km;
+          if (km === null || km === undefined || !Number.isFinite(km) || km <= 0) continue;
+          attendanceForCalc.push({
+            staff_name: emp.name,
+            work_date: ar.work_date,
+            business_km: km,
+          });
+        }
+
+        const calcConfig: CalcConfig = {
+          settings,
+          units: (unitRes.data ?? []) as ServiceUnit[],
+          rates: (rateRes.data ?? []) as RegionalRate[],
+          yobouRecords: allYobou,
+          attendanceRecords: attendanceForCalc,
+          officeTravelUnitPrice: travelRate,
+        };
+
+        // 5) 各 employee で集計 (出勤簿 + 給与計算)
         const result: SummaryRow[] = employees.map((emp) => {
-          const empRows = byEmp.get(emp.id) ?? [];
-          const records = empRows.map(dbToAttendanceRecord);
+          const empAttRows = byEmp.get(emp.id) ?? [];
+          const records = empAttRows.map(dbToAttendanceRecord);
           const dailies = calcDailyListWithWeekly(records, weekStart);
           const summary = calcMonthlySummary(records, weekStart, month);
-          // 出勤日数 / 出張km は当月分のみカウント (週次残業の按分は extended で済）
           const workDays = dailies.filter(
             (d) => d.work_minutes > 0 && d.work_date.startsWith(month),
           ).length;
           let businessKmTotal = 0;
-          for (const r of empRows) {
+          for (const r of empAttRows) {
             if (!r.work_date.startsWith(month)) continue;
             const km = r.business_km;
             if (km === null || km === undefined || km === "") continue;
@@ -214,13 +315,8 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
           }
           businessKmTotal = Math.round(businessKmTotal * 10) / 10;
 
-          const honnin = emp.kyotaku_honnin_kyu ?? 0;
-          const shokuno = emp.kyotaku_shokuno_kyu ?? 0;
-          const kotei_zangyo = emp.kyotaku_kotei_zangyo ?? 0;
-          const shikaku = emp.kyotaku_shikaku_teate ?? 0;
-          const kotei = emp.kyotaku_kotei ?? 0;
-          const tokutei = emp.kyotaku_tokutei_shogu ?? 0;
-          const total = honnin + shokuno + kotei_zangyo + shikaku + kotei + tokutei;
+          // 給与計算 (kyotaku-calc)
+          const breakdown = calcSalary(allKyotakuRecords, emp.name, month, calcConfig);
 
           return {
             employee_id: emp.id,
@@ -236,13 +332,18 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
             absenceMin: summary.total_absence,
             paidLeaveDays: summary.total_paid_leave_days,
             businessKmTotal,
-            honnin,
-            shokuno,
-            kotei_zangyo,
-            shikaku,
-            kotei,
-            tokutei,
-            total,
+            honnin: breakdown.honnin,
+            shokuno: breakdown.shokuno,
+            kotei_zangyo: breakdown.kotei_zangyo,
+            shikaku: breakdown.shikaku,
+            kotei: breakdown.kotei,
+            tokutei: breakdown.tokutei,
+            plan: breakdown.plan,
+            kazan: breakdown.kazan,
+            chosei1: breakdown.chosei1,
+            chosei2: breakdown.chosei2,
+            business_trip_teate: breakdown.business_trip_teate,
+            total: breakdown.total,
           };
         });
         if (!cancelled) setRows(result);
@@ -299,25 +400,30 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
               <th className="px-3 py-2 font-medium text-right">資格手当</th>
               <th className="px-3 py-2 font-medium text-right">勤続手当</th>
               <th className="px-3 py-2 font-medium text-right">特定処遇</th>
+              <th className="px-3 py-2 font-medium text-right" title="プラン手当 (件数連動、T+1 払い)">プラン</th>
+              <th className="px-3 py-2 font-medium text-right" title="加算手当 (件数連動、T+1 払い)">加算</th>
+              <th className="px-3 py-2 font-medium text-right" title="調整手当① (late1 起源、T+2 払い)">調整①</th>
+              <th className="px-3 py-2 font-medium text-right" title="調整手当② (late2 起源、T+3 払い)">調整②</th>
+              <th className="px-3 py-2 font-medium text-right" title="出張距離手当 (= 出張km合計 × office.travel_unit_price)">出張手当</th>
               <th className="px-3 py-2 font-medium text-right">支給合計</th>
             </tr>
           </thead>
           <tbody>
             {!officeId ? (
               <tr>
-                <td colSpan={19} className="text-center text-muted-foreground py-4">
+                <td colSpan={24} className="text-center text-muted-foreground py-4">
                   事業所を選択してください
                 </td>
               </tr>
             ) : loading ? (
               <tr>
-                <td colSpan={19} className="text-center text-muted-foreground py-4">
+                <td colSpan={24} className="text-center text-muted-foreground py-4">
                   読み込み中...
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={19} className="text-center text-muted-foreground py-4">
+                <td colSpan={24} className="text-center text-muted-foreground py-4">
                   データなし
                 </td>
               </tr>
@@ -349,11 +455,16 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
                     <td className="px-3 py-1.5 text-right">{yen(r.shikaku)}</td>
                     <td className="px-3 py-1.5 text-right">{yen(r.kotei)}</td>
                     <td className="px-3 py-1.5 text-right">{yen(r.tokutei)}</td>
+                    <td className="px-3 py-1.5 text-right">{yen(r.plan)}</td>
+                    <td className="px-3 py-1.5 text-right">{yen(r.kazan)}</td>
+                    <td className="px-3 py-1.5 text-right">{yen(r.chosei1)}</td>
+                    <td className="px-3 py-1.5 text-right">{yen(r.chosei2)}</td>
+                    <td className="px-3 py-1.5 text-right">{yen(r.business_trip_teate)}</td>
                     <td className="px-3 py-1.5 text-right font-bold">{r.total.toLocaleString("ja-JP")}円</td>
                   </tr>
                 ))}
                 <tr className="border-t bg-muted/10 font-semibold">
-                  <td colSpan={18} className="px-3 py-1.5 text-right">合計</td>
+                  <td colSpan={23} className="px-3 py-1.5 text-right">合計</td>
                   <td className="px-3 py-1.5 text-right">{grandTotal.toLocaleString("ja-JP")}円</td>
                 </tr>
               </>
@@ -362,8 +473,9 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
         </table>
       </div>
       <div className="px-3 py-2 text-xs text-muted-foreground border-t">
-        ※ 給与額は payroll_employees の本人給/職能給/固定残業/資格手当/勤続手当/特定処遇改善の合計です。
-        プラン手当・加算手当・出張手当などの計算は給与計算ページから別途確認してください。
+        ※ 支給合計 = 本人給 + 職能給 + 固定残業 + 資格 + 勤続 + 特定処遇
+        + プラン + 加算 + 調整① + 調整② + 出張手当 (kyotaku-calc.calcSalary 由来)。
+        対象月 = サービス提供月。プラン/加算/調整の確定は給与計算ページから。
       </div>
     </div>
   );
