@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Button } from "@/components/ui/button";
@@ -210,120 +210,125 @@ export function KyotakuSummarySection() {
     };
   }, []);
 
-  const selectedOffice = useMemo(
-    () => offices.find((o) => o.id === selectedOfficeId) ?? null,
-    [offices, selectedOfficeId],
-  );
+  // 選択中 office (find は cheap、useMemo 不要)
+  const selectedOffice = offices.find((o) => o.id === selectedOfficeId) ?? null;
+  const weekStart = selectedOffice?.work_week_start ?? 0;
 
-  const loadSummary = useCallback(async () => {
+  // ─── 集計 fetch (selectedOfficeId / month が変わるたび、または offices 初期 fetch 完了時) ───
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- office/month 切替の async fetch */
     if (!selectedOfficeId) {
       setRows([]);
       return;
     }
-    setLoading(true);
-    setErr(null);
-    try {
-      // 1) office の employee 一覧
-      const { data: empData, error: empErr } = await supabase
-        .from("payroll_employees")
-        .select(
-          "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
-        )
-        .eq("office_id", selectedOfficeId)
-        .order("name");
-      if (empErr) throw empErr;
-      const employees = (empData ?? []) as EmployeeRow[];
-      if (employees.length === 0) {
-        setRows([]);
-        return;
-      }
-      const empIds = employees.map((e) => e.id);
-
-      // 2) 当月の出勤簿 record
-      const { start, end } = monthRange(month);
-      const { data: attData, error: attErr } = await supabase
-        .from("payroll_kyotaku_attendance_records")
-        .select(
-          "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, business_km, substitute_for_date",
-        )
-        .in("employee_id", empIds)
-        .gte("work_date", start)
-        .lte("work_date", end);
-      if (attErr) throw attErr;
-      const attRows = (attData ?? []) as AttendanceDbRow[];
-
-      // 3) employee_id → record list でグルーピング
-      const byEmp = new Map<string, AttendanceDbRow[]>();
-      for (const r of attRows) {
-        if (!byEmp.has(r.employee_id)) byEmp.set(r.employee_id, []);
-        byEmp.get(r.employee_id)!.push(r);
-      }
-
-      // 4) 各 employee で集計
-      const weekStart = selectedOffice?.work_week_start ?? 0;
-      const result: SummaryRow[] = employees.map((emp) => {
-        const empRows = byEmp.get(emp.id) ?? [];
-        const records = empRows.map(dbToAttendanceRecord);
-        const dailies = calcDailyListWithWeekly(records, weekStart);
-        const summary = calcMonthlySummary(records, weekStart);
-        // 出勤日数 = 実労働 > 0 な日
-        const workDays = dailies.filter((d) => d.work_minutes > 0).length;
-        // 出張km 月合計
-        let businessKmTotal = 0;
-        for (const r of empRows) {
-          const km = r.business_km;
-          if (km === null || km === undefined || km === "") continue;
-          const n = typeof km === "string" ? parseFloat(km) : km;
-          if (Number.isFinite(n) && n > 0) businessKmTotal += n;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        // 1) office の employee 一覧
+        const { data: empData, error: empErr } = await supabase
+          .from("payroll_employees")
+          .select(
+            "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
+          )
+          .eq("office_id", selectedOfficeId)
+          .order("name");
+        if (cancelled) return;
+        if (empErr) throw empErr;
+        const employees = (empData ?? []) as EmployeeRow[];
+        if (employees.length === 0) {
+          setRows([]);
+          return;
         }
-        businessKmTotal = Math.round(businessKmTotal * 10) / 10;
+        const empIds = employees.map((e) => e.id);
 
-        const honnin = emp.kyotaku_honnin_kyu ?? 0;
-        const shokuno = emp.kyotaku_shokuno_kyu ?? 0;
-        const kotei_zangyo = emp.kyotaku_kotei_zangyo ?? 0;
-        const shikaku = emp.kyotaku_shikaku_teate ?? 0;
-        const kotei = emp.kyotaku_kotei ?? 0;
-        const tokutei = emp.kyotaku_tokutei_shogu ?? 0;
-        const total = honnin + shokuno + kotei_zangyo + shikaku + kotei + tokutei;
+        // 2) 当月の出勤簿 record
+        const { start, end } = monthRange(month);
+        const { data: attData, error: attErr } = await supabase
+          .from("payroll_kyotaku_attendance_records")
+          .select(
+            "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, business_km, substitute_for_date",
+          )
+          .in("employee_id", empIds)
+          .gte("work_date", start)
+          .lte("work_date", end);
+        if (cancelled) return;
+        if (attErr) throw attErr;
+        const attRows = (attData ?? []) as AttendanceDbRow[];
 
-        return {
-          employee_id: emp.id,
-          employee_number: emp.employee_number ?? "",
-          name: emp.name,
-          role_type: emp.role_type ?? "",
-          workDays,
-          workMin: summary.total_work,
-          dailyOvertimeMin: summary.total_daily_overtime,
-          weeklyOvertimeMin: summary.total_weekly_overtime,
-          midnightMin: summary.total_midnight,
-          holidayWorkMin: summary.total_holiday,
-          absenceMin: summary.total_absence,
-          paidLeaveDays: summary.total_paid_leave_days,
-          businessKmTotal,
-          honnin,
-          shokuno,
-          kotei_zangyo,
-          shikaku,
-          kotei,
-          tokutei,
-          total,
-        };
-      });
-      setRows(result);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(`集計の取得に失敗: ${msg}`);
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedOfficeId, month, selectedOffice]);
+        // 3) employee_id → record list でグルーピング
+        const byEmp = new Map<string, AttendanceDbRow[]>();
+        for (const r of attRows) {
+          if (!byEmp.has(r.employee_id)) byEmp.set(r.employee_id, []);
+          byEmp.get(r.employee_id)!.push(r);
+        }
 
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- office/month 切替の async fetch */
-    void loadSummary();
+        // 4) 各 employee で集計
+        const result: SummaryRow[] = employees.map((emp) => {
+          const empRows = byEmp.get(emp.id) ?? [];
+          const records = empRows.map(dbToAttendanceRecord);
+          const dailies = calcDailyListWithWeekly(records, weekStart);
+          const summary = calcMonthlySummary(records, weekStart);
+          const workDays = dailies.filter((d) => d.work_minutes > 0).length;
+          let businessKmTotal = 0;
+          for (const r of empRows) {
+            const km = r.business_km;
+            if (km === null || km === undefined || km === "") continue;
+            const n = typeof km === "string" ? parseFloat(km) : km;
+            if (Number.isFinite(n) && n > 0) businessKmTotal += n;
+          }
+          businessKmTotal = Math.round(businessKmTotal * 10) / 10;
+
+          const honnin = emp.kyotaku_honnin_kyu ?? 0;
+          const shokuno = emp.kyotaku_shokuno_kyu ?? 0;
+          const kotei_zangyo = emp.kyotaku_kotei_zangyo ?? 0;
+          const shikaku = emp.kyotaku_shikaku_teate ?? 0;
+          const kotei = emp.kyotaku_kotei ?? 0;
+          const tokutei = emp.kyotaku_tokutei_shogu ?? 0;
+          const total = honnin + shokuno + kotei_zangyo + shikaku + kotei + tokutei;
+
+          return {
+            employee_id: emp.id,
+            employee_number: emp.employee_number ?? "",
+            name: emp.name,
+            role_type: emp.role_type ?? "",
+            workDays,
+            workMin: summary.total_work,
+            dailyOvertimeMin: summary.total_daily_overtime,
+            weeklyOvertimeMin: summary.total_weekly_overtime,
+            midnightMin: summary.total_midnight,
+            holidayWorkMin: summary.total_holiday,
+            absenceMin: summary.total_absence,
+            paidLeaveDays: summary.total_paid_leave_days,
+            businessKmTotal,
+            honnin,
+            shokuno,
+            kotei_zangyo,
+            shikaku,
+            kotei,
+            tokutei,
+            total,
+          };
+        });
+        if (!cancelled) setRows(result);
+      } catch (e) {
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setErr(`集計の取得に失敗: ${msg}`);
+          setRows([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [loadSummary]);
+    // weekStart は selectedOffice 由来 = offices + selectedOfficeId 由来。両方 deps に入れる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOfficeId, month]);
 
   // 合計
   const grandTotal = useMemo(() => rows.reduce((s, r) => s + r.total, 0), [rows]);
