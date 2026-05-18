@@ -269,13 +269,16 @@ export function KyotakuAttendanceContent() {
 
   const loadRows = useCallback(async () => {
     // 月の全日空 row を必ず作る (DB 未登録でも入力可能)
+    // 日曜は労基§35「週1日の休日」のデフォルトとして is_legal_holiday=true で初期化
+    //   (=出勤すると自動で 法定休日労働 ×1.35 扱いに)
+    //   ユーザが別曜日を法定休日にしたい場合は checkbox で個別調整可
     const baseRows: RowState[] = dates.map(({ date, dow }) => ({
       work_date: date,
       dow,
       start_time: "",
       end_time: "",
       break_minutes: 0,
-      is_legal_holiday: false,
+      is_legal_holiday: dow === 0, // 日曜は default で 法定休日 扱い
       is_paid_leave: false,
       note: "",
       business_km: "",
