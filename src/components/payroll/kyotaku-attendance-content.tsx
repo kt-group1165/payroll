@@ -31,6 +31,7 @@ import {
   extendedMonthRange,
   formatHM,
   minutesBetween,
+  weekKeyOf,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
 import { isJapaneseHoliday } from "@/lib/payroll/japan-holidays";
@@ -531,6 +532,18 @@ export function KyotakuAttendanceContent() {
     if (!substituteModalDate) {
       toast.error("日付を選択してください");
       return;
+    }
+    // 振替元と出勤日が同じ週内か判定。週またぎなら確認ダイアログを出す
+    const targetRow = rows[substituteModalIdx];
+    if (targetRow) {
+      const workWeek = weekKeyOf(targetRow.work_date, selectedOfficeWeekStart);
+      const subWeek = weekKeyOf(substituteModalDate, selectedOfficeWeekStart);
+      if (workWeek && subWeek && workWeek !== subWeek) {
+        const ok = window.confirm(
+          `振替元 ${substituteModalDate} は出勤日 ${targetRow.work_date} と同じ週ではありません。\n通常、振替休日は同一週内で行うことが推奨されます。このまま登録しますか？`,
+        );
+        if (!ok) return;
+      }
     }
     updateRow(substituteModalIdx, { substitute_for_date: substituteModalDate });
     setSubstituteModalIdx(null);

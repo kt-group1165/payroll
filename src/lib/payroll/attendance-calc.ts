@@ -252,7 +252,7 @@ function parseDateUTC(date: string): Date | null {
  * 指定日の「週キー」(= 週の起算日 YYYY-MM-DD) を返す。
  * weekStartDay: 0=日曜 / 1=月曜 / ...
  */
-function weekKeyOf(date: string, weekStartDay: number): string | null {
+export function weekKeyOf(date: string, weekStartDay: number): string | null {
   const dt = parseDateUTC(date);
   if (!dt) return null;
   const dow = dt.getUTCDay();
