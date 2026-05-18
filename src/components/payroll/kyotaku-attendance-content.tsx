@@ -696,7 +696,8 @@ export function KyotakuAttendanceContent() {
                     <TableHead className="w-20 text-right">実労働</TableHead>
                     <TableHead className="w-20 text-right">残業</TableHead>
                     <TableHead className="w-20 text-right">深夜</TableHead>
-                    <TableHead className="w-16 text-center">法定休日</TableHead>
+                    <TableHead className="w-16 text-center">法休</TableHead>
+                    <TableHead className="w-20 text-right" title="法定休日出勤時間 (法休✓ 時のみ集計)">法休勤務</TableHead>
                     <TableHead className="w-14 text-center">有給</TableHead>
                     <TableHead className="w-24 text-right">出張距離(km)</TableHead>
                     <TableHead>備考</TableHead>
@@ -797,6 +798,11 @@ export function KyotakuAttendanceContent() {
                               updateRow(idx, { is_legal_holiday: e.target.checked })
                             }
                           />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {calc.holiday_work > 0
+                            ? formatHM(calc.holiday_work)
+                            : "—"}
                         </TableCell>
                         <TableCell className="text-center">
                           <input
