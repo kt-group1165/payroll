@@ -340,8 +340,20 @@ function extractDay(serviceDate: string): number {
 }
 
 /**
+ * 勤続手当 資格要件チェック。
+ *   - has_care_qualification (= 介護福祉士 or 実務者研修修了者) TRUE
+ *   - または job_type='居宅介護支援' (= 介護支援専門員所持の前提)
+ */
+function hasTenureQualification(
+  hasCareQualification: boolean,
+  jobType: string,
+): boolean {
+  return hasCareQualification || jobType === "居宅介護支援";
+}
+
+/**
  * 勤続手当計算（資格・経験による定期昇給）
- * 対象: 介護福祉士または実務者研修修了者
+ * 対象: 介護福祉士 / 実務者研修修了者 / 介護支援専門員 (= 居宅介護支援職員は全員所持)
  *   社員(月給)    : 1年=1,000円、以降1年ごと+500円
  *   パートヘルパー: 1年=10円/h、5年=20円/h、以降5年ごと+10円/h
  *   パート訪問入浴: 1年=10円/件、5年=20円/件、以降5年ごと+10円/件
@@ -356,7 +368,7 @@ function computeTenureAllowance(
   recordCount: number,    // パート訪問入浴用（実績件数）
   carePlanCount: number,  // 非常勤居宅介護支援用（要介護プラン相当件数）
 ): number {
-  if (!hasQualification) return 0;
+  if (!hasTenureQualification(hasQualification, jobType)) return 0;
   const years = Math.floor(effectiveServiceMonths / 12);
   if (years < 1) return 0;
 
@@ -388,13 +400,30 @@ function computeTenureRate(
   effectiveServiceMonths: number,
   jobType: string,
 ): number {
-  if (!hasQualification) return 0;
+  if (!hasTenureQualification(hasQualification, jobType)) return 0;
   const years = Math.floor(effectiveServiceMonths / 12);
   if (years < 1) return 0;
   if (jobType === "訪問介護" || jobType === "訪問看護") return (Math.floor(years / 5) + 1) * 10;
   if (jobType === "訪問入浴") return (Math.floor(years / 5) + 1) * 10;
   if (jobType === "居宅介護支援") return (Math.floor(years / 5) + 1) * 50;
   return 0;
+}
+
+/**
+ * 設定の `tenure_allowance_auto` が TRUE なら computed 値を、FALSE なら手動入力の
+ * `tenure_allowance` を返す。flag が undefined のときは default TRUE 扱い (= 既存挙動)。
+ */
+function resolveTenureAllowance(
+  stored: SalarySettings | null,
+  computed: number,
+): number {
+  if (!stored) return computed;
+  // tenure_allowance_auto は新規追加列 (undefined なら true 扱いで後方互換)
+  const auto =
+    (stored as SalarySettings & { tenure_allowance_auto?: boolean })
+      .tenure_allowance_auto;
+  if (auto === false) return stored.tenure_allowance ?? 0;
+  return computed;
 }
 
 function fixedTotal(s: SalarySettings): number {
@@ -1031,7 +1060,7 @@ export default function PayrollPage() {
       );
       const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
           const sal = salMap.get(e.id) ?? null;
-          // 勤続手当を自動計算してsettingsをオーバーライド
+          // 勤続手当: tenure_allowance_auto=true (default) なら自動計算、false なら手動入力値
           const computedTenure = computeTenureAllowance(
             e.has_care_qualification ?? false,
             adjustedMonths(e.effective_service_months ?? 0),
@@ -1039,7 +1068,8 @@ export default function PayrollPage() {
             e.job_type ?? "",
             0, 0, 0
           );
-          const settingsWithTenure = sal ? { ...sal, tenure_allowance: computedTenure } : null;
+          const resolvedTenure = resolveTenureAllowance(sal, computedTenure);
+          const settingsWithTenure = sal ? { ...sal, tenure_allowance: resolvedTenure } : null;
           const summary = computeSummary(String(e.employee_number), recsByEmp.get(String(e.employee_number)) ?? []);
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];

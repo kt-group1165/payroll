@@ -27,6 +27,8 @@ type SalarySettings = {
   position_allowance: number;
   qualification_allowance: number;
   tenure_allowance: number;
+  /** 勤続手当を自動計算するか (default TRUE = 既存挙動)。FALSE のときは tenure_allowance の手動入力値を使用 */
+  tenure_allowance_auto: boolean;
   treatment_improvement: number;
   specific_treatment_improvement: number;
   treatment_subsidy: number;
@@ -98,6 +100,7 @@ const emptySettings = (employeeId: string): SalarySettings => ({
   position_allowance: 0,
   qualification_allowance: 0,
   tenure_allowance: 0,
+  tenure_allowance_auto: true,
   treatment_improvement: 0,
   specific_treatment_improvement: 0,
   treatment_subsidy: 0,
@@ -511,6 +514,8 @@ export function SalaryList({
             position_allowance: toInt(get("役職手当")),
             qualification_allowance: toInt(get("資格手当")),
             tenure_allowance: toInt(get("勤続手当")),
+            // CSV 取込時の auto flag default: TRUE (自動計算)
+            tenure_allowance_auto: true,
             treatment_improvement: toInt(get("処遇改善手当")),
             specific_treatment_improvement: toInt(get("特定処遇改善手当")),
             treatment_subsidy: toInt(get("処遇改善補助金手当")),
@@ -928,7 +933,22 @@ export function SalaryList({
                   <CardContent className="space-y-3">
                     <YenInput label="役職手当" value={settings.position_allowance} onChange={(v) => upd("position_allowance", v)} />
                     <YenInput label="資格手当" value={settings.qualification_allowance} onChange={(v) => upd("qualification_allowance", v)} />
-                    <YenInput label="勤続手当" value={settings.tenure_allowance} onChange={(v) => upd("tenure_allowance", v)} />
+                    <div className="space-y-1">
+                      <YenInput
+                        label={`勤続手当${settings.tenure_allowance_auto ? " (自動計算)" : ""}`}
+                        value={settings.tenure_allowance}
+                        onChange={(v) => upd("tenure_allowance", v)}
+                      />
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground pl-1">
+                        <input
+                          type="checkbox"
+                          checked={settings.tenure_allowance_auto}
+                          onChange={(e) => upd("tenure_allowance_auto", e.target.checked)}
+                        />
+                        勤続手当を自動計算する
+                        <span className="text-[10px]">(資格要件: 介護福祉士 / 実務者研修修了者 / 居宅介護支援職員)</span>
+                      </label>
+                    </div>
                     <Subtotal label="手当計" value={settings.position_allowance + settings.qualification_allowance + settings.tenure_allowance} />
                   </CardContent>
                 </Card>

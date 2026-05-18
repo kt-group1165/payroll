@@ -16,6 +16,7 @@ type SalarySettings = {
   position_allowance: number;
   qualification_allowance: number;
   tenure_allowance: number;
+  tenure_allowance_auto: boolean;
   treatment_improvement: number;
   specific_treatment_improvement: number;
   treatment_subsidy: number;
