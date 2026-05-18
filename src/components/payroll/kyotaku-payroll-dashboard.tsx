@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { fetchAllPagesParallel } from "@/lib/fetch-all";
+import { useKyotakuDashboardData } from "@/lib/swr/use-kyotaku-dashboard-data";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,8 +23,6 @@ import {
   getBaseUnit,
   type CalcConfig,
   type Confirmation,
-  type EmployeeSetting,
-  type KyotakuAttendanceRecord,
   type KyotakuRecord,
   type RegionalRate,
   type ServiceUnit,
@@ -80,11 +78,6 @@ type FullRecord = KyotakuRecord & {
   service_code: string | null;
 };
 
-type SettingRow = EmployeeSetting & {
-  id?: string;
-  office_number: string;
-};
-
 type ConfirmationRow = Confirmation & {
   id: string;
   office_number: string;
@@ -98,16 +91,6 @@ type YobouRow = YobouRecord & {
   office_number: string;
   source: "csv" | "manual";
   source_filename: string | null;
-};
-
-/**
- * 出勤簿 row (出張距離手当 用、staff_name 解決済)。
- * 元 row (payroll_kyotaku_attendance_records) は employee_id key だが、
- * 給与計算は staff_name key なので payroll_employees の (id → name) で
- * 変換した形で保持する。
- */
-type AttendanceWithStaffName = KyotakuAttendanceRecord & {
-  office_number: string;
 };
 
 // =====================================================================
@@ -381,27 +364,13 @@ export function KyotakuPayrollDashboard({
   allKyotakuOffices,
   initialOfficeNumber,
 }: Props) {
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  const [records, setRecords] = useState<FullRecord[]>([]);
-  const [settings, setSettings] = useState<SettingRow[]>([]);
-  const [units, setUnits] = useState<ServiceUnit[]>([]);
-  const [rates, setRates] = useState<RegionalRate[]>([]);
-  const [confirmations, setConfirmations] = useState<ConfirmationRow[]>([]);
-  const [yobouRows, setYobouRows] = useState<YobouRow[]>([]);
-  /** 出勤簿 row (staff_name 解決済)、出張距離手当 算出用 */
-  const [attendanceRows, setAttendanceRows] = useState<AttendanceWithStaffName[]>([]);
-  /** office_number → travel_unit_price (円/km)。出張距離手当 単価 */
-  const [officeTravelRateMap, setOfficeTravelRateMap] = useState<Map<string, number>>(
-    new Map(),
-  );
-
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   // 設定 modal は office_number 単位なので、開く時に対象 office を保持する
   const [settingsModalOffice, setSettingsModalOffice] =
     useState<KyotakuOffice | null>(null);
   const [busyPay, setBusyPay] = useState<string | null>(null);
+  /** 確定/取消などの mutation 操作中の error message (SWR 由来 error とは別 channel) */
+  const [mutationErr, setMutationErr] = useState<string | null>(null);
 
   /** 絞り込み office_number。null = 全社横断 mode */
   const [filterOfficeNumber, setFilterOfficeNumber] = useState<string | null>(
@@ -452,207 +421,27 @@ export function KyotakuPayrollDashboard({
     return m;
   }, [allKyotakuOffices]);
 
-  const fetchAll = async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      if (officeNumbers.length === 0) {
-        setRecords([]);
-        setSettings([]);
-        setUnits([]);
-        setRates([]);
-        setConfirmations([]);
-        setYobouRows([]);
-        setAttendanceRows([]);
-        setOfficeTravelRateMap(new Map());
-        return;
-      }
+  // SWR 経由で 8 種のデータを取得。officeNumbers が変わると別 cache、
+  // 同じ officeNumbers で再訪したときは cache から即時返却 (keepPreviousData)。
+  const {
+    records,
+    settings,
+    units,
+    rates,
+    confirmations,
+    yobouRows,
+    attendanceRows,
+    officeTravelRateMap,
+    isLoading,
+    error: swrError,
+    mutate,
+  } = useKyotakuDashboardData(officeNumbers, officeIds);
 
-      const [recs, setRes, unitRes, rateRes, confRes, yobouRes, attRes, officeRes] = await Promise.all([
-        fetchAllPagesParallel<FullRecord>(
-          () =>
-            supabase
-              .from("payroll_kyotaku_records")
-              .select("*", { count: "exact", head: true })
-              .in("office_number", officeNumbers),
-          (from, to) =>
-            supabase
-              .from("payroll_kyotaku_records")
-              .select("*")
-              .in("office_number", officeNumbers)
-              .order("office_number")
-              .order("service_month")
-              .range(from, to) as unknown as PromiseLike<{
-              data: FullRecord[] | null;
-            }>,
-        ),
-        // 給与設定は payroll_employees の 3 列に集約 (2026-05-13 移行)。
-        // payroll_employees.office_id は payroll_offices.id への FK。office_number で
-        // partition したいので embed で payroll_offices.office_number を引き寄せる。
-        // 全 employees fetch すると PostgREST default 1000 行 limit に引っ掛かり、
-        // id 順で範囲外の居宅介護支援ケアマネが落ちる (memory: 1253 件 backfill 済)。
-        // 居宅介護支援 office (~30 件) に絞れば数百件で完結し limit を回避できる。
-        supabase
-          .from("payroll_employees")
-          .select(
-            "id, name, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
-          )
-          .in("office_id", officeIds),
-        supabase.from("payroll_kyotaku_service_units").select("*"),
-        supabase.from("payroll_kyotaku_regional_rates").select("*"),
-        supabase
-          .from("payroll_kyotaku_confirmations")
-          .select("*")
-          .in("office_number", officeNumbers)
-          .is("reverted_at", null),
-        // 介護予防支援件数 (CSV 取込 + 手入力)。1 row = staff × 提供月 × 請求月 の
-        // 集約形式なので、~30 office × ~数年 × ~ケアマネ数 でも数千行に収まる前提。
-        // DB に table 未 apply の段階では空配列を fallback (error は捕捉して握り潰す)。
-        supabase
-          .from("payroll_kyotaku_yobou_records")
-          .select("*")
-          .in("office_number", officeNumbers),
-        // 出勤簿 (出張距離手当 算出用)。employee_id + work_date + business_km のみ。
-        // ~30 office × ~ケアマネ数 × ~日数 = 数千〜数万行になり得る。1000 行 PostgREST
-        // limit を超える前提なら fetchAllPagesParallel に切替が必要だが、まずは
-        // .limit(10000) で運用 (DB 未 apply 時は error 握り潰し → 空 fallback)。
-        // business_km は migration apply 前は列が無いので error になり得る → 同じく
-        // 空 fallback。
-        supabase
-          .from("payroll_kyotaku_attendance_records")
-          .select("employee_id, work_date, business_km, office_id")
-          .in("office_id", officeIds)
-          .not("business_km", "is", null)
-          .limit(10000),
-        // 事業所の出張距離単価 (NUMERIC 10,2)。office_number → travel_unit_price。
-        supabase
-          .from("payroll_offices")
-          .select("office_number, travel_unit_price")
-          .in("office_number", officeNumbers),
-      ]);
-
-      if (setRes.error) throw setRes.error;
-      if (unitRes.error) throw unitRes.error;
-      if (rateRes.error) throw rateRes.error;
-      if (confRes.error) throw confRes.error;
-      // yobouRes は DB 未 apply 段階の error を許容 (空配列 fallback)
-
-      setRecords(recs);
-      // payroll_employees row → SettingRow に flatten。office_number は embed 経由で
-      // 取り出す。embed は 1:1 (employees.office_id → offices.id) なので object。
-      // 居宅介護支援以外の office に紐づく employee は office_number が
-      // officeNumbers 集合に含まれないため partitionByOffice で自然に除外される。
-      type RawEmployeeRow = {
-        id: string;
-        name: string;
-        kyotaku_honnin_kyu: number | null;
-        kyotaku_shokuno_kyu: number | null;
-        kyotaku_kotei_zangyo: number | null;
-        kyotaku_shikaku_teate: number | null;
-        kyotaku_kotei: number | null;
-        kyotaku_tokutei_shogu: number | null;
-        kyotaku_kaigo_rate: number | null;
-        kyotaku_shien_rate: number | null;
-        office: { office_number: string | null } | null;
-      };
-      const officeNumberSet = new Set(officeNumbers);
-      const mappedSettings: SettingRow[] = [];
-      for (const r of (setRes.data ?? []) as unknown as RawEmployeeRow[]) {
-        const officeNumber = r.office?.office_number ?? "";
-        if (!officeNumber || !officeNumberSet.has(officeNumber)) continue;
-        if (!r.name) continue;
-        mappedSettings.push({
-          id: r.id,
-          office_number: officeNumber,
-          staff_name: r.name,
-          honnin_kyu: r.kyotaku_honnin_kyu,
-          shokuno_kyu: r.kyotaku_shokuno_kyu,
-          kotei_zangyo: r.kyotaku_kotei_zangyo,
-          shikaku_teate: r.kyotaku_shikaku_teate,
-          kotei: r.kyotaku_kotei,
-          tokutei_shogu: r.kyotaku_tokutei_shogu,
-          kaigo_rate: r.kyotaku_kaigo_rate,
-          shien_rate: r.kyotaku_shien_rate,
-        });
-      }
-      setSettings(mappedSettings);
-      setUnits((unitRes.data ?? []) as ServiceUnit[]);
-      setRates((rateRes.data ?? []) as RegionalRate[]);
-      setConfirmations((confRes.data ?? []) as ConfirmationRow[]);
-      setYobouRows(yobouRes.error ? [] : ((yobouRes.data ?? []) as YobouRow[]));
-
-      // ── 出張距離手当 用 attendance + office travel rate を整形 ──────────────
-      // attendance は employee_id key だが計算は staff_name key。
-      // setRes.data (= 同じく居宅介護支援 office に限定された payroll_employees) で
-      // (id → name, office_number) の map を組み、attendance を staff_name 解決済の
-      // 形に flatten する。
-      type RawAttendanceRow = {
-        employee_id: string;
-        work_date: string | null;
-        business_km: number | string | null;
-        office_id: string;
-      };
-      type EmployeeIdMapEntry = { name: string; office_number: string };
-      const employeeIdMap = new Map<string, EmployeeIdMapEntry>();
-      for (const r of (setRes.data ?? []) as unknown as RawEmployeeRow[]) {
-        const officeNumber = r.office?.office_number ?? "";
-        if (!officeNumber || !officeNumberSet.has(officeNumber)) continue;
-        if (!r.name) continue;
-        employeeIdMap.set(r.id, { name: r.name, office_number: officeNumber });
-      }
-
-      const mappedAttendance: AttendanceWithStaffName[] = [];
-      if (!attRes.error) {
-        for (const ar of (attRes.data ?? []) as unknown as RawAttendanceRow[]) {
-          if (!ar.employee_id || !ar.work_date) continue;
-          if (ar.business_km === null || ar.business_km === undefined) continue;
-          const emp = employeeIdMap.get(ar.employee_id);
-          if (!emp) continue;
-          // NUMERIC は文字列で返ることがあるので Number 化
-          const km = typeof ar.business_km === "string"
-            ? parseFloat(ar.business_km)
-            : ar.business_km;
-          if (!Number.isFinite(km) || km <= 0) continue;
-          mappedAttendance.push({
-            staff_name: emp.name,
-            office_number: emp.office_number,
-            work_date: ar.work_date,
-            business_km: km,
-          });
-        }
-      }
-      setAttendanceRows(mappedAttendance);
-
-      // payroll_offices.travel_unit_price → Map<office_number, number>
-      type RawOfficeRow = {
-        office_number: string;
-        travel_unit_price: number | string | null;
-      };
-      const travelMap = new Map<string, number>();
-      if (!officeRes.error) {
-        for (const o of (officeRes.data ?? []) as unknown as RawOfficeRow[]) {
-          if (!o.office_number) continue;
-          const v = typeof o.travel_unit_price === "string"
-            ? parseFloat(o.travel_unit_price)
-            : (o.travel_unit_price ?? 0);
-          travelMap.set(o.office_number, Number.isFinite(v) ? v : 0);
-        }
-      }
-      setOfficeTravelRateMap(travelMap);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- office 集合切替時の async fetch */
-    fetchAll().catch(() => undefined);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [officeNumbers.join(",")]);
+  // loading 表示は「データ未取得 (records.length===0) かつ fetch 中」のときのみ。
+  // keepPreviousData により revalidate 中も前回データを表示し続けるので、
+  // タブ/事業所/月切替時の体感速度を維持する。
+  const loading = isLoading && records.length === 0 && yobouRows.length === 0;
+  const err = mutationErr ?? (swrError ? swrError.message : null);
 
   // ----------------------- 絞り込み済み view -----------------------
 
@@ -873,6 +662,7 @@ export function KyotakuPayrollDashboard({
     const lockKey = `${officeNumber}|${staff}|${payMonth}`;
     if (busyPay) return;
     setBusyPay(lockKey);
+    setMutationErr(null);
     try {
       const { error } = await supabase
         .from("payroll_kyotaku_confirmations")
@@ -885,10 +675,10 @@ export function KyotakuPayrollDashboard({
           confirmed_at: new Date().toISOString(),
         });
       if (error) throw error;
-      await fetchAll();
+      mutate();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setErr(`確定に失敗: ${msg}`);
+      setMutationErr(`確定に失敗: ${msg}`);
     } finally {
       setBusyPay(null);
     }
@@ -909,16 +699,17 @@ export function KyotakuPayrollDashboard({
     );
     if (!row) return;
     setBusyPay(lockKey);
+    setMutationErr(null);
     try {
       const { error } = await supabase
         .from("payroll_kyotaku_confirmations")
         .update({ reverted_at: new Date().toISOString() })
         .eq("id", row.id);
       if (error) throw error;
-      await fetchAll();
+      mutate();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setErr(`確定解除に失敗: ${msg}`);
+      setMutationErr(`確定解除に失敗: ${msg}`);
     } finally {
       setBusyPay(null);
     }
@@ -976,7 +767,7 @@ export function KyotakuPayrollDashboard({
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
           エラー: {err}
         </div>
-        <Button onClick={() => fetchAll()} variant="outline" size="sm">
+        <Button onClick={() => mutate()} variant="outline" size="sm">
           再読込
         </Button>
       </div>
@@ -1049,7 +840,7 @@ export function KyotakuPayrollDashboard({
             tenantId={TENANT_ID}
             officeNumber={settingsModalOffice.office_number}
             staffNames={[]}
-            onSaved={() => fetchAll()}
+            onSaved={() => mutate()}
           />
         )}
       </div>
@@ -1163,7 +954,7 @@ export function KyotakuPayrollDashboard({
             yobouRows={filteredYobou}
             allStaffKeys={allStaffKeys}
             officeMap={officeMap}
-            onSaved={fetchAll}
+            onSaved={() => mutate()}
           />
         </TabsContent>
       </Tabs>
@@ -1183,7 +974,7 @@ export function KyotakuPayrollDashboard({
                 .map((r) => r.staff_name),
             ),
           )}
-          onSaved={() => fetchAll()}
+          onSaved={() => mutate()}
         />
       )}
     </div>

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +27,6 @@ import { toast } from "sonner";
 import {
   calcDailyListWithWeekly,
   calcMonthlySummary,
-  extendedMonthRange,
   formatHM,
   minutesBetween,
   weekKeyOf,
@@ -40,6 +38,9 @@ import {
   parseKyotakuAttendanceCsv,
   type KyotakuAttendanceCsvRow,
 } from "@/lib/csv/kyotaku-attendance-parser";
+import { useKyotakuOffices } from "@/lib/swr/use-kyotaku-offices";
+import { useKyotakuEmployees } from "@/lib/swr/use-kyotaku-employees";
+import { useKyotakuAttendanceRows } from "@/lib/swr/use-kyotaku-attendance-rows";
 
 /**
  * 居宅介護支援ケアマネ 出勤簿入力画面
@@ -60,22 +61,10 @@ import {
 // 型定義
 // =====================================================================
 
-type KyotakuOffice = {
-  id: string;
-  office_number: string;
-  short_name: string;
-  name: string;
-  /** 1週間の起算曜日 (0=日, 1=月, ..., 6=土)。法定休日 auto-detect と週次残業の週境界に使用 */
-  work_week_start: number;
-};
+// KyotakuOffice / EmployeeRow は @/lib/swr/* hook から import。
+// SWR を撤去するときは hook 内部を useEffect+useState に書き換えるだけで component 側は変更不要。
 
-type EmployeeRow = {
-  id: string;
-  name: string;
-  office_id: string;
-};
-
-/** DB row (payroll_kyotaku_attendance_records) */
+/** DB row (payroll_kyotaku_attendance_records) - upsert 用 */
 type AttendanceRow = {
   id?: string;
   tenant_id: string;
@@ -202,22 +191,32 @@ function toAttendanceRecord(row: RowState): AttendanceRecord {
 // =====================================================================
 
 export function KyotakuAttendanceContent() {
-  const [offices, setOffices] = useState<KyotakuOffice[]>([]);
-  const [officeLoading, setOfficeLoading] = useState(true);
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>("");
-
-  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
-
   const [month, setMonth] = useState<string>(() => currentMonth());
 
+  // ---------------- SWR-backed master data ----------------
+  // offices: 居宅介護支援 全件 (cache key = "kyotaku-offices")
+  // employees: 選択 office に紐づく職員 (cache key = "kyotaku-employees:{officeId}")
+  // attendance: 選択スタッフ + 月の出勤簿 row + 隣接月 record
+  //   (cache key = "kyotaku-attendance:{empId}:{month}:{weekStart}")
+  // SWR は本 component と各 hook 内部のみで使用 → 撤去時は hook 内部を書き換えるだけ。
+  const {
+    offices,
+    isLoading: officeLoading,
+    error: officeFetchError,
+  } = useKyotakuOffices();
+  const {
+    employees,
+    error: employeeFetchError,
+  } = useKyotakuEmployees(selectedOfficeId);
+
+  /** UI 上の編集可能 row state。
+   *  SWR cache = DB 上の真実 / rows = user 編集 (dirty=true 含む) の作業用コピー。
+   *  SWR data が変わったら useEffect で base に reset する (= reload 相当)。 */
   const [rows, setRows] = useState<RowState[]>([]);
-  /**
-   * 月跨ぎ週の正しい週次残業計算のため、当月の前後の週に該当する隣接月の record を
-   * 別途保持する (rows = 当月分のみ、UI 表示は当月のみ)。
-   */
+  /** 月跨ぎ週の週次残業計算用の隣接月 record (UI 表示しない) */
   const [neighborRecords, setNeighborRecords] = useState<AttendanceRecord[]>([]);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -284,72 +283,38 @@ export function KyotakuAttendanceContent() {
     };
   }, [hasUnsavedChanges]);
 
-  // ---------------- offices 初期 fetch ----------------
+  // ---------------- SWR error → 表示用 err state へ伝播 ----------------
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setOfficeLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("payroll_offices")
-          .select(`id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`)
-          .eq("office_type", "居宅介護支援");
-        if (cancelled) return;
-        if (error) throw error;
-        const flat = flattenOfficeMaster(data as never) as unknown as KyotakuOffice[];
-        flat.sort((a, b) => a.office_number.localeCompare(b.office_number));
-        setOffices(flat);
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : String(e);
-          setErr(`事業所一覧の取得に失敗: ${msg}`);
-        }
-      } finally {
-        if (!cancelled) setOfficeLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    /* eslint-disable react-hooks/set-state-in-effect -- SWR error を表示用 state へ sync */
+    if (officeFetchError) {
+      setErr(`事業所一覧の取得に失敗: ${officeFetchError.message}`);
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [officeFetchError]);
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- SWR error を表示用 state へ sync */
+    if (employeeFetchError) {
+      setErr(`職員一覧の取得に失敗: ${employeeFetchError.message}`);
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [employeeFetchError]);
 
-  // ---------------- employees (office 変更時) fetch ----------------
+  // ---------------- 選択 office が変わって employees list が切替わったら
+  // 旧 employee 選択を valid 化する (新 office に居なければクリア) ----------------
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- office 切替に応じた async fetch */
+    /* eslint-disable react-hooks/set-state-in-effect -- office 変更時の selected 同期 */
     if (!selectedOfficeId) {
-      setEmployees([]);
-      setSelectedEmployeeId("");
+      if (selectedEmployeeId !== "") setSelectedEmployeeId("");
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("payroll_employees")
-          .select("id, name, office_id")
-          .eq("office_id", selectedOfficeId)
-          .order("name");
-        if (cancelled) return;
-        if (error) throw error;
-        const list = (data ?? []) as EmployeeRow[];
-        setEmployees(list);
-        // 選択中 employee が新 office に居なければクリア
-        if (!list.some((e) => e.id === selectedEmployeeId)) {
-          setSelectedEmployeeId("");
-        }
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : String(e);
-          setErr(`職員一覧の取得に失敗: ${msg}`);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    if (employees.length === 0) return;
+    if (!employees.some((e) => e.id === selectedEmployeeId)) {
+      setSelectedEmployeeId("");
+    }
     /* eslint-enable react-hooks/set-state-in-effect */
+    // selectedEmployeeId をあえて deps から外し loop を避ける
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedOfficeId]);
+  }, [employees, selectedOfficeId]);
 
   // ---------------- 月 row build + DB 読み込み ----------------
   const dates = useMemo(() => monthDates(month), [month]);
@@ -360,10 +325,28 @@ export function KyotakuAttendanceContent() {
     return o?.work_week_start ?? 0;
   }, [offices, selectedOfficeId]);
 
-  const loadRows = useCallback(async () => {
-    // 月の全日空 row を必ず作る (DB 未登録でも入力可能)
-    // is_legal_holiday は user の checkbox 操作 or calcDailyListWithWeekly の
-    // 「週内に休みが 1 日も無い時 = 最終労働日が法定休日扱い」自動判定で決まる。
+  // ---------------- 出勤簿 SWR fetch ----------------
+  // SWR が DB 上の「真実」を保持。表示用 rows は SWR data を base に組み立てる。
+  const {
+    data: attendanceData,
+    isLoading: attendanceLoading,
+    error: attendanceFetchError,
+    mutate: mutateAttendance,
+  } = useKyotakuAttendanceRows(selectedEmployeeId, month, selectedOfficeWeekStart);
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- SWR error を表示用 state へ sync */
+    if (attendanceFetchError) {
+      setErr(`出勤データの取得に失敗: ${attendanceFetchError.message}`);
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [attendanceFetchError]);
+
+  /** SWR data + dates から rows を組み立てる純粋関数 */
+  const buildRowsFromSwr = useCallback((): {
+    rows: RowState[];
+    neighbors: AttendanceRecord[];
+  } => {
     const baseRows: RowState[] = dates.map(({ date, dow }) => ({
       work_date: date,
       dow,
@@ -378,107 +361,58 @@ export function KyotakuAttendanceContent() {
       dirty: false,
       existing_id: null,
     }));
-
-    if (!selectedEmployeeId || dates.length === 0) {
-      setRows(baseRows);
-      setNeighborRecords([]);
-      return;
+    if (!selectedEmployeeId || dates.length === 0 || !attendanceData) {
+      return { rows: baseRows, neighbors: [] };
     }
-
-    setLoading(true);
-    setErr(null);
-    try {
-      const monthStart = dates[0].date;
-      const monthEnd = dates[dates.length - 1].date;
-      // 月跨ぎ週の週次残業計算のため拡張範囲で fetch
-      const { start: extStart, end: extEnd } = extendedMonthRange(month, selectedOfficeWeekStart);
-      const { data, error } = await supabase
-        .from("payroll_kyotaku_attendance_records")
-        .select("*")
-        .eq("employee_id", selectedEmployeeId)
-        .gte("work_date", extStart || monthStart)
-        .lte("work_date", extEnd || monthEnd);
-      // table 未 apply 時は error 握り潰し → 空 fallback
-      if (error) {
-        setRows(baseRows);
-        setNeighborRecords([]);
-        return;
-      }
-      const allRows = (data ?? []) as AttendanceRow[];
-      // 当月分のみ byDate に、隣接月分は neighborRecords に分ける
-      const byDate = new Map<string, AttendanceRow>();
-      const neighbors: AttendanceRecord[] = [];
-      for (const r of allRows) {
-        if (r.work_date >= monthStart && r.work_date <= monthEnd) {
-          byDate.set(r.work_date, r);
-        } else {
-          // 隣接月の records は calc 用に AttendanceRecord 形式に変換 (UI 表示しない)
-          const paidLeaveType: "full" | "half" | null =
-            r.paid_leave_type === "full" || r.paid_leave_type === "half"
-              ? r.paid_leave_type
-              : r.is_paid_leave
-                ? "full"
-                : null;
-          neighbors.push({
-            work_date: r.work_date,
-            start_time: toUiTime(r.start_time) || null,
-            end_time: toUiTime(r.end_time) || null,
-            break_minutes: r.break_minutes ?? 0,
-            is_legal_holiday: !!r.is_legal_holiday,
-            paid_leave_type: paidLeaveType,
-            substitute_for_date: r.substitute_for_date ?? null,
-          });
-        }
-      }
-      setNeighborRecords(neighbors);
-      const merged = baseRows.map((br) => {
-        const ex = byDate.get(br.work_date);
-        if (!ex) return br;
-        // business_km は NUMERIC なので number / 文字列 両対応で取得
-        const rawKm = (ex as { business_km?: number | string | null }).business_km;
-        let businessKmStr = "";
-        if (rawKm !== null && rawKm !== undefined && rawKm !== "") {
-          const n = typeof rawKm === "string" ? parseFloat(rawKm) : rawKm;
-          if (Number.isFinite(n)) businessKmStr = String(n);
-        }
-        // paid_leave_type が NULL かつ is_paid_leave=true なら legacy (backfill 前) として "full" 扱い
-        const paidLeaveType: "full" | "half" | null =
-          ex.paid_leave_type === "full" || ex.paid_leave_type === "half"
-            ? ex.paid_leave_type
-            : ex.is_paid_leave
-              ? "full"
-              : null;
-        return {
-          ...br,
-          start_time: toUiTime(ex.start_time),
-          end_time: toUiTime(ex.end_time),
-          break_minutes: ex.break_minutes ?? 0,
-          is_legal_holiday: !!ex.is_legal_holiday,
-          paid_leave_type: paidLeaveType,
-          note: ex.note ?? "",
-          business_km: businessKmStr,
-          substitute_for_date: ex.substitute_for_date ?? "",
-          dirty: false,
-          existing_id: ex.id ?? null,
-        };
-      });
-      setRows(merged);
-    } catch (e) {
-      // 例外時も空 row で入力可能にする
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(`出勤データの取得に失敗: ${msg}`);
-      setRows(baseRows);
-      setNeighborRecords([]);
-    } finally {
-      setLoading(false);
+    const byDate = new Map<string, AttendanceRow>();
+    for (const r of attendanceData.currentMonthRows) {
+      byDate.set(r.work_date, r as unknown as AttendanceRow);
     }
-  }, [selectedEmployeeId, dates, month, selectedOfficeWeekStart]);
+    const merged = baseRows.map((br) => {
+      const ex = byDate.get(br.work_date);
+      if (!ex) return br;
+      const rawKm = (ex as { business_km?: number | string | null }).business_km;
+      let businessKmStr = "";
+      if (rawKm !== null && rawKm !== undefined && rawKm !== "") {
+        const n = typeof rawKm === "string" ? parseFloat(rawKm) : rawKm;
+        if (Number.isFinite(n)) businessKmStr = String(n);
+      }
+      const paidLeaveType: "full" | "half" | null =
+        ex.paid_leave_type === "full" || ex.paid_leave_type === "half"
+          ? ex.paid_leave_type
+          : ex.is_paid_leave
+            ? "full"
+            : null;
+      return {
+        ...br,
+        start_time: toUiTime(ex.start_time),
+        end_time: toUiTime(ex.end_time),
+        break_minutes: ex.break_minutes ?? 0,
+        is_legal_holiday: !!ex.is_legal_holiday,
+        paid_leave_type: paidLeaveType,
+        note: ex.note ?? "",
+        business_km: businessKmStr,
+        substitute_for_date: ex.substitute_for_date ?? "",
+        dirty: false,
+        existing_id: ex.id ?? null,
+      };
+    });
+    return { rows: merged, neighbors: attendanceData.neighborRecords };
+  }, [dates, selectedEmployeeId, attendanceData]);
 
+  // SWR data / dates / employee 切替で rows を再構築 (= 旧 loadRows 相当)。
+  // dirty な編集中変更は捨てられるが、employee/month/office 切替時は confirmIfDirty()
+  // で事前に確認しているので問題ない。SWR background revalidate でも同じ DB データなら
+  // 出力 rows も同一 → 余計な再 render は起きない (が rows identity は変わる)。
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- employee/month 切替の async fetch */
-    void loadRows();
+    /* eslint-disable react-hooks/set-state-in-effect -- SWR data 反映 */
+    const { rows: built, neighbors } = buildRowsFromSwr();
+    setRows(built);
+    setNeighborRecords(neighbors);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [loadRows]);
+  }, [buildRowsFromSwr]);
+
+  const loading = attendanceLoading;
 
   // ---------------- 行更新 helper ----------------
   const updateRow = (idx: number, patch: Partial<RowState>): void => {
@@ -661,8 +595,8 @@ export function KyotakuAttendanceContent() {
         .upsert(upsertRows, { onConflict: "employee_id,work_date" });
       if (error) throw error;
       toast.success(`${dirtyRows.length}件 保存しました`);
-      // 再読み込み (existing_id / dirty=false を更新)
-      await loadRows();
+      // SWR cache invalidate → buildRowsFromSwr 再走 → existing_id / dirty=false 更新
+      mutateAttendance();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`保存に失敗: ${msg}`);
@@ -699,8 +633,8 @@ export function KyotakuAttendanceContent() {
         .lte("work_date", monthEnd);
       if (error) throw error;
       toast.success(`${count ?? 0} 件 削除しました`);
-      // 削除後は再 loadRows() で空 baseRows に戻す
-      await loadRows();
+      // 削除後は SWR cache invalidate → 空 baseRows に戻る
+      mutateAttendance();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`削除に失敗: ${msg}`);

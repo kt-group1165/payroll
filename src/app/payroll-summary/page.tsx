@@ -9,8 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useLocalStorage } from "@/lib/use-local-storage";
 import { KyotakuSummarySection } from "@/components/payroll/kyotaku-summary-section";
 import { MonthInputButton } from "@/components/ui/month-input-button";
-import { supabase } from "@/lib/supabase";
-import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { usePayrollOffices } from "@/lib/swr/use-payroll-offices";
 
 // ─── 型 ──────────────────────────────────────────────
 
@@ -260,15 +259,6 @@ const BUSINESS_TYPE_OPTIONS: { value: string; label: string; types: string[] }[]
 
 // ─── 本体 ────────────────────────────────────────────
 
-type OfficeForPayroll = {
-  id: string;
-  office_number: string;
-  short_name: string;
-  name: string;
-  office_type: string;
-  work_week_start: number;
-};
-
 export default function PayrollSummaryPage() {
   // useLocalStorage で SSR-safe に hydrate (setState-in-effect 不要)
   const [index] = useLocalStorage<IndexEntry[]>(
@@ -287,30 +277,8 @@ export default function PayrollSummaryPage() {
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>("");
   const [month, setMonth] = useState<string>(() => currentYM());
 
-  // 全 office (業種選択肢に応じて filter)
-  const [allOffices, setAllOffices] = useState<OfficeForPayroll[]>([]);
-  const [officesLoading, setOfficesLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setOfficesLoading(true);
-      const { data, error } = await supabase
-        .from("payroll_offices")
-        .select(`id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`);
-      if (cancelled) return;
-      if (error) {
-        setAllOffices([]);
-      } else {
-        const flat = flattenOfficeMaster(data as never) as unknown as OfficeForPayroll[];
-        flat.sort((a, b) => a.office_number.localeCompare(b.office_number));
-        setAllOffices(flat);
-      }
-      setOfficesLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // 全 office (業種選択肢に応じて filter) — SWR cache でページ再訪時の fetch を skip
+  const { offices: allOffices, isLoading: officesLoading } = usePayrollOffices();
 
   const businessTypeMatchTypes = useMemo(
     () => BUSINESS_TYPE_OPTIONS.find((o) => o.value === businessType)?.types ?? [],
