@@ -1125,7 +1125,6 @@ export function KyotakuPayrollDashboard({
             units={units}
             allStaffKeys={allStaffKeys}
             allMonths={allMonths}
-            officeMap={officeMap}
           />
         </TabsContent>
 
@@ -2065,13 +2064,11 @@ function RiyoshaTab({
   units,
   allStaffKeys,
   allMonths,
-  officeMap,
 }: {
   records: FullRecord[];
   units: ServiceUnit[];
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
   allMonths: string[];
-  officeMap: Map<string, KyotakuOffice>;
 }) {
   // 月選択 state (default = 最新月 = allMonths 末尾)
   const [selectedMonth, setSelectedMonth] = useState<string | null>(
@@ -2185,8 +2182,7 @@ function RiyoshaTab({
         <Table className="text-xs">
           <TableHeader>
             <TableRow>
-              <TableHead className="min-w-28">事業所</TableHead>
-              <TableHead className="min-w-32">担当ケアマネ</TableHead>
+              <TableHead className="min-w-28">担当ケアマネ</TableHead>
               <TableHead className="min-w-28">利用者名</TableHead>
               <TableHead className="min-w-20">介護度</TableHead>
               <TableHead className="min-w-24">保険者</TableHead>
@@ -2197,21 +2193,19 @@ function RiyoshaTab({
           <TableBody>
             {groups.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
                   この月のデータはありません
                 </TableCell>
               </TableRow>
             ) : groups.map((g) => {
               const first = g.rows[0];
-              const officeName = officeShortLabel(officeMap, first.office_number);
               // 連続する同値セルを空欄化するため、前 row の利用者識別子を保持
               let prevClient: string | null = null;
               return (
                 <Fragment key={g.key}>
                   {g.rows.map((r, rowIdx) => {
                     const resolved = resolveRecordUnit(r, units);
-                    // 事業所 / 担当ケアマネ は group 内で一定なので先頭行だけ表示
-                    const showOffice = rowIdx === 0;
+                    // 担当ケアマネ は group 内で一定なので先頭行だけ表示
                     const showStaff = rowIdx === 0;
                     // 利用者単位で 介護度 / 保険者 は同値が続くため、利用者切替時のみ表示
                     const clientKey = r.client_number ?? r.insured_number ?? r.insured_name ?? "";
@@ -2219,9 +2213,6 @@ function RiyoshaTab({
                     prevClient = clientKey;
                     return (
                       <TableRow key={r.id}>
-                        <TableCell className="text-muted-foreground/70">
-                          {showOffice ? officeShortLabel(officeMap, r.office_number) : ""}
-                        </TableCell>
                         <TableCell className="text-muted-foreground/70">
                           {showStaff ? r.staff_name : ""}
                         </TableCell>
@@ -2240,8 +2231,8 @@ function RiyoshaTab({
                     );
                   })}
                   <TableRow className="bg-muted/50 font-medium">
-                    <TableCell colSpan={6} className="text-right">
-                      {officeName} / {first.staff_name} 合計
+                    <TableCell colSpan={5} className="text-right">
+                      {first.staff_name} 合計
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {g.total.toLocaleString("ja-JP")}
