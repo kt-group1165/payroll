@@ -177,46 +177,14 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
       setLoading(true);
       setErr(null);
       try {
-        // 1) office の employee 一覧 + 国保連 records + master 系 + 予防支援 + 出張単価
-        // 国保連 records (plan/kazan/chosei の計算には service_month 全期間が必要)
-        // service_units / regional_rates は tenant 共通
-        // yobou_records は予防支援件数 (オプション)
-        // office travel_unit_price は出張距離手当の単価
-        const [empRes, recRes, unitRes, rateRes, yobouRes, officeRes] = await Promise.all([
-          supabase
-            .from("payroll_employees")
-            .select(
-              "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
-            )
-            .eq("office_id", officeId)
-            .order("name"),
-          supabase
-            .from("payroll_kyotaku_records")
-            .select("*")
-            .limit(10000),
-          supabase.from("payroll_kyotaku_service_units").select("*"),
-          supabase.from("payroll_kyotaku_regional_rates").select("*"),
-          supabase
-            .from("payroll_kyotaku_yobou_records")
-            .select("*"),
-          supabase
-            .from("payroll_offices")
-            .select("office_number, travel_unit_price")
-            .eq("id", officeId)
-            .single(),
-        ]);
+        // 1a) 先に office_number と travel_unit_price を取得 (kyotaku_records / yobou を office_number で DB-level filter するため)
+        const officeRes = await supabase
+          .from("payroll_offices")
+          .select("office_number, travel_unit_price")
+          .eq("id", officeId)
+          .single();
         if (cancelled) return;
-        if (empRes.error) throw empRes.error;
-        type RawEmployee = EmployeeRow & {
-          office?: { office_number: string | null } | null;
-        };
-        const rawEmployees = (empRes.data ?? []) as unknown as RawEmployee[];
-        const employees: EmployeeRow[] = rawEmployees;
-        if (employees.length === 0) {
-          setRows([]);
-          return;
-        }
-        const empIds = employees.map((e) => e.id);
+        if (officeRes.error) throw officeRes.error;
         const officeNumber =
           (officeRes.data as { office_number?: string | null } | null)?.office_number ?? "";
         const travelRate = (() => {
@@ -225,6 +193,36 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
           const n = typeof v === "string" ? parseFloat(v) : v;
           return Number.isFinite(n) ? n : 0;
         })();
+
+        // 1b) employees / kyotaku_records (office filter) / master / yobou を並列 fetch
+        const [empRes, recRes, unitRes, rateRes, yobouRes] = await Promise.all([
+          supabase
+            .from("payroll_employees")
+            .select(
+              "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate",
+            )
+            .eq("office_id", officeId)
+            .order("name"),
+          supabase
+            .from("payroll_kyotaku_records")
+            .select("*")
+            .eq("office_number", officeNumber)
+            .limit(10000),
+          supabase.from("payroll_kyotaku_service_units").select("*"),
+          supabase.from("payroll_kyotaku_regional_rates").select("*"),
+          supabase
+            .from("payroll_kyotaku_yobou_records")
+            .select("*")
+            .eq("office_number", officeNumber),
+        ]);
+        if (cancelled) return;
+        if (empRes.error) throw empRes.error;
+        const employees = (empRes.data ?? []) as EmployeeRow[];
+        if (employees.length === 0) {
+          setRows([]);
+          return;
+        }
+        const empIds = employees.map((e) => e.id);
 
         // 2) 月跨ぎ週も含めて拡張範囲で出勤簿 fetch (週次残業を正しく計算)
         const { start: extStart, end: extEnd } = extendedMonthRange(month, weekStart);
@@ -261,13 +259,9 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
           shien_rate: e.kyotaku_shien_rate,
         }));
 
-        // kyotaku_records / yobou は当該 office に絞る (limit ガード)
-        const allKyotakuRecords = ((recRes.data ?? []) as unknown[]).filter(
-          (r) => (r as { office_number?: string }).office_number === officeNumber,
-        ) as KyotakuRecord[];
-        const allYobou = ((yobouRes.error ? [] : yobouRes.data) ?? []).filter(
-          (r) => (r as { office_number?: string }).office_number === officeNumber,
-        ) as YobouRecord[];
+        // kyotaku_records / yobou は DB-level で office_number で filter 済
+        const allKyotakuRecords = (recRes.data ?? []) as KyotakuRecord[];
+        const allYobou = (yobouRes.error ? [] : (yobouRes.data ?? [])) as YobouRecord[];
 
         // calcSalary に渡す attendance は staff_name 付き (= employee_id → name 解決済)
         // 当該 office の全 employee 分まとめて。
