@@ -31,9 +31,10 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "給与計算",
     items: [
-      { href: "/attendance",          label: "労働時間管理", icon: "🕐" },
-      { href: "/kyotaku-attendance",  label: "出勤簿",       icon: "📅" },
-      { href: "/salary",              label: "給与設定",     icon: "⚙️" },
+      { href: "/attendance",            label: "労働時間管理", icon: "🕐" },
+      { href: "/kyotaku-attendance",    label: "出勤簿",       icon: "📅" },
+      { href: "/kyotaku-labor-check",   label: "居宅労働時間チェック", icon: "🩺" },
+      { href: "/salary",                label: "給与設定",     icon: "⚙️" },
       { href: "/distance",            label: "移動距離計算", icon: "🗺️" },
       { href: "/payroll",             label: "給与計算",     icon: "💰" },
       { href: "/payroll-summary",     label: "総括表",       icon: "📊" },

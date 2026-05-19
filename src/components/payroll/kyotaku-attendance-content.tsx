@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Download, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -191,9 +192,20 @@ function toAttendanceRecord(row: RowState): AttendanceRecord {
 // =====================================================================
 
 export function KyotakuAttendanceContent() {
-  const [selectedOfficeId, setSelectedOfficeId] = useState<string>("");
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
-  const [month, setMonth] = useState<string>(() => currentMonth());
+  // URL ?office= / ?employee= / ?month= が指定されていれば初期値に採用
+  // (労働時間チェック等の deep link から飛んで来る用)
+  const searchParams = useSearchParams();
+  const initialOfficeId = searchParams.get("office") ?? "";
+  const initialEmployeeId = searchParams.get("employee") ?? "";
+  const initialMonth =
+    searchParams.get("month") &&
+    /^\d{4}-\d{2}$/.test(searchParams.get("month") as string)
+      ? (searchParams.get("month") as string)
+      : currentMonth();
+
+  const [selectedOfficeId, setSelectedOfficeId] = useState<string>(initialOfficeId);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(initialEmployeeId);
+  const [month, setMonth] = useState<string>(initialMonth);
 
   // ---------------- SWR-backed master data ----------------
   // offices: 居宅介護支援 全件 (cache key = "kyotaku-offices")
