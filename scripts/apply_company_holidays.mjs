@@ -39,33 +39,24 @@ const sb = createClient(SB_URL, SB_KEY, {
 });
 
 // ===================================================================
-// 1) Migration SQL 適用
+// 1) Migration の existence チェック (table が既にあれば skip)
 // ===================================================================
-const sqlPath = resolve(__dirname, "..", "migrations", "payroll_company_holidays.sql");
-const sql = readFileSync(sqlPath, "utf8");
-
-console.log("[1/2] migration payroll_company_holidays.sql 適用");
-const { error: sqlErr } = await sb.rpc("exec_sql", { sql });
-if (sqlErr) {
-  // table が既に存在するなら無視して seed に進む
-  const msg = sqlErr.message || "";
-  if (
-    msg.includes("already exists") ||
-    msg.includes("relation \"payroll_company_holidays\" already exists")
-  ) {
-    console.log("  → table 既に存在。seed のみ実行します");
-  } else {
-    console.error("\n⚠️ exec_sql RPC が無いため、自動適用できません。");
-    console.error("Supabase SQL Editor で以下を実行してください:\n");
-    console.error("─".repeat(60));
-    console.error(sql);
-    console.error("─".repeat(60));
-    console.error("\n適用後、再度このスクリプトを実行すると seed が走ります。");
-    process.exit(1);
-  }
-} else {
-  console.log("  → OK");
+console.log("[1/2] payroll_company_holidays table 存在確認");
+const { error: probeErr } = await sb
+  .from("payroll_company_holidays")
+  .select("id", { count: "exact", head: true });
+if (probeErr) {
+  const sqlPath = resolve(__dirname, "..", "migrations", "payroll_company_holidays.sql");
+  const sql = readFileSync(sqlPath, "utf8");
+  console.error("\n⚠️ payroll_company_holidays table 未作成。");
+  console.error(`probe error: ${probeErr.message}`);
+  console.error("Supabase SQL Editor で以下を実行してから再実行してください:\n");
+  console.error("─".repeat(60));
+  console.error(sql);
+  console.error("─".repeat(60));
+  process.exit(1);
 }
+console.log("  → table 存在確認 OK、seed に進みます");
 
 // ===================================================================
 // 2) デフォルト seed (当年 + 翌年)
