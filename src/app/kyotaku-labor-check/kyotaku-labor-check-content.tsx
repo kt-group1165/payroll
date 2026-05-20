@@ -112,6 +112,7 @@ export function KyotakuLaborCheckContent() {
                     <th className="px-3 py-2 font-medium text-right">日次残業</th>
                     <th className="px-3 py-2 font-medium text-right">週次残業</th>
                     <th className="px-3 py-2 font-medium text-right">欠勤</th>
+                    <th className="px-3 py-2 font-medium text-right" title="実残業代 / 固定残業代">残業代 vs 固定</th>
                     <th className="px-3 py-2 font-medium text-center w-24"></th>
                   </tr>
                 </thead>
@@ -147,6 +148,22 @@ export function KyotakuLaborCheckContent() {
                       >
                         {hm(r.absenceMin)}
                       </td>
+                      <td
+                        className={`px-3 py-1.5 text-right tabular-nums ${
+                          r.hasFixedOvertimeExceeded
+                            ? "text-amber-700 font-semibold"
+                            : ""
+                        }`}
+                        title={
+                          r.fixedOvertimePay > 0
+                            ? `実残業代 ¥${r.overtimePay.toLocaleString()} / 固定残業代 ¥${r.fixedOvertimePay.toLocaleString()}`
+                            : "固定残業代 未設定"
+                        }
+                      >
+                        {r.fixedOvertimePay > 0
+                          ? `¥${r.overtimePay.toLocaleString()} / ¥${r.fixedOvertimePay.toLocaleString()}`
+                          : "—"}
+                      </td>
                       <td className="px-3 py-1.5 text-center">
                         <Link
                           href={`/kyotaku-attendance?office=${r.office_id}&employee=${r.employee_id}&month=${month}`}
@@ -162,7 +179,10 @@ export function KyotakuLaborCheckContent() {
               <p className="mt-3 text-xs text-muted-foreground">
                 ※ 出勤簿に記録がある (= start_time 入力済) 職員のみ集計対象。
                 日次残業 = 1日 8h 超 / 週次残業 = 週 40h 超 / 欠勤 = 所定労働日に
-                実労働が足りない時間 (週 40h 補填後)。
+                実労働が足りない時間 (週 40h 補填後) /{" "}
+                <span className="text-amber-700 font-semibold">残業代 vs 固定</span>{" "}
+                = 通常残業代(1.25倍) + 深夜割増(0.25倍) + 法休割増(0.35倍) の合計が
+                固定残業代を超えた場合に表示。
               </p>
             </div>
           )}

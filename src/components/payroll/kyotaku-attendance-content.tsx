@@ -33,7 +33,12 @@ import {
   weekKeyOf,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
-import { isJapaneseHoliday } from "@/lib/payroll/japan-holidays";
+import { isJapaneseHoliday, getJapaneseHolidayName } from "@/lib/payroll/japan-holidays";
+import {
+  calcOvertimePayBreakdown,
+  type OvertimeSettingForCalc,
+  type SalarySettingsForOvertime,
+} from "@/lib/payroll/overtime-pay-calc";
 import {
   exportKyotakuAttendanceCsv,
   parseKyotakuAttendanceCsv,
@@ -42,6 +47,8 @@ import {
 import { useKyotakuOffices } from "@/lib/swr/use-kyotaku-offices";
 import { useKyotakuEmployees } from "@/lib/swr/use-kyotaku-employees";
 import { useKyotakuAttendanceRows } from "@/lib/swr/use-kyotaku-attendance-rows";
+import { useKyotakuMonthly } from "@/lib/swr/use-kyotaku-attendance-monthly";
+import { useCompanyHolidays } from "@/lib/swr/use-company-holidays";
 
 /**
  * 居宅介護支援ケアマネ 出勤簿入力画面
@@ -233,6 +240,54 @@ export function KyotakuAttendanceContent() {
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // 月単位データ (件数 + 加算)
+  const {
+    monthly: monthlyBase,
+    kasanRows: kasanBase,
+    mutate: mutateMonthly,
+  } = useKyotakuMonthly(selectedEmployeeId, month);
+  const [kaigoCount, setKaigoCount] = useState<string>("0");
+  const [yobouCount, setYobouCount] = useState<string>("0");
+  type KasanEdit = {
+    id: string | null;
+    /** "kasan" | "free" */
+    kind: "kasan" | "free";
+    kasan_unit: number | null; // for kasan kind
+    kasan_count: string; // for kasan kind
+    free_label: string; // for free kind
+    free_amount: string; // for free kind
+  };
+  const [kasanEdit, setKasanEdit] = useState<KasanEdit[]>([]);
+  const [monthlyDirty, setMonthlyDirty] = useState(false);
+  // base → edit に reset
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- SWR data → edit state sync (HANDOVER §2) */
+    setKaigoCount(String(monthlyBase.kaigo_count));
+    setYobouCount(String(monthlyBase.yobou_count));
+    const edits: KasanEdit[] = kasanBase.map((k) => ({
+      id: k.id,
+      kind: k.kasan_unit !== null ? "kasan" : "free",
+      kasan_unit: k.kasan_unit,
+      kasan_count: k.kasan_count !== null ? String(k.kasan_count) : "",
+      free_label: k.free_label ?? "",
+      free_amount: k.free_amount !== null ? String(k.free_amount) : "",
+    }));
+    // 加算行が 1 つも無ければ、デフォルトで空の「規定加算」行を 1 つ用意
+    if (edits.length === 0) {
+      edits.push({
+        id: null,
+        kind: "kasan",
+        kasan_unit: 200,
+        kasan_count: "",
+        free_label: "",
+        free_amount: "",
+      });
+    }
+    setKasanEdit(edits);
+    setMonthlyDirty(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [monthlyBase, kasanBase]);
+
   // 振替 date picker modal: 編集対象 row index と一時 date state
   const [substituteModalIdx, setSubstituteModalIdx] = useState<number | null>(null);
   const [substituteModalDate, setSubstituteModalDate] = useState<string>("");
@@ -242,7 +297,10 @@ export function KyotakuAttendanceContent() {
 
   // ---------------- 未保存変更の離脱警告 ----------------
   // dirty な row が 1 件でもあれば、tab close / refresh / 別 URL 入力 / sidebar link click で警告
-  const hasUnsavedChanges = useMemo(() => rows.some((r) => r.dirty), [rows]);
+  const hasUnsavedChanges = useMemo(
+    () => rows.some((r) => r.dirty) || monthlyDirty,
+    [rows, monthlyDirty],
+  );
 
   /** 同 page 内 (事業所/スタッフ/月) 切替時、未保存なら confirm。OK なら遷移を許可 */
   const confirmIfDirty = useCallback((): boolean => {
@@ -345,6 +403,13 @@ export function KyotakuAttendanceContent() {
     error: attendanceFetchError,
     mutate: mutateAttendance,
   } = useKyotakuAttendanceRows(selectedEmployeeId, month, selectedOfficeWeekStart);
+
+  // 会社休日 (お盆/年末年始等)。tenant 単位で全期間 fetch (件数は数十/年で軽い)。
+  // attendance-calc に渡して祝日と同じく「所定労働日でない日」として扱う。
+  const {
+    holidayDates: companyHolidayDates,
+    nameByDate: companyHolidayNameByDate,
+  } = useCompanyHolidays();
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- SWR error を表示用 state へ sync */
@@ -479,16 +544,14 @@ export function KyotakuAttendanceContent() {
       toast.error("日付を選択してください");
       return;
     }
-    // 振替元と出勤日が同じ週内か判定。週またぎなら確認ダイアログを出す
+    // 振替元と出勤日が同じ週内か判定。週またぎは完全禁止 (労基§35 の趣旨: 週単位の休)
     const targetRow = rows[substituteModalIdx];
     if (targetRow) {
       const workWeek = weekKeyOf(targetRow.work_date, selectedOfficeWeekStart);
       const subWeek = weekKeyOf(substituteModalDate, selectedOfficeWeekStart);
       if (workWeek && subWeek && workWeek !== subWeek) {
-        const ok = window.confirm(
-          `振替元 ${substituteModalDate} は出勤日 ${targetRow.work_date} と同じ週ではありません。\n通常、振替休日は同一週内で行うことが推奨されます。このまま登録しますか？`,
-        );
-        if (!ok) return;
+        toast.error("振替は同一週内でのみ可能です");
+        return;
       }
     }
     updateRow(substituteModalIdx, { substitute_for_date: substituteModalDate });
@@ -513,8 +576,13 @@ export function KyotakuAttendanceContent() {
   }, [rows, neighborRecords]);
 
   const allDailyCalcs = useMemo(
-    () => calcDailyListWithWeekly(combinedRecords, selectedOfficeWeekStart),
-    [combinedRecords, selectedOfficeWeekStart],
+    () =>
+      calcDailyListWithWeekly(
+        combinedRecords,
+        selectedOfficeWeekStart,
+        companyHolidayDates,
+      ),
+    [combinedRecords, selectedOfficeWeekStart, companyHolidayDates],
   );
 
   // 当月分の row index → daily calc を date 引きで対応付け
@@ -547,8 +615,13 @@ export function KyotakuAttendanceContent() {
 
   const monthSummary = useMemo(
     () =>
-      calcMonthlySummary(combinedRecords, selectedOfficeWeekStart, month),
-    [combinedRecords, selectedOfficeWeekStart, month],
+      calcMonthlySummary(
+        combinedRecords,
+        selectedOfficeWeekStart,
+        month,
+        companyHolidayDates,
+      ),
+    [combinedRecords, selectedOfficeWeekStart, month, companyHolidayDates],
   );
   /** 月合計 出張距離 (km、小数 1 桁) */
   const totalBusinessKm = useMemo(() => {
@@ -569,10 +642,51 @@ export function KyotakuAttendanceContent() {
       return;
     }
     const dirtyRows = rows.filter((r) => r.dirty);
-    if (dirtyRows.length === 0) {
+    if (dirtyRows.length === 0 && !monthlyDirty) {
       toast.info("変更はありません");
       return;
     }
+
+    // 固定残業代 超過チェック (保存前 inline 警告)
+    //   salary_settings + overtime_settings を select し、calcOvertimePayBreakdown で判定。
+    //   超過なら確認 dialog を出し、OK で保存続行 / Cancel で中止。
+    try {
+      const [{ data: salaryRow }, { data: otRow }] = await Promise.all([
+        supabase
+          .from("payroll_salary_settings")
+          .select(
+            "base_personal_salary, skill_salary, position_allowance, qualification_allowance, tenure_allowance, treatment_improvement, specific_treatment_improvement, treatment_subsidy, fixed_overtime_pay, special_bonus",
+          )
+          .eq("employee_id", selectedEmployeeId)
+          .maybeSingle(),
+        supabase
+          .from("payroll_overtime_settings")
+          .select(
+            "scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
+          )
+          .eq("job_type", "居宅介護支援")
+          .maybeSingle(),
+      ]);
+      const ot = calcOvertimePayBreakdown(
+        monthSummary,
+        salaryRow as SalarySettingsForOvertime | null,
+        otRow as OvertimeSettingForCalc | null,
+      );
+      if (ot.isExceeding) {
+        const ok = window.confirm(
+          `固定残業代を超えています。\n\n` +
+            `  実残業代: ¥${ot.totalOvertimePay.toLocaleString()}\n` +
+            `  固定残業代: ¥${ot.fixedOvertimePay.toLocaleString()}\n` +
+            `  超過額: ¥${ot.exceedAmount.toLocaleString()}\n\n` +
+            `このまま保存していいですか？`,
+        );
+        if (!ok) return;
+      }
+    } catch (e) {
+      // 設定 fetch 失敗は保存をブロックしない (log のみ)
+      console.warn("[kyotaku-attendance] fixed_overtime 超過チェック失敗:", e);
+    }
+
     setSaving(true);
     try {
       const upsertRows: AttendanceRow[] = dirtyRows.map((r) => {
@@ -602,11 +716,86 @@ export function KyotakuAttendanceContent() {
           substitute_for_date: r.substitute_for_date || null,
         };
       });
-      const { error } = await supabase
-        .from("payroll_kyotaku_attendance_records")
-        .upsert(upsertRows, { onConflict: "employee_id,work_date" });
-      if (error) throw error;
-      toast.success(`${dirtyRows.length}件 保存しました`);
+      if (upsertRows.length > 0) {
+        const { error } = await supabase
+          .from("payroll_kyotaku_attendance_records")
+          .upsert(upsertRows, { onConflict: "employee_id,work_date" });
+        if (error) throw error;
+      }
+
+      // 月単位データの保存 (件数 + 加算)
+      if (monthlyDirty) {
+        const monthStart = `${month}-01`;
+        const { error: mErr } = await supabase
+          .from("payroll_kyotaku_attendance_monthly")
+          .upsert(
+            {
+              tenant_id: TENANT_ID,
+              office_id: selectedOfficeId,
+              employee_id: selectedEmployeeId,
+              month_start: monthStart,
+              kaigo_count: Math.max(0, parseInt(kaigoCount, 10) || 0),
+              yobou_count: Math.max(0, parseInt(yobouCount, 10) || 0),
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "employee_id,month_start" },
+          );
+        if (mErr) throw mErr;
+
+        // 加算行: 「全部削除 → 再挿入」で同期する (シンプル)
+        const { error: delErr } = await supabase
+          .from("payroll_kyotaku_attendance_monthly_kasan")
+          .delete()
+          .eq("employee_id", selectedEmployeeId)
+          .eq("month_start", monthStart);
+        if (delErr) throw delErr;
+
+        const kasanInsert = kasanEdit
+          .map((k, idx) => {
+            if (k.kind === "kasan") {
+              const count = parseInt(k.kasan_count, 10);
+              if (!k.kasan_unit || !Number.isFinite(count) || count <= 0) return null;
+              return {
+                tenant_id: TENANT_ID,
+                office_id: selectedOfficeId,
+                employee_id: selectedEmployeeId,
+                month_start: monthStart,
+                sort_order: idx,
+                kasan_unit: k.kasan_unit,
+                kasan_count: count,
+                free_label: null,
+                free_amount: null,
+              };
+            } else {
+              const amount = parseInt(k.free_amount, 10);
+              const label = k.free_label.trim();
+              if (!label || !Number.isFinite(amount) || amount <= 0) return null;
+              return {
+                tenant_id: TENANT_ID,
+                office_id: selectedOfficeId,
+                employee_id: selectedEmployeeId,
+                month_start: monthStart,
+                sort_order: idx,
+                kasan_unit: null,
+                kasan_count: null,
+                free_label: label,
+                free_amount: amount,
+              };
+            }
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+        if (kasanInsert.length > 0) {
+          const { error: insErr } = await supabase
+            .from("payroll_kyotaku_attendance_monthly_kasan")
+            .insert(kasanInsert);
+          if (insErr) throw insErr;
+        }
+        setMonthlyDirty(false);
+        mutateMonthly();
+      }
+
+      const saveCount = dirtyRows.length + (monthlyDirty ? 1 : 0);
+      toast.success(`${saveCount} 件 保存しました`);
       // SWR cache invalidate → buildRowsFromSwr 再走 → existing_id / dirty=false 更新
       mutateAttendance();
     } catch (e) {
@@ -901,6 +1090,181 @@ export function KyotakuAttendanceContent() {
         </CardContent>
       </Card>
 
+      {/* 月集計: 介護件数 / 予防件数 / 加算 (規定 + 自由記述) */}
+      {selectedEmployeeId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              月集計 (件数・加算)
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                {fmtMonthLabel(month)} の件数と加算を入力。「保存」で出勤簿と一緒に書き込まれます。
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4 max-w-md mb-4">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">介護件数</label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={kaigoCount}
+                  onChange={(e) => {
+                    setKaigoCount(e.target.value);
+                    setMonthlyDirty(true);
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">予防件数</label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={yobouCount}
+                  onChange={(e) => {
+                    setYobouCount(e.target.value);
+                    setMonthlyDirty(true);
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-muted-foreground">加算</div>
+              {kasanEdit.map((k, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  {k.kind === "kasan" ? (
+                    <>
+                      <select
+                        className="border rounded-md px-2 py-1 text-sm w-24"
+                        value={k.kasan_unit ?? 200}
+                        onChange={(e) => {
+                          const next = [...kasanEdit];
+                          next[idx] = {
+                            ...next[idx],
+                            kasan_unit: parseInt(e.target.value, 10),
+                          };
+                          setKasanEdit(next);
+                          setMonthlyDirty(true);
+                        }}
+                      >
+                        {[200, 300, 400, 450, 600, 750, 900].map((u) => (
+                          <option key={u} value={u}>
+                            {u}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-xs text-muted-foreground">単位 ×</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        placeholder="件数"
+                        value={k.kasan_count}
+                        onChange={(e) => {
+                          const next = [...kasanEdit];
+                          next[idx] = { ...next[idx], kasan_count: e.target.value };
+                          setKasanEdit(next);
+                          setMonthlyDirty(true);
+                        }}
+                        className="w-24"
+                      />
+                      <span className="text-xs text-muted-foreground">件</span>
+                    </>
+                  ) : (
+                    <>
+                      <Input
+                        type="text"
+                        placeholder="加算名 (自由記述)"
+                        value={k.free_label}
+                        onChange={(e) => {
+                          const next = [...kasanEdit];
+                          next[idx] = { ...next[idx], free_label: e.target.value };
+                          setKasanEdit(next);
+                          setMonthlyDirty(true);
+                        }}
+                        className="w-48"
+                      />
+                      <Input
+                        type="number"
+                        min={0}
+                        placeholder="金額 (円)"
+                        value={k.free_amount}
+                        onChange={(e) => {
+                          const next = [...kasanEdit];
+                          next[idx] = { ...next[idx], free_amount: e.target.value };
+                          setKasanEdit(next);
+                          setMonthlyDirty(true);
+                        }}
+                        className="w-32"
+                      />
+                      <span className="text-xs text-muted-foreground">円</span>
+                    </>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const next = kasanEdit.filter((_, i) => i !== idx);
+                      setKasanEdit(next);
+                      setMonthlyDirty(true);
+                    }}
+                    title="この行を削除"
+                    className="text-destructive"
+                  >
+                    ×
+                  </Button>
+                </div>
+              ))}
+              <div className="flex gap-2 mt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setKasanEdit([
+                      ...kasanEdit,
+                      {
+                        id: null,
+                        kind: "kasan",
+                        kasan_unit: 200,
+                        kasan_count: "",
+                        free_label: "",
+                        free_amount: "",
+                      },
+                    ]);
+                    setMonthlyDirty(true);
+                  }}
+                >
+                  + 規定加算行を追加
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setKasanEdit([
+                      ...kasanEdit,
+                      {
+                        id: null,
+                        kind: "free",
+                        kasan_unit: null,
+                        kasan_count: "",
+                        free_label: "",
+                        free_amount: "",
+                      },
+                    ]);
+                    setMonthlyDirty(true);
+                  }}
+                >
+                  + 自由記述行を追加
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
@@ -923,7 +1287,12 @@ export function KyotakuAttendanceContent() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={saving || deleting || !selectedEmployeeId || rows.every((r) => !r.dirty)}
+              disabled={
+                saving ||
+                deleting ||
+                !selectedEmployeeId ||
+                (rows.every((r) => !r.dirty) && !monthlyDirty)
+              }
             >
               {saving ? "保存中..." : "保存"}
             </Button>
@@ -963,9 +1332,22 @@ export function KyotakuAttendanceContent() {
                   {rows.map((row, idx) => {
                     const day = parseInt(row.work_date.slice(8, 10), 10);
                     const calc = dailyCalcs[idx];
-                    // 祝日は曜日に関わらず赤、その他は曜日ベースの色 (日=赤 / 土=青)
+                    // 祝日 / 会社休日は曜日に関わらず赤、その他は曜日ベースの色 (日=赤 / 土=青)
                     const isHoliday = isJapaneseHoliday(row.work_date);
-                    const dowColor = isHoliday
+                    const companyHolidayName =
+                      companyHolidayNameByDate.get(row.work_date) ?? null;
+                    const isCompanyHoliday = companyHolidayName !== null;
+                    // tooltip: 祝日名 + 会社休日名を併記
+                    const holidayName = (() => {
+                      const parts: string[] = [];
+                      if (isHoliday) {
+                        const n = getJapaneseHolidayName(row.work_date);
+                        if (n) parts.push(n);
+                      }
+                      if (companyHolidayName) parts.push(companyHolidayName);
+                      return parts.length > 0 ? parts.join(" / ") : null;
+                    })();
+                    const dowColor = isHoliday || isCompanyHoliday
                       ? "text-red-600"
                       : DOW_COLOR[row.dow] ?? "";
                     // 休み判定: 実労働 0 分 (= 出勤/退勤 未入力 or 同時刻)
@@ -978,14 +1360,22 @@ export function KyotakuAttendanceContent() {
                         : "";
                     return (
                       <TableRow key={row.work_date} className={rowClass}>
-                        <TableCell className={`text-center ${dowColor}`}>{day}</TableCell>
                         <TableCell
                           className={`text-center ${dowColor}`}
-                          title={isHoliday ? "祝日" : undefined}
+                          title={holidayName ?? undefined}
+                        >
+                          {day}
+                        </TableCell>
+                        <TableCell
+                          className={`text-center ${dowColor}`}
+                          title={holidayName ?? undefined}
                         >
                           {WEEK_DAY_LABELS[row.dow]}
                           {isHoliday && (
                             <span className="ml-0.5 text-[9px] align-top">祝</span>
+                          )}
+                          {!isHoliday && isCompanyHoliday && (
+                            <span className="ml-0.5 text-[9px] align-top">社休</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -1237,17 +1627,39 @@ export function KyotakuAttendanceContent() {
           </DialogHeader>
           <div className="py-2">
             <label className="text-xs text-muted-foreground block mb-1">
-              振替元の日付
+              振替元の日付 (同一週内のみ)
             </label>
-            <Input
-              type="date"
-              value={substituteModalDate}
-              onChange={(e) => setSubstituteModalDate(e.target.value)}
-              autoFocus
-            />
+            {(() => {
+              // 同一週内のみ選択可能にするため min/max を計算
+              const targetRow =
+                substituteModalIdx !== null ? rows[substituteModalIdx] : null;
+              const weekStart = targetRow
+                ? weekKeyOf(targetRow.work_date, selectedOfficeWeekStart)
+                : null;
+              let weekEnd: string | null = null;
+              if (weekStart) {
+                const d = new Date(weekStart + "T00:00:00Z");
+                d.setUTCDate(d.getUTCDate() + 6);
+                weekEnd = d.toISOString().slice(0, 10);
+              }
+              return (
+                <Input
+                  type="date"
+                  value={substituteModalDate}
+                  onChange={(e) => setSubstituteModalDate(e.target.value)}
+                  min={weekStart ?? undefined}
+                  max={weekEnd ?? undefined}
+                  autoFocus
+                />
+              );
+            })()}
             <p className="text-xs text-muted-foreground mt-2">
-              ※ 例: 1月5日(日) の休日を 1月12日(日) に振替えて 1月5日 に出勤した場合、
-              この日 (出勤日) に「1月12日」を入力します。
+              ※ 振替は <strong>同一週内のみ可能</strong>です (労基§35 の週単位休保護の趣旨)。
+              別週の日付を選ぼうとすると確定時にエラーになります。
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              例: 1月5日(日) の休日を 1月7日(火) に振替えて 1月5日 に出勤した場合、
+              この日 (出勤日) に「1月7日」を入力します。
             </p>
           </div>
           <DialogFooter>

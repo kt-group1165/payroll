@@ -7,6 +7,11 @@ import {
   extendedMonthRange,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
+import {
+  calcOvertimePayBreakdown,
+  type OvertimeSettingForCalc,
+  type SalarySettingsForOvertime,
+} from "@/lib/payroll/overtime-pay-calc";
 
 /**
  * 居宅介護支援 労働時間チェック用データ取得 hook (SWR ベース)。
@@ -36,10 +41,16 @@ export type LaborCheckRow = {
   dailyOvertimeMin: number;
   weeklyOvertimeMin: number;
   absenceMin: number;
+  /** 実残業代 (= 通常残業代 + 深夜割増 + 法休割増、円) */
+  overtimePay: number;
+  /** 固定残業代 (settings.fixed_overtime_pay) */
+  fixedOvertimePay: number;
   /** 警告フラグ (少なくとも 1 つ true なら一覧に乗る) */
   hasDailyOvertime: boolean;
   hasWeeklyOvertime: boolean;
   hasAbsence: boolean;
+  /** 実残業代 > 固定残業代 (固定 0 のときは false) */
+  hasFixedOvertimeExceeded: boolean;
 };
 
 type OfficeRow = {
@@ -140,6 +151,28 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
     byEmp.get(r.employee_id)!.push(r);
   }
 
+  // 4b) salary_settings (固定残業代 + base 構成要素) を employee 分まとめて fetch
+  const { data: salaryData } = await supabase
+    .from("payroll_salary_settings")
+    .select(
+      "employee_id, base_personal_salary, skill_salary, position_allowance, qualification_allowance, tenure_allowance, treatment_improvement, specific_treatment_improvement, treatment_subsidy, fixed_overtime_pay, special_bonus",
+    )
+    .in("employee_id", empIds);
+  const salaryByEmp = new Map<string, SalarySettingsForOvertime>();
+  for (const r of (salaryData ?? []) as (SalarySettingsForOvertime & { employee_id: string })[]) {
+    salaryByEmp.set(r.employee_id, r);
+  }
+
+  // 4c) overtime_settings (job_type='居宅介護支援') を 1 件取得
+  const { data: otData } = await supabase
+    .from("payroll_overtime_settings")
+    .select(
+      "job_type, scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
+    )
+    .eq("job_type", "居宅介護支援")
+    .maybeSingle();
+  const otSetting = (otData ?? null) as OvertimeSettingForCalc | null;
+
   // 5) 各 employee で月集計 → 警告条件に合致するものだけ収集
   const result: LaborCheckRow[] = [];
   for (const emp of employees) {
@@ -155,7 +188,18 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
     const hasWeeklyOvertime = sum.total_weekly_overtime > 0;
     const hasAbsence = sum.total_absence > 0;
 
-    if (!hasDailyOvertime && !hasWeeklyOvertime && !hasAbsence) continue;
+    // 固定残業代超過の判定
+    const salary = salaryByEmp.get(emp.id) ?? null;
+    const ot = calcOvertimePayBreakdown(sum, salary, otSetting);
+    const hasFixedOvertimeExceeded = ot.isExceeding;
+
+    if (
+      !hasDailyOvertime &&
+      !hasWeeklyOvertime &&
+      !hasAbsence &&
+      !hasFixedOvertimeExceeded
+    )
+      continue;
 
     result.push({
       office_id: office.id,
@@ -167,9 +211,12 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
       dailyOvertimeMin: sum.total_daily_overtime,
       weeklyOvertimeMin: sum.total_weekly_overtime,
       absenceMin: sum.total_absence,
+      overtimePay: ot.totalOvertimePay,
+      fixedOvertimePay: ot.fixedOvertimePay,
       hasDailyOvertime,
       hasWeeklyOvertime,
       hasAbsence,
+      hasFixedOvertimeExceeded,
     });
   }
 

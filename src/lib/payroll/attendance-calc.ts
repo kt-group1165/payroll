@@ -418,6 +418,7 @@ export function calcDaily(record: AttendanceRecord): DailyCalc {
 export function calcDailyListWithWeekly(
   records: AttendanceRecord[],
   weekStartDay: number = 0,
+  companyHolidayDates?: Set<string>,
 ): DailyCalc[] {
   // 元順を保持するため index 付き
   // autoLegalHoliday: 週内に休み無し → 自動で法定休日扱いになった日 (manual 指定とは別 flag)
@@ -510,7 +511,9 @@ export function calcDailyListWithWeekly(
       const dt = parseDateUTC(it.r.work_date);
       const dow = dt ? dt.getUTCDay() : 0;
       const isWeekday = dow >= 1 && dow <= 5;
-      const isHoliday = isJapaneseHoliday(it.r.work_date);
+      const isHoliday =
+        isJapaneseHoliday(it.r.work_date) ||
+        (companyHolidayDates?.has(it.r.work_date) ?? false);
       const isScheduledDay = isSubstituteWorkDay || (isWeekday && !isHoliday);
       if (!isScheduledDay) {
         it.daily.scheduled_minutes = 0;
@@ -582,6 +585,7 @@ export function calcMonthlySummary(
   records: AttendanceRecord[],
   weekStartDay: number = 0,
   monthFilter?: string,
+  companyHolidayDates?: Set<string>,
 ): MonthlySummary {
   const summary: MonthlySummary = {
     total_work: 0,
@@ -596,7 +600,7 @@ export function calcMonthlySummary(
   // calcDailyListWithWeekly 経由で集計 — 法定休日 auto-detect + 週次按分が
   // 行表示と一致する。月跨ぎ週の正しい按分のため、records は extended 範囲で
   // 渡される想定でも OK (monthFilter で当該月の day だけ積算)。
-  const dailies = calcDailyListWithWeekly(records, weekStartDay);
+  const dailies = calcDailyListWithWeekly(records, weekStartDay, companyHolidayDates);
 
   for (let i = 0; i < records.length; i++) {
     const r = records[i];

@@ -50,6 +50,12 @@ const sections: { title: string; items: NavItem[] }[] = [
       { href: "/billing/formats",        label: "請求書様式管理",     icon: "📝" },
     ],
   },
+  {
+    title: "設定",
+    items: [
+      { href: "/settings/company-holidays", label: "会社休日", icon: "🎌" },
+    ],
+  },
 ];
 
 export function Sidebar() {

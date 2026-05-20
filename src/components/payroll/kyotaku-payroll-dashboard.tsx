@@ -28,6 +28,16 @@ import {
   type ServiceUnit,
   type YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
+import {
+  calcProvisional,
+  calcProvisionalDiff,
+  type ProvisionalKasanInput,
+} from "@/lib/payroll/kyotaku-provisional-calc";
+import type {
+  MonthlyRow,
+  MonthlyKasanRow,
+  ProvisionalSnapshotRow,
+} from "@/lib/swr/use-kyotaku-dashboard-data";
 import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
 
 /**
@@ -432,6 +442,9 @@ export function KyotakuPayrollDashboard({
     yobouRows,
     attendanceRows,
     officeTravelRateMap,
+    monthlyRows,
+    monthlyKasanRows,
+    provisionalSnapshots,
     isLoading,
     error: swrError,
     mutate,
@@ -440,7 +453,11 @@ export function KyotakuPayrollDashboard({
   // loading 表示は「データ未取得 (records.length===0) かつ fetch 中」のときのみ。
   // keepPreviousData により revalidate 中も前回データを表示し続けるので、
   // タブ/事業所/月切替時の体感速度を維持する。
-  const loading = isLoading && records.length === 0 && yobouRows.length === 0;
+  const loading =
+    isLoading &&
+    records.length === 0 &&
+    yobouRows.length === 0 &&
+    monthlyRows.length === 0;
   const err = mutationErr ?? (swrError ? swrError.message : null);
 
   // ----------------------- 絞り込み済み view -----------------------
@@ -481,16 +498,43 @@ export function KyotakuPayrollDashboard({
         : attendanceRows.filter((a) => a.office_number === filterOfficeNumber),
     [attendanceRows, filterOfficeNumber],
   );
+  const filteredMonthly = useMemo(
+    () =>
+      filterOfficeNumber === null
+        ? monthlyRows
+        : monthlyRows.filter((m) => m.office_number === filterOfficeNumber),
+    [monthlyRows, filterOfficeNumber],
+  );
+  const filteredMonthlyKasan = useMemo(
+    () =>
+      filterOfficeNumber === null
+        ? monthlyKasanRows
+        : monthlyKasanRows.filter(
+            (m) => m.office_number === filterOfficeNumber,
+          ),
+    [monthlyKasanRows, filterOfficeNumber],
+  );
+  const filteredProvSnapshots = useMemo(
+    () =>
+      filterOfficeNumber === null
+        ? provisionalSnapshots
+        : provisionalSnapshots.filter(
+            (s) => s.office_number === filterOfficeNumber,
+          ),
+    [provisionalSnapshots, filterOfficeNumber],
+  );
 
   // ----------------------- derived data -----------------------
 
-  // allMonths は records と yobou の和集合 (介護予防のみ取込済の staff/月も含める)
+  // allMonths は records / yobou / monthly (出勤簿 月次) の和集合。
+  // CSV 取込前で monthly のみある月も「仮計算」列を表示するため month set に取り込む。
   const allMonths = useMemo(() => {
     const s = new Set<string>();
     for (const r of filteredRecords) if (r.service_month) s.add(r.service_month);
     for (const y of filteredYobou) if (y.service_month) s.add(y.service_month);
+    for (const mo of filteredMonthly) if (mo.month_start) s.add(mo.month_start);
     return Array.from(s).sort();
-  }, [filteredRecords, filteredYobou]);
+  }, [filteredRecords, filteredYobou, filteredMonthly]);
   // staff の identity を (office_number, staff_name) に格上げ。同名ケアマネを区別する。
   // records / yobou 双方から導出 (yobou-only staff も対象)
   const allStaffKeys = useMemo(() => {
@@ -506,6 +550,7 @@ export function KyotakuPayrollDashboard({
     };
     for (const r of filteredRecords) push(r.office_number, r.staff_name);
     for (const y of filteredYobou) push(y.office_number, y.staff_name);
+    for (const mo of filteredMonthly) push(mo.office_number, mo.staff_name);
     // distinctStaffKeys と同 sort key で並べ直す
     merged.sort((a, b) => {
       const oa = officeOrder.get(a.office_number) ?? 9999;
@@ -517,7 +562,7 @@ export function KyotakuPayrollDashboard({
       officeNumber: r.office_number,
       staffName: r.staff_name,
     }));
-  }, [filteredRecords, filteredYobou, officeOrder]);
+  }, [filteredRecords, filteredYobou, filteredMonthly, officeOrder]);
   const allPayMonths = useMemo(
     () => deriveAllPayMonths(allMonths),
     [allMonths],
@@ -651,6 +696,114 @@ export function KyotakuPayrollDashboard({
     [filteredConfirmations],
   );
 
+  // ----------------------- 仮計算 (出勤簿 inputs ベース) -----------------------
+
+  // staff の (office_number, staff_name) → kaigo_rate / shien_rate / employee_id /
+  //                                         office_id を解決する map。
+  // filteredSettings は payroll_employees の embed 込み結果 (id = employee_id) を持つ。
+  // office_id は別 lookup で allKyotakuOffices.id を利用 (office_number 一致)。
+  const officeIdByNumber = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const o of allKyotakuOffices) m.set(o.office_number, o.id);
+    return m;
+  }, [allKyotakuOffices]);
+
+  /** key: officeNumber|staffName */
+  const staffMetaMap = useMemo(() => {
+    const m = new Map<
+      string,
+      {
+        employeeId: string | null;
+        officeId: string | null;
+        kaigoRate: number | null;
+        shienRate: number | null;
+      }
+    >();
+    for (const s of filteredSettings) {
+      const k = staffKey(s.office_number, s.staff_name);
+      m.set(k, {
+        employeeId: s.id ?? null,
+        officeId: officeIdByNumber.get(s.office_number) ?? null,
+        kaigoRate: s.kaigo_rate,
+        shienRate: s.shien_rate,
+      });
+    }
+    return m;
+  }, [filteredSettings, officeIdByNumber]);
+
+  /**
+   * key: officeNumber|staffName|month_start
+   * value: 出勤簿 月次本体 (件数) row。無い場合は undefined → 仮計算 0 扱い。
+   */
+  const monthlyByKey = useMemo(() => {
+    const m = new Map<string, MonthlyRow>();
+    for (const r of filteredMonthly) {
+      m.set(`${r.office_number}|${r.staff_name}|${r.month_start}`, r);
+    }
+    return m;
+  }, [filteredMonthly]);
+
+  /**
+   * key: officeNumber|staffName|month_start
+   * value: 当該月の加算 rows (多数)。
+   */
+  const kasanByKey = useMemo(() => {
+    const m = new Map<string, MonthlyKasanRow[]>();
+    for (const r of filteredMonthlyKasan) {
+      const k = `${r.office_number}|${r.staff_name}|${r.month_start}`;
+      const arr = m.get(k) ?? [];
+      arr.push(r);
+      m.set(k, arr);
+    }
+    return m;
+  }, [filteredMonthlyKasan]);
+
+  /**
+   * 仮計算結果 cache。 monthly が無い key は entry を作らない (= UI 側で null 判定)。
+   * key: officeNumber|staffName|month_start
+   * value: provisional total (円、未丸め)。
+   */
+  const provisionalCache = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const k of allStaffKeys) {
+      const meta = staffMetaMap.get(staffKey(k.officeNumber, k.staffName));
+      const kaigoRate = meta?.kaigoRate ?? 0;
+      const shienRate = meta?.shienRate ?? 0;
+      for (const mo of allMonths) {
+        const key = `${k.officeNumber}|${k.staffName}|${mo}`;
+        const monthly = monthlyByKey.get(key);
+        const kasanRows = kasanByKey.get(key) ?? [];
+        if (!monthly && kasanRows.length === 0) continue;
+        const kasanInputs: ProvisionalKasanInput[] = kasanRows.map((r) => ({
+          kasan_unit: r.kasan_unit,
+          kasan_count: r.kasan_count,
+          free_label: r.free_label,
+          free_amount: r.free_amount,
+        }));
+        const b = calcProvisional({
+          kaigo_count: monthly?.kaigo_count ?? 0,
+          yobou_count: monthly?.yobou_count ?? 0,
+          kaigo_rate: kaigoRate,
+          shien_rate: shienRate,
+          kasanRows: kasanInputs,
+        });
+        m.set(key, b.total);
+      }
+    }
+    return m;
+  }, [allStaffKeys, allMonths, staffMetaMap, monthlyByKey, kasanByKey]);
+
+  /**
+   * 仮計算 snapshot lookup (key: officeNumber|staffName|month_start → snapshot row)
+   */
+  const snapshotByKey = useMemo(() => {
+    const m = new Map<string, ProvisionalSnapshotRow>();
+    for (const s of filteredProvSnapshots) {
+      m.set(`${s.office_number}|${s.staff_name}|${s.month_start}`, s);
+    }
+    return m;
+  }, [filteredProvSnapshots]);
+
   // ----------------------- 確定 / 解除 -----------------------
 
   const confirmPayment = async (
@@ -679,6 +832,81 @@ export function KyotakuPayrollDashboard({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setMutationErr(`確定に失敗: ${msg}`);
+    } finally {
+      setBusyPay(null);
+    }
+  };
+
+  /**
+   * 仮計算 snapshot を保存 (= 「仮確定」)。
+   * upsert で「最新の仮計算結果」を 1 row 維持。
+   *
+   * busyPay は通常の確定 lock と共用 (同一画面で同時操作させない)。
+   */
+  const saveProvisionalSnapshot = async (
+    officeNumber: string,
+    staff: string,
+    monthStart: string,
+    amount: number,
+  ) => {
+    const lockKey = `prov|${officeNumber}|${staff}|${monthStart}`;
+    if (busyPay) return;
+    const meta = staffMetaMap.get(staffKey(officeNumber, staff));
+    if (!meta?.employeeId || !meta?.officeId) {
+      setMutationErr(
+        "仮確定に失敗: 該当ケアマネの payroll_employees 紐付けが解決できません",
+      );
+      return;
+    }
+    setBusyPay(lockKey);
+    setMutationErr(null);
+    try {
+      const { error } = await supabase
+        .from("payroll_kyotaku_provisional_snapshots")
+        .upsert(
+          {
+            tenant_id: TENANT_ID,
+            office_id: meta.officeId,
+            employee_id: meta.employeeId,
+            month_start: monthStart,
+            provisional_amount: Math.round(amount),
+            snapshot_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "employee_id,month_start" },
+        );
+      if (error) throw error;
+      mutate();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMutationErr(`仮確定に失敗: ${msg}`);
+    } finally {
+      setBusyPay(null);
+    }
+  };
+
+  /** 仮計算 snapshot を取消 (= DELETE)。 */
+  const revertProvisionalSnapshot = async (
+    officeNumber: string,
+    staff: string,
+    monthStart: string,
+  ) => {
+    const lockKey = `prov|${officeNumber}|${staff}|${monthStart}`;
+    if (busyPay) return;
+    const snap = snapshotByKey.get(`${officeNumber}|${staff}|${monthStart}`);
+    if (!snap) return;
+    setBusyPay(lockKey);
+    setMutationErr(null);
+    try {
+      const { error } = await supabase
+        .from("payroll_kyotaku_provisional_snapshots")
+        .delete()
+        .eq("id", snap.id);
+      if (error) throw error;
+      mutate();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMutationErr(`仮確定の取消に失敗: ${msg}`);
     } finally {
       setBusyPay(null);
     }
@@ -800,7 +1028,11 @@ export function KyotakuPayrollDashboard({
     setSettingsModalOpen(true);
   };
 
-  if (records.length === 0 && yobouRows.length === 0) {
+  if (
+    records.length === 0 &&
+    yobouRows.length === 0 &&
+    monthlyRows.length === 0
+  ) {
     return (
       <div className="space-y-4 p-4">
         <header className="flex items-start justify-between gap-4">
@@ -894,6 +1126,11 @@ export function KyotakuPayrollDashboard({
             salaryCache={salaryCache}
             adjustmentsByStaffMonth={adjustmentsByStaffMonth}
             paidMap={paidMap}
+            provisionalCache={provisionalCache}
+            snapshotByKey={snapshotByKey}
+            busyPay={busyPay}
+            onSnapshot={saveProvisionalSnapshot}
+            onRevertSnapshot={revertProvisionalSnapshot}
           />
         </TabsContent>
 
@@ -1028,6 +1265,19 @@ const SALARY_ROWS = [
   "差異",
 ] as const;
 
+/**
+ * 仮計算 / 確定計算 / 差額 行 (各 staff × 月で表示)。
+ * 「仮計算」: 出勤簿 月次 inputs から計算した支給予定額
+ * 「確定計算」: CSV ベースの最終確定額 (= 上記 SALARY_ROWS の 合計額 と同等)
+ * 「仮確定差額」: 確定計算 - 仮計算 snapshot (= 翌月支給に乗せる調整原資)
+ */
+const PROVISIONAL_ROWS = [
+  "仮計算",
+  "仮計算(確定値)",
+  "確定計算",
+  "仮確定差額",
+] as const;
+
 function KyuyoTab({
   allStaffKeys,
   allMonths,
@@ -1037,6 +1287,11 @@ function KyuyoTab({
   salaryCache,
   adjustmentsByStaffMonth,
   paidMap,
+  provisionalCache,
+  snapshotByKey,
+  busyPay,
+  onSnapshot,
+  onRevertSnapshot,
 }: {
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
   allMonths: string[];
@@ -1046,6 +1301,20 @@ function KyuyoTab({
   salaryCache: Map<string, ReturnType<typeof calcSalary>>;
   adjustmentsByStaffMonth: Map<string, { late_adj: number; sayi_adj: number }>;
   paidMap: Map<string, number>;
+  provisionalCache: Map<string, number>;
+  snapshotByKey: Map<string, ProvisionalSnapshotRow>;
+  busyPay: string | null;
+  onSnapshot: (
+    officeNumber: string,
+    staff: string,
+    monthStart: string,
+    amount: number,
+  ) => void;
+  onRevertSnapshot: (
+    officeNumber: string,
+    staff: string,
+    monthStart: string,
+  ) => void;
 }) {
   return (
     <div className="overflow-auto rounded-lg border">
@@ -1078,6 +1347,11 @@ function KyuyoTab({
               salaryCache={salaryCache}
               adjustmentsByStaffMonth={adjustmentsByStaffMonth}
               paidMap={paidMap}
+              provisionalCache={provisionalCache}
+              snapshotByKey={snapshotByKey}
+              busyPay={busyPay}
+              onSnapshot={onSnapshot}
+              onRevertSnapshot={onRevertSnapshot}
             />
           ))}
         </TableBody>
@@ -1096,6 +1370,11 @@ function StaffBlock({
   salaryCache,
   adjustmentsByStaffMonth,
   paidMap,
+  provisionalCache,
+  snapshotByKey,
+  busyPay,
+  onSnapshot,
+  onRevertSnapshot,
 }: {
   officeNumber: string;
   staff: string;
@@ -1106,6 +1385,20 @@ function StaffBlock({
   salaryCache: Map<string, ReturnType<typeof calcSalary>>;
   adjustmentsByStaffMonth: Map<string, { late_adj: number; sayi_adj: number }>;
   paidMap: Map<string, number>;
+  provisionalCache: Map<string, number>;
+  snapshotByKey: Map<string, ProvisionalSnapshotRow>;
+  busyPay: string | null;
+  onSnapshot: (
+    officeNumber: string,
+    staff: string,
+    monthStart: string,
+    amount: number,
+  ) => void;
+  onRevertSnapshot: (
+    officeNumber: string,
+    staff: string,
+    monthStart: string,
+  ) => void;
 }) {
   const perMonth = allMonths.map((m) => {
     const sal = salaryCache.get(`${officeNumber}|${staff}|${m}`);
@@ -1132,7 +1425,29 @@ function StaffBlock({
         sal.business_trip_teate
       : 0;
     const diff = paid > 0 ? total - paid : null;
-    return { m, sal, counts, chosei, total, paid, diff };
+
+    // 仮計算 (出勤簿 inputs ベース)。entry 無し = monthly 未入力 → null。
+    const provKey = `${officeNumber}|${staff}|${m}`;
+    const provisional = provisionalCache.get(provKey) ?? null;
+    const snapshot = snapshotByKey.get(provKey) ?? null;
+    // 仮確定差額: snapshot 有るときだけ意味あり。確定 (CSV ベース合計額) - 仮確定値。
+    const provDiff =
+      snapshot !== null && sal
+        ? calcProvisionalDiff(snapshot.provisional_amount, total)
+        : null;
+
+    return {
+      m,
+      sal,
+      counts,
+      chosei,
+      total,
+      paid,
+      diff,
+      provisional,
+      snapshot,
+      provDiff,
+    };
   });
 
   const label = formatStaffLabel(officeMap, officeNumber, staff);
@@ -1143,7 +1458,9 @@ function StaffBlock({
         <TableRow key={`${officeNumber}|${staff}|count|${row.key}`}>
           {idx === 0 ? (
             <TableCell
-              rowSpan={COUNT_ROWS.length + SALARY_ROWS.length}
+              rowSpan={
+                COUNT_ROWS.length + SALARY_ROWS.length + PROVISIONAL_ROWS.length
+              }
               className="sticky left-0 z-10 bg-background align-top font-medium border-r whitespace-nowrap"
             >
               {label}
@@ -1192,6 +1509,107 @@ function StaffBlock({
                 }`}
               >
                 {v === null ? "" : fmtYen(v)}
+              </TableCell>
+            );
+          })}
+        </TableRow>
+      ))}
+      {PROVISIONAL_ROWS.map((rowLabel) => (
+        <TableRow
+          key={`${officeNumber}|${staff}|prov|${rowLabel}`}
+          className="bg-sky-50/60 dark:bg-sky-950/30"
+        >
+          <TableCell className="sticky left-20 z-10 bg-sky-50/80 dark:bg-sky-950/40 border-r font-medium">
+            {rowLabel}
+          </TableCell>
+          {perMonth.map((pm) => {
+            const provKey = `${officeNumber}|${staff}|${pm.m}`;
+            const lockKey = `prov|${provKey}`;
+            const isBusy = busyPay === lockKey;
+            const hasSnapshot = pm.snapshot !== null;
+
+            if (rowLabel === "仮計算") {
+              if (pm.provisional === null) {
+                return <TableCell key={pm.m} />;
+              }
+              return (
+                <TableCell key={pm.m} className="text-right tabular-nums">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <span>{fmtYen(pm.provisional)}</span>
+                    {hasSnapshot ? (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        disabled={isBusy}
+                        onClick={() =>
+                          onRevertSnapshot(officeNumber, staff, pm.m)
+                        }
+                        title="仮確定を取消"
+                      >
+                        取消
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        disabled={isBusy}
+                        onClick={() =>
+                          onSnapshot(
+                            officeNumber,
+                            staff,
+                            pm.m,
+                            pm.provisional ?? 0,
+                          )
+                        }
+                        title="この仮計算値を確定 (snapshot 保存)"
+                      >
+                        仮確定
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              );
+            }
+            if (rowLabel === "仮計算(確定値)") {
+              return (
+                <TableCell
+                  key={pm.m}
+                  className="text-right tabular-nums text-muted-foreground"
+                >
+                  {hasSnapshot
+                    ? fmtYen(pm.snapshot!.provisional_amount)
+                    : ""}
+                </TableCell>
+              );
+            }
+            if (rowLabel === "確定計算") {
+              // CSV データが入っている (= records / yobou 有り) 月だけ表示
+              const hasCsv = pm.sal && (pm.sal.plan > 0 || pm.sal.kazan > 0
+                || pm.counts.same_kaigo > 0 || pm.counts.same_shien > 0
+                || pm.counts.normal_kaigo > 0 || pm.counts.normal_shien > 0
+                || pm.counts.late1_kaigo > 0 || pm.counts.late1_shien > 0
+                || pm.counts.late2_kaigo > 0 || pm.counts.late2_shien > 0);
+              if (!hasCsv) return <TableCell key={pm.m} />;
+              return (
+                <TableCell key={pm.m} className="text-right tabular-nums">
+                  {fmtYen(pm.total)}
+                </TableCell>
+              );
+            }
+            // 仮確定差額
+            if (pm.provDiff === null) {
+              return <TableCell key={pm.m} />;
+            }
+            const showRed = pm.provDiff !== 0;
+            return (
+              <TableCell
+                key={pm.m}
+                className={`text-right tabular-nums ${
+                  showRed ? "text-amber-700 dark:text-amber-400 font-medium" : ""
+                }`}
+                title="確定計算 - 仮確定値 (翌月支給に乗せる調整原資)"
+              >
+                {fmtSigned(pm.provDiff)}
               </TableCell>
             );
           })}

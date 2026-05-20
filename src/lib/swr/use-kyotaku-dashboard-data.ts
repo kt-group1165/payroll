@@ -63,6 +63,45 @@ export type AttendanceWithStaffName = KyotakuAttendanceRecord & {
   office_number: string;
 };
 
+/**
+ * 出勤簿 月次 (件数) 1 row。dashboard 仮計算 input。
+ * staff_name は employees から解決済 (DB の row 自体は employee_id key)。
+ */
+export type MonthlyRow = {
+  office_number: string;
+  staff_name: string;
+  month_start: string; // YYYY-MM-01
+  kaigo_count: number;
+  yobou_count: number;
+};
+
+/**
+ * 出勤簿 月次 加算 1 row。
+ * 規定加算 (kasan_unit + kasan_count) または 自由記述 (free_label + free_amount)。
+ */
+export type MonthlyKasanRow = {
+  office_number: string;
+  staff_name: string;
+  month_start: string;
+  kasan_unit: number | null;
+  kasan_count: number | null;
+  free_label: string | null;
+  free_amount: number | null;
+};
+
+/**
+ * 仮計算 snapshot 1 row。「確定」操作で保存された仮計算結果。
+ * UI 上は (office_number, staff_name, month_start) で lookup する。
+ */
+export type ProvisionalSnapshotRow = {
+  id: string;
+  office_number: string;
+  staff_name: string;
+  month_start: string;
+  provisional_amount: number;
+  snapshot_at: string;
+};
+
 export type KyotakuDashboardData = {
   records: FullRecord[];
   settings: SettingRow[];
@@ -72,6 +111,9 @@ export type KyotakuDashboardData = {
   yobouRows: YobouRow[];
   attendanceRows: AttendanceWithStaffName[];
   officeTravelRateMap: Map<string, number>;
+  monthlyRows: MonthlyRow[];
+  monthlyKasanRows: MonthlyKasanRow[];
+  provisionalSnapshots: ProvisionalSnapshotRow[];
 };
 
 const EMPTY_DATA: KyotakuDashboardData = {
@@ -83,6 +125,9 @@ const EMPTY_DATA: KyotakuDashboardData = {
   yobouRows: [],
   attendanceRows: [],
   officeTravelRateMap: new Map(),
+  monthlyRows: [],
+  monthlyKasanRows: [],
+  provisionalSnapshots: [],
 };
 
 // =====================================================================
@@ -97,8 +142,19 @@ async function fetchKyotakuDashboardData(
     return EMPTY_DATA;
   }
 
-  const [recs, setRes, unitRes, rateRes, confRes, yobouRes, attRes, officeRes] =
-    await Promise.all([
+  const [
+    recs,
+    setRes,
+    unitRes,
+    rateRes,
+    confRes,
+    yobouRes,
+    attRes,
+    officeRes,
+    monthlyRes,
+    monthlyKasanRes,
+    provSnapRes,
+  ] = await Promise.all([
       fetchAllPagesParallel<FullRecord>(
         () =>
           supabase
@@ -159,6 +215,31 @@ async function fetchKyotakuDashboardData(
         .from("payroll_offices")
         .select("office_number, travel_unit_price")
         .in("office_number", officeNumbers),
+      // 出勤簿 月次本体 (件数)。1 row = staff × month、~30 office × ~12 ヶ月 ×
+      // ~ケアマネ数 で数千行に収まる前提。DB 未 apply 段階は error 握り潰し。
+      // 1000 行 PostgREST default 対策で limit(10000) を明示。
+      supabase
+        .from("payroll_kyotaku_attendance_monthly")
+        .select("employee_id, month_start, kaigo_count, yobou_count, office_id")
+        .in("office_id", officeIds)
+        .limit(10000),
+      // 出勤簿 月次加算明細 (規定 + 自由記述)。multi-row per (employee, month)。
+      supabase
+        .from("payroll_kyotaku_attendance_monthly_kasan")
+        .select(
+          "employee_id, month_start, kasan_unit, kasan_count, free_label, free_amount, office_id",
+        )
+        .in("office_id", officeIds)
+        .limit(10000),
+      // 仮計算 snapshot (確定済み)。1 row = staff × month。
+      // DB 未 apply 段階は error 握り潰し → 空 fallback。
+      supabase
+        .from("payroll_kyotaku_provisional_snapshots")
+        .select(
+          "id, employee_id, month_start, provisional_amount, snapshot_at, office_id",
+        )
+        .in("office_id", officeIds)
+        .limit(10000),
     ]);
 
   if (setRes.error) throw setRes.error;
@@ -264,6 +345,81 @@ async function fetchKyotakuDashboardData(
     }
   }
 
+  // ── 月次本体 + 月次加算 + 仮計算 snapshot を staff_name 解決済の形に整形 ──
+  // 各 row は employee_id key だが、dashboard 計算は staff_name key で動く。
+  // employeeIdMap は上で組み済 (居宅介護支援 office に限定済)。
+  type RawMonthlyRow = {
+    employee_id: string;
+    month_start: string;
+    kaigo_count: number | null;
+    yobou_count: number | null;
+  };
+  const mappedMonthly: MonthlyRow[] = [];
+  if (!monthlyRes.error) {
+    for (const r of (monthlyRes.data ?? []) as unknown as RawMonthlyRow[]) {
+      const emp = employeeIdMap.get(r.employee_id);
+      if (!emp) continue;
+      if (!r.month_start) continue;
+      mappedMonthly.push({
+        office_number: emp.office_number,
+        staff_name: emp.name,
+        month_start: r.month_start,
+        kaigo_count: r.kaigo_count ?? 0,
+        yobou_count: r.yobou_count ?? 0,
+      });
+    }
+  }
+
+  type RawKasanRow = {
+    employee_id: string;
+    month_start: string;
+    kasan_unit: number | null;
+    kasan_count: number | null;
+    free_label: string | null;
+    free_amount: number | null;
+  };
+  const mappedKasan: MonthlyKasanRow[] = [];
+  if (!monthlyKasanRes.error) {
+    for (const r of (monthlyKasanRes.data ?? []) as unknown as RawKasanRow[]) {
+      const emp = employeeIdMap.get(r.employee_id);
+      if (!emp) continue;
+      if (!r.month_start) continue;
+      mappedKasan.push({
+        office_number: emp.office_number,
+        staff_name: emp.name,
+        month_start: r.month_start,
+        kasan_unit: r.kasan_unit,
+        kasan_count: r.kasan_count,
+        free_label: r.free_label,
+        free_amount: r.free_amount,
+      });
+    }
+  }
+
+  type RawProvSnapRow = {
+    id: string;
+    employee_id: string;
+    month_start: string;
+    provisional_amount: number | null;
+    snapshot_at: string;
+  };
+  const mappedProvSnap: ProvisionalSnapshotRow[] = [];
+  if (!provSnapRes.error) {
+    for (const r of (provSnapRes.data ?? []) as unknown as RawProvSnapRow[]) {
+      const emp = employeeIdMap.get(r.employee_id);
+      if (!emp) continue;
+      if (!r.month_start) continue;
+      mappedProvSnap.push({
+        id: r.id,
+        office_number: emp.office_number,
+        staff_name: emp.name,
+        month_start: r.month_start,
+        provisional_amount: r.provisional_amount ?? 0,
+        snapshot_at: r.snapshot_at,
+      });
+    }
+  }
+
   return {
     records: recs,
     settings: mappedSettings,
@@ -273,6 +429,9 @@ async function fetchKyotakuDashboardData(
     yobouRows: yobouRes.error ? [] : ((yobouRes.data ?? []) as YobouRow[]),
     attendanceRows: mappedAttendance,
     officeTravelRateMap: travelMap,
+    monthlyRows: mappedMonthly,
+    monthlyKasanRows: mappedKasan,
+    provisionalSnapshots: mappedProvSnap,
   };
 }
 
@@ -321,6 +480,9 @@ export function useKyotakuDashboardData(
     yobouRows: effective.yobouRows,
     attendanceRows: effective.attendanceRows,
     officeTravelRateMap: effective.officeTravelRateMap,
+    monthlyRows: effective.monthlyRows,
+    monthlyKasanRows: effective.monthlyKasanRows,
+    provisionalSnapshots: effective.provisionalSnapshots,
     isLoading,
     error: error ?? null,
     mutate: () => {
