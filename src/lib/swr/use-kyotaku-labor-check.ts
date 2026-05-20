@@ -173,6 +173,17 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
     .maybeSingle();
   const otSetting = (otData ?? null) as OvertimeSettingForCalc | null;
 
+  // 4d) 会社休日 (お盆 / 年末年始) を fetch
+  //     祝日と同様に「所定労働日でない日」として absence 判定から除外する。
+  //     渡さないと お盆出勤しなかった日が「欠勤」 として誤検知される。
+  const { data: holidayData } = await supabase
+    .from("payroll_company_holidays")
+    .select("holiday_date")
+    .eq("tenant_id", "kt-group");
+  const companyHolidayDates = new Set<string>(
+    (holidayData ?? []).map((r) => (r as { holiday_date: string }).holiday_date),
+  );
+
   // 5) 各 employee で月集計 → 警告条件に合致するものだけ収集
   const result: LaborCheckRow[] = [];
   for (const emp of employees) {
@@ -182,7 +193,7 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
     if (!office) continue;
     const weekStart = office.work_week_start ?? 0;
     const records = empRows.map(dbToAttendanceRecord);
-    const sum = calcMonthlySummary(records, weekStart, month);
+    const sum = calcMonthlySummary(records, weekStart, month, companyHolidayDates);
 
     const hasDailyOvertime = sum.total_daily_overtime > 0;
     const hasWeeklyOvertime = sum.total_weekly_overtime > 0;
@@ -193,13 +204,10 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
     const ot = calcOvertimePayBreakdown(sum, salary, otSetting);
     const hasFixedOvertimeExceeded = ot.isExceeding;
 
-    if (
-      !hasDailyOvertime &&
-      !hasWeeklyOvertime &&
-      !hasAbsence &&
-      !hasFixedOvertimeExceeded
-    )
-      continue;
+    // 警告条件: 欠勤 or 固定残業代超過 のいずれか。
+    // 残業 (日次/週次) は数値が出ても問題ない (= 正常な労働) なので trigger からは除外。
+    // ただし数値自体は表示用に残す。
+    if (!hasAbsence && !hasFixedOvertimeExceeded) continue;
 
     result.push({
       office_id: office.id,

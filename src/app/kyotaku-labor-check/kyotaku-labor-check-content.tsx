@@ -177,12 +177,16 @@ export function KyotakuLaborCheckContent() {
                 </tbody>
               </table>
               <p className="mt-3 text-xs text-muted-foreground">
-                ※ 出勤簿に記録がある (= start_time 入力済) 職員のみ集計対象。
-                日次残業 = 1日 8h 超 / 週次残業 = 週 40h 超 / 欠勤 = 所定労働日に
-                実労働が足りない時間 (週 40h 補填後) /{" "}
-                <span className="text-amber-700 font-semibold">残業代 vs 固定</span>{" "}
-                = 通常残業代(1.25倍) + 深夜割増(0.25倍) + 法休割増(0.35倍) の合計が
-                固定残業代を超えた場合に表示。
+                ※ 出勤簿に記録がある (= start_time 入力済) 職員のみ集計対象。<br />
+                <strong>行表示の条件</strong> (どれか 1 つでも該当で表示):
+                <span className="text-rose-600 font-semibold mx-1">欠勤あり</span> /{" "}
+                <span className="text-amber-700 font-semibold mx-1">残業代が固定残業代を超過</span><br />
+                <span className="text-muted-foreground">
+                  欠勤 = 所定労働日 (平日 / 祝日 / 会社休日 を除く) に
+                  実労働が足りない時間 (有給 8h・半有給 4h 換算後、週 40h 補填後)。<br />
+                  残業代 = 通常残業代(1.25倍) + 深夜割増(0.25倍) + 法休割増(0.35倍) の円換算合計。<br />
+                  日次/週次残業の数値は参考表示のみ (発生自体は正常な労働として警告しない)。
+                </span>
               </p>
             </div>
           )}
