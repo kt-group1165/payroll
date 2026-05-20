@@ -40,10 +40,24 @@ export type LaborCheckRow = {
   employee_name: string;
   workMin: number;
   absenceMin: number;
-  /** 実残業代 (= 通常残業代 + 深夜割増 + 法休割増、円) */
+  /** 残業 (日次 + 週次) 分 */
+  overtimeMin: number;
+  /** 残業代 (1.25 倍、円) */
   overtimePay: number;
-  /** 固定残業代 (settings.fixed_overtime_pay) */
+  /** 深夜分 */
+  midnightMin: number;
+  /** 深夜割増 (0.25 倍のみ、円) */
+  midnightPay: number;
+  /** 法休分 */
+  holidayMin: number;
+  /** 法休割増 (0.35 倍のみ、円) */
+  holidayPay: number;
+  /** 実残業代の合計 (= overtimePay + midnightPay + holidayPay) */
+  totalOvertimePay: number;
+  /** 固定残業代 (kyotaku_kotei_zangyo) */
   fixedOvertimePay: number;
+  /** 超過支給額 (= max(0, totalOvertimePay - fixedOvertimePay)) */
+  exceedAmount: number;
   hasAbsence: boolean;
   /** 実残業代 > 固定残業代 (固定 0 のときは false) */
   hasFixedOvertimeExceeded: boolean;
@@ -253,8 +267,15 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
         employee_name: emp.name,
         workMin: sum.total_work,
         absenceMin: sum.total_absence,
-        overtimePay: ot.totalOvertimePay,
+        overtimeMin: sum.total_daily_overtime + sum.total_weekly_overtime,
+        overtimePay: ot.regularOvertimePay,
+        midnightMin: sum.total_midnight,
+        midnightPay: ot.midnightExtraPay,
+        holidayMin: sum.total_holiday,
+        holidayPay: ot.holidayExtraPay,
+        totalOvertimePay: ot.totalOvertimePay,
         fixedOvertimePay: ot.fixedOvertimePay,
+        exceedAmount: ot.exceedAmount,
         hasAbsence,
         hasFixedOvertimeExceeded,
       });

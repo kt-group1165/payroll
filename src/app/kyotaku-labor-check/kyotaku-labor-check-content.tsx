@@ -58,7 +58,11 @@ export function KyotakuLaborCheckContent() {
                     <th className="px-3 py-2 font-medium text-left">担当ケアマネ</th>
                     <th className="px-3 py-2 font-medium text-right">実労働</th>
                     <th className="px-3 py-2 font-medium text-right">欠勤</th>
-                    <th className="px-3 py-2 font-medium text-right" title="実残業代 / 固定残業代">残業代 vs 固定</th>
+                    <th className="px-3 py-2 font-medium text-right" title="日次+週次の残業 (1.25倍)">残業</th>
+                    <th className="px-3 py-2 font-medium text-right" title="22:00-翌05:00 の深夜帯 (0.25倍の割増のみ)">深夜</th>
+                    <th className="px-3 py-2 font-medium text-right" title="法定休日労働 (0.35倍の割増のみ)">法休</th>
+                    <th className="px-3 py-2 font-medium text-right" title="固定残業代 (kyotaku_kotei_zangyo)">固定残業代</th>
+                    <th className="px-3 py-2 font-medium text-right" title="max(0, 実残業代合計 - 固定残業代) = 追加で支給される金額">超過支給</th>
                     <th className="px-3 py-2 font-medium text-center w-24"></th>
                   </tr>
                 </thead>
@@ -83,21 +87,40 @@ export function KyotakuLaborCheckContent() {
                       >
                         {hm(r.absenceMin)}
                       </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        <div>{hm(r.overtimeMin)}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {r.overtimePay > 0 ? `¥${r.overtimePay.toLocaleString()}` : "—"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        <div>{hm(r.midnightMin)}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {r.midnightPay > 0 ? `¥${r.midnightPay.toLocaleString()}` : "—"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        <div>{hm(r.holidayMin)}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {r.holidayPay > 0 ? `¥${r.holidayPay.toLocaleString()}` : "—"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                        {r.fixedOvertimePay > 0
+                          ? `¥${r.fixedOvertimePay.toLocaleString()}`
+                          : "—"}
+                      </td>
                       <td
                         className={`px-3 py-1.5 text-right tabular-nums ${
-                          r.hasFixedOvertimeExceeded
-                            ? "text-amber-700 font-semibold"
-                            : ""
+                          r.exceedAmount > 0
+                            ? "text-amber-700 font-bold"
+                            : "text-muted-foreground"
                         }`}
-                        title={
-                          r.fixedOvertimePay > 0
-                            ? `実残業代 ¥${r.overtimePay.toLocaleString()} / 固定残業代 ¥${r.fixedOvertimePay.toLocaleString()}`
-                            : "固定残業代 未設定"
-                        }
+                        title={`実残業代合計 ¥${r.totalOvertimePay.toLocaleString()} − 固定残業代 ¥${r.fixedOvertimePay.toLocaleString()}`}
                       >
-                        {r.fixedOvertimePay > 0
-                          ? `¥${r.overtimePay.toLocaleString()} / ¥${r.fixedOvertimePay.toLocaleString()}`
-                          : "—"}
+                        {r.exceedAmount > 0
+                          ? `¥${r.exceedAmount.toLocaleString()}`
+                          : "¥0"}
                       </td>
                       <td className="px-3 py-1.5 text-center">
                         <Link
@@ -119,8 +142,11 @@ export function KyotakuLaborCheckContent() {
                 <span className="text-muted-foreground">
                   欠勤 = 所定労働日 (平日 / 祝日 / 会社休日 を除く) に実労働が足りない時間。
                   ただしその週の <strong>有給込み・残業込みの効果労働時間が 40h 確保</strong> されていれば 0 扱い (= 一覧に出ない)。<br />
-                  残業代 = 通常残業代(1.25倍) + 深夜割増(0.25倍) + 法休割増(0.35倍) の円換算合計。
-                  固定残業代 = 居宅ケアマネ給与設定の「固定残業手当」。
+                  残業 = 日次+週次の残業時間 (1.25倍) /
+                  深夜 = 22:00-翌05:00 の割増分のみ (0.25倍) /
+                  法休 = 法定休日労働の割増分のみ (0.35倍)。<br />
+                  <strong>超過支給</strong> = max(0, 残業代+深夜代+法休代 − 固定残業代)。
+                  この金額のみが実際に追加支給される。固定残業代以下の場合は ¥0。
                 </span>
               </p>
             </div>
