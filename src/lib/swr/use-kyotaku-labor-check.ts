@@ -16,12 +16,11 @@ import {
 /**
  * 居宅介護支援 労働時間チェック用データ取得 hook (SWR ベース)。
  *
- * 指定された 1 ヶ月について、全 居宅介護支援 office × 全職員 の出勤簿を集計し、
- * 「週40h 不足 (= 欠勤あり)」「日次残業あり」「週次残業あり」のいずれかが
- * 発生している職員だけを行として返す。
+ * 全 居宅介護支援 office × 全職員 × 全月 の出勤簿を集計し、
+ * 「欠勤あり (週40h 確保できず) 」「固定残業代 超過」 のいずれかが
+ * 発生している (employee × month) 行だけを返す。
  *
- * Cache key: `kyotaku-labor-check:{month}`
- *   month は YYYY-MM。
+ * Cache key: `kyotaku-labor-check:all`
  *
  * 撤去容易性: SWR を使うのは本ファイルだけ。撤去時は内部を useEffect+useState に
  * 書き換えるだけで、呼び出し側 component は無変更。
@@ -32,22 +31,19 @@ import {
 // =====================================================================
 
 export type LaborCheckRow = {
+  /** 対象月 YYYY-MM */
+  month: string;
   office_id: string;
   office_short_name: string;
   office_number: string;
   employee_id: string;
   employee_name: string;
   workMin: number;
-  dailyOvertimeMin: number;
-  weeklyOvertimeMin: number;
   absenceMin: number;
   /** 実残業代 (= 通常残業代 + 深夜割増 + 法休割増、円) */
   overtimePay: number;
   /** 固定残業代 (settings.fixed_overtime_pay) */
   fixedOvertimePay: number;
-  /** 警告フラグ (少なくとも 1 つ true なら一覧に乗る) */
-  hasDailyOvertime: boolean;
-  hasWeeklyOvertime: boolean;
   hasAbsence: boolean;
   /** 実残業代 > 固定残業代 (固定 0 のときは false) */
   hasFixedOvertimeExceeded: boolean;
@@ -107,7 +103,7 @@ function dbToAttendanceRecord(r: AttendanceDbRow): AttendanceRecord {
 // fetcher
 // =====================================================================
 
-async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
+async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
   // 1) 居宅介護支援 offices 全件
   const { data: officeData, error: officeErr } = await supabase
     .from("payroll_offices")
@@ -119,48 +115,87 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
   const officeIds = offices.map((o) => o.id);
   const officeById = new Map(offices.map((o) => [o.id, o]));
 
-  // 2) 居宅介護支援 office の全 employee
+  // 2) 居宅介護支援 office の全 employee + 居宅専用の給与設定 (kyotaku_* 列)
+  //    固定残業代の判定は payroll_salary_settings ではなく
+  //    payroll_employees.kyotaku_kotei_zangyo (= 居宅ケアマネ給与設定画面の値) を使う。
   const { data: empData, error: empErr } = await supabase
     .from("payroll_employees")
-    .select("id, name, office_id")
+    .select(
+      "id, name, office_id, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
+    )
     .in("office_id", officeIds);
   if (empErr) throw empErr;
-  const employees = (empData ?? []) as EmployeeRow[];
+  type EmployeeWithKyotaku = EmployeeRow & {
+    kyotaku_honnin_kyu: number | null;
+    kyotaku_shokuno_kyu: number | null;
+    kyotaku_kotei_zangyo: number | null;
+    kyotaku_shikaku_teate: number | null;
+    kyotaku_kotei: number | null;
+    kyotaku_tokutei_shogu: number | null;
+  };
+  const employees = (empData ?? []) as EmployeeWithKyotaku[];
   if (employees.length === 0) return [];
   const empIds = employees.map((e) => e.id);
 
-  // 3) 当月 (extended range for 月跨ぎ週) の出勤簿 record を全 employee 分まとめて fetch
-  //    各 office で work_week_start が異なる可能性があるので、最大 9 日前/後の余裕で fetch
-  //    (週起算 0-6 のいずれでも余裕で含まれる範囲)
-  const fallbackRange = extendedMonthRange(month, 0);
+  // 3) 全期間の出勤簿 record を fetch (1000 行制限を回避するため pagination)
+  //    select() の default limit 1000 を超える可能性があるので明示的に大きく取る。
   const { data: attData, error: attErr } = await supabase
     .from("payroll_kyotaku_attendance_records")
     .select(
       "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, substitute_for_date",
     )
     .in("employee_id", empIds)
-    .gte("work_date", fallbackRange.start)
-    .lte("work_date", fallbackRange.end);
+    .limit(100000);
   if (attErr) throw attErr;
   const attRows = (attData ?? []) as AttendanceDbRow[];
 
-  // 4) employee_id 単位で出勤 record をグルーピング
-  const byEmp = new Map<string, AttendanceDbRow[]>();
+  // 4) employee_id + 月 でグルーピング (YYYY-MM)
+  const byEmpMonth = new Map<string, Map<string, AttendanceDbRow[]>>();
+  // 出現する全 month 集合
+  const monthsByEmp = new Map<string, Set<string>>();
   for (const r of attRows) {
-    if (!byEmp.has(r.employee_id)) byEmp.set(r.employee_id, []);
-    byEmp.get(r.employee_id)!.push(r);
+    const ym = r.work_date.slice(0, 7); // YYYY-MM
+    if (!byEmpMonth.has(r.employee_id)) byEmpMonth.set(r.employee_id, new Map());
+    const monthMap = byEmpMonth.get(r.employee_id)!;
+    if (!monthMap.has(ym)) monthMap.set(ym, []);
+    monthMap.get(ym)!.push(r);
+    if (!monthsByEmp.has(r.employee_id)) monthsByEmp.set(r.employee_id, new Set());
+    monthsByEmp.get(r.employee_id)!.add(ym);
   }
 
-  // 4b) salary_settings (固定残業代 + base 構成要素) を employee 分まとめて fetch
-  const { data: salaryData } = await supabase
-    .from("payroll_salary_settings")
-    .select(
-      "employee_id, base_personal_salary, skill_salary, position_allowance, qualification_allowance, tenure_allowance, treatment_improvement, specific_treatment_improvement, treatment_subsidy, fixed_overtime_pay, special_bonus",
-    )
-    .in("employee_id", empIds);
-  const salaryByEmp = new Map<string, SalarySettingsForOvertime>();
-  for (const r of (salaryData ?? []) as (SalarySettingsForOvertime & { employee_id: string })[]) {
-    salaryByEmp.set(r.employee_id, r);
+  // 月跨ぎ週の正確計算のため、各月集計時には隣接月分も必要。
+  // ここでは extendedMonthRange で当月 ± 9 日の record を抽出して計算に渡す。
+  function recordsForMonth(empId: string, ym: string): AttendanceDbRow[] {
+    const range = extendedMonthRange(ym, 0);
+    const empAll = byEmpMonth.get(empId);
+    if (!empAll) return [];
+    const out: AttendanceDbRow[] = [];
+    // empAll は month 単位で持っているので、隣接 3 ヶ月分 (前/当/後) を結合
+    for (const [, list] of empAll) {
+      for (const r of list) {
+        if (r.work_date >= range.start && r.work_date <= range.end) out.push(r);
+      }
+    }
+    return out;
+  }
+
+  // 4b) 居宅ケアマネ用 salary を employees の kyotaku_* 列から SalarySettingsForOvertime 形に mapping
+  //     overtime_settings.include_base_personal_salary / include_skill_salary だけ true なので、
+  //     base = honnin_kyu + shokuno_kyu になる。固定残業代は kotei_zangyo。
+  //     他の手当 (qualification/tenure/specific) は include 設定次第。
+  function kyotakuToSalarySettings(e: EmployeeWithKyotaku): SalarySettingsForOvertime {
+    return {
+      base_personal_salary: e.kyotaku_honnin_kyu ?? 0,
+      skill_salary: e.kyotaku_shokuno_kyu ?? 0,
+      position_allowance: 0,
+      qualification_allowance: e.kyotaku_shikaku_teate ?? 0,
+      tenure_allowance: e.kyotaku_kotei ?? 0,
+      treatment_improvement: 0,
+      specific_treatment_improvement: e.kyotaku_tokutei_shogu ?? 0,
+      treatment_subsidy: 0,
+      fixed_overtime_pay: e.kyotaku_kotei_zangyo ?? 0,
+      special_bonus: 0,
+    };
   }
 
   // 4c) overtime_settings (job_type='居宅介護支援') を 1 件取得
@@ -184,52 +219,51 @@ async function fetchLaborCheck(month: string): Promise<LaborCheckRow[]> {
     (holidayData ?? []).map((r) => (r as { holiday_date: string }).holiday_date),
   );
 
-  // 5) 各 employee で月集計 → 警告条件に合致するものだけ収集
+  // 5) 各 employee × 各月 で集計 → 警告条件に合致するものだけ収集
   const result: LaborCheckRow[] = [];
   for (const emp of employees) {
-    const empRows = byEmp.get(emp.id) ?? [];
-    if (empRows.length === 0) continue; // 出勤記録 0 件はチェック対象外
+    const monthSet = monthsByEmp.get(emp.id);
+    if (!monthSet || monthSet.size === 0) continue;
     const office = officeById.get(emp.office_id);
     if (!office) continue;
     const weekStart = office.work_week_start ?? 0;
-    const records = empRows.map(dbToAttendanceRecord);
-    const sum = calcMonthlySummary(records, weekStart, month, companyHolidayDates);
+    const salary = kyotakuToSalarySettings(emp);
 
-    const hasDailyOvertime = sum.total_daily_overtime > 0;
-    const hasWeeklyOvertime = sum.total_weekly_overtime > 0;
-    const hasAbsence = sum.total_absence > 0;
+    for (const ym of monthSet) {
+      const empRecords = recordsForMonth(emp.id, ym);
+      if (empRecords.length === 0) continue;
+      // 当月分が実際に存在するか (空 month は除く)
+      const hasCurrentMonth = empRecords.some((r) => r.work_date.slice(0, 7) === ym);
+      if (!hasCurrentMonth) continue;
+      const records = empRecords.map(dbToAttendanceRecord);
+      const sum = calcMonthlySummary(records, weekStart, ym, companyHolidayDates);
 
-    // 固定残業代超過の判定
-    const salary = salaryByEmp.get(emp.id) ?? null;
-    const ot = calcOvertimePayBreakdown(sum, salary, otSetting);
-    const hasFixedOvertimeExceeded = ot.isExceeding;
+      const hasAbsence = sum.total_absence > 0;
+      const ot = calcOvertimePayBreakdown(sum, salary, otSetting);
+      const hasFixedOvertimeExceeded = ot.isExceeding;
 
-    // 警告条件: 欠勤 or 固定残業代超過 のいずれか。
-    // 残業 (日次/週次) は数値が出ても問題ない (= 正常な労働) なので trigger からは除外。
-    // ただし数値自体は表示用に残す。
-    if (!hasAbsence && !hasFixedOvertimeExceeded) continue;
+      if (!hasAbsence && !hasFixedOvertimeExceeded) continue;
 
-    result.push({
-      office_id: office.id,
-      office_short_name: office.short_name ?? office.office_number,
-      office_number: office.office_number,
-      employee_id: emp.id,
-      employee_name: emp.name,
-      workMin: sum.total_work,
-      dailyOvertimeMin: sum.total_daily_overtime,
-      weeklyOvertimeMin: sum.total_weekly_overtime,
-      absenceMin: sum.total_absence,
-      overtimePay: ot.totalOvertimePay,
-      fixedOvertimePay: ot.fixedOvertimePay,
-      hasDailyOvertime,
-      hasWeeklyOvertime,
-      hasAbsence,
-      hasFixedOvertimeExceeded,
-    });
+      result.push({
+        month: ym,
+        office_id: office.id,
+        office_short_name: office.short_name ?? office.office_number,
+        office_number: office.office_number,
+        employee_id: emp.id,
+        employee_name: emp.name,
+        workMin: sum.total_work,
+        absenceMin: sum.total_absence,
+        overtimePay: ot.totalOvertimePay,
+        fixedOvertimePay: ot.fixedOvertimePay,
+        hasAbsence,
+        hasFixedOvertimeExceeded,
+      });
+    }
   }
 
-  // 6) office_number ASC → employee_name ASC でソート
+  // 6) month DESC (新しい月先頭) → office_number ASC → employee_name ASC でソート
   result.sort((a, b) => {
+    if (a.month !== b.month) return b.month.localeCompare(a.month);
     if (a.office_number !== b.office_number)
       return a.office_number.localeCompare(b.office_number);
     return a.employee_name.localeCompare(b.employee_name);
@@ -248,11 +282,11 @@ export type UseKyotakuLaborCheckResult = {
   mutate: () => void;
 };
 
-export function useKyotakuLaborCheck(month: string): UseKyotakuLaborCheckResult {
-  const key = `kyotaku-labor-check:${month}`;
+export function useKyotakuLaborCheck(): UseKyotakuLaborCheckResult {
+  const key = `kyotaku-labor-check:all`;
   const { data, error, isLoading, mutate } = useSWR<LaborCheckRow[]>(
     key,
-    () => fetchLaborCheck(month),
+    () => fetchLaborCheck(),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: true,

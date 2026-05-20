@@ -528,16 +528,24 @@ export function calcDailyListWithWeekly(
     // ─── 欠勤 週次調整 ───
     // 週の欠勤 = min(
     //   Σ raw 欠勤,
-    //   max(0, 40h - Σ min(work_minutes, 8h))    ← 1日8h超を除いた週合計の40h不足分
+    //   max(0, 40h - 効果労働時間)
     // )
-    // 法休 work は仕様により週合計 (40h プール) に含める。
+    //   効果労働時間 = Σ work_minutes (uncapped、残業分も含む)
+    //                + Σ 有給 credit (full=8h, half=4h)
+    //   = 「結果としてその週 40h（有給での調整後）が確保されているか」を 1 つの数値で表現。
+    // 残業時間も補填源として扱う (= ユーザ運用ポリシー: その週 40h が結果として確保されていれば
+    //   欠勤として警告しない)。
+    // 法休 work は仕様により効果労働時間に含める。
     // 補填があれば日付昇順で raw 欠勤を 0 まで引き下げる (sum=月計と一致)。
     const rawAbsSum = list.reduce((s, it) => s + it.daily.absence_minutes, 0);
-    const cappedWorkSum = list.reduce(
-      (s, it) => s + Math.min(it.daily.work_minutes, LEGAL_DAILY_LIMIT),
-      0,
-    );
-    const weeklyShortfall = Math.max(0, LEGAL_WEEKLY_LIMIT - cappedWorkSum);
+    const workSum = list.reduce((s, it) => s + it.daily.work_minutes, 0);
+    const paidLeaveCreditSum = list.reduce((s, it) => {
+      if (it.r.paid_leave_type === "full") return s + LEGAL_DAILY_LIMIT;
+      if (it.r.paid_leave_type === "half") return s + 4 * MIN_PER_HOUR;
+      return s;
+    }, 0);
+    const effectiveWorkSum = workSum + paidLeaveCreditSum;
+    const weeklyShortfall = Math.max(0, LEGAL_WEEKLY_LIMIT - effectiveWorkSum);
     const weeklyAbsence = Math.min(rawAbsSum, weeklyShortfall);
     if (weeklyAbsence < rawAbsSum) {
       let reductionNeeded = rawAbsSum - weeklyAbsence;

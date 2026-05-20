@@ -648,16 +648,16 @@ export function KyotakuAttendanceContent() {
     }
 
     // 固定残業代 超過チェック (保存前 inline 警告)
-    //   salary_settings + overtime_settings を select し、calcOvertimePayBreakdown で判定。
-    //   超過なら確認 dialog を出し、OK で保存続行 / Cancel で中止。
+    //   居宅ケアマネは payroll_employees.kyotaku_* から salary 構築。
+    //   overtime_settings は共通 (job_type='居宅介護支援')。
     try {
-      const [{ data: salaryRow }, { data: otRow }] = await Promise.all([
+      const [{ data: empRow }, { data: otRow }] = await Promise.all([
         supabase
-          .from("payroll_salary_settings")
+          .from("payroll_employees")
           .select(
-            "base_personal_salary, skill_salary, position_allowance, qualification_allowance, tenure_allowance, treatment_improvement, specific_treatment_improvement, treatment_subsidy, fixed_overtime_pay, special_bonus",
+            "kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
           )
-          .eq("employee_id", selectedEmployeeId)
+          .eq("id", selectedEmployeeId)
           .maybeSingle(),
         supabase
           .from("payroll_overtime_settings")
@@ -667,9 +667,31 @@ export function KyotakuAttendanceContent() {
           .eq("job_type", "居宅介護支援")
           .maybeSingle(),
       ]);
+      const e = empRow as {
+        kyotaku_honnin_kyu: number | null;
+        kyotaku_shokuno_kyu: number | null;
+        kyotaku_kotei_zangyo: number | null;
+        kyotaku_shikaku_teate: number | null;
+        kyotaku_kotei: number | null;
+        kyotaku_tokutei_shogu: number | null;
+      } | null;
+      const salary: SalarySettingsForOvertime | null = e
+        ? {
+            base_personal_salary: e.kyotaku_honnin_kyu ?? 0,
+            skill_salary: e.kyotaku_shokuno_kyu ?? 0,
+            position_allowance: 0,
+            qualification_allowance: e.kyotaku_shikaku_teate ?? 0,
+            tenure_allowance: e.kyotaku_kotei ?? 0,
+            treatment_improvement: 0,
+            specific_treatment_improvement: e.kyotaku_tokutei_shogu ?? 0,
+            treatment_subsidy: 0,
+            fixed_overtime_pay: e.kyotaku_kotei_zangyo ?? 0,
+            special_bonus: 0,
+          }
+        : null;
       const ot = calcOvertimePayBreakdown(
         monthSummary,
-        salaryRow as SalarySettingsForOvertime | null,
+        salary,
         otRow as OvertimeSettingForCalc | null,
       );
       if (ot.isExceeding) {
