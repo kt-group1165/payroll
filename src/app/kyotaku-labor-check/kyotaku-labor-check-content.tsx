@@ -109,8 +109,6 @@ export function KyotakuLaborCheckContent() {
                     <th className="px-3 py-2 font-medium text-left">事業所</th>
                     <th className="px-3 py-2 font-medium text-left">担当ケアマネ</th>
                     <th className="px-3 py-2 font-medium text-right">実労働</th>
-                    <th className="px-3 py-2 font-medium text-right">日次残業</th>
-                    <th className="px-3 py-2 font-medium text-right">週次残業</th>
                     <th className="px-3 py-2 font-medium text-right">欠勤</th>
                     <th className="px-3 py-2 font-medium text-right" title="実残業代 / 固定残業代">残業代 vs 固定</th>
                     <th className="px-3 py-2 font-medium text-center w-24"></th>
@@ -126,20 +124,6 @@ export function KyotakuLaborCheckContent() {
                       <td className="px-3 py-1.5">{r.employee_name}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">
                         {hm(r.workMin)}
-                      </td>
-                      <td
-                        className={`px-3 py-1.5 text-right tabular-nums ${
-                          r.hasDailyOvertime ? "text-amber-700 font-semibold" : ""
-                        }`}
-                      >
-                        {hm(r.dailyOvertimeMin)}
-                      </td>
-                      <td
-                        className={`px-3 py-1.5 text-right tabular-nums ${
-                          r.hasWeeklyOvertime ? "text-amber-700 font-semibold" : ""
-                        }`}
-                      >
-                        {hm(r.weeklyOvertimeMin)}
                       </td>
                       <td
                         className={`px-3 py-1.5 text-right tabular-nums ${
@@ -184,8 +168,7 @@ export function KyotakuLaborCheckContent() {
                 <span className="text-muted-foreground">
                   欠勤 = 所定労働日 (平日 / 祝日 / 会社休日 を除く) に
                   実労働が足りない時間 (有給 8h・半有給 4h 換算後、週 40h 補填後)。<br />
-                  残業代 = 通常残業代(1.25倍) + 深夜割増(0.25倍) + 法休割増(0.35倍) の円換算合計。<br />
-                  日次/週次残業の数値は参考表示のみ (発生自体は正常な労働として警告しない)。
+                  残業代 = 通常残業代(1.25倍) + 深夜割増(0.25倍) + 法休割増(0.35倍) の円換算合計。
                 </span>
               </p>
             </div>
