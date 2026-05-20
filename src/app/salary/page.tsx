@@ -11,6 +11,8 @@ import { SalaryList } from "./salary-list";
 type SalarySettings = {
   id?: string;
   employee_id: string;
+  /** 適用開始月 (YYYY-MM-DD)。履歴化 (Phase 1) で追加。同 employee 内で対象月 >= effective_from の最新が active */
+  effective_from: string;
   base_personal_salary: number;
   skill_salary: number;
   position_allowance: number;

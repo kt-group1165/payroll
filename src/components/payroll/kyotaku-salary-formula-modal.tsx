@@ -47,36 +47,36 @@ const ITEMS: Record<
 > = {
   honnin: {
     label: "本人給",
-    formula: "payroll_employees.kyotaku_honnin_kyu",
+    formula: "payroll_kyotaku_salary.honnin_kyu",
     description:
       "本人ごとの基本給。マスタの本人給を毎月そのまま支給。給与計算では変動なし。",
   },
   shokuno: {
     label: "職能給",
-    formula: "payroll_employees.kyotaku_shokuno_kyu",
+    formula: "payroll_kyotaku_salary.shokuno_kyu",
     description:
       "職能ごとの給与。マスタ値をそのまま支給。base (= 本人給 + 職能給 + 固定残業) の構成要素として、件数連動手当 (プラン/調整) の判定にも使う。",
   },
   kotei_zangyo: {
     label: "固定残業手当",
-    formula: "payroll_employees.kyotaku_kotei_zangyo",
+    formula: "payroll_kyotaku_salary.kotei_zangyo",
     description:
       "固定残業代。マスタ値をそのまま支給。base (= 本人給 + 職能給 + 固定残業) の構成要素。",
   },
   shikaku: {
     label: "資格手当",
-    formula: "payroll_employees.kyotaku_shikaku_teate",
+    formula: "payroll_kyotaku_salary.shikaku_teate",
     description: "資格保有者向けの固定手当。マスタ値をそのまま加算。",
   },
   kotei: {
     label: "勤続手当",
-    formula: "payroll_employees.kyotaku_kotei",
+    formula: "payroll_kyotaku_salary.kotei",
     description:
-      "勤続年数ベースの固定手当。マスタ値 (DB 列名は kyotaku_kotei) をそのまま加算。",
+      "勤続年数ベースの固定手当。マスタ値 (DB 列名は payroll_kyotaku_salary.kotei) をそのまま加算。",
   },
   tokutei: {
     label: "特定処遇改善",
-    formula: "payroll_employees.kyotaku_tokutei_shogu",
+    formula: "payroll_kyotaku_salary.tokutei_shogu",
     description:
       "介護職員等特定処遇改善加算。マスタ値をそのまま加算。",
   },

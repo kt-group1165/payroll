@@ -19,6 +19,10 @@ import {
   type ServiceUnit,
   type YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
+import {
+  getActiveKyotakuSalary,
+  type KyotakuSalary,
+} from "@/lib/payroll/kyotaku-salary-history";
 
 /**
  * 居宅介護支援 総括表 集計データ取得 hook (SWR ベース)。
@@ -73,14 +77,6 @@ type EmployeeRow = {
   employee_number: string | null;
   name: string;
   role_type: string | null;
-  kyotaku_honnin_kyu: number | null;
-  kyotaku_shokuno_kyu: number | null;
-  kyotaku_kotei_zangyo: number | null;
-  kyotaku_shikaku_teate: number | null;
-  kyotaku_kotei: number | null;
-  kyotaku_tokutei_shogu: number | null;
-  kyotaku_kaigo_rate: number | null;
-  kyotaku_shien_rate: number | null;
 };
 
 type AttendanceDbRow = {
@@ -152,30 +148,44 @@ async function fetchKyotakuSummary(
   })();
 
   // 1b) 並列 fetch
-  const [empRes, recRes, unitRes, rateRes, yobouRes] = await Promise.all([
-    supabase
-      .from("payroll_employees")
-      .select(
-        "id, employee_number, name, role_type, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate",
-      )
-      .eq("office_id", officeId)
-      .order("name"),
-    supabase
-      .from("payroll_kyotaku_records")
-      .select("*")
-      .eq("office_number", officeNumber)
-      .limit(10000),
-    supabase.from("payroll_kyotaku_service_units").select("*"),
-    supabase.from("payroll_kyotaku_regional_rates").select("*"),
-    supabase
-      .from("payroll_kyotaku_yobou_records")
-      .select("*")
-      .eq("office_number", officeNumber),
-  ]);
+  //   居宅ケアマネ給与設定は payroll_employees.kyotaku_* (旧) から
+  //   payroll_kyotaku_salary (履歴 table) に移行済。対象月の active row を
+  //   getActiveKyotakuSalary(rows, employee_id, monthStart) で解決する。
+  const [empRes, recRes, unitRes, rateRes, yobouRes, salaryRes] =
+    await Promise.all([
+      supabase
+        .from("payroll_employees")
+        .select("id, employee_number, name, role_type")
+        .eq("office_id", officeId)
+        .order("name"),
+      supabase
+        .from("payroll_kyotaku_records")
+        .select("*")
+        .eq("office_number", officeNumber)
+        .limit(10000),
+      supabase.from("payroll_kyotaku_service_units").select("*"),
+      supabase.from("payroll_kyotaku_regional_rates").select("*"),
+      supabase
+        .from("payroll_kyotaku_yobou_records")
+        .select("*")
+        .eq("office_number", officeNumber),
+      // 対象 office の employee の給与履歴を fetch。employee_id 絞り込みは employees
+      // 取得後でないとできないので、ここでは全件取得 (件数 ~数千、limit(10000) で十分)。
+      // DB 未 apply 段階は error 握り潰し → 空配列 fallback。
+      supabase
+        .from("payroll_kyotaku_salary")
+        .select(
+          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+        )
+        .limit(10000),
+    ]);
   if (empRes.error) throw empRes.error;
   const employees = (empRes.data ?? []) as EmployeeRow[];
   if (employees.length === 0) return [];
   const empIds = employees.map((e) => e.id);
+  const kyotakuSalaryRows: KyotakuSalary[] = salaryRes.error
+    ? []
+    : ((salaryRes.data ?? []) as unknown as KyotakuSalary[]);
 
   // 2) 出勤簿 (extended range)
   const { start: extStart, end: extEnd } = extendedMonthRange(month, weekStart);
@@ -198,17 +208,24 @@ async function fetchKyotakuSummary(
   }
 
   // 4) calcSalary 用 config
-  const settings: EmployeeSetting[] = employees.map((e) => ({
-    staff_name: e.name,
-    honnin_kyu: e.kyotaku_honnin_kyu,
-    shokuno_kyu: e.kyotaku_shokuno_kyu,
-    kotei_zangyo: e.kyotaku_kotei_zangyo,
-    shikaku_teate: e.kyotaku_shikaku_teate,
-    kotei: e.kyotaku_kotei,
-    tokutei_shogu: e.kyotaku_tokutei_shogu,
-    kaigo_rate: e.kyotaku_kaigo_rate,
-    shien_rate: e.kyotaku_shien_rate,
-  }));
+  //    対象月 (`${month}-01`) で active な salary row を解決して EmployeeSetting に
+  //    焼き込む (履歴 table 対応)。active row なし → null fallback (resolveSetting の
+  //    DEFAULT_BASE_SALARY=250000 へ)。
+  const serviceMonth = `${month}-01`;
+  const settings: EmployeeSetting[] = employees.map((e) => {
+    const active = getActiveKyotakuSalary(kyotakuSalaryRows, e.id, serviceMonth);
+    return {
+      staff_name: e.name,
+      honnin_kyu: active ? active.honnin_kyu : null,
+      shokuno_kyu: active ? active.shokuno_kyu : null,
+      kotei_zangyo: active ? active.kotei_zangyo : null,
+      shikaku_teate: active ? active.shikaku_teate : null,
+      kotei: active ? active.kotei : null,
+      tokutei_shogu: active ? active.tokutei_shogu : null,
+      kaigo_rate: active ? active.kaigo_rate : null,
+      shien_rate: active ? active.shien_rate : null,
+    };
+  });
   const allKyotakuRecords = (recRes.data ?? []) as KyotakuRecord[];
   const allYobou = (yobouRes.error ? [] : (yobouRes.data ?? [])) as YobouRecord[];
   const attendanceForCalc: KyotakuAttendanceRecord[] = [];
@@ -251,7 +268,6 @@ async function fetchKyotakuSummary(
     }
     businessKmTotal = Math.round(businessKmTotal * 10) / 10;
 
-    const serviceMonth = `${month}-01`;
     const breakdown = calcSalary(allKyotakuRecords, emp.name, serviceMonth, calcConfig);
 
     return {

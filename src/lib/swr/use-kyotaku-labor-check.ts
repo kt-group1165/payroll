@@ -12,6 +12,10 @@ import {
   type OvertimeSettingForCalc,
   type SalarySettingsForOvertime,
 } from "@/lib/payroll/overtime-pay-calc";
+import {
+  getActiveKyotakuSalary,
+  type KyotakuSalary,
+} from "@/lib/payroll/kyotaku-salary-history";
 
 /**
  * 居宅介護支援 労働時間チェック用データ取得 hook (SWR ベース)。
@@ -129,27 +133,31 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
   const officeIds = offices.map((o) => o.id);
   const officeById = new Map(offices.map((o) => [o.id, o]));
 
-  // 2) 居宅介護支援 office の全 employee + 居宅専用の給与設定 (kyotaku_* 列)
+  // 2) 居宅介護支援 office の全 employee (identity のみ)。
   //    固定残業代の判定は payroll_salary_settings ではなく
-  //    payroll_employees.kyotaku_kotei_zangyo (= 居宅ケアマネ給与設定画面の値) を使う。
+  //    payroll_kyotaku_salary (= 居宅ケアマネ給与設定の履歴 table) を使う。
+  //    対象月の active row を getActiveKyotakuSalary(rows, employee_id, month) で解決。
   const { data: empData, error: empErr } = await supabase
     .from("payroll_employees")
-    .select(
-      "id, name, office_id, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
-    )
+    .select("id, name, office_id")
     .in("office_id", officeIds);
   if (empErr) throw empErr;
-  type EmployeeWithKyotaku = EmployeeRow & {
-    kyotaku_honnin_kyu: number | null;
-    kyotaku_shokuno_kyu: number | null;
-    kyotaku_kotei_zangyo: number | null;
-    kyotaku_shikaku_teate: number | null;
-    kyotaku_kotei: number | null;
-    kyotaku_tokutei_shogu: number | null;
-  };
-  const employees = (empData ?? []) as EmployeeWithKyotaku[];
+  const employees = (empData ?? []) as EmployeeRow[];
   if (employees.length === 0) return [];
   const empIds = employees.map((e) => e.id);
+
+  // 2b) 居宅ケアマネ給与履歴 (= 月別 active row 解決用)。
+  //     DB 未 apply 段階は error 握り潰し → 空配列 fallback (= 旧 NULL 互換挙動)。
+  const { data: salaryData, error: salaryErr } = await supabase
+    .from("payroll_kyotaku_salary")
+    .select(
+      "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+    )
+    .in("employee_id", empIds)
+    .limit(10000);
+  const kyotakuSalaryRows: KyotakuSalary[] = salaryErr
+    ? []
+    : ((salaryData ?? []) as unknown as KyotakuSalary[]);
 
   // 3) 全期間の出勤簿 record を fetch (1000 行制限を回避するため pagination)
   //    select() の default limit 1000 を超える可能性があるので明示的に大きく取る。
@@ -193,21 +201,33 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
     return out;
   }
 
-  // 4b) 居宅ケアマネ用 salary を employees の kyotaku_* 列から SalarySettingsForOvertime 形に mapping
+  // 4b) 居宅ケアマネ用 salary を payroll_kyotaku_salary (履歴) から月別に解決し
+  //     SalarySettingsForOvertime 形に mapping。
   //     overtime_settings.include_base_personal_salary / include_skill_salary だけ true なので、
   //     base = honnin_kyu + shokuno_kyu になる。固定残業代は kotei_zangyo。
   //     他の手当 (qualification/tenure/specific) は include 設定次第。
-  function kyotakuToSalarySettings(e: EmployeeWithKyotaku): SalarySettingsForOvertime {
+  //
+  //     対象月 ym (YYYY-MM) → ${ym}-01 で getActiveKyotakuSalary に渡す。
+  //     active row なし (履歴 0 件 or 未来 effective_from) は全 0 fallback。
+  function kyotakuToSalarySettings(
+    employeeId: string,
+    ym: string,
+  ): SalarySettingsForOvertime {
+    const active = getActiveKyotakuSalary(
+      kyotakuSalaryRows,
+      employeeId,
+      `${ym}-01`,
+    );
     return {
-      base_personal_salary: e.kyotaku_honnin_kyu ?? 0,
-      skill_salary: e.kyotaku_shokuno_kyu ?? 0,
+      base_personal_salary: active?.honnin_kyu ?? 0,
+      skill_salary: active?.shokuno_kyu ?? 0,
       position_allowance: 0,
-      qualification_allowance: e.kyotaku_shikaku_teate ?? 0,
-      tenure_allowance: e.kyotaku_kotei ?? 0,
+      qualification_allowance: active?.shikaku_teate ?? 0,
+      tenure_allowance: active?.kotei ?? 0,
       treatment_improvement: 0,
-      specific_treatment_improvement: e.kyotaku_tokutei_shogu ?? 0,
+      specific_treatment_improvement: active?.tokutei_shogu ?? 0,
       treatment_subsidy: 0,
-      fixed_overtime_pay: e.kyotaku_kotei_zangyo ?? 0,
+      fixed_overtime_pay: active?.kotei_zangyo ?? 0,
       special_bonus: 0,
     };
   }
@@ -241,7 +261,6 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
     const office = officeById.get(emp.office_id);
     if (!office) continue;
     const weekStart = office.work_week_start ?? 0;
-    const salary = kyotakuToSalarySettings(emp);
 
     for (const ym of monthSet) {
       const empRecords = recordsForMonth(emp.id, ym);
@@ -251,6 +270,9 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
       if (!hasCurrentMonth) continue;
       const records = empRecords.map(dbToAttendanceRecord);
       const sum = calcMonthlySummary(records, weekStart, ym, companyHolidayDates);
+
+      // 対象月の active salary 履歴 row で固定残業代 等を解決
+      const salary = kyotakuToSalarySettings(emp.id, ym);
 
       const hasAbsence = sum.total_absence > 0;
       const ot = calcOvertimePayBreakdown(sum, salary, otSetting);

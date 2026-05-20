@@ -40,6 +40,10 @@ import {
   type SalarySettingsForOvertime,
 } from "@/lib/payroll/overtime-pay-calc";
 import {
+  getActiveKyotakuSalary,
+  type KyotakuSalary,
+} from "@/lib/payroll/kyotaku-salary-history";
+import {
   exportKyotakuAttendanceCsv,
   parseKyotakuAttendanceCsv,
   type KyotakuAttendanceCsvRow,
@@ -648,17 +652,18 @@ export function KyotakuAttendanceContent() {
     }
 
     // 固定残業代 超過チェック (保存前 inline 警告)
-    //   居宅ケアマネは payroll_employees.kyotaku_* から salary 構築。
+    //   居宅ケアマネ給与は payroll_kyotaku_salary (履歴 table) から対象月の active row
+    //   を取得して salary 構築する (旧 payroll_employees.kyotaku_* は obsolete)。
     //   overtime_settings は共通 (job_type='居宅介護支援')。
     try {
-      const [{ data: empRow }, { data: otRow }] = await Promise.all([
+      const [{ data: salaryRows }, { data: otRow }] = await Promise.all([
         supabase
-          .from("payroll_employees")
+          .from("payroll_kyotaku_salary")
           .select(
-            "kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu",
+            "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
           )
-          .eq("id", selectedEmployeeId)
-          .maybeSingle(),
+          .eq("employee_id", selectedEmployeeId)
+          .order("effective_from", { ascending: false }),
         supabase
           .from("payroll_overtime_settings")
           .select(
@@ -667,25 +672,23 @@ export function KyotakuAttendanceContent() {
           .eq("job_type", "居宅介護支援")
           .maybeSingle(),
       ]);
-      const e = empRow as {
-        kyotaku_honnin_kyu: number | null;
-        kyotaku_shokuno_kyu: number | null;
-        kyotaku_kotei_zangyo: number | null;
-        kyotaku_shikaku_teate: number | null;
-        kyotaku_kotei: number | null;
-        kyotaku_tokutei_shogu: number | null;
-      } | null;
-      const salary: SalarySettingsForOvertime | null = e
+      const allRows = (salaryRows ?? []) as unknown as KyotakuSalary[];
+      const active = getActiveKyotakuSalary(
+        allRows,
+        selectedEmployeeId,
+        `${month}-01`,
+      );
+      const salary: SalarySettingsForOvertime | null = active
         ? {
-            base_personal_salary: e.kyotaku_honnin_kyu ?? 0,
-            skill_salary: e.kyotaku_shokuno_kyu ?? 0,
+            base_personal_salary: active.honnin_kyu,
+            skill_salary: active.shokuno_kyu,
             position_allowance: 0,
-            qualification_allowance: e.kyotaku_shikaku_teate ?? 0,
-            tenure_allowance: e.kyotaku_kotei ?? 0,
+            qualification_allowance: active.shikaku_teate,
+            tenure_allowance: active.kotei,
             treatment_improvement: 0,
-            specific_treatment_improvement: e.kyotaku_tokutei_shogu ?? 0,
+            specific_treatment_improvement: active.tokutei_shogu,
             treatment_subsidy: 0,
-            fixed_overtime_pay: e.kyotaku_kotei_zangyo ?? 0,
+            fixed_overtime_pay: active.kotei_zangyo,
             special_bonus: 0,
           }
         : null;

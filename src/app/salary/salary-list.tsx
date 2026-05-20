@@ -16,12 +16,18 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import type { Employee, Office, JobType } from "@/types/database";
+import {
+  buildActiveSalaryMap,
+  getLatestSalary,
+} from "@/lib/payroll/salary-history";
 
 // ─── 型定義 ──────────────────────────────────────────────────
 
 type SalarySettings = {
   id?: string;
   employee_id: string;
+  /** 適用開始月 (YYYY-MM-DD)。履歴化 (Phase 1) で追加。同 employee 内で対象月 >= effective_from の最新が active */
+  effective_from: string;
   base_personal_salary: number;
   skill_salary: number;
   position_allowance: number;
@@ -41,6 +47,16 @@ type SalarySettings = {
   yocho_unit_price: number;
   note: string;
 };
+
+/**
+ * 今月の 1 日 ('YYYY-MM-01') を返す。新規 row の effective_from default。
+ */
+function thisMonthStart(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
+}
 
 // ─── 残業設定型 ──────────────────────────────────────────────
 
@@ -93,8 +109,9 @@ const CSV_HEADERS = [
   "備考",
 ] as const;
 
-const emptySettings = (employeeId: string): SalarySettings => ({
+const emptySettings = (employeeId: string, effectiveFrom?: string): SalarySettings => ({
   employee_id: employeeId,
+  effective_from: effectiveFrom ?? thisMonthStart(),
   base_personal_salary: 0,
   skill_salary: 0,
   position_allowance: 0,
@@ -165,7 +182,8 @@ function parseCsvText(text: string): string[][] {
 type ImportRow = {
   employee_number: string;
   name: string;
-  settings: Omit<SalarySettings, "id" | "employee_id">;
+  // effective_from は CSV には含めず、取込実行時に決定する (= 今月)
+  settings: Omit<SalarySettings, "id" | "employee_id" | "effective_from">;
   employee_id?: string;
   error?: string;
 };
@@ -326,6 +344,12 @@ export function SalaryList({
   const [saving, setSaving] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
+  // ─── 履歴 modal ─────────────────────────────────────────────
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyEmpId, setHistoryEmpId] = useState("");
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [backfillEmpId, setBackfillEmpId] = useState("");
+
   // フィルター・ソート
   const [filterOfficeId, setFilterOfficeId] = useState("");
   const [sortCol, setSortCol] = useState<SortCol>("employee_number");
@@ -372,12 +396,29 @@ export function SalaryList({
     router.refresh();
   }, [router]);
 
+  // 編集ダイアログを開く時、その employee の最新 row を form の初期値にする。
+  // 履歴化方式: ここで取得した値を「新 row INSERT の雛形」として使う。
+  // effective_from だけは「今月」に上書き (=過去の値を上書きするのでなく、今月から
+  // 新しい設定を作る、という UX に揃える)。
   const loadSettings = useCallback(async (empId: string) => {
     if (!empId) { setSettings(null); return; }
     setLoading(true);
     const { data } = await supabase
-      .from("payroll_salary_settings").select("*").eq("employee_id", empId).maybeSingle();
-    setSettings((data as SalarySettings | null) ?? emptySettings(empId));
+      .from("payroll_salary_settings")
+      .select("*")
+      .eq("employee_id", empId)
+      .order("effective_from", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const latest = data as SalarySettings | null;
+    if (latest) {
+      // 既存の最新値を雛形に。id は外して新 INSERT 扱い。effective_from は今月。
+      const { id: _id, ...rest } = latest;
+      void _id;
+      setSettings({ ...rest, effective_from: thisMonthStart() } as SalarySettings);
+    } else {
+      setSettings(emptySettings(empId));
+    }
     setLoading(false);
   }, []);
 
@@ -386,25 +427,56 @@ export function SalaryList({
 
   // ─── 保存 ───────────────────────────────────────────────────
 
+  // 履歴化方式: 常に新 row INSERT。同 (employee_id, effective_from) があれば upsert で上書き
+  // (= 「同じ適用月の設定を直す」ケース)。
   const handleSave = async () => {
     if (!settings) return;
-    setSaving(true);
-    const { id, ...payload } = settings;
-    let error;
-    if (id) {
-      ({ error } = await supabase.from("payroll_salary_settings").update(payload).eq("id", id));
-    } else {
-      ({ error } = await supabase.from("payroll_salary_settings").insert(payload));
+    if (!settings.effective_from) {
+      toast.error("適用開始月を入力してください");
+      return;
     }
+    setSaving(true);
+    const { id: _id, ...payload } = settings;
+    void _id;
+    const { error } = await supabase
+      .from("payroll_salary_settings")
+      .upsert(payload, { onConflict: "employee_id,effective_from" });
     if (error) toast.error(`保存エラー: ${error.message}`);
-    else { toast.success("給与設定を保存しました"); loadSettings(selectedId); refresh(); }
+    else {
+      toast.success(`給与設定を保存しました (適用: ${settings.effective_from} 〜)`);
+      loadSettings(selectedId);
+      refresh();
+    }
     setSaving(false);
+  };
+
+  // ─── 履歴行削除 ─────────────────────────────────────────────
+  const handleDeleteHistoryRow = async (rowId: string) => {
+    if (!rowId) return;
+    if (!confirm("この履歴行を削除します。よろしいですか？")) return;
+    const { error } = await supabase.from("payroll_salary_settings").delete().eq("id", rowId);
+    if (error) toast.error(`削除エラー: ${error.message}`);
+    else { toast.success("履歴行を削除しました"); refresh(); }
+  };
+
+  // ─── 過去の値を追加 (backfill) ─────────────────────────────
+  // 「過去日付 + 値を直接 INSERT」用。最新値を雛形に effective_from を変えて保存。
+  const handleBackfillSave = async (row: SalarySettings) => {
+    if (!row.effective_from) { toast.error("適用開始月を入力してください"); return; }
+    const { id: _id, ...payload } = row;
+    void _id;
+    const { error } = await supabase
+      .from("payroll_salary_settings")
+      .upsert(payload, { onConflict: "employee_id,effective_from" });
+    if (error) toast.error(`保存エラー: ${error.message}`);
+    else { toast.success(`過去設定を追加しました (${row.effective_from} 〜)`); refresh(); setBackfillOpen(false); }
   };
 
   // ─── CSV エクスポート（全員分） ────────────────────────────
 
   function handleExport() {
-    const settingsMap = new Map(allSettings.map((s) => [s.employee_id, s]));
+    // CSV 出力: 「現時点で active な設定」を出す (履歴は出力しない方針)。
+    const exportSettingsMap = buildActiveSalaryMap(allSettings, thisMonthStart());
 
     const rows: string[][] = [CSV_HEADERS.slice()];
 
@@ -415,7 +487,7 @@ export function SalaryList({
 
     const officeByIdForExport = new Map(offices.map((o) => [o.id, o]));
     for (const emp of targets) {
-      const s = settingsMap.get(emp.id) ?? emptySettings(emp.id);
+      const s = exportSettingsMap.get(emp.id) ?? emptySettings(emp.id);
       const empOffice = officeByIdForExport.get(emp.office_id);
       rows.push([
         empOffice?.office_number ?? "",
@@ -544,18 +616,16 @@ export function SalaryList({
     if (valid.length === 0) { toast.error("インポートできる行がありません"); return; }
 
     setImporting(true);
-    const settingsMap = new Map(allSettings.map((s) => [s.employee_id, s.id]));
+    // 履歴化方式: 常に upsert (employee_id, effective_from)。
+    // effective_from は CSV 取込時は「今月」を採用 (=取込実行時の新適用)。
+    const effFrom = thisMonthStart();
     let success = 0, fail = 0;
 
     for (const row of valid) {
-      const payload = { employee_id: row.employee_id!, ...row.settings };
-      const existingId = settingsMap.get(row.employee_id!);
-      let error;
-      if (existingId) {
-        ({ error } = await supabase.from("payroll_salary_settings").update(payload).eq("id", existingId));
-      } else {
-        ({ error } = await supabase.from("payroll_salary_settings").insert(payload));
-      }
+      const payload = { employee_id: row.employee_id!, effective_from: effFrom, ...row.settings };
+      const { error } = await supabase
+        .from("payroll_salary_settings")
+        .upsert(payload, { onConflict: "employee_id,effective_from" });
       if (error) fail++;
       else success++;
     }
@@ -566,7 +636,7 @@ export function SalaryList({
     refresh();
     if (selectedId) loadSettings(selectedId);
 
-    if (fail === 0) toast.success(`${success}件をインポートしました`);
+    if (fail === 0) toast.success(`${success}件をインポートしました (適用: ${effFrom} 〜)`);
     else toast.warning(`${success}件成功、${fail}件失敗`);
   }
 
@@ -605,7 +675,10 @@ export function SalaryList({
     (e) => !e.employment_status || e.employment_status === "在職者"
   );
 
-  const settingsMap = new Map(allSettings.map((s) => [s.employee_id, s]));
+  // 履歴化方式: 一覧は「今日 active な row」を表示する。effective_from <= today の最新。
+  // (= 未来日付 row は反映しない。/payroll の対象月計算は別途その月の active を使う)
+  const todayStart = thisMonthStart();
+  const settingsMap = buildActiveSalaryMap(allSettings, todayStart);
   const officeMap = new Map(offices.map((o) => [o.id, o]));
 
   const filtered = activeEmployees.filter((e) =>
@@ -699,8 +772,21 @@ export function SalaryList({
     setEditOpen(true);
     setLoading(true);
     const { data } = await supabase
-      .from("payroll_salary_settings").select("*").eq("employee_id", empId).maybeSingle();
-    setSettings((data as SalarySettings | null) ?? emptySettings(empId));
+      .from("payroll_salary_settings")
+      .select("*")
+      .eq("employee_id", empId)
+      .order("effective_from", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const latest = data as SalarySettings | null;
+    if (latest) {
+      // 履歴化: 既存最新値を雛形に。id 外して新規 INSERT 扱い。effective_from は今月。
+      const { id: _id, ...rest } = latest;
+      void _id;
+      setSettings({ ...rest, effective_from: thisMonthStart() } as SalarySettings);
+    } else {
+      setSettings(emptySettings(empId));
+    }
     setLoading(false);
   };
 
@@ -786,6 +872,7 @@ export function SalaryList({
                   <th className="text-right px-4 py-2 font-medium whitespace-nowrap">本人給</th>
                   <th className="text-right px-4 py-2 font-medium whitespace-nowrap">処遇改善計</th>
                   <th className="text-center px-4 py-2 font-medium">状態</th>
+                  <th className="text-center px-4 py-2 font-medium whitespace-nowrap">履歴</th>
                 </tr>
               </thead>
               <tbody>
@@ -817,6 +904,7 @@ export function SalaryList({
                         <td className="px-4 py-2 text-center">
                           <span className="text-xs">合算</span>
                         </td>
+                        <td className="px-4 py-2 text-center text-muted-foreground/50 text-xs">—</td>
                       </tr>
                     );
                   }
@@ -857,12 +945,25 @@ export function SalaryList({
                           ? <span className="text-xs text-green-600">設定済み</span>
                           : <span className="text-xs text-muted-foreground">未設定</span>}
                       </td>
+                      <td className="px-4 py-2 text-center">
+                        <button
+                          type="button"
+                          className="text-xs text-blue-600 hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHistoryEmpId(emp.id);
+                            setHistoryOpen(true);
+                          }}
+                        >
+                          履歴を見る
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {sorted.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       {activeEmployees.length === 0 ? "職員が登録されていません" : "該当する職員がいません"}
                     </td>
                   </tr>
@@ -897,6 +998,22 @@ export function SalaryList({
 
           {!loading && settings && (
             <>
+              {/* 適用開始月 (履歴化) */}
+              <div className="mb-3 p-3 rounded-lg border-2 border-blue-200 bg-blue-50/30">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Label className="text-sm font-semibold whitespace-nowrap">適用開始月</Label>
+                  <Input
+                    type="date"
+                    value={settings.effective_from}
+                    onChange={(e) => upd("effective_from", e.target.value)}
+                    className="w-44"
+                  />
+                  <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
+                    この月以降の給与計算でこの設定が使われます。保存すると新しい履歴行が作られ、過去の値は履歴として残ります。
+                  </p>
+                </div>
+              </div>
+
               {/* 合計バー */}
               <div className="mb-5 p-4 rounded-lg bg-primary/5 flex items-center justify-between gap-4">
                 <div>
@@ -1216,6 +1333,226 @@ export function SalaryList({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 履歴 modal (給与設定の effective_from 履歴) */}
+      <SalaryHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        employee={employees.find((e) => e.id === historyEmpId) ?? null}
+        rows={allSettings.filter((s) => s.employee_id === historyEmpId)}
+        onDelete={handleDeleteHistoryRow}
+        onOpenBackfill={() => {
+          setBackfillEmpId(historyEmpId);
+          setHistoryOpen(false);
+          setBackfillOpen(true);
+        }}
+      />
+
+      {/* 過去の値追加 (backfill) modal */}
+      <SalaryBackfillDialog
+        open={backfillOpen}
+        onOpenChange={setBackfillOpen}
+        employee={employees.find((e) => e.id === backfillEmpId) ?? null}
+        templateRow={
+          // 最新値を雛形に。なければ空。
+          backfillEmpId
+            ? (getLatestSalary(allSettings, backfillEmpId) ?? emptySettings(backfillEmpId, "2024-01-01"))
+            : null
+        }
+        onSave={handleBackfillSave}
+      />
     </div>
   );
 }
+
+// ─── 履歴閲覧 modal ─────────────────────────────────────────
+function SalaryHistoryDialog({
+  open, onOpenChange, employee, rows, onDelete, onOpenBackfill,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  employee: Employee | null;
+  rows: SalarySettings[];
+  onDelete: (rowId: string) => void;
+  onOpenBackfill: () => void;
+}) {
+  // effective_from DESC
+  const sortedRows = [...rows].sort((a, b) =>
+    (b.effective_from ?? "").localeCompare(a.effective_from ?? "")
+  );
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            給与設定 履歴 — {employee?.name ?? "-"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm text-muted-foreground">
+            {sortedRows.length}件の履歴。 編集は閉じて行を選択してください (新しい effective_from で履歴行が追加されます)。
+          </p>
+          <Button variant="outline" size="sm" onClick={onOpenBackfill}>
+            ＋ 過去の値を追加する
+          </Button>
+        </div>
+        {sortedRows.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">履歴がありません</p>
+        ) : (
+          <div className="overflow-x-auto border rounded-md">
+            <table className="w-full text-xs whitespace-nowrap">
+              <thead>
+                <tr className="bg-muted/50 border-b">
+                  <th className="text-left px-2 py-1.5 font-medium">適用開始月</th>
+                  <th className="text-right px-2 py-1.5 font-medium">本人給</th>
+                  <th className="text-right px-2 py-1.5 font-medium">職能給</th>
+                  <th className="text-right px-2 py-1.5 font-medium">役職</th>
+                  <th className="text-right px-2 py-1.5 font-medium">資格</th>
+                  <th className="text-right px-2 py-1.5 font-medium">勤続</th>
+                  <th className="text-right px-2 py-1.5 font-medium">処遇改善</th>
+                  <th className="text-right px-2 py-1.5 font-medium">特定処遇</th>
+                  <th className="text-right px-2 py-1.5 font-medium">補助金</th>
+                  <th className="text-right px-2 py-1.5 font-medium">固定残業</th>
+                  <th className="text-right px-2 py-1.5 font-medium">特別報奨</th>
+                  <th className="text-right px-2 py-1.5 font-medium">固定合計</th>
+                  <th className="text-center px-2 py-1.5 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map((r) => (
+                  <tr key={r.id ?? r.effective_from} className="border-b hover:bg-muted/20">
+                    <td className="px-2 py-1.5 font-mono">{r.effective_from}</td>
+                    <td className="px-2 py-1.5 text-right">{r.base_personal_salary.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.skill_salary.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.position_allowance.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.qualification_allowance.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.tenure_allowance.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.treatment_improvement.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.specific_treatment_improvement.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.treatment_subsidy.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.fixed_overtime_pay.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.special_bonus.toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right font-semibold">{fixedTotal(r).toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-center">
+                      {r.id ? (
+                        <button
+                          type="button"
+                          className="text-xs text-red-600 hover:underline"
+                          onClick={() => onDelete(r.id!)}
+                        >
+                          削除
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground/50">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground mt-3">
+          ※ 履歴は append-only です。値を変更したい場合は履歴 modal を閉じ、行を選択して新しい適用開始月で保存してください。
+          削除は誤って入力した行のクリーンアップ用。
+        </p>
+        <div className="flex justify-end mt-3">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>閉じる</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── 過去の値を追加 (backfill) modal ───────────────────────
+// 「open のたびに templateRow から初期化」を useEffect+setState でやると
+// react-hooks/set-state-in-effect で蹴られるので、内部 form を別 component に切り出し
+// `key` で remount させて初期化する方式にする。
+function SalaryBackfillDialog({
+  open, onOpenChange, employee, templateRow, onSave,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  employee: Employee | null;
+  templateRow: SalarySettings | null;
+  onSave: (row: SalarySettings) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>過去の値を追加 — {employee?.name ?? "-"}</DialogTitle>
+        </DialogHeader>
+        {open && templateRow && (
+          <SalaryBackfillForm
+            key={`${employee?.id ?? "none"}:${open ? "open" : "closed"}`}
+            templateRow={templateRow}
+            onCancel={() => onOpenChange(false)}
+            onSave={onSave}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SalaryBackfillForm({
+  templateRow, onCancel, onSave,
+}: {
+  templateRow: SalarySettings;
+  onCancel: () => void;
+  onSave: (row: SalarySettings) => void;
+}) {
+  // 雛形から id を外し effective_from を過去日付に置く (= 過去入力を促す)
+  const [draft, setDraft] = useState<SalarySettings>(() => {
+    const { id: _id, ...rest } = templateRow;
+    void _id;
+    const eff = rest.effective_from && rest.effective_from !== "1970-01-01"
+      ? rest.effective_from : "2024-01-01";
+    return { ...rest, effective_from: eff } as SalarySettings;
+  });
+  const set = <K extends keyof SalarySettings>(k: K, v: SalarySettings[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+
+  return (
+    <>
+      <p className="text-sm text-muted-foreground mb-3">
+        過去の月で適用されていた給与設定を遡って入力します。 effective_from に過去日付を入れて保存してください。
+        (= 過去月の給与再計算で使われるようになります)
+      </p>
+
+      <div className="mb-3 p-3 rounded-lg border-2 border-amber-200 bg-amber-50/30">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Label className="text-sm font-semibold whitespace-nowrap">適用開始月</Label>
+          <Input
+            type="date"
+            value={draft.effective_from}
+            onChange={(e) => set("effective_from", e.target.value)}
+            className="w-44"
+          />
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        <YenInput label="本人給" value={draft.base_personal_salary} onChange={(v) => set("base_personal_salary", v)} />
+        <YenInput label="職能給" value={draft.skill_salary} onChange={(v) => set("skill_salary", v)} />
+        <YenInput label="役職手当" value={draft.position_allowance} onChange={(v) => set("position_allowance", v)} />
+        <YenInput label="資格手当" value={draft.qualification_allowance} onChange={(v) => set("qualification_allowance", v)} />
+        <YenInput label="勤続手当" value={draft.tenure_allowance} onChange={(v) => set("tenure_allowance", v)} />
+        <YenInput label="処遇改善手当" value={draft.treatment_improvement} onChange={(v) => set("treatment_improvement", v)} />
+        <YenInput label="特定処遇改善" value={draft.specific_treatment_improvement} onChange={(v) => set("specific_treatment_improvement", v)} />
+        <YenInput label="処遇改善補助金" value={draft.treatment_subsidy} onChange={(v) => set("treatment_subsidy", v)} />
+        <YenInput label="固定残業代" value={draft.fixed_overtime_pay} onChange={(v) => set("fixed_overtime_pay", v)} />
+        <YenInput label="特別報奨金" value={draft.special_bonus} onChange={(v) => set("special_bonus", v)} />
+      </div>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <Button variant="outline" onClick={onCancel}>キャンセル</Button>
+        <Button onClick={() => onSave(draft)}>
+          💾 過去設定を追加
+        </Button>
+      </div>
+    </>
+  );
+}
+

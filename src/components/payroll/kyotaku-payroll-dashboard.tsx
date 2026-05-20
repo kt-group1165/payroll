@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useKyotakuDashboardData } from "@/lib/swr/use-kyotaku-dashboard-data";
 import { Button } from "@/components/ui/button";
@@ -23,11 +23,13 @@ import {
   getBaseUnit,
   type CalcConfig,
   type Confirmation,
+  type EmployeeSetting,
   type KyotakuRecord,
   type RegionalRate,
   type ServiceUnit,
   type YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
+import { getActiveKyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
 import {
   calcProvisional,
   calcProvisionalDiff,
@@ -49,10 +51,12 @@ import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
  *
  * データソース:
  *   - payroll_kyotaku_records          国保連 CSV row (一覧)
- *   - payroll_employees                ケアマネ別 (6 列分解: kyotaku_honnin_kyu / shokuno_kyu /
- *                                       kotei_zangyo / shikaku_teate / kotei / tokutei_shogu /
- *                                       + kyotaku_kaigo_rate / kyotaku_shien_rate)
- *                                       ※ 旧 kyotaku_base_salary は DB 残置 (rollback 用、参照しない)
+ *   - payroll_employees                ケアマネ identity (id, name, office_id)
+ *   - payroll_kyotaku_salary           ケアマネ給与履歴 (append-only、effective_from で時系列管理)
+ *                                       honnin_kyu / shokuno_kyu / kotei_zangyo / shikaku_teate /
+ *                                       kotei / tokutei_shogu / kaigo_rate / shien_rate
+ *                                       対象月の active row = effective_from <= 対象月 の最新
+ *                                       ※ 旧 payroll_employees.kyotaku_* は DB 残置するが参照しない
  *   - payroll_kyotaku_service_units    項目別 単位数 (tenant 共通)
  *   - payroll_kyotaku_regional_rates   保険者 → 円/単位 (tenant 共通)
  *   - payroll_kyotaku_confirmations    支給済み (reverted_at IS NULL のみ active)
@@ -436,6 +440,7 @@ export function KyotakuPayrollDashboard({
   const {
     records,
     settings,
+    kyotakuSalaryRows,
     units,
     rates,
     confirmations,
@@ -601,7 +606,87 @@ export function KyotakuPayrollDashboard({
     [filteredAttendance],
   );
 
-  /** office_number → 該当 office の CalcConfig */
+  /**
+   * office × 月 → EmployeeSetting[] (= 対象月で active な salary row から派生)。
+   * key: officeNumber|month_start (YYYY-MM-01)
+   *
+   * 履歴 table 移行 (Phase 1):
+   *   旧仕様では payroll_employees.kyotaku_* を 1 row/employee で持つので「全月共通」
+   *   の settings 配列を CalcConfig に渡せば足りた。Phase 1 以降は給与設定が
+   *   payroll_kyotaku_salary に履歴化されたので、対象月ごとに active row を解決して
+   *   per-月 の settings 配列を組み立てる必要がある。
+   *
+   *   給与設定が無い (履歴 row 0 件、または全 row の effective_from > 対象月) employee は
+   *   honnin_kyu 等を null で返す → resolveSetting 内の DEFAULT_BASE_SALARY=250000 fallback
+   *   に乗る (旧仕様互換)。
+   */
+  const settingsByOfficeMonth = useMemo(() => {
+    // office_number → (id, name)[] (office に所属する employee 一覧)
+    const empsByOffice = new Map<string, Array<{ id: string; name: string }>>();
+    for (const s of settings) {
+      if (!s.id) continue;
+      if (!empsByOffice.has(s.office_number)) {
+        empsByOffice.set(s.office_number, []);
+      }
+      empsByOffice.get(s.office_number)!.push({ id: s.id, name: s.staff_name });
+    }
+
+    const m = new Map<string, EmployeeSetting[]>();
+    for (const o of allKyotakuOffices) {
+      const officeNumber = o.office_number;
+      const emps = empsByOffice.get(officeNumber);
+      if (!emps || emps.length === 0) continue;
+      for (const mo of allMonths) {
+        const list: EmployeeSetting[] = [];
+        for (const e of emps) {
+          const active = getActiveKyotakuSalary(kyotakuSalaryRows, e.id, mo);
+          list.push({
+            staff_name: e.name,
+            honnin_kyu: active ? active.honnin_kyu : null,
+            shokuno_kyu: active ? active.shokuno_kyu : null,
+            kotei_zangyo: active ? active.kotei_zangyo : null,
+            shikaku_teate: active ? active.shikaku_teate : null,
+            kotei: active ? active.kotei : null,
+            tokutei_shogu: active ? active.tokutei_shogu : null,
+            kaigo_rate: active ? active.kaigo_rate : null,
+            shien_rate: active ? active.shien_rate : null,
+          });
+        }
+        m.set(`${officeNumber}|${mo}`, list);
+      }
+    }
+    return m;
+  }, [allKyotakuOffices, allMonths, settings, kyotakuSalaryRows]);
+
+  /**
+   * office × 月 → CalcConfig (対象月の active salary が settings に焼き込まれる)。
+   * units / rates / yobou / attendance / travel は office 単位で共通なので毎月同じ値を持つ。
+   */
+  const buildCalcConfig = useCallback(
+    (officeNumber: string, monthStart: string): CalcConfig => ({
+      settings: settingsByOfficeMonth.get(`${officeNumber}|${monthStart}`) ?? [],
+      units,
+      rates,
+      yobouRecords: yobouByOffice.get(officeNumber) ?? [],
+      attendanceRecords: attendanceByOffice.get(officeNumber) ?? [],
+      officeTravelUnitPrice: officeTravelRateMap.get(officeNumber) ?? 0,
+    }),
+    [
+      settingsByOfficeMonth,
+      units,
+      rates,
+      yobouByOffice,
+      attendanceByOffice,
+      officeTravelRateMap,
+    ],
+  );
+
+  /**
+   * 後方互換用: 「最新月の CalcConfig」。SayiTab 内の calcPaymentForMonth のように
+   * 「過去月走査前提で 1 個の CalcConfig しか受け取れない」 caller に渡す snapshot。
+   * settings は履歴 table の「最新 row」(= settingsByOffice の値) を使う。
+   * 過去月の正確な再計算には別途 buildCalcConfig(officeNumber, month) を使うこと。
+   */
   const calcConfigByOffice = useMemo(() => {
     const m = new Map<string, CalcConfig>();
     for (const o of allKyotakuOffices) {
@@ -626,13 +711,13 @@ export function KyotakuPayrollDashboard({
   ]);
 
   // staff × month の salary cache (key: officeNumber|staff|month)
+  // 対象月の active salary を CalcConfig.settings に焼き込んで calcSalary に渡す。
   const salaryCache = useMemo(() => {
     const m = new Map<string, ReturnType<typeof calcSalary>>();
     for (const k of allStaffKeys) {
       const recs = recordsByOffice.get(k.officeNumber) ?? [];
-      const cfg = calcConfigByOffice.get(k.officeNumber);
-      if (!cfg) continue;
       for (const mo of allMonths) {
+        const cfg = buildCalcConfig(k.officeNumber, mo);
         m.set(
           `${k.officeNumber}|${k.staffName}|${mo}`,
           calcSalary(recs, k.staffName, mo, cfg),
@@ -640,9 +725,13 @@ export function KyotakuPayrollDashboard({
       }
     }
     return m;
-  }, [allStaffKeys, allMonths, recordsByOffice, calcConfigByOffice]);
+  }, [allStaffKeys, allMonths, recordsByOffice, buildCalcConfig]);
 
   // staff × pay_month の payment cache (key: officeNumber|staff|pm)
+  // calcPaymentForMonth は内部で「staff の全提供月」を走査して各月の calcSalary を呼ぶ。
+  // CalcConfig は 1 個しか受け取らないが、Phase 1 では実用上「最新 row snapshot」で
+  // 充分 (= 過去の確定 row との差異は別 path で算出済)。
+  // TODO(future): calcPaymentForMonth を per-month CalcConfig 受け取り版にリファクタ。
   const paymentCache = useMemo(() => {
     const m = new Map<string, number>();
     for (const k of allStaffKeys) {
@@ -660,12 +749,11 @@ export function KyotakuPayrollDashboard({
   }, [allStaffKeys, allPayMonths, recordsByOffice, calcConfigByOffice]);
 
   // adjustments cache (key: officeNumber|staff|month)
+  // 対象月 mo の active salary を焼き込んだ CalcConfig で calcAdjustments を呼ぶ。
   const adjustmentsByStaffMonth = useMemo(() => {
     const m = new Map<string, { late_adj: number; sayi_adj: number }>();
     for (const k of allStaffKeys) {
       const recs = recordsByOffice.get(k.officeNumber) ?? [];
-      const cfg = calcConfigByOffice.get(k.officeNumber);
-      if (!cfg) continue;
       const officeConfs = confirmationsByOffice.get(k.officeNumber) ?? [];
       const confs: Confirmation[] = officeConfs.map((c) => ({
         staff_name: c.staff_name,
@@ -673,6 +761,7 @@ export function KyotakuPayrollDashboard({
         amount: c.amount,
       }));
       for (const mo of allMonths) {
+        const cfg = buildCalcConfig(k.officeNumber, mo);
         m.set(
           `${k.officeNumber}|${k.staffName}|${mo}`,
           calcAdjustments(recs, k.staffName, mo, {
@@ -687,7 +776,7 @@ export function KyotakuPayrollDashboard({
     allStaffKeys,
     allMonths,
     recordsByOffice,
-    calcConfigByOffice,
+    buildCalcConfig,
     confirmationsByOffice,
   ]);
 
@@ -698,10 +787,11 @@ export function KyotakuPayrollDashboard({
 
   // ----------------------- 仮計算 (出勤簿 inputs ベース) -----------------------
 
-  // staff の (office_number, staff_name) → kaigo_rate / shien_rate / employee_id /
-  //                                         office_id を解決する map。
+  // staff の (office_number, staff_name) → employee_id / office_id を解決する map。
   // filteredSettings は payroll_employees の embed 込み結果 (id = employee_id) を持つ。
   // office_id は別 lookup で allKyotakuOffices.id を利用 (office_number 一致)。
+  // kaigo_rate / shien_rate は履歴 table (payroll_kyotaku_salary) から月別に解決
+  // (= provisionalCache 内で getActiveKyotakuSalary(rows, employee_id, month_start))。
   const officeIdByNumber = useMemo(() => {
     const m = new Map<string, string>();
     for (const o of allKyotakuOffices) m.set(o.office_number, o.id);
@@ -715,8 +805,6 @@ export function KyotakuPayrollDashboard({
       {
         employeeId: string | null;
         officeId: string | null;
-        kaigoRate: number | null;
-        shienRate: number | null;
       }
     >();
     for (const s of filteredSettings) {
@@ -724,8 +812,6 @@ export function KyotakuPayrollDashboard({
       m.set(k, {
         employeeId: s.id ?? null,
         officeId: officeIdByNumber.get(s.office_number) ?? null,
-        kaigoRate: s.kaigo_rate,
-        shienRate: s.shien_rate,
       });
     }
     return m;
@@ -762,18 +848,25 @@ export function KyotakuPayrollDashboard({
    * 仮計算結果 cache。 monthly が無い key は entry を作らない (= UI 側で null 判定)。
    * key: officeNumber|staffName|month_start
    * value: provisional total (円、未丸め)。
+   *
+   * kaigo_rate / shien_rate は対象月の active salary row から解決 (履歴対応)。
+   * 該当 row なし → 0 (= 旧仕様の NULL→0 fallback と等価)。
    */
   const provisionalCache = useMemo(() => {
     const m = new Map<string, number>();
     for (const k of allStaffKeys) {
       const meta = staffMetaMap.get(staffKey(k.officeNumber, k.staffName));
-      const kaigoRate = meta?.kaigoRate ?? 0;
-      const shienRate = meta?.shienRate ?? 0;
+      const employeeId = meta?.employeeId ?? null;
       for (const mo of allMonths) {
         const key = `${k.officeNumber}|${k.staffName}|${mo}`;
         const monthly = monthlyByKey.get(key);
         const kasanRows = kasanByKey.get(key) ?? [];
         if (!monthly && kasanRows.length === 0) continue;
+        const active = employeeId
+          ? getActiveKyotakuSalary(kyotakuSalaryRows, employeeId, mo)
+          : null;
+        const kaigoRate = active?.kaigo_rate ?? 0;
+        const shienRate = active?.shien_rate ?? 0;
         const kasanInputs: ProvisionalKasanInput[] = kasanRows.map((r) => ({
           kasan_unit: r.kasan_unit,
           kasan_count: r.kasan_count,
@@ -791,7 +884,14 @@ export function KyotakuPayrollDashboard({
       }
     }
     return m;
-  }, [allStaffKeys, allMonths, staffMetaMap, monthlyByKey, kasanByKey]);
+  }, [
+    allStaffKeys,
+    allMonths,
+    staffMetaMap,
+    monthlyByKey,
+    kasanByKey,
+    kyotakuSalaryRows,
+  ]);
 
   /**
    * 仮計算 snapshot lookup (key: officeNumber|staffName|month_start → snapshot row)

@@ -12,6 +12,7 @@ import type {
   ServiceUnit,
   YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
+import type { KyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
 
 /**
  * 居宅介護支援 給与計算 dashboard 用 SWR データ取得 hook。
@@ -39,6 +40,17 @@ export type FullRecord = KyotakuRecord & {
   service_code: string | null;
 };
 
+/**
+ * SettingRow: 居宅介護支援ケアマネ identity + (履歴の最新行から派生した) salary snapshot。
+ *
+ * - id / office_number / staff_name は employee identity
+ * - honnin_kyu 以降の salary 数値は payroll_kyotaku_salary の「最新 row」を flatten
+ *   したもの (= 履歴 table から effective_from DESC で 1 件目)
+ * - 月別の active 値が必要な reader (= dashboard / summary 等) は本 SettingRow ではなく
+ *   `kyotakuSalaryRows` + `getActiveKyotakuSalary(rows, employee_id, monthStart)` で
+ *   対象月の row を解決すること。本 SettingRow の数値は「最新 row snapshot」であり
+ *   過去月計算には使えない。
+ */
 export type SettingRow = EmployeeSetting & {
   id?: string;
   office_number: string;
@@ -105,6 +117,9 @@ export type ProvisionalSnapshotRow = {
 export type KyotakuDashboardData = {
   records: FullRecord[];
   settings: SettingRow[];
+  /** 居宅ケアマネ給与履歴 (payroll_kyotaku_salary, append-only)。
+   *  対象月の active row は `getActiveKyotakuSalary(rows, employee_id, monthStart)` で解決。 */
+  kyotakuSalaryRows: KyotakuSalary[];
   units: ServiceUnit[];
   rates: RegionalRate[];
   confirmations: ConfirmationRow[];
@@ -119,6 +134,7 @@ export type KyotakuDashboardData = {
 const EMPTY_DATA: KyotakuDashboardData = {
   records: [],
   settings: [],
+  kyotakuSalaryRows: [],
   units: [],
   rates: [],
   confirmations: [],
@@ -145,6 +161,7 @@ async function fetchKyotakuDashboardData(
   const [
     recs,
     setRes,
+    salaryRes,
     unitRes,
     rateRes,
     confRes,
@@ -172,18 +189,32 @@ async function fetchKyotakuDashboardData(
             data: FullRecord[] | null;
           }>,
       ),
-      // 給与設定は payroll_employees の 3 列に集約 (2026-05-13 移行)。
-      // payroll_employees.office_id は payroll_offices.id への FK。office_number で
-      // partition したいので embed で payroll_offices.office_number を引き寄せる。
+      // 居宅介護支援ケアマネ identity 取得。payroll_employees.office_id は
+      // payroll_offices.id への FK。office_number で partition したいので embed で
+      // payroll_offices.office_number を引き寄せる。
       // 全 employees fetch すると PostgREST default 1000 行 limit に引っ掛かり、
       // id 順で範囲外の居宅介護支援ケアマネが落ちる (memory: 1253 件 backfill 済)。
       // 居宅介護支援 office (~30 件) に絞れば数百件で完結し limit を回避できる。
+      //
+      // 給与数値 (honnin_kyu 等) は payroll_employees.kyotaku_* (旧 source) ではなく
+      // payroll_kyotaku_salary (= 履歴 table) から月別に解決する (salaryRes 参照)。
+      // ここでは identity (id, name, office_number) のみ取得する。
       supabase
         .from("payroll_employees")
         .select(
-          "id, name, kyotaku_honnin_kyu, kyotaku_shokuno_kyu, kyotaku_kotei_zangyo, kyotaku_shikaku_teate, kyotaku_kotei, kyotaku_tokutei_shogu, kyotaku_kaigo_rate, kyotaku_shien_rate, office:payroll_offices!office_id(office_number)",
+          "id, name, office:payroll_offices!office_id(office_number)",
         )
         .in("office_id", officeIds),
+      // 居宅ケアマネ給与履歴。append-only / per-employee × effective_from。
+      // 件数は ~30 office × ~ケアマネ数 × (履歴件数 ~1-数件) で数百〜数千 row の見込み。
+      // 1000 行 PostgREST default 対策で limit(10000) を明示。
+      // DB 未 apply 段階は error 握り潰し → 空配列 fallback (= 旧仕様互換挙動)。
+      supabase
+        .from("payroll_kyotaku_salary")
+        .select(
+          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+        )
+        .limit(10000),
       supabase.from("payroll_kyotaku_service_units").select("*"),
       supabase.from("payroll_kyotaku_regional_rates").select("*"),
       supabase
@@ -246,43 +277,51 @@ async function fetchKyotakuDashboardData(
   if (unitRes.error) throw unitRes.error;
   if (rateRes.error) throw rateRes.error;
   if (confRes.error) throw confRes.error;
-  // yobouRes は DB 未 apply 段階の error を許容 (空配列 fallback)
+  // yobouRes / salaryRes は DB 未 apply 段階の error を許容 (空配列 fallback)
 
-  // payroll_employees row → SettingRow に flatten。office_number は embed 経由で
+  // payroll_employees row → identity だけ取り出す。office_number は embed 経由で
   // 取り出す。embed は 1:1 (employees.office_id → offices.id) なので object。
   // 居宅介護支援以外の office に紐づく employee は office_number が
   // officeNumbers 集合に含まれないため後段の partition で自然に除外される。
   type RawEmployeeRow = {
     id: string;
     name: string;
-    kyotaku_honnin_kyu: number | null;
-    kyotaku_shokuno_kyu: number | null;
-    kyotaku_kotei_zangyo: number | null;
-    kyotaku_shikaku_teate: number | null;
-    kyotaku_kotei: number | null;
-    kyotaku_tokutei_shogu: number | null;
-    kyotaku_kaigo_rate: number | null;
-    kyotaku_shien_rate: number | null;
     office: { office_number: string | null } | null;
   };
   const officeNumberSet = new Set(officeNumbers);
+
+  // 履歴 row: employee_id → 全 row。同 employee の中で effective_from DESC で 1 件目を
+  // 「最新 row snapshot」として SettingRow に焼き込む。月別 active 値が必要な reader
+  // (= dashboard / summary) は SettingRow ではなく kyotakuSalaryRows を直接参照する。
+  const kyotakuSalaryRows: KyotakuSalary[] = salaryRes.error
+    ? []
+    : ((salaryRes.data ?? []) as unknown as KyotakuSalary[]);
+  const latestSalaryByEmp = new Map<string, KyotakuSalary>();
+  for (const s of kyotakuSalaryRows) {
+    const prev = latestSalaryByEmp.get(s.employee_id);
+    if (!prev || s.effective_from > prev.effective_from) {
+      latestSalaryByEmp.set(s.employee_id, s);
+    }
+  }
+
   const mappedSettings: SettingRow[] = [];
   for (const r of (setRes.data ?? []) as unknown as RawEmployeeRow[]) {
     const officeNumber = r.office?.office_number ?? "";
     if (!officeNumber || !officeNumberSet.has(officeNumber)) continue;
     if (!r.name) continue;
+    const latest = latestSalaryByEmp.get(r.id);
     mappedSettings.push({
       id: r.id,
       office_number: officeNumber,
       staff_name: r.name,
-      honnin_kyu: r.kyotaku_honnin_kyu,
-      shokuno_kyu: r.kyotaku_shokuno_kyu,
-      kotei_zangyo: r.kyotaku_kotei_zangyo,
-      shikaku_teate: r.kyotaku_shikaku_teate,
-      kotei: r.kyotaku_kotei,
-      tokutei_shogu: r.kyotaku_tokutei_shogu,
-      kaigo_rate: r.kyotaku_kaigo_rate,
-      shien_rate: r.kyotaku_shien_rate,
+      honnin_kyu: latest ? latest.honnin_kyu : null,
+      shokuno_kyu: latest ? latest.shokuno_kyu : null,
+      kotei_zangyo: latest ? latest.kotei_zangyo : null,
+      shikaku_teate: latest ? latest.shikaku_teate : null,
+      kotei: latest ? latest.kotei : null,
+      tokutei_shogu: latest ? latest.tokutei_shogu : null,
+      kaigo_rate: latest ? latest.kaigo_rate : null,
+      shien_rate: latest ? latest.shien_rate : null,
     });
   }
 
@@ -423,6 +462,7 @@ async function fetchKyotakuDashboardData(
   return {
     records: recs,
     settings: mappedSettings,
+    kyotakuSalaryRows,
     units: (unitRes.data ?? []) as ServiceUnit[],
     rates: (rateRes.data ?? []) as RegionalRate[],
     confirmations: (confRes.data ?? []) as ConfirmationRow[],
@@ -474,6 +514,7 @@ export function useKyotakuDashboardData(
   return {
     records: effective.records,
     settings: effective.settings,
+    kyotakuSalaryRows: effective.kyotakuSalaryRows,
     units: effective.units,
     rates: effective.rates,
     confirmations: effective.confirmations,

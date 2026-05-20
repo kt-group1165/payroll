@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
+import { buildActiveSalaryMap, selectedMonthToMonthStart } from "@/lib/payroll/salary-history";
 
 // ─── 実勤続月数の基準月 ─────────────────────────────────────
 // effective_service_months の初期データが何月時点の値かを設定する
@@ -132,6 +133,8 @@ type Employee = {
 
 type SalarySettings = {
   employee_id: string;
+  /** 適用開始月 (YYYY-MM-DD)。履歴化 (Phase 1) で追加。対象月 >= effective_from の最新が active */
+  effective_from: string;
   base_personal_salary: number;
   skill_salary: number;
   position_allowance: number;
@@ -677,7 +680,14 @@ export default function PayrollPage() {
       const officeByIdMap     = new Map(officeRows.map((o: Office) => [o.id, o]));
       const rateMap    = new Map((rateRes.data ?? []).map((r: CategoryHourlyRate) => [`${r.office_id}:${r.category_id}`, r.hourly_rate]));
       const employees  = (empRes.data ?? []) as Employee[];
-      const salMap     = new Map((salRes.data ?? []).map((s: SalarySettings) => [s.employee_id, s]));
+      // 履歴化方式: 対象月 (selectedMonth = YYYYMM) で active な salary row を選ぶ。
+      // effective_from <= 対象月 のうち最新を per-employee で 1 row 抽出。
+      // 履歴がまだ無い employee は default '1970-01-01' の backfill row が当たる。
+      const _monthStart = selectedMonthToMonthStart(selectedMonth);
+      const salMap     = buildActiveSalaryMap<SalarySettings>(
+        (salRes.data ?? []) as SalarySettings[],
+        _monthStart,
+      );
       const attRecords = (attRes.data ?? []) as AttendanceRecord[];
       const ofRecords  = allOfRecords;
       const otMap = new Map((otRes.data ?? []).map((r: OvertimeSetting) => [r.job_type, r]));
