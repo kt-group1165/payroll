@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -61,7 +61,7 @@ type EditRow = {
   plan_payment_cycle: "monthly" | "semi_annual";
 };
 
-// 列定義: 入力 keys ＋ ラベル。
+// 列定義: 入力 keys ＋ ラベル ＋ 短縮ラベル (1 行 table view 用)。
 const INPUT_COLS: ReadonlyArray<{
   key:
     | "honnin_kyu"
@@ -73,16 +73,17 @@ const INPUT_COLS: ReadonlyArray<{
     | "kaigo_rate"
     | "shien_rate";
   label: string;
+  short: string;
   placeholder: string;
 }> = [
-  { key: "honnin_kyu", label: "本人給 (円)", placeholder: "0" },
-  { key: "shokuno_kyu", label: "職能給 (円)", placeholder: "0" },
-  { key: "kotei_zangyo", label: "固定残業手当 (円)", placeholder: "0" },
-  { key: "shikaku_teate", label: "資格手当 (円)", placeholder: "0" },
-  { key: "kotei", label: "勤続手当 (円)", placeholder: "0" },
-  { key: "tokutei_shogu", label: "特定処遇改善 (円)", placeholder: "0" },
-  { key: "kaigo_rate", label: "要介護単価 (円/件)", placeholder: "0" },
-  { key: "shien_rate", label: "要支援単価 (円/件)", placeholder: "0" },
+  { key: "honnin_kyu", label: "本人給 (円)", short: "本人給", placeholder: "0" },
+  { key: "shokuno_kyu", label: "職能給 (円)", short: "職能給", placeholder: "0" },
+  { key: "kotei_zangyo", label: "固定残業手当 (円)", short: "固残", placeholder: "0" },
+  { key: "shikaku_teate", label: "資格手当 (円)", short: "資格", placeholder: "0" },
+  { key: "kotei", label: "勤続手当 (円)", short: "勤続", placeholder: "0" },
+  { key: "tokutei_shogu", label: "特定処遇改善 (円)", short: "特処", placeholder: "0" },
+  { key: "kaigo_rate", label: "要介護単価 (円/件)", short: "介護", placeholder: "0" },
+  { key: "shien_rate", label: "要支援単価 (円/件)", short: "支援", placeholder: "0" },
 ];
 
 /** YYYY-MM-DD (DATE) → "YYYY/MM/DD" 表示 */
@@ -441,199 +442,204 @@ export function KyotakuSettingsModal({
               先に /employees から職員登録してください。
             </p>
           ) : (
-            <div className="space-y-2">
-              {employees.map((emp) => {
-                const edit = getOrInitEdit(emp);
-                const isExpanded = expanded.has(emp.employee_id);
-                const history = historyByEmp.get(emp.employee_id) ?? [];
-                const isSaving = saving === emp.employee_id;
-                return (
-                  <div
-                    key={emp.employee_id}
-                    className="rounded-lg border bg-card"
-                  >
-                    {/* ----- header (ケアマネ名 + active 表示 + 履歴 toggle) ----- */}
-                    <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-                      <div className="flex flex-1 items-center gap-2 min-w-0">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => toggleExpand(emp.employee_id)}
-                          aria-label={
-                            isExpanded ? "履歴を閉じる" : "履歴を見る"
-                          }
-                          title={isExpanded ? "履歴を閉じる" : "履歴を見る"}
-                        >
-                          {isExpanded ? (
-                            <ChevronDown />
-                          ) : (
-                            <ChevronRight />
-                          )}
-                        </Button>
-                        <span className="font-medium">{emp.staff_name}</span>
-                        <span className="text-xs text-muted-foreground truncate">
-                          現在: {formatActiveLabel(emp.employee_id)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* ----- 編集行 (grid layout でコンパクト化) ----- */}
-                    <div className="space-y-3 p-3">
-                      {/* 上段: 適用開始月 + 支給方式 + 保存 */}
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-muted-foreground">適用開始月</label>
-                          <Input
-                            type="date"
-                            className="h-9 w-40"
-                            value={edit.effective_from}
-                            onChange={(ev) =>
-                              updateEdit(
-                                emp.employee_id,
-                                { effective_from: ev.target.value },
-                                edit,
-                              )
-                            }
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] text-muted-foreground">プラン手当 支給方式</label>
-                          <select
-                            className="h-9 w-64 rounded border bg-background px-2 text-sm"
-                            value={edit.plan_payment_cycle}
-                            onChange={(ev) =>
-                              updateEdit(
-                                emp.employee_id,
-                                {
-                                  plan_payment_cycle:
-                                    ev.target.value === "semi_annual" ? "semi_annual" : "monthly",
-                                },
-                                edit,
-                              )
-                            }
-                          >
-                            <option value="monthly">毎月支給</option>
-                            <option value="semi_annual">半期締め (1-6→9月 / 7-12→3月)</option>
-                          </select>
-                        </div>
-                        <div className="ml-auto">
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void handleSaveRow(emp)}
-                            disabled={isSaving}
-                          >
-                            {isSaving ? "保存中…" : "保存"}
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* 下段: 8 input を 4 列 grid */}
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4">
-                        {INPUT_COLS.map((c) => (
-                          <div key={c.key} className="flex flex-col gap-1">
-                            <label className="text-[11px] text-muted-foreground">{c.label}</label>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/40 text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium whitespace-nowrap">ケアマネ</th>
+                    <th className="px-1 py-1.5 text-left font-medium whitespace-nowrap">開始月</th>
+                    {INPUT_COLS.map((c) => (
+                      <th
+                        key={c.key}
+                        className="px-1 py-1.5 text-right font-medium whitespace-nowrap"
+                        title={c.label}
+                      >
+                        {c.short}
+                      </th>
+                    ))}
+                    <th className="px-1 py-1.5 text-left font-medium whitespace-nowrap">支給方式</th>
+                    <th className="px-1 py-1.5 font-medium" />
+                    <th className="px-1 py-1.5 font-medium" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map((emp) => {
+                    const edit = getOrInitEdit(emp);
+                    const isExpanded = expanded.has(emp.employee_id);
+                    const history = historyByEmp.get(emp.employee_id) ?? [];
+                    const isSaving = saving === emp.employee_id;
+                    return (
+                      <Fragment key={emp.employee_id}>
+                        <tr className="border-t hover:bg-muted/10">
+                          <td className="px-2 py-1 whitespace-nowrap">
+                            <div className="flex flex-col leading-tight">
+                              <span className="font-medium">{emp.staff_name}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {formatActiveLabel(emp.employee_id)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-1 py-1">
                             <Input
-                              type="number"
-                              min={0}
-                              step={1}
-                              className="h-9 text-right tabular-nums"
-                              value={edit[c.key] ?? ""}
-                              placeholder={c.placeholder}
+                              type="date"
+                              className="h-8 w-32 text-xs"
+                              value={edit.effective_from}
                               onChange={(ev) =>
                                 updateEdit(
                                   emp.employee_id,
-                                  { [c.key]: parseIntOrNull(ev.target.value) },
+                                  { effective_from: ev.target.value },
                                   edit,
                                 )
                               }
                             />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* ----- 履歴一覧 (展開時のみ) ----- */}
-                    {isExpanded && (
-                      <div className="border-t bg-muted/20 px-3 py-2">
-                        <div className="text-xs font-medium text-muted-foreground mb-2">
-                          過去の設定履歴 ({history.length} 件)
-                        </div>
-                        {history.length === 0 ? (
-                          <p className="text-xs text-muted-foreground italic">
-                            履歴はまだありません。
-                          </p>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <Table className="text-xs">
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead className="whitespace-nowrap">
-                                    適用開始月
-                                  </TableHead>
-                                  {INPUT_COLS.map((c) => (
-                                    <TableHead
-                                      key={c.key}
-                                      className="whitespace-nowrap text-right"
-                                    >
-                                      {c.label.replace(" (円)", "").replace(" (円/件)", "")}
-                                    </TableHead>
-                                  ))}
-                                  <TableHead className="whitespace-nowrap">
-                                    支給方式
-                                  </TableHead>
-                                  <TableHead className="w-10"></TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {history.map((r) => (
-                                  <TableRow key={r.id}>
-                                    <TableCell className="whitespace-nowrap">
-                                      {fmtDate(r.effective_from)}
-                                    </TableCell>
-                                    {INPUT_COLS.map((c) => (
-                                      <TableCell
-                                        key={c.key}
-                                        className="whitespace-nowrap text-right tabular-nums"
-                                      >
-                                        {r[c.key].toLocaleString("ja-JP")}
-                                      </TableCell>
-                                    ))}
-                                    <TableCell className="whitespace-nowrap">
-                                      {(r.plan_payment_cycle ?? "monthly") ===
-                                      "semi_annual"
-                                        ? "半期締め"
-                                        : "毎月"}
-                                    </TableCell>
-                                    <TableCell>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon-sm"
-                                        onClick={() =>
-                                          void handleDeleteRow(
-                                            r.id,
-                                            `${emp.staff_name} (${fmtDate(r.effective_from)}〜)`,
-                                          )
-                                        }
-                                        disabled={deleting === r.id}
-                                        aria-label="この履歴を削除"
-                                        title="この履歴を削除"
-                                      >
-                                        <Trash2 className="text-destructive" />
-                                      </Button>
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </div>
+                          </td>
+                          {INPUT_COLS.map((c) => (
+                            <td key={c.key} className="px-1 py-1">
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                className="h-8 w-20 text-right tabular-nums text-xs"
+                                value={edit[c.key] ?? ""}
+                                placeholder={c.placeholder}
+                                onChange={(ev) =>
+                                  updateEdit(
+                                    emp.employee_id,
+                                    { [c.key]: parseIntOrNull(ev.target.value) },
+                                    edit,
+                                  )
+                                }
+                              />
+                            </td>
+                          ))}
+                          <td className="px-1 py-1">
+                            <select
+                              className="h-8 w-24 rounded border bg-background px-1 text-xs"
+                              value={edit.plan_payment_cycle}
+                              onChange={(ev) =>
+                                updateEdit(
+                                  emp.employee_id,
+                                  {
+                                    plan_payment_cycle:
+                                      ev.target.value === "semi_annual"
+                                        ? "semi_annual"
+                                        : "monthly",
+                                  },
+                                  edit,
+                                )
+                              }
+                              title={
+                                edit.plan_payment_cycle === "semi_annual"
+                                  ? "半期締め (1-6→9月 / 7-12→3月)"
+                                  : "毎月支給"
+                              }
+                            >
+                              <option value="monthly">毎月</option>
+                              <option value="semi_annual">半期締め</option>
+                            </select>
+                          </td>
+                          <td className="px-1 py-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => void handleSaveRow(emp)}
+                              disabled={isSaving}
+                            >
+                              {isSaving ? "…" : "保存"}
+                            </Button>
+                          </td>
+                          <td className="px-1 py-1">
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => toggleExpand(emp.employee_id)}
+                              aria-label={isExpanded ? "履歴を閉じる" : "履歴を見る"}
+                              title={isExpanded ? "履歴を閉じる" : "履歴を見る"}
+                            >
+                              {isExpanded ? <ChevronDown /> : <ChevronRight />}
+                            </Button>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={INPUT_COLS.length + 5} className="border-t bg-muted/20 px-3 py-2">
+                              <div className="text-[11px] font-medium text-muted-foreground mb-2">
+                                過去の設定履歴 ({history.length} 件)
+                              </div>
+                              {history.length === 0 ? (
+                                <p className="text-xs text-muted-foreground italic">
+                                  履歴はまだありません。
+                                </p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <Table className="text-xs">
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead className="whitespace-nowrap">適用開始月</TableHead>
+                                        {INPUT_COLS.map((c) => (
+                                          <TableHead
+                                            key={c.key}
+                                            className="whitespace-nowrap text-right"
+                                          >
+                                            {c.short}
+                                          </TableHead>
+                                        ))}
+                                        <TableHead className="whitespace-nowrap">支給方式</TableHead>
+                                        <TableHead className="w-10" />
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {history.map((r) => (
+                                        <TableRow key={r.id}>
+                                          <TableCell className="whitespace-nowrap">
+                                            {fmtDate(r.effective_from)}
+                                          </TableCell>
+                                          {INPUT_COLS.map((c) => (
+                                            <TableCell
+                                              key={c.key}
+                                              className="whitespace-nowrap text-right tabular-nums"
+                                            >
+                                              {r[c.key].toLocaleString("ja-JP")}
+                                            </TableCell>
+                                          ))}
+                                          <TableCell className="whitespace-nowrap">
+                                            {(r.plan_payment_cycle ?? "monthly") === "semi_annual"
+                                              ? "半期締め"
+                                              : "毎月"}
+                                          </TableCell>
+                                          <TableCell>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon-sm"
+                                              onClick={() =>
+                                                void handleDeleteRow(
+                                                  r.id,
+                                                  `${emp.staff_name} (${fmtDate(r.effective_from)}〜)`,
+                                                )
+                                              }
+                                              disabled={deleting === r.id}
+                                              aria-label="この履歴を削除"
+                                              title="この履歴を削除"
+                                            >
+                                              <Trash2 className="text-destructive" />
+                                            </Button>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
                         )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 
