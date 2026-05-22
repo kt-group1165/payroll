@@ -499,7 +499,7 @@ export function KyotakuSettingsModal({
                                 type="number"
                                 min={0}
                                 step={1}
-                                className="h-8 w-20 text-right tabular-nums text-xs"
+                                className="h-8 w-24 text-right tabular-nums text-xs"
                                 value={edit[c.key] ?? ""}
                                 placeholder={c.placeholder}
                                 onChange={(ev) =>
