@@ -114,6 +114,25 @@ export type ProvisionalSnapshotRow = {
   snapshot_at: string;
 };
 
+/**
+ * プラン手当 半期締め支給 用 積立額 1 row。
+ * (office_number, staff_name, period_start) で lookup する。
+ *  - period_start: 'YYYY-MM' (e.g., '2026-01' or '2026-07')
+ *  - payout_month: 'YYYY-MM' (e.g., '2026-09' or '2027-03')
+ */
+export type PlanAccumulatorRow = {
+  id: string;
+  office_number: string;
+  staff_name: string;
+  employee_id: string;
+  period_start: string;
+  period_end: string;
+  payout_month: string;
+  accumulated_amount: number;
+  paid_at: string | null;
+  notes: string | null;
+};
+
 export type KyotakuDashboardData = {
   records: FullRecord[];
   settings: SettingRow[];
@@ -129,6 +148,7 @@ export type KyotakuDashboardData = {
   monthlyRows: MonthlyRow[];
   monthlyKasanRows: MonthlyKasanRow[];
   provisionalSnapshots: ProvisionalSnapshotRow[];
+  planAccumulators: PlanAccumulatorRow[];
 };
 
 const EMPTY_DATA: KyotakuDashboardData = {
@@ -144,6 +164,7 @@ const EMPTY_DATA: KyotakuDashboardData = {
   monthlyRows: [],
   monthlyKasanRows: [],
   provisionalSnapshots: [],
+  planAccumulators: [],
 };
 
 // =====================================================================
@@ -171,6 +192,7 @@ async function fetchKyotakuDashboardData(
     monthlyRes,
     monthlyKasanRes,
     provSnapRes,
+    planAccRes,
   ] = await Promise.all([
       fetchAllPagesParallel<FullRecord>(
         () =>
@@ -212,7 +234,7 @@ async function fetchKyotakuDashboardData(
       supabase
         .from("payroll_kyotaku_salary")
         .select(
-          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate, plan_payment_cycle",
         )
         .limit(10000),
       supabase.from("payroll_kyotaku_service_units").select("*"),
@@ -270,6 +292,14 @@ async function fetchKyotakuDashboardData(
           "id, employee_id, month_start, provisional_amount, snapshot_at, office_id",
         )
         .in("office_id", officeIds)
+        .limit(10000),
+      // プラン手当 半期締め支給用 積立額。1 row = employee × period_start。
+      // DB 未 apply 段階は error 握り潰し → 空 fallback。
+      supabase
+        .from("payroll_kyotaku_plan_accumulator")
+        .select(
+          "id, employee_id, period_start, period_end, payout_month, accumulated_amount, paid_at, notes",
+        )
         .limit(10000),
     ]);
 
@@ -459,6 +489,36 @@ async function fetchKyotakuDashboardData(
     }
   }
 
+  type RawPlanAccRow = {
+    id: string;
+    employee_id: string;
+    period_start: string;
+    period_end: string;
+    payout_month: string;
+    accumulated_amount: number | null;
+    paid_at: string | null;
+    notes: string | null;
+  };
+  const mappedPlanAcc: PlanAccumulatorRow[] = [];
+  if (!planAccRes.error) {
+    for (const r of (planAccRes.data ?? []) as unknown as RawPlanAccRow[]) {
+      const emp = employeeIdMap.get(r.employee_id);
+      if (!emp) continue;
+      mappedPlanAcc.push({
+        id: r.id,
+        office_number: emp.office_number,
+        staff_name: emp.name,
+        employee_id: r.employee_id,
+        period_start: r.period_start,
+        period_end: r.period_end,
+        payout_month: r.payout_month,
+        accumulated_amount: r.accumulated_amount ?? 0,
+        paid_at: r.paid_at,
+        notes: r.notes,
+      });
+    }
+  }
+
   return {
     records: recs,
     settings: mappedSettings,
@@ -472,6 +532,7 @@ async function fetchKyotakuDashboardData(
     monthlyRows: mappedMonthly,
     monthlyKasanRows: mappedKasan,
     provisionalSnapshots: mappedProvSnap,
+    planAccumulators: mappedPlanAcc,
   };
 }
 
@@ -524,6 +585,7 @@ export function useKyotakuDashboardData(
     monthlyRows: effective.monthlyRows,
     monthlyKasanRows: effective.monthlyKasanRows,
     provisionalSnapshots: effective.provisionalSnapshots,
+    planAccumulators: effective.planAccumulators,
     isLoading,
     error: error ?? null,
     mutate: () => {

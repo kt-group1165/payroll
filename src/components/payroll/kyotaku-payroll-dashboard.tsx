@@ -31,6 +31,10 @@ import {
 } from "@/lib/payroll/kyotaku-calc";
 import { getActiveKyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
 import {
+  getPlanCyclePeriod,
+  isPlanPayoutMonth,
+} from "@/lib/payroll/kyotaku-plan-accumulator";
+import {
   calcProvisional,
   calcProvisionalDiff,
   type ProvisionalKasanInput,
@@ -39,6 +43,7 @@ import type {
   MonthlyRow,
   MonthlyKasanRow,
   ProvisionalSnapshotRow,
+  PlanAccumulatorRow,
 } from "@/lib/swr/use-kyotaku-dashboard-data";
 import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
 
@@ -450,6 +455,7 @@ export function KyotakuPayrollDashboard({
     monthlyRows,
     monthlyKasanRows,
     provisionalSnapshots,
+    planAccumulators,
     isLoading,
     error: swrError,
     mutate,
@@ -527,6 +533,15 @@ export function KyotakuPayrollDashboard({
             (s) => s.office_number === filterOfficeNumber,
           ),
     [provisionalSnapshots, filterOfficeNumber],
+  );
+  const filteredPlanAccumulators = useMemo(
+    () =>
+      filterOfficeNumber === null
+        ? planAccumulators
+        : planAccumulators.filter(
+            (a) => a.office_number === filterOfficeNumber,
+          ),
+    [planAccumulators, filterOfficeNumber],
   );
 
   // ----------------------- derived data -----------------------
@@ -904,6 +919,103 @@ export function KyotakuPayrollDashboard({
     return m;
   }, [filteredProvSnapshots]);
 
+  /**
+   * プラン手当 積立額 lookup (key: officeNumber|staffName|period_start (YYYY-MM)).
+   * period_start は半期の頭 ('YYYY-01' or 'YYYY-07')。
+   */
+  const planAccByKey = useMemo(() => {
+    const m = new Map<string, PlanAccumulatorRow>();
+    for (const a of filteredPlanAccumulators) {
+      m.set(`${a.office_number}|${a.staff_name}|${a.period_start}`, a);
+    }
+    return m;
+  }, [filteredPlanAccumulators]);
+
+  /**
+   * 指定 (office, staff, month) の cycle が semi_annual かを判定する helper。
+   * 履歴 row から対象月の active row を取り、plan_payment_cycle が semi_annual なら true。
+   * row 無し / cycle 未設定 (DB migration apply 前) は monthly fallback で false。
+   */
+  const isSemiAnnualForMonth = useCallback(
+    (officeNumber: string, staff: string, month: string): boolean => {
+      const meta = staffMetaMap.get(staffKey(officeNumber, staff));
+      if (!meta?.employeeId) return false;
+      const active = getActiveKyotakuSalary(
+        kyotakuSalaryRows,
+        meta.employeeId,
+        month,
+      );
+      return (active?.plan_payment_cycle ?? "monthly") === "semi_annual";
+    },
+    [staffMetaMap, kyotakuSalaryRows],
+  );
+
+  /**
+   * (office, staff, month) → 表示用 plan / 積立行情報。
+   *
+   * - cycle = monthly: rawPlan をそのまま返す。accumulator は null。
+   * - cycle = semi_annual:
+   *     - 非支給月 (1-2, 4-8, 10-12月 など): displayPlan = 0, accumulator あり
+   *     - 支給月 (9月 or 3月): displayPlan = accumulator.accumulated_amount, accumulator あり
+   *
+   * 返り値の planForTotal は total 計算に使う値。
+   */
+  const resolvePlanForCell = useCallback(
+    (
+      officeNumber: string,
+      staff: string,
+      month: string,
+      rawPlan: number,
+    ): {
+      displayPlan: number;
+      planForTotal: number;
+      isSemiAnnual: boolean;
+      isPayoutMonth: boolean;
+      accumulator: PlanAccumulatorRow | null;
+      periodStart: string;
+    } => {
+      const isSemi = isSemiAnnualForMonth(officeNumber, staff, month);
+      const period = getPlanCyclePeriod(month);
+      const accKey = `${officeNumber}|${staff}|${period.period_start}`;
+      const acc = planAccByKey.get(accKey) ?? null;
+      const isPayout = isPlanPayoutMonth(month);
+
+      if (!isSemi) {
+        return {
+          displayPlan: rawPlan,
+          planForTotal: rawPlan,
+          isSemiAnnual: false,
+          isPayoutMonth: false,
+          accumulator: acc,
+          periodStart: period.period_start,
+        };
+      }
+      // semi_annual
+      if (isPayout) {
+        // 支給月 = accumulator の金額を一括支給
+        const val = acc?.accumulated_amount ?? 0;
+        return {
+          displayPlan: val,
+          planForTotal: val,
+          isSemiAnnual: true,
+          isPayoutMonth: true,
+          accumulator: acc,
+          periodStart: period.period_start,
+        };
+      }
+      // 非支給月: 出力 0、積立中
+      return {
+        displayPlan: 0,
+        planForTotal: 0,
+        isSemiAnnual: true,
+        isPayoutMonth: false,
+        accumulator: acc,
+        periodStart: period.period_start,
+      };
+    },
+    [isSemiAnnualForMonth, planAccByKey],
+  );
+
   // ----------------------- 確定 / 解除 -----------------------
 
   const confirmPayment = async (
@@ -928,10 +1040,131 @@ export function KyotakuPayrollDashboard({
           confirmed_at: new Date().toISOString(),
         });
       if (error) throw error;
+
+      // ── プラン手当 半期締め支給 (semi_annual) の積立処理 ──────────
+      // pay_month は提供月 +1 / +2 / +3 のいずれかで多義的だが、半期締めは「提供月」
+      // ベースで動く設計なので payMonth−1 = serviceMonth とみなす (T+1 支払い前提)。
+      // この付随処理は失敗しても 確定 自体は完了させる (try/catch を分離)。
+      try {
+        const serviceMonth = addMonths(payMonth, -1);
+        const isSemi = isSemiAnnualForMonth(officeNumber, staff, serviceMonth);
+        if (isSemi) {
+          const meta = staffMetaMap.get(staffKey(officeNumber, staff));
+          if (meta?.employeeId) {
+            const period = getPlanCyclePeriod(serviceMonth);
+            const accKey = `${officeNumber}|${staff}|${period.period_start}`;
+            const existing = planAccByKey.get(accKey);
+            const sal = salaryCache.get(
+              `${officeNumber}|${staff}|${serviceMonth}`,
+            );
+            const monthlyPlanDelta = sal?.plan ?? 0;
+
+            if (isPlanPayoutMonth(serviceMonth)) {
+              // 支給月: paid_at を set。
+              if (existing) {
+                await supabase
+                  .from("payroll_kyotaku_plan_accumulator")
+                  .update({
+                    paid_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("id", existing.id);
+              }
+            } else {
+              // 非支給月: accumulated_amount += monthlyPlanDelta
+              if (existing) {
+                await supabase
+                  .from("payroll_kyotaku_plan_accumulator")
+                  .update({
+                    accumulated_amount:
+                      (existing.accumulated_amount ?? 0) +
+                      Math.round(monthlyPlanDelta),
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("id", existing.id);
+              } else {
+                await supabase
+                  .from("payroll_kyotaku_plan_accumulator")
+                  .insert({
+                    tenant_id: TENANT_ID,
+                    employee_id: meta.employeeId,
+                    period_start: period.period_start,
+                    period_end: period.period_end,
+                    payout_month: period.payout_month,
+                    accumulated_amount: Math.round(monthlyPlanDelta),
+                  });
+              }
+            }
+          }
+        }
+      } catch (accErr) {
+        // 失敗してもログだけ。確定 自体は成立しているので mutate() で UI 更新する。
+        console.warn(
+          "[kyotaku-dashboard] plan accumulator update failed:",
+          accErr,
+        );
+      }
+
       mutate();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setMutationErr(`確定に失敗: ${msg}`);
+    } finally {
+      setBusyPay(null);
+    }
+  };
+
+  /**
+   * プラン手当 積立額の手動編集 (UPSERT)。
+   * existing row があれば accumulated_amount を上書き、無ければ INSERT。
+   */
+  const updatePlanAccumulator = async (
+    officeNumber: string,
+    staff: string,
+    serviceMonth: string,
+    newAmount: number,
+  ) => {
+    const lockKey = `plan-acc|${officeNumber}|${staff}|${serviceMonth}`;
+    if (busyPay) return;
+    const meta = staffMetaMap.get(staffKey(officeNumber, staff));
+    if (!meta?.employeeId) {
+      setMutationErr(
+        "積立額の保存に失敗: 該当ケアマネの payroll_employees 紐付けが解決できません",
+      );
+      return;
+    }
+    const period = getPlanCyclePeriod(serviceMonth);
+    const accKey = `${officeNumber}|${staff}|${period.period_start}`;
+    const existing = planAccByKey.get(accKey);
+    setBusyPay(lockKey);
+    setMutationErr(null);
+    try {
+      if (existing) {
+        const { error } = await supabase
+          .from("payroll_kyotaku_plan_accumulator")
+          .update({
+            accumulated_amount: Math.round(newAmount),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("payroll_kyotaku_plan_accumulator")
+          .insert({
+            tenant_id: TENANT_ID,
+            employee_id: meta.employeeId,
+            period_start: period.period_start,
+            period_end: period.period_end,
+            payout_month: period.payout_month,
+            accumulated_amount: Math.round(newAmount),
+          });
+        if (error) throw error;
+      }
+      mutate();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMutationErr(`積立額の保存に失敗: ${msg}`);
     } finally {
       setBusyPay(null);
     }
@@ -1228,6 +1461,8 @@ export function KyotakuPayrollDashboard({
             paidMap={paidMap}
             provisionalCache={provisionalCache}
             snapshotByKey={snapshotByKey}
+            resolvePlanForCell={resolvePlanForCell}
+            onUpdateAccumulator={updatePlanAccumulator}
             busyPay={busyPay}
             onSnapshot={saveProvisionalSnapshot}
             onRevertSnapshot={revertProvisionalSnapshot}
@@ -1378,6 +1613,31 @@ const PROVISIONAL_ROWS = [
   "仮確定差額",
 ] as const;
 
+/**
+ * (officeNumber, staff, month, rawPlan) → 表示用 plan + accumulator 情報。
+ * 半期締め cycle のとき、display は 0 (非支給月) or accumulator 額 (支給月) に置換される。
+ */
+type ResolvePlanForCell = (
+  officeNumber: string,
+  staff: string,
+  month: string,
+  rawPlan: number,
+) => {
+  displayPlan: number;
+  planForTotal: number;
+  isSemiAnnual: boolean;
+  isPayoutMonth: boolean;
+  accumulator: PlanAccumulatorRow | null;
+  periodStart: string;
+};
+
+type UpdateAccumulatorFn = (
+  officeNumber: string,
+  staff: string,
+  serviceMonth: string,
+  newAmount: number,
+) => void;
+
 function KyuyoTab({
   allStaffKeys,
   allMonths,
@@ -1389,6 +1649,8 @@ function KyuyoTab({
   paidMap,
   provisionalCache,
   snapshotByKey,
+  resolvePlanForCell,
+  onUpdateAccumulator,
   busyPay,
   onSnapshot,
   onRevertSnapshot,
@@ -1403,6 +1665,8 @@ function KyuyoTab({
   paidMap: Map<string, number>;
   provisionalCache: Map<string, number>;
   snapshotByKey: Map<string, ProvisionalSnapshotRow>;
+  resolvePlanForCell: ResolvePlanForCell;
+  onUpdateAccumulator: UpdateAccumulatorFn;
   busyPay: string | null;
   onSnapshot: (
     officeNumber: string,
@@ -1449,6 +1713,8 @@ function KyuyoTab({
               paidMap={paidMap}
               provisionalCache={provisionalCache}
               snapshotByKey={snapshotByKey}
+              resolvePlanForCell={resolvePlanForCell}
+              onUpdateAccumulator={onUpdateAccumulator}
               busyPay={busyPay}
               onSnapshot={onSnapshot}
               onRevertSnapshot={onRevertSnapshot}
@@ -1472,6 +1738,8 @@ function StaffBlock({
   paidMap,
   provisionalCache,
   snapshotByKey,
+  resolvePlanForCell,
+  onUpdateAccumulator,
   busyPay,
   onSnapshot,
   onRevertSnapshot,
@@ -1487,6 +1755,8 @@ function StaffBlock({
   paidMap: Map<string, number>;
   provisionalCache: Map<string, number>;
   snapshotByKey: Map<string, ProvisionalSnapshotRow>;
+  resolvePlanForCell: ResolvePlanForCell;
+  onUpdateAccumulator: UpdateAccumulatorFn;
   busyPay: string | null;
   onSnapshot: (
     officeNumber: string,
@@ -1500,6 +1770,11 @@ function StaffBlock({
     monthStart: string,
   ) => void;
 }) {
+  // 半期締め 積立額 inline 編集 (key: month → 入力中文字列)。
+  const [accEditByMonth, setAccEditByMonth] = useState<Map<string, string>>(
+    new Map(),
+  );
+
   const perMonth = allMonths.map((m) => {
     const sal = salaryCache.get(`${officeNumber}|${staff}|${m}`);
     const adj = adjustmentsByStaffMonth.get(
@@ -1512,11 +1787,20 @@ function StaffBlock({
     const payMonth = addMonths(m, 1);
     const paid = paidMap.get(`${officeNumber}|${staff}|${payMonth}`) ?? 0;
     const chosei = adj.late_adj + adj.sayi_adj;
-    // total: base (= honnin+shokuno+kotei_zangyo) + plan + kazan + chosei
+
+    // プラン手当 cycle 解決 (semi_annual 時は表示値を上書き)
+    const planInfo = resolvePlanForCell(
+      officeNumber,
+      staff,
+      m,
+      sal?.plan ?? 0,
+    );
+
+    // total: base (= honnin+shokuno+kotei_zangyo) + plan (cycle 反映後) + kazan + chosei
     //        + 独立加算 (shikaku + kotei + tokutei + business_trip_teate)
     const total = sal
       ? sal.base +
-        sal.plan +
+        planInfo.planForTotal +
         sal.kazan +
         chosei +
         sal.shikaku +
@@ -1547,6 +1831,7 @@ function StaffBlock({
       provisional,
       snapshot,
       provDiff,
+      planInfo,
     };
   });
 
@@ -1585,11 +1870,96 @@ function StaffBlock({
             {label}
           </TableCell>
           {perMonth.map((pm) => {
+            // ── プラン手当 行は cycle 別の特殊 render ─────────────
+            if (label === "プラン手当") {
+              const info = pm.planInfo;
+              if (!info.isSemiAnnual) {
+                // monthly: 既存挙動
+                return (
+                  <TableCell
+                    key={pm.m}
+                    className="text-right tabular-nums"
+                  >
+                    {fmtYen(info.displayPlan)}
+                  </TableCell>
+                );
+              }
+              // semi_annual: 積立 inline edit + 表示分岐
+              const accAmount = info.accumulator?.accumulated_amount ?? 0;
+              const accEditVal = accEditByMonth.get(pm.m);
+              const lockKey = `plan-acc|${officeNumber}|${staff}|${pm.m}`;
+              const isBusy = busyPay === lockKey;
+              return (
+                <TableCell
+                  key={pm.m}
+                  className="text-right tabular-nums"
+                  title={
+                    info.isPayoutMonth
+                      ? `${info.periodStart}〜の半期 一括支給月`
+                      : `${info.periodStart}〜の半期 積立中 (支給月: ${info.accumulator?.payout_month ?? getPlanCyclePeriod(pm.m).payout_month})`
+                  }
+                >
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span>
+                      {info.isPayoutMonth
+                        ? `${fmtYen(info.displayPlan)} (一括)`
+                        : `¥0 (積立中)`}
+                    </span>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <span>積立:</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        className="border rounded h-5 w-16 px-1 text-[10px] tabular-nums text-right bg-background"
+                        value={accEditVal ?? String(accAmount)}
+                        disabled={isBusy}
+                        onChange={(ev) =>
+                          setAccEditByMonth((prev) => {
+                            const next = new Map(prev);
+                            next.set(pm.m, ev.target.value);
+                            return next;
+                          })
+                        }
+                      />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        disabled={
+                          isBusy ||
+                          accEditVal === undefined ||
+                          accEditVal === String(accAmount)
+                        }
+                        onClick={() => {
+                          const raw =
+                            accEditVal ?? String(accAmount);
+                          const n = Number(raw);
+                          if (!Number.isFinite(n) || n < 0) return;
+                          onUpdateAccumulator(
+                            officeNumber,
+                            staff,
+                            pm.m,
+                            Math.trunc(n),
+                          );
+                          setAccEditByMonth((prev) => {
+                            const next = new Map(prev);
+                            next.delete(pm.m);
+                            return next;
+                          });
+                        }}
+                      >
+                        保存
+                      </Button>
+                    </div>
+                  </div>
+                </TableCell>
+              );
+            }
+
             let v: number | null = null;
             if (label === "本人給") v = pm.sal?.honnin ?? 0;
             else if (label === "職能給") v = pm.sal?.shokuno ?? 0;
             else if (label === "固定残業手当") v = pm.sal?.kotei_zangyo ?? 0;
-            else if (label === "プラン手当") v = pm.sal?.plan ?? 0;
             else if (label === "加算手当") v = pm.sal?.kazan ?? 0;
             else if (label === "調整手当") v = pm.chosei;
             else if (label === "資格手当") v = pm.sal?.shikaku ?? 0;

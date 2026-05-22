@@ -57,6 +57,8 @@ type EditRow = {
   tokutei_shogu: number | null;
   kaigo_rate: number | null;
   shien_rate: number | null;
+  /** プラン手当の支給サイクル (default 'monthly') */
+  plan_payment_cycle: "monthly" | "semi_annual";
 };
 
 // 列定義: 入力 keys ＋ ラベル。
@@ -179,7 +181,7 @@ export function KyotakuSettingsModal({
       const { data: salaryData, error: salaryErr } = await supabase
         .from("payroll_kyotaku_salary")
         .select(
-          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate, plan_payment_cycle",
         )
         .in("employee_id", empIds)
         .order("effective_from", { ascending: false });
@@ -235,6 +237,7 @@ export function KyotakuSettingsModal({
         tokutei_shogu: active?.tokutei_shogu ?? null,
         kaigo_rate: active?.kaigo_rate ?? null,
         shien_rate: active?.shien_rate ?? null,
+        plan_payment_cycle: active?.plan_payment_cycle ?? "monthly",
       };
     },
     [editByEmp, salaryRows],
@@ -315,6 +318,7 @@ export function KyotakuSettingsModal({
           tokutei_shogu: e.tokutei_shogu ?? 0,
           kaigo_rate: e.kaigo_rate ?? 0,
           shien_rate: e.shien_rate ?? 0,
+          plan_payment_cycle: e.plan_payment_cycle,
         };
         // UNIQUE (employee_id, effective_from) があるので、同月再保存は upsert で UPDATE 扱い。
         const { error } = await supabase
@@ -489,6 +493,9 @@ export function KyotakuSettingsModal({
                                 {c.label}
                               </TableHead>
                             ))}
+                            <TableHead className="min-w-40 whitespace-nowrap">
+                              プラン手当 支給方式
+                            </TableHead>
                             <TableHead className="w-28 whitespace-nowrap text-right">
                               操作
                             </TableHead>
@@ -531,6 +538,29 @@ export function KyotakuSettingsModal({
                                 />
                               </TableCell>
                             ))}
+                            <TableCell>
+                              <select
+                                className="border rounded h-9 px-2 w-full text-sm bg-background"
+                                value={edit.plan_payment_cycle}
+                                onChange={(ev) =>
+                                  updateEdit(
+                                    emp.employee_id,
+                                    {
+                                      plan_payment_cycle:
+                                        ev.target.value === "semi_annual"
+                                          ? "semi_annual"
+                                          : "monthly",
+                                    },
+                                    edit,
+                                  )
+                                }
+                              >
+                                <option value="monthly">毎月支給</option>
+                                <option value="semi_annual">
+                                  半期締め (1-6→9月 / 7-12→3月)
+                                </option>
+                              </select>
+                            </TableCell>
                             <TableCell className="text-right">
                               <Button
                                 type="button"
@@ -572,6 +602,9 @@ export function KyotakuSettingsModal({
                                       {c.label.replace(" (円)", "").replace(" (円/件)", "")}
                                     </TableHead>
                                   ))}
+                                  <TableHead className="whitespace-nowrap">
+                                    支給方式
+                                  </TableHead>
                                   <TableHead className="w-10"></TableHead>
                                 </TableRow>
                               </TableHeader>
@@ -589,6 +622,12 @@ export function KyotakuSettingsModal({
                                         {r[c.key].toLocaleString("ja-JP")}
                                       </TableCell>
                                     ))}
+                                    <TableCell className="whitespace-nowrap">
+                                      {(r.plan_payment_cycle ?? "monthly") ===
+                                      "semi_annual"
+                                        ? "半期締め"
+                                        : "毎月"}
+                                    </TableCell>
                                     <TableCell>
                                       <Button
                                         type="button"

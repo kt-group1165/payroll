@@ -25,6 +25,12 @@ export type KyotakuSalary = {
   kaigo_rate: number;
   /** 要支援単価 (円/件) */
   shien_rate: number;
+  /** プラン手当の支給サイクル (default 'monthly')。
+   *  - 'monthly': 毎月支給 (既存挙動)
+   *  - 'semi_annual': 1-6月分を9月、7-12月分を翌3月にまとめて支給
+   *  DB migration `payroll_kyotaku_plan_cycle.sql` 適用前は undefined になり得るので
+   *  reader は `?? 'monthly'` で fallback する。 */
+  plan_payment_cycle?: "monthly" | "semi_annual";
 };
 
 /**
