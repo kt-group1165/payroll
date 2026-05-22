@@ -43,3 +43,7 @@ next-env.d.ts
 .vercel
 
 .claude/
+
+# 国保連 / 利用者一覧などの CSV は PII 含む可能性があるため repo に入れない
+*.CSV
+*.csv
