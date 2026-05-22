@@ -477,103 +477,80 @@ export function KyotakuSettingsModal({
                       </div>
                     </div>
 
-                    {/* ----- 編集行 ----- */}
-                    <div className="overflow-x-auto p-3">
-                      <Table className="text-sm">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="min-w-32 whitespace-nowrap">
-                              適用開始月
-                            </TableHead>
-                            {INPUT_COLS.map((c) => (
-                              <TableHead
-                                key={c.key}
-                                className="min-w-28 whitespace-nowrap"
-                              >
-                                {c.label}
-                              </TableHead>
-                            ))}
-                            <TableHead className="min-w-40 whitespace-nowrap">
-                              プラン手当 支給方式
-                            </TableHead>
-                            <TableHead className="w-28 whitespace-nowrap text-right">
-                              操作
-                            </TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          <TableRow>
-                            <TableCell>
-                              <Input
-                                type="date"
-                                value={edit.effective_from}
-                                onChange={(ev) =>
-                                  updateEdit(
-                                    emp.employee_id,
-                                    { effective_from: ev.target.value },
-                                    edit,
-                                  )
-                                }
-                              />
-                            </TableCell>
-                            {INPUT_COLS.map((c) => (
-                              <TableCell key={c.key}>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  step={1}
-                                  value={edit[c.key] ?? ""}
-                                  placeholder={c.placeholder}
-                                  onChange={(ev) =>
-                                    updateEdit(
-                                      emp.employee_id,
-                                      {
-                                        [c.key]: parseIntOrNull(
-                                          ev.target.value,
-                                        ),
-                                      },
-                                      edit,
-                                    )
-                                  }
-                                />
-                              </TableCell>
-                            ))}
-                            <TableCell>
-                              <select
-                                className="border rounded h-9 px-2 w-full text-sm bg-background"
-                                value={edit.plan_payment_cycle}
-                                onChange={(ev) =>
-                                  updateEdit(
-                                    emp.employee_id,
-                                    {
-                                      plan_payment_cycle:
-                                        ev.target.value === "semi_annual"
-                                          ? "semi_annual"
-                                          : "monthly",
-                                    },
-                                    edit,
-                                  )
-                                }
-                              >
-                                <option value="monthly">毎月支給</option>
-                                <option value="semi_annual">
-                                  半期締め (1-6→9月 / 7-12→3月)
-                                </option>
-                              </select>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => void handleSaveRow(emp)}
-                                disabled={isSaving}
-                              >
-                                {isSaving ? "保存中…" : "保存"}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
+                    {/* ----- 編集行 (grid layout でコンパクト化) ----- */}
+                    <div className="space-y-3 p-3">
+                      {/* 上段: 適用開始月 + 支給方式 + 保存 */}
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-muted-foreground">適用開始月</label>
+                          <Input
+                            type="date"
+                            className="h-9 w-40"
+                            value={edit.effective_from}
+                            onChange={(ev) =>
+                              updateEdit(
+                                emp.employee_id,
+                                { effective_from: ev.target.value },
+                                edit,
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] text-muted-foreground">プラン手当 支給方式</label>
+                          <select
+                            className="h-9 w-64 rounded border bg-background px-2 text-sm"
+                            value={edit.plan_payment_cycle}
+                            onChange={(ev) =>
+                              updateEdit(
+                                emp.employee_id,
+                                {
+                                  plan_payment_cycle:
+                                    ev.target.value === "semi_annual" ? "semi_annual" : "monthly",
+                                },
+                                edit,
+                              )
+                            }
+                          >
+                            <option value="monthly">毎月支給</option>
+                            <option value="semi_annual">半期締め (1-6→9月 / 7-12→3月)</option>
+                          </select>
+                        </div>
+                        <div className="ml-auto">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleSaveRow(emp)}
+                            disabled={isSaving}
+                          >
+                            {isSaving ? "保存中…" : "保存"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* 下段: 8 input を 4 列 grid */}
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4">
+                        {INPUT_COLS.map((c) => (
+                          <div key={c.key} className="flex flex-col gap-1">
+                            <label className="text-[11px] text-muted-foreground">{c.label}</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={1}
+                              className="h-9 text-right tabular-nums"
+                              value={edit[c.key] ?? ""}
+                              placeholder={c.placeholder}
+                              onChange={(ev) =>
+                                updateEdit(
+                                  emp.employee_id,
+                                  { [c.key]: parseIntOrNull(ev.target.value) },
+                                  edit,
+                                )
+                              }
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     {/* ----- 履歴一覧 (展開時のみ) ----- */}
