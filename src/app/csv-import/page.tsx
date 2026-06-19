@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   MeisaiImporter,
@@ -128,6 +129,20 @@ export default async function CsvImportPage() {
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">CSV取り込み</h2>
+      <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <span className="font-semibold">📂 フォルダごと一括取込したい場合</span>
+          <span className="text-muted-foreground ml-2">
+            このページは <span className="font-mono">1 ファイルずつ</span> の取込です。フォルダ drop は非対応。
+          </span>
+        </div>
+        <Link
+          href="/csv-import/batch"
+          className="inline-flex items-center gap-1 px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
+        >
+          一括取込 (フォルダ) ページへ →
+        </Link>
+      </div>
       <Tabs defaultValue="meisai">
         <TabsList>
           <TabsTrigger value="meisai">介護ソフトCSV</TabsTrigger>
