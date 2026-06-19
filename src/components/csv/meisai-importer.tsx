@@ -81,7 +81,11 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
       .delete()
       .eq("processing_month", month)
       .eq("office_number", office_number);
-    if (error) { toast.error(`削除エラー: ${error.message}`); return; }
+    if (error) {
+      console.warn(`[meisai-importer] 削除失敗 (${office_number}/${month}):`, error.message);
+      toast.error(`削除エラー: ${error.message}`);
+      return;
+    }
     toast.success(`${officeName} ${label}のデータを削除しました`);
     fetchExistingMonths();
   };
@@ -134,11 +138,14 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
         .single();
 
       if (batchError || !batch) {
+        console.warn(`[meisai-importer] batch 作成失敗:`, batchError?.message);
         toast.error(`バッチ作成エラー: ${batchError?.message}`);
         return;
       }
 
       // データを500件ずつ分割して挿入
+      // 注: chunk 失敗時は batch を error 状態にして即停止する (部分 INSERT は中途半端な状態を作るため)。
+      //     上流の console.warn と batch.error_message に詳細を残す。
       const chunkSize = 500;
       for (let i = 0; i < allData.length; i += chunkSize) {
         const chunk = allData.slice(i, i + chunkSize);
@@ -195,6 +202,10 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
           .insert(records);
 
         if (insertError) {
+          console.warn(
+            `[meisai-importer] chunk ${i}-${i + chunk.length} INSERT 失敗 (batch=${batch.id}, ${i} 件は既に INSERT 済):`,
+            insertError.message,
+          );
           await supabase
             .from("payroll_import_batches")
             .update({
@@ -202,7 +213,9 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
               error_message: insertError.message,
             })
             .eq("id", batch.id);
-          toast.error(`データ登録エラー: ${insertError.message}`);
+          toast.error(
+            `データ登録エラー (${i}/${allData.length} 件登録済、残り未登録): ${insertError.message}`,
+          );
           return;
         }
       }

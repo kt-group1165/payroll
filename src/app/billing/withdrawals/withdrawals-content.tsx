@@ -167,6 +167,17 @@ export function WithdrawalsContent({
           if (r.billing_status !== "paid") toPaid.push({ id: r.id, amount: r.invoiced_amount ?? r.amount });
         }
       }
+      // 部分失敗の可視化: chunk/row 毎に try し、失敗は集計して最後に提示。
+      // 数字 (billing 金額) が絡むので silent fail は絶対 NG。
+      let overdueOk = 0;
+      let overdueFail = 0;
+      let paidOk = 0;
+      let paidFail = 0;
+      const errSamples: string[] = [];
+      const pushErr = (msg: string) => {
+        if (errSamples.length < 3) errSamples.push(msg);
+      };
+
       // overdue 更新
       if (toOverdue.length > 0) {
         const chunk = 200;
@@ -179,7 +190,16 @@ export function WithdrawalsContent({
               lifecycle_note: `引落不可 (${withdrawalDate}) 取り込み`,
             })
             .in("id", ids);
-          if (error) throw error;
+          if (error) {
+            overdueFail += ids.length;
+            console.warn(
+              `[withdrawals] overdue chunk ${i}-${i + ids.length} 更新失敗:`,
+              error.message,
+            );
+            pushErr(error.message);
+          } else {
+            overdueOk += ids.length;
+          }
         }
       }
       // paid 更新 (行ごとに paid_amount が異なるので個別)
@@ -192,9 +212,23 @@ export function WithdrawalsContent({
             paid_amount: t.amount,
           })
           .eq("id", t.id);
-        if (error) throw error;
+        if (error) {
+          paidFail++;
+          console.warn(`[withdrawals] paid 更新失敗 (id=${t.id}):`, error.message);
+          pushErr(error.message);
+        } else {
+          paidOk++;
+        }
       }
-      toast.success(`完了: overdue ${toOverdue.length} 件 / paid ${toPaid.length} 件`);
+
+      const totalFail = overdueFail + paidFail;
+      if (totalFail > 0) {
+        toast.error(
+          `部分失敗: overdue ${overdueOk}/${toOverdue.length} 件成功 / paid ${paidOk}/${toPaid.length} 件成功 / 失敗 ${totalFail} 件 (詳細はコンソール: ${errSamples.join(" / ")})`,
+        );
+      } else {
+        toast.success(`完了: overdue ${overdueOk} 件 / paid ${paidOk} 件`);
+      }
       setDone(true);
       router.refresh();
     } catch (e) {

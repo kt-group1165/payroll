@@ -460,29 +460,38 @@ function calcKazan(
   serviceMonth: string,
   units: ServiceUnit[],
 ): number {
-  let kazan = 0;
-
   // 同 staff/月 の行を 1 度抽出
   const subset = records.filter(
     (r) => r.staff_name === staffName && r.service_month === serviceMonth,
   );
+  if (subset.length === 0) return 0;
 
-  for (const u of units) {
-    if (!u.is_addition) continue;
-    if (u.is_office_addition) continue;
-    // SPEC §8.14: 部分一致で "特定事業所加算" 系を二重防御
-    if (u.item_name.includes("特定事業所加算")) continue;
+  // 加算対象 units を事前 filter (毎 row 走査でフラグ判定しない)。
+  // SPEC §8.14: 部分一致で "特定事業所加算" 系を二重防御。
+  const addUnits = units.filter(
+    (u) =>
+      u.is_addition &&
+      !u.is_office_addition &&
+      !u.item_name.includes("特定事業所加算"),
+  );
+  if (addUnits.length === 0) return 0;
 
+  // service_name を事前抽出 (毎 unit 比較で `r.service_name ?? ""` を再評価しない)。
+  const svcNames: string[] = [];
+  for (const r of subset) {
+    const svc = r.service_name ?? "";
+    if (svc) svcNames.push(svc);
+  }
+  if (svcNames.length === 0) return 0;
+
+  let kazan = 0;
+  for (const u of addUnits) {
     let count = 0;
-    for (const r of subset) {
-      const svc = r.service_name ?? "";
-      if (svc && svc.includes(u.item_name)) {
-        count += 1;
-      }
+    for (const svc of svcNames) {
+      if (svc.includes(u.item_name)) count += 1;
     }
     kazan += count * u.unit_count * 10;
   }
-
   return kazan;
 }
 
@@ -723,21 +732,31 @@ export function calcAdjustments(
     officeTravelUnitPrice,
     confirmations,
   } = config;
-  const baseConfig: CalcConfig = {
+  // 性能改善 (2026-06-19): calcSalary は内部で records / yobouRecords /
+  // attendanceRecords を毎回 staff_name でフィルタする。calcAdjustments では
+  // 同じ staff で複数の serviceMonth に対し calcSalary を繰り返し呼ぶため、
+  // 事前に staff 名で 1 回だけ絞った subset を渡すと、内部フィルタは小さい
+  // 集合に対する no-op で済み、出力は変わらない (= 同値リファクタ)。
+  const staffRecords = records.filter((r) => r.staff_name === staffName);
+  const staffYobou = yobouRecords?.filter((y) => y.staff_name === staffName);
+  const staffAttendance = attendanceRecords?.filter(
+    (a) => a.staff_name === staffName,
+  );
+  const staffConfig: CalcConfig = {
     settings,
     units,
     rates,
-    yobouRecords,
-    attendanceRecords,
+    yobouRecords: staffYobou,
+    attendanceRecords: staffAttendance,
     officeTravelUnitPrice,
   };
 
   // 1) late_adj: T+1 へ流れる過去月の chosei
   const { base, plan, kazan, shikaku, kotei, tokutei, business_trip_teate } =
-    calcSalary(records, staffName, serviceMonth, baseConfig);
+    calcSalary(staffRecords, staffName, serviceMonth, staffConfig);
   const payMonth = addMonths(serviceMonth, 1);
   const late_adj =
-    calcPaymentForMonth(records, staffName, payMonth, baseConfig) -
+    calcPaymentForMonth(staffRecords, staffName, payMonth, staffConfig) -
     (base +
       plan +
       kazan +
@@ -750,22 +769,17 @@ export function calcAdjustments(
   //    最新未確定月 = staff の全提供月を新しい順に走査し、
   //      confirmations[(staff, T+1)] が無い (or amount===0) の最初の T
   const staffMonthsSet = new Set<string>();
-  for (const r of records) {
-    if (r.staff_name === staffName && r.service_month) {
-      staffMonthsSet.add(r.service_month);
+  for (const r of staffRecords) {
+    if (r.service_month) staffMonthsSet.add(r.service_month);
+  }
+  if (staffYobou) {
+    for (const yr of staffYobou) {
+      if (yr.service_month) staffMonthsSet.add(yr.service_month);
     }
   }
-  if (yobouRecords) {
-    for (const yr of yobouRecords) {
-      if (yr.staff_name === staffName && yr.service_month) {
-        staffMonthsSet.add(yr.service_month);
-      }
-    }
-  }
-  if (attendanceRecords) {
+  if (staffAttendance) {
     // attendance only ある月も sayi 計算対象に取り込む (出張距離手当 差異検出)
-    for (const ar of attendanceRecords) {
-      if (ar.staff_name !== staffName) continue;
+    for (const ar of staffAttendance) {
       if (!ar.work_date) continue;
       const ym = ar.work_date.slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
@@ -799,7 +813,7 @@ export function calcAdjustments(
       const prevPay = addMonths(prevMonth, 1);
       const prevPaid = paidMap.get(prevPay) ?? 0;
       if (prevPaid === 0) continue;
-      const prev = calcSalary(records, staffName, prevMonth, baseConfig);
+      const prev = calcSalary(staffRecords, staffName, prevMonth, staffConfig);
       const diff =
         prev.base +
         prev.plan +

@@ -129,9 +129,12 @@ export function YobouImporter({ tenantId, initialOffices }: YobouImporterProps) 
       // upsert を chunk 500 で。ignoreDuplicates: true なので
       // 同じ UNIQUE key (office_number, service_month, billing_month, staff_name)
       // が既にあれば skip。
+      // chunk 単位の失敗は即停止せず集計表示 (部分失敗の可視化)。
       const chunkSize = 500;
       let inserted = 0;
       let skipped = 0;
+      let failed = 0;
+      const errMessages: string[] = [];
       const ONCONFLICT =
         "office_number,service_month,billing_month,staff_name";
 
@@ -145,9 +148,13 @@ export function YobouImporter({ tenantId, initialOffices }: YobouImporterProps) 
           })
           .select("id");
         if (error) {
-          toast.error(`登録エラー: ${error.message}`);
-          setIsImporting(false);
-          return;
+          failed += chunk.length;
+          console.warn(
+            `[yobou-importer] chunk ${i}-${i + chunk.length} 登録失敗:`,
+            error.message,
+          );
+          if (errMessages.length < 3) errMessages.push(error.message);
+          continue;
         }
         const insertedInChunk = data?.length ?? 0;
         inserted += insertedInChunk;
@@ -156,7 +163,13 @@ export function YobouImporter({ tenantId, initialOffices }: YobouImporterProps) 
 
       setResult({ inserted, skipped });
       setImported(true);
-      toast.success(`${inserted} 件 INSERT (${skipped} 件 skip)`);
+      if (failed > 0) {
+        toast.error(
+          `${records.length} 件中 ${inserted} 件 INSERT / ${skipped} 件 skip / ${failed} 件 失敗 (詳細はコンソール: ${errMessages.join(" / ")})`,
+        );
+      } else {
+        toast.success(`${inserted} 件 INSERT (${skipped} 件 skip)`);
+      }
     } catch (e) {
       toast.error(`エラー: ${e instanceof Error ? e.message : String(e)}`);
     } finally {

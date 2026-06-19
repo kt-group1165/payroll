@@ -346,7 +346,9 @@ export default function PayrollSummaryPage() {
     try {
       const raw = localStorage.getItem(selectedKey);
       if (raw) return JSON.parse(raw) as Summary;
-    } catch {}
+    } catch (e) {
+      console.warn(`[payroll-summary] summary JSON parse 失敗 (key=${selectedKey}):`, e);
+    }
     return null;
   }, [selectedKey]);
 

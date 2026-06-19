@@ -441,8 +441,13 @@ export function SalaryList({
     const { error } = await supabase
       .from("payroll_salary_settings")
       .upsert(payload, { onConflict: "employee_id,effective_from" });
-    if (error) toast.error(`保存エラー: ${error.message}`);
-    else {
+    if (error) {
+      console.warn(
+        `[salary-list] handleSave upsert 失敗 (emp=${payload.employee_id}, eff=${payload.effective_from}):`,
+        error.message,
+      );
+      toast.error(`保存エラー: ${error.message}`);
+    } else {
       toast.success(`給与設定を保存しました (適用: ${settings.effective_from} 〜)`);
       loadSettings(selectedId);
       refresh();
@@ -468,8 +473,13 @@ export function SalaryList({
     const { error } = await supabase
       .from("payroll_salary_settings")
       .upsert(payload, { onConflict: "employee_id,effective_from" });
-    if (error) toast.error(`保存エラー: ${error.message}`);
-    else { toast.success(`過去設定を追加しました (${row.effective_from} 〜)`); refresh(); setBackfillOpen(false); }
+    if (error) {
+      console.warn(
+        `[salary-list] handleBackfillSave upsert 失敗 (emp=${payload.employee_id}, eff=${payload.effective_from}):`,
+        error.message,
+      );
+      toast.error(`保存エラー: ${error.message}`);
+    } else { toast.success(`過去設定を追加しました (${row.effective_from} 〜)`); refresh(); setBackfillOpen(false); }
   };
 
   // ─── CSV エクスポート（全員分） ────────────────────────────
@@ -621,13 +631,20 @@ export function SalaryList({
     const effFrom = thisMonthStart();
     let success = 0, fail = 0;
 
+    const errSamples: string[] = [];
     for (const row of valid) {
       const payload = { employee_id: row.employee_id!, effective_from: effFrom, ...row.settings };
       const { error } = await supabase
         .from("payroll_salary_settings")
         .upsert(payload, { onConflict: "employee_id,effective_from" });
-      if (error) fail++;
-      else success++;
+      if (error) {
+        fail++;
+        console.warn(
+          `[salary-list] CSV import upsert 失敗 (emp=${row.employee_id}, name=${row.name}):`,
+          error.message,
+        );
+        if (errSamples.length < 3) errSamples.push(error.message);
+      } else success++;
     }
 
     setImporting(false);
@@ -637,7 +654,7 @@ export function SalaryList({
     if (selectedId) loadSettings(selectedId);
 
     if (fail === 0) toast.success(`${success}件をインポートしました (適用: ${effFrom} 〜)`);
-    else toast.warning(`${success}件成功、${fail}件失敗`);
+    else toast.warning(`${success}件成功、${fail}件失敗 (詳細はコンソール: ${errSamples.join(" / ")})`);
   }
 
   // ─── 残業設定 保存 ───────────────────────────────────────────
@@ -653,6 +670,7 @@ export function SalaryList({
   const handleSaveOvertime = async () => {
     setSavingOvertime(true);
     let fail = 0;
+    const errSamples: string[] = [];
     for (const jt of JOB_TYPES_FOR_OVERTIME) {
       const s = overtimeSettings.get(jt) ?? emptyOvertimeSetting(jt);
       const { id, ...payload } = s;
@@ -662,11 +680,15 @@ export function SalaryList({
       } else {
         ({ error } = await supabase.from("payroll_overtime_settings").insert(payload));
       }
-      if (error) fail++;
+      if (error) {
+        fail++;
+        console.warn(`[salary-list] handleSaveOvertime 失敗 (jobType=${jt}):`, error.message);
+        if (errSamples.length < 3) errSamples.push(error.message);
+      }
     }
     setSavingOvertime(false);
     if (fail === 0) { toast.success("残業設定を保存しました"); refresh(); }
-    else toast.error(`${fail}件の保存に失敗しました`);
+    else toast.error(`${fail}件の保存に失敗しました (詳細はコンソール: ${errSamples.join(" / ")})`);
   };
 
   // ─── テーブル用データ ─────────────────────────────────────────

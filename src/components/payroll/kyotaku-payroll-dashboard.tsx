@@ -3482,6 +3482,20 @@ function YobouTab({
     }
   };
 
+  // edit rows を表示順 sort: source=csv 先頭 / staff 順 / billingMonth 順
+  // editRows が変わらない限り再 sort を避ける (毎 render で sort しない)。
+  // 早期 return 前に呼ぶ (= Hook 順序保持)。
+  const rowsSorted = useMemo(
+    () =>
+      Array.from(editRows.values()).sort((a, b) => {
+        if (a.staffName !== b.staffName) {
+          return a.staffName.localeCompare(b.staffName, "ja");
+        }
+        return a.billingMonth.localeCompare(b.billingMonth);
+      }),
+    [editRows],
+  );
+
   if (allKyotakuOffices.length === 0) {
     return (
       <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -3489,14 +3503,6 @@ function YobouTab({
       </div>
     );
   }
-
-  // edit rows を表示順 sort: source=csv 先頭 / staff 順 / billingMonth 順
-  const rowsSorted = Array.from(editRows.values()).sort((a, b) => {
-    if (a.staffName !== b.staffName) {
-      return a.staffName.localeCompare(b.staffName, "ja");
-    }
-    return a.billingMonth.localeCompare(b.billingMonth);
-  });
 
   return (
     <div className="space-y-3">

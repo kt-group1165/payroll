@@ -681,9 +681,16 @@ export function BillingImporter() {
       }
 
       // 後方互換: offices.shogai_office_number を更新（/offices 編集画面での表示用）
+      let shogaiUpdateFail = 0;
       for (const u of shogaiUpdates) {
         const { error } = await supabase.from("payroll_offices").update({ shogai_office_number: u.shogaiNum }).eq("id", u.officeId);
-        if (error) console.error("shogai_office_number 更新エラー", error);
+        if (error) {
+          shogaiUpdateFail++;
+          console.warn(`[billing-importer] shogai_office_number 更新失敗 (office=${u.officeId}, num=${u.shogaiNum}):`, error.message);
+        }
+      }
+      if (shogaiUpdateFail > 0) {
+        toast.warning(`shogai_office_number の更新が ${shogaiUpdateFail} 件失敗しました (詳細はコンソール)`);
       }
       if (shogaiUpdates.length > 0) {
         // 最新のofficesを再取得（以降の取り込みで同じ番号が自動解決されるように）
