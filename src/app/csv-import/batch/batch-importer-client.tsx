@@ -132,6 +132,7 @@ export function BatchImporterClient({ offices, tenantId }: BatchImporterClientPr
 
   const addFiles = useCallback(async (files: File[]) => {
     const next: FileEntry[] = [];
+    let skippedEmpty = 0;
     for (const f of files) {
       try {
         const buffer = await f.arrayBuffer();
@@ -139,6 +140,11 @@ export function BatchImporterClient({ offices, tenantId }: BatchImporterClientPr
         // 注: kyotaku/meisai は Shift-JIS 固定だが、detect では BOM / fatal 判定で SJIS 経由になる
         const text = decodeCsv(buffer);
         const detect = detectFromText(text, f.name);
+        // ヘッダーのみ (= 0 行 or 1 行) は取込対象外 → 一覧に入れない
+        if (detect.rowCount <= 0) {
+          skippedEmpty++;
+          continue;
+        }
         next.push({
           id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
           payload: { file: f, buffer, text },
@@ -155,7 +161,10 @@ export function BatchImporterClient({ offices, tenantId }: BatchImporterClientPr
     }
     if (next.length > 0) {
       setEntries((prev) => [...prev, ...next]);
-      toast.success(`${next.length} 件追加 (合計 ${entries.length + next.length} 件)`);
+      const skipMsg = skippedEmpty > 0 ? ` (空 CSV ${skippedEmpty} 件はスキップ)` : "";
+      toast.success(`${next.length} 件追加 (合計 ${entries.length + next.length} 件)${skipMsg}`);
+    } else if (skippedEmpty > 0) {
+      toast.info(`${skippedEmpty} 件すべて空 CSV のためスキップ`);
     }
   }, [entries.length]);
 
@@ -310,6 +319,35 @@ export function BatchImporterClient({ offices, tenantId }: BatchImporterClientPr
     setProgress(null);
   };
 
+  // ── 一括設定 (= 未入力 cell に同じ事業所/年月をまとめて流し込む) ───────────
+  const [bulkOffice, setBulkOffice] = useState<string>("");
+  const [bulkYearMonth, setBulkYearMonth] = useState<string>("");
+
+  const applyBulk = (mode: "missing" | "overwrite") => {
+    if (isRunning) return;
+    if (!bulkOffice && !bulkYearMonth) {
+      toast.error("事業所 か 年月 を選択してください");
+      return;
+    }
+    setEntries((prev) => prev.map((e) => {
+      const next: Partial<FileEntry> = {};
+      if (bulkOffice) {
+        // missing: detect + override の両方が空のときだけ書く
+        const current = e.overrideOfficeNumber || (e.detect.officeNumber ?? "");
+        if (mode === "overwrite" || !current) next.overrideOfficeNumber = bulkOffice;
+      }
+      if (bulkYearMonth) {
+        const current = e.overrideYearMonth || (e.detect.yearMonth ?? "");
+        if (mode === "overwrite" || !current) next.overrideYearMonth = bulkYearMonth;
+      }
+      return { ...e, ...next };
+    }));
+    toast.success(`一括適用 (${mode === "overwrite" ? "全件上書き" : "未入力のみ"})`);
+  };
+
+  // 一括設定で表示する事業所候補 = 全事業所 (種別不明エントリ含むため)
+  const bulkOfficeOptions = offices;
+
   return (
     <div className="space-y-4">
       {/* dropzone */}
@@ -353,7 +391,7 @@ export function BatchImporterClient({ offices, tenantId }: BatchImporterClientPr
 
       {entries.length > 0 && (
         <>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="text-sm">
               ファイル一覧 (<span className="font-mono">{entries.length}</span> 件)
               {progress && (
@@ -372,121 +410,162 @@ export function BatchImporterClient({ offices, tenantId }: BatchImporterClientPr
             </div>
           </div>
 
-          <div className="border rounded-md divide-y">
-            {entries.map((entry) => {
-              const { kind, officeNumber, yearMonth } = resolveEntry(entry);
-              const kindOk = kind !== "unknown";
-              const officeOk = !!officeNumber;
-              const yearMonthOk = !!yearMonth;
-              const canRun = kindOk && officeOk && yearMonthOk && kind !== "billing";
-              const kindOffices = kind !== "unknown" && kind !== "billing"
-                ? officesByKind[kind]
-                : offices;
+          {/* 一括設定バー: 未入力 or 全件上書きで 事業所/年月 をまとめて流し込む */}
+          <div className="border rounded-md bg-blue-50/40 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-muted-foreground font-medium whitespace-nowrap">一括設定</span>
+            <select
+              className="border rounded px-1.5 py-1 bg-background text-xs"
+              value={bulkOffice}
+              onChange={(e) => setBulkOffice(e.target.value)}
+              disabled={isRunning}
+            >
+              <option value="">事業所 (選択)</option>
+              {bulkOfficeOptions.map((o) => (
+                <option key={o.id} value={o.office_number}>
+                  {o.short_name || o.name} ({o.office_number})
+                </option>
+              ))}
+            </select>
+            <input
+              type="month"
+              className="border rounded px-1.5 py-1 bg-background text-xs"
+              value={bulkYearMonth}
+              onChange={(e) => setBulkYearMonth(e.target.value)}
+              disabled={isRunning}
+            />
+            <Button size="sm" variant="outline" onClick={() => applyBulk("missing")} disabled={isRunning}>
+              未入力に適用
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => applyBulk("overwrite")} disabled={isRunning}>
+              全件上書き
+            </Button>
+          </div>
 
-              return (
-                <div key={entry.id} className="p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs truncate max-w-[280px]" title={entry.payload.file.name}>
+          {/*
+            コンパクト table 風レイアウト:
+              ファイル (ファイル名 + バッジ + 行数) / 種別 / 事業所 / 年月 / ✕
+            グリッド: minmax 指定で横幅可変。md 以上で 1 行表示、sm 以下は折り返し。
+            不足 (種別/事業所/年月) は cell 単位で赤枠、行全体は薄赤背景でひと目で分かるように。
+          */}
+          <div className="border rounded-md overflow-hidden">
+            {/* 列ヘッダー (sticky) */}
+            <div className="hidden md:grid grid-cols-[minmax(220px,1.8fr)_140px_minmax(220px,2fr)_130px_28px] gap-2 items-center px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground bg-muted/40 border-b">
+              <div>ファイル</div>
+              <div>種別</div>
+              <div>事業所</div>
+              <div>年月</div>
+              <div></div>
+            </div>
+
+            <div className="divide-y">
+              {entries.map((entry) => {
+                const { kind, officeNumber, yearMonth } = resolveEntry(entry);
+                const kindOk = kind !== "unknown";
+                const officeOk = !!officeNumber;
+                const yearMonthOk = !!yearMonth;
+                const canRun = kindOk && officeOk && yearMonthOk && kind !== "billing";
+                const kindOffices = kind !== "unknown" && kind !== "billing"
+                  ? officesByKind[kind]
+                  : offices;
+                const rowBg =
+                  entry.status === "done" ? "bg-green-50/60" :
+                  entry.status === "error" ? "bg-red-50/60" :
+                  entry.status === "running" ? "bg-blue-50/60" :
+                  (!canRun && kind !== "billing") ? "bg-amber-50/40" :
+                  "";
+
+                return (
+                  <div
+                    key={entry.id}
+                    className={`grid grid-cols-1 md:grid-cols-[minmax(220px,1.8fr)_140px_minmax(220px,2fr)_130px_28px] gap-2 items-center px-3 py-1.5 text-xs ${rowBg}`}
+                  >
+                    {/* ファイル: 名前 + 状態 badge + 行数 */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono truncate" title={entry.payload.file.name}>
                         {entry.payload.file.name}
                       </span>
                       <ConfidenceBadge d={entry.detect} />
-                      <span className="text-[10px] text-muted-foreground">
-                        {entry.detect.rowCount} 行
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                        {entry.detect.rowCount}行
                       </span>
                       {entry.status === "running" && (
-                        <span className="text-[10px] text-blue-700">処理中…</span>
+                        <span className="text-[10px] text-blue-700 whitespace-nowrap">処理中…</span>
                       )}
                       {entry.status === "done" && entry.result && (
-                        <span className="text-[10px] text-green-700">
-                          ✓ INSERT {entry.result.inserted} (skip {entry.result.skipped})
+                        <span className="text-[10px] text-green-700 whitespace-nowrap" title={`INSERT ${entry.result.inserted} / skip ${entry.result.skipped}`}>
+                          ✓ {entry.result.inserted}
                         </span>
                       )}
                       {entry.status === "error" && entry.result && (
-                        <span className="text-[10px] text-red-700">
+                        <span className="text-[10px] text-red-700 truncate" title={entry.result.errors[0] ?? `fail=${entry.result.failed}`}>
                           ✗ {entry.result.errors[0] ?? `fail=${entry.result.failed}`}
                         </span>
                       )}
                     </div>
+
+                    {/* 種別 */}
+                    <select
+                      className={`border rounded px-1.5 py-1 text-xs bg-background w-full ${kindOk ? "" : "border-red-400"}`}
+                      value={entry.overrideKind || ""}
+                      onChange={(e) => updateEntry(entry.id, {
+                        overrideKind: e.target.value as ImporterKind | "",
+                        overrideOfficeNumber: "",
+                      })}
+                      disabled={isRunning}
+                    >
+                      {KIND_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.value === "" && entry.detect.kind !== "unknown"
+                            ? `${IMPORTER_LABELS[entry.detect.kind as ImporterKind] ?? "不明"} (自動)`
+                            : opt.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* 事業所 */}
+                    <select
+                      className={`border rounded px-1.5 py-1 text-xs bg-background w-full ${officeOk ? "" : "border-red-400"}`}
+                      value={entry.overrideOfficeNumber || (entry.detect.officeNumber ?? "")}
+                      onChange={(e) => updateEntry(entry.id, { overrideOfficeNumber: e.target.value })}
+                      disabled={isRunning || kind === "billing"}
+                    >
+                      <option value="">(選択)</option>
+                      {kindOffices.map((o) => (
+                        <option key={o.id} value={o.office_number}>
+                          {o.short_name || o.name} ({o.office_number})
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* 年月 */}
+                    <input
+                      type="month"
+                      className={`border rounded px-1.5 py-1 text-xs bg-background w-full ${yearMonthOk ? "" : "border-red-400"}`}
+                      value={entry.overrideYearMonth || (entry.detect.yearMonth ?? "")}
+                      onChange={(e) => updateEntry(entry.id, { overrideYearMonth: e.target.value })}
+                      disabled={isRunning}
+                    />
+
+                    {/* 削除 */}
                     <button
                       onClick={() => removeEntry(entry.id)}
                       disabled={isRunning}
-                      className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
+                      title="削除"
+                      className="text-red-600 hover:text-red-800 disabled:opacity-30 text-base leading-none"
                     >
-                      ✕ 削除
+                      ✕
                     </button>
-                  </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-                    {/* 種別 */}
-                    <div className="flex items-center gap-2">
-                      <label className="whitespace-nowrap text-muted-foreground">種別</label>
-                      <select
-                        className={`border rounded px-2 py-1 text-xs bg-background flex-1 ${kindOk ? "" : "border-red-400"}`}
-                        value={entry.overrideKind || ""}
-                        onChange={(e) => updateEntry(entry.id, {
-                          overrideKind: e.target.value as ImporterKind | "",
-                          // 種別変更時は事業所選択をリセット
-                          overrideOfficeNumber: "",
-                        })}
-                        disabled={isRunning}
-                      >
-                        {KIND_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.value === "" && entry.detect.kind !== "unknown"
-                              ? `(自動: ${IMPORTER_LABELS[entry.detect.kind as ImporterKind] ?? "不明"})`
-                              : opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {/* 事業所 */}
-                    <div className="flex items-center gap-2">
-                      <label className="whitespace-nowrap text-muted-foreground">事業所</label>
-                      <select
-                        className={`border rounded px-2 py-1 text-xs bg-background flex-1 ${officeOk ? "" : "border-red-400"}`}
-                        value={entry.overrideOfficeNumber || (entry.detect.officeNumber ?? "")}
-                        onChange={(e) => updateEntry(entry.id, { overrideOfficeNumber: e.target.value })}
-                        disabled={isRunning || kind === "billing"}
-                      >
-                        <option value="">(選択)</option>
-                        {kindOffices.map((o) => (
-                          <option key={o.id} value={o.office_number}>
-                            {o.short_name || o.name} ({o.office_number})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {/* 年月 */}
-                    <div className="flex items-center gap-2">
-                      <label className="whitespace-nowrap text-muted-foreground">年月</label>
-                      <input
-                        type="month"
-                        className={`border rounded px-2 py-1 text-xs bg-background flex-1 ${yearMonthOk ? "" : "border-red-400"}`}
-                        value={entry.overrideYearMonth || (entry.detect.yearMonth ?? "")}
-                        onChange={(e) => updateEntry(entry.id, { overrideYearMonth: e.target.value })}
-                        disabled={isRunning}
-                      />
-                    </div>
+                    {/* billing 警告 (= 行下に小さく表示。table を崩さないため grid 全 col span) */}
+                    {kind === "billing" && (
+                      <p className="md:col-span-5 text-[10px] text-orange-700 -mt-0.5">
+                        ※ 請求 CSV は /billing/import で取込んでください
+                      </p>
+                    )}
                   </div>
-
-                  {entry.detect.notes && (
-                    <p className="text-[10px] text-muted-foreground">{entry.detect.notes}</p>
-                  )}
-                  {kind === "billing" && (
-                    <p className="text-[10px] text-orange-700">
-                      ※ 請求 CSV は事業所紐付け (alias) が必要なため、ここでは取込実行しません。<br />
-                      右メニュー「請求CSV取り込み」(/billing/import) でアップロードしてください。
-                    </p>
-                  )}
-                  {!canRun && kind !== "billing" && kind !== "unknown" && (
-                    <p className="text-[10px] text-red-700">
-                      取込実行には種別 / 事業所 / 年月 を全て指定してください
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
 
           {/* 結果サマリ */}
