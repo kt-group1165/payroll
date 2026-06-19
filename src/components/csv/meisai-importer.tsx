@@ -14,10 +14,141 @@ import {
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileDropzone } from "./file-dropzone";
-import { parseMeisaiFiles } from "@/lib/csv/meisai-parser";
+import { parseMeisaiFile, parseMeisaiFiles } from "@/lib/csv/meisai-parser";
 import type { MeisaiRow, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ProcessResult } from "@/lib/csv-import/types";
+
+/**
+ * batch UI 向けの process 関数。UI の handleImport の INSERT ロジックを抜き出した。
+ *
+ * 既存 UI の差分:
+ *   - payroll_import_batches を 1 file ごとに作る (UI 単発と同じ単位)
+ *   - chunk INSERT に失敗したらその file の処理は中断し、batch を error 状態にする
+ *     (= UI 単発と同じセマンティクス)
+ *
+ * 引数:
+ *   - file: parseMeisaiFile が File を直接受けるためそのまま渡す
+ *   - opts.processingMonth: YYYYMM (= UI の selectedProcessingMonth を replace("-", "") した形)
+ *   - opts.officeNumber: 取込先事業所番号
+ *
+ * 既存 UI からは呼んでおらず、UI 単発取込の挙動は不変。
+ */
+export async function processMeisaiCsvFromFile(
+  file: File,
+  opts: {
+    officeNumber: string;
+    /** YYYYMM 形式 */
+    processingMonth: string;
+    supabase: SupabaseClient;
+  },
+): Promise<ProcessResult> {
+  const parsed: CsvParseResult<MeisaiRow> = await parseMeisaiFile(file);
+  if (parsed.errors.length > 0 && parsed.data.length === 0) {
+    return {
+      inserted: 0,
+      skipped: 0,
+      failed: 0,
+      errors: parsed.errors.slice(0, 5),
+    };
+  }
+
+  // バッチを 1 件作って配下に挿入する (UI 単発と同じ単位)
+  const { data: batch, error: batchError } = await opts.supabase
+    .from("payroll_import_batches")
+    .insert({
+      import_type: "meisai" as const,
+      file_names: [file.name],
+      record_count: parsed.data.length,
+      processing_month: opts.processingMonth,
+      office_number: opts.officeNumber,
+      status: "pending" as const,
+    })
+    .select()
+    .single();
+
+  if (batchError || !batch) {
+    console.warn(`[processMeisaiCsvFromFile] ${file.name} batch 作成失敗:`, batchError?.message);
+    return {
+      inserted: 0,
+      skipped: 0,
+      failed: parsed.data.length,
+      errors: [`batch 作成エラー: ${batchError?.message ?? "unknown"}`],
+    };
+  }
+
+  const chunkSize = 500;
+  let inserted = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (let i = 0; i < parsed.data.length; i += chunkSize) {
+    const chunk = parsed.data.slice(i, i + chunkSize);
+    const records = chunk.map((row) => ({
+      import_batch_id: batch.id,
+      office_number: opts.officeNumber,
+      office_name: row.事業者名,
+      processing_month: opts.processingMonth,
+      employee_number: row.職員番号,
+      employee_name: row.職員名.replace(/　様$/, "").replace(/　$/, ""),
+      period_start: row.開始日,
+      period_end: row.終了日,
+      service_date: row.日付,
+      dispatch_start_time: row.派遣開始時間,
+      dispatch_end_time: row.派遣終了時間,
+      client_name: row.利用者名,
+      service_type: row.サービス,
+      actual_start_time: row.実時刻開始時間,
+      actual_end_time: row.実時刻終了時間,
+      actual_duration: row.実時間,
+      calc_start_time: row.算定開始時刻,
+      calc_end_time: row.算定終了時刻,
+      calc_duration: row.算定時間,
+      holiday_type: row.休日区分,
+      time_period: row.時間帯,
+      service_category: row.サービス型,
+      amount: row.金額 ? parseInt(row.金額, 10) || null : null,
+      transport_fee: row.交通費 ? parseInt(row.交通費, 10) || null : null,
+      phone_fee: row.電話代 ? parseInt(row.電話代, 10) || null : null,
+      adjustment_fee: row.調整費 ? parseInt(row.調整費, 10) || null : null,
+      meeting_fee: row.会議費 ? parseInt(row.会議費, 10) || null : null,
+      training_fee: row.研修 ? parseInt(row.研修, 10) || null : null,
+      other_allowance: row.その他手当 ? parseInt(row.その他手当, 10) || null : null,
+      total: row.合計 ? parseInt(row.合計, 10) || null : null,
+      accompanied_visit: row.同行訪問 ?? "",
+      client_number: row.利用者番号,
+      service_code: row.サービスコード,
+    }));
+
+    const { error: insertError } = await opts.supabase
+      .from("payroll_service_records")
+      .insert(records);
+
+    if (insertError) {
+      failed = parsed.data.length - inserted; // 未挿入分を failed に
+      console.warn(
+        `[processMeisaiCsvFromFile] ${file.name} chunk ${i}-${i + chunk.length} 失敗 (batch=${batch.id}):`,
+        insertError.message,
+      );
+      errors.push(insertError.message);
+      await opts.supabase
+        .from("payroll_import_batches")
+        .update({ status: "error" as const, error_message: insertError.message })
+        .eq("id", batch.id);
+      return { inserted, skipped: 0, failed, errors };
+    }
+    inserted += chunk.length;
+  }
+
+  await opts.supabase
+    .from("payroll_import_batches")
+    .update({ status: "completed" as const })
+    .eq("id", batch.id);
+
+  return { inserted, skipped: 0, failed: 0, errors: [] };
+}
 
 interface Office { id: string; office_number: string; name: string; short_name: string; office_type: string; }
 

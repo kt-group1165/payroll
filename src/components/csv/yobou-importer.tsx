@@ -34,6 +34,73 @@ import {
 } from "@/lib/csv/yobou-parser";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ProcessResult } from "@/lib/csv-import/types";
+
+/**
+ * batch UI 向けの process 関数。UI の handleImport の INSERT ロジックを抜き出した。
+ * 既存 UI からは呼んでおらず、UI 単発取込の挙動は不変。
+ */
+export async function processYobouCsvFromBuffer(
+  buffer: ArrayBuffer,
+  opts: {
+    tenantId: string;
+    officeNumber: string;
+    sourceFilename: string;
+    supabase: SupabaseClient;
+  },
+): Promise<ProcessResult> {
+  const parseRes = await parseYobouCsv(buffer);
+  if (parseRes.errors.length > 0 && parseRes.rows.length === 0) {
+    return {
+      inserted: 0,
+      skipped: 0,
+      failed: 0,
+      errors: parseRes.errors.slice(0, 5).map((e) => `行 ${e.line}: ${e.reason}`),
+    };
+  }
+
+  const records = parseRes.rows.map((row) => ({
+    tenant_id: opts.tenantId,
+    office_number: opts.officeNumber,
+    source: "csv" as const,
+    source_filename: opts.sourceFilename,
+    service_month: row.service_month,
+    billing_month: row.billing_month,
+    staff_name: row.staff_name,
+    yobou1_count: row.yobou1_count,
+    yobou2_count: row.yobou2_count,
+  }));
+
+  const ONCONFLICT = "office_number,service_month,billing_month,staff_name";
+  const chunkSize = 500;
+  let inserted = 0;
+  let skipped = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (let i = 0; i < records.length; i += chunkSize) {
+    const chunk = records.slice(i, i + chunkSize);
+    const { data, error } = await opts.supabase
+      .from("payroll_kyotaku_yobou_records")
+      .upsert(chunk, { onConflict: ONCONFLICT, ignoreDuplicates: true })
+      .select("id");
+    if (error) {
+      failed += chunk.length;
+      console.warn(
+        `[processYobouCsvFromBuffer] ${opts.sourceFilename} chunk ${i}-${i + chunk.length} 失敗:`,
+        error.message,
+      );
+      if (errors.length < 5) errors.push(error.message);
+      continue;
+    }
+    const insertedInChunk = data?.length ?? 0;
+    inserted += insertedInChunk;
+    skipped += chunk.length - insertedInChunk;
+  }
+
+  return { inserted, skipped, failed, errors };
+}
 
 type Office = {
   id: string;

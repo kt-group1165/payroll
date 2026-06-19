@@ -36,6 +36,101 @@ import {
 } from "@/lib/csv/kokuho-parser";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ProcessResult } from "@/lib/csv-import/types";
+
+/**
+ * batch UI 向けの共通 process 関数。
+ *
+ * UI の handleImport 内に書かれていた INSERT ロジックを抜き出した。
+ * 既存 UI (handleImport) からは呼んでいないため、UI 単発取込の挙動は不変。
+ *
+ * 引数:
+ *  - buffer: CSV の生 ArrayBuffer (Shift-JIS のままのバイト列)。parseKokuhoCsv 内部で
+ *    decodeCP932 されるため、batch UI からは file.arrayBuffer() の戻り値を直接渡す想定。
+ *  - opts.tenantId / opts.officeNumber / opts.sourceFilename: payroll_kyotaku_records に書く値
+ *  - opts.supabase: SSR 経由でも browser 経由でも互換
+ */
+export async function processKyotakuCsvFromBuffer(
+  buffer: ArrayBuffer,
+  opts: {
+    tenantId: string;
+    officeNumber: string;
+    sourceFilename: string;
+    supabase: SupabaseClient;
+  },
+): Promise<ProcessResult> {
+  const parseRes = await parseKokuhoCsv(buffer);
+  if (parseRes.errors.length > 0 && parseRes.rows.length === 0) {
+    return {
+      inserted: 0,
+      skipped: 0,
+      failed: 0,
+      errors: parseRes.errors.slice(0, 5).map((e) => `行 ${e.line}: ${e.reason}`),
+    };
+  }
+
+  const records = parseRes.rows.map((row) => ({
+    tenant_id: opts.tenantId,
+    office_number: opts.officeNumber,
+    source_filename: opts.sourceFilename,
+    service_month: row.service_month,
+    billing_month: row.billing_month,
+    staff_name: row.staff_name,
+    detail_row_no: row.detail_row_no,
+    insured_number: row.insured_number,
+    insured_name: row.insured_name,
+    client_number: row.client_number,
+    gender: row.gender,
+    birth_date: row.birth_date,
+    care_level: row.care_level,
+    insurer_number: row.insurer_number,
+    insurer_name: row.insurer_name,
+    service_code: row.service_code,
+    service_name: row.service_name,
+    unit_total: row.unit_total,
+    unit_price: row.unit_price,
+    amount: row.amount,
+    cert_start_date: row.cert_start_date,
+    cert_end_date: row.cert_end_date,
+    staff_number: row.staff_number,
+    staff_identifier: row.staff_identifier,
+    kyotaku_office_number: row.kyotaku_office_number,
+    kyotaku_office_name: row.kyotaku_office_name,
+    kyotaku_support_number: row.kyotaku_support_number,
+    receiver_number: row.receiver_number,
+  }));
+
+  const ONCONFLICT =
+    "office_number,service_month,detail_row_no,insured_number,service_code,staff_name";
+  const chunkSize = 500;
+  let inserted = 0;
+  let skipped = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (let i = 0; i < records.length; i += chunkSize) {
+    const chunk = records.slice(i, i + chunkSize);
+    const { data, error } = await opts.supabase
+      .from("payroll_kyotaku_records")
+      .upsert(chunk, { onConflict: ONCONFLICT, ignoreDuplicates: true })
+      .select("id");
+    if (error) {
+      failed += chunk.length;
+      console.warn(
+        `[processKyotakuCsvFromBuffer] ${opts.sourceFilename} chunk ${i}-${i + chunk.length} 失敗:`,
+        error.message,
+      );
+      if (errors.length < 5) errors.push(error.message);
+      continue;
+    }
+    const insertedInChunk = data?.length ?? 0;
+    inserted += insertedInChunk;
+    skipped += chunk.length - insertedInChunk;
+  }
+
+  return { inserted, skipped, failed, errors };
+}
 
 type Office = {
   id: string;
