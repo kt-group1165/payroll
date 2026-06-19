@@ -48,6 +48,7 @@ const sections: { title: string; items: NavItem[] }[] = [
       { href: "/billing/withdrawals",    label: "引落結果取り込み",   icon: "💴" },
       { href: "/billing/reconciliation", label: "突合・月次サマリ",   icon: "📊" },
       { href: "/billing/formats",        label: "請求書様式管理",     icon: "📝" },
+      { href: "/office-input",           label: "事業所書式入力",     icon: "🏤" },
     ],
   },
   {
