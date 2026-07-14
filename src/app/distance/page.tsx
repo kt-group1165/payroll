@@ -56,7 +56,7 @@ export default function DistancePage() {
     supabase
       .from("payroll_import_batches")
       .select("processing_month,record_count,import_type,status")
-      .eq("import_type", "meisai")
+      .in("import_type", ["meisai", "kaigo_meisai"])
       .eq("status", "completed")
       .gt("record_count", 0)
       .order("processing_month", { ascending: false })

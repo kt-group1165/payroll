@@ -545,10 +545,11 @@ export default function PayrollPage() {
 
   useEffect(() => {
     // service_records実データのある月を import_batches 経由で取得（高速）
+    // kaigo_meisai = kaigo-app 直接モードの snapshot 取込 (格納先は同じ payroll_service_records)
     supabase
       .from("payroll_import_batches")
       .select("processing_month,record_count,import_type,status")
-      .eq("import_type", "meisai")
+      .in("import_type", ["meisai", "kaigo_meisai"])
       .eq("status", "completed")
       .gt("record_count", 0)
       .order("processing_month", { ascending: false })

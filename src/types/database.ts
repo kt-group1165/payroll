@@ -21,7 +21,7 @@ export type RoleType =
 /** 給与形態 */
 export type SalaryType = "月給" | "時給";
 
-export type ImportType = "meisai" | "attendance" | "office_form";
+export type ImportType = "meisai" | "attendance" | "office_form" | "kaigo_meisai";
 
 export interface Company {
   id: string;
