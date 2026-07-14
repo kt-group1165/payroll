@@ -1,23 +1,19 @@
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  MeisaiImporter,
-  type MeisaiExistingMonth,
-} from "@/components/csv/meisai-importer";
-import {
-  AttendanceImporter,
-  type AttendanceExistingCount,
-} from "@/components/csv/attendance-importer";
-import {
-  OfficeFormImporter,
-  type OfficeFormExistingMonth,
-} from "@/components/csv/office-form-importer";
+import { MeisaiImporter } from "@/components/csv/meisai-importer";
+import { AttendanceImporter } from "@/components/csv/attendance-importer";
+import { OfficeFormImporter } from "@/components/csv/office-form-importer";
 import { ClientImporter } from "@/components/csv/client-importer";
 import { KyotakuImporter } from "@/components/csv/kyotaku-importer";
 import { YobouImporter } from "@/components/csv/yobou-importer";
 import { KaigoMeisaiImporter } from "@/components/kaigo/kaigo-meisai-importer";
 import { DataSourceModeSwitch } from "@/components/kaigo/data-source-mode-switch";
 import { getJissekiSourceMode } from "@/lib/app-settings";
+import {
+  fetchServiceRecordCounts,
+  fetchAttendanceRecordCounts,
+  fetchOfficeFormRecordCounts,
+} from "@/lib/import-counts";
 import { createClient } from "@/lib/supabase/server";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
@@ -32,81 +28,8 @@ interface OfficeForImporters {
   office_id: string | null; // 共通 offices.id (kaigo 直接取込の事業所紐付けに使用)
 }
 
-type SupabaseLike = Awaited<ReturnType<typeof createClient>>;
-
-async function fetchAttendanceCounts(supabase: SupabaseLike): Promise<AttendanceExistingCount[]> {
-  const counts = new Map<string, number>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data } = await supabase
-      .from("payroll_attendance_records")
-      .select("year, month, office_number")
-      .range(from, from + pageSize - 1);
-    if (!data || data.length === 0) break;
-    for (const r of data as { year: number; month: number; office_number: string }[]) {
-      const ym = `${r.year}${String(r.month).padStart(2, "0")}`;
-      const key = `${ym}|${r.office_number}`;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return [...counts.entries()].map(([k, count]) => {
-    const [month, office_number] = k.split("|");
-    return { month, office_number, count };
-  });
-}
-
-async function fetchMeisaiMonths(supabase: SupabaseLike): Promise<MeisaiExistingMonth[]> {
-  const countMap = new Map<string, number>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data } = await supabase
-      .from("payroll_service_records")
-      .select("processing_month,office_number")
-      .range(from, from + pageSize - 1);
-    if (!data || data.length === 0) break;
-    for (const r of data as { processing_month: string; office_number: string }[]) {
-      const key = `${r.processing_month}__${r.office_number}`;
-      countMap.set(key, (countMap.get(key) ?? 0) + 1);
-    }
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return [...countMap.entries()]
-    .map(([key, count]) => {
-      const [month, office_number] = key.split("__");
-      return { month, office_number, count };
-    })
-    .sort((a, b) => b.month.localeCompare(a.month) || a.office_number.localeCompare(b.office_number));
-}
-
-async function fetchOfficeFormMonths(supabase: SupabaseLike): Promise<OfficeFormExistingMonth[]> {
-  const countMap = new Map<string, number>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data } = await supabase
-      .from("payroll_office_form_records")
-      .select("processing_month,office_number")
-      .range(from, from + pageSize - 1);
-    if (!data || data.length === 0) break;
-    for (const r of data as { processing_month: string; office_number: string }[]) {
-      const key = `${r.processing_month}__${r.office_number}`;
-      countMap.set(key, (countMap.get(key) ?? 0) + 1);
-    }
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return [...countMap.entries()]
-    .map(([key, count]) => {
-      const [month, office_number] = key.split("__");
-      return { month, office_number, count };
-    })
-    .sort((a, b) => b.month.localeCompare(a.month));
-}
+// 件数集計は 8 万行超の全件ページングを避けるため RPC (GROUP BY) を使う
+// (未適用環境は import-counts 内で従来スキャンへ fallback)
 
 /**
  * /csv-import
@@ -121,9 +44,9 @@ export default async function CsvImportPage() {
     supabase
       .from("payroll_offices")
       .select(`id, office_number, short_name, office_type, office_id, ${OFFICE_MASTER_JOIN}`),
-    fetchAttendanceCounts(supabase),
-    fetchMeisaiMonths(supabase),
-    fetchOfficeFormMonths(supabase),
+    fetchAttendanceRecordCounts(supabase),
+    fetchServiceRecordCounts(supabase),
+    fetchOfficeFormRecordCounts(supabase),
     getJissekiSourceMode(supabase),
   ]);
 

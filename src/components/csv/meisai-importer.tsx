@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ProcessResult } from "@/lib/csv-import/types";
+import { fetchServiceRecordCounts } from "@/lib/import-counts";
 
 /**
  * batch UI 向けの process 関数。UI の handleImport の INSERT ロジックを抜き出した。
@@ -177,29 +178,8 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
   const [selectedOfficeType, setSelectedOfficeType] = useState<string>("訪問介護");
 
   const fetchExistingMonths = useCallback(async () => {
-    const countMap = new Map<string, number>();
-    const pageSize = 1000;
-    let from = 0;
-    while (true) {
-      const { data } = await supabase
-        .from("payroll_service_records")
-        .select("processing_month,office_number")
-        .range(from, from + pageSize - 1);
-      if (!data || data.length === 0) break;
-      for (const r of data as { processing_month: string; office_number: string }[]) {
-        const key = `${r.processing_month}__${r.office_number}`;
-        countMap.set(key, (countMap.get(key) ?? 0) + 1);
-      }
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    const sorted = [...countMap.entries()]
-      .map(([key, count]) => {
-        const [month, office_number] = key.split("__");
-        return { month, office_number, count };
-      })
-      .sort((a, b) => b.month.localeCompare(a.month) || a.office_number.localeCompare(b.office_number));
-    setExistingMonths(sorted);
+    // 8 万行超の全件ページングを避けるため RPC (GROUP BY) 集計を使う
+    setExistingMonths(await fetchServiceRecordCounts(supabase));
   }, []);
 
   const handleClearMonth = async (month: string, office_number: string, count: number) => {

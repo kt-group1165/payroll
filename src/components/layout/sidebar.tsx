@@ -15,7 +15,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: "全般",
     items: [
       { href: "/", label: "ダッシュボード", icon: "📊" },
-      { href: "/csv-import", label: "CSV取り込み", icon: "📁" },
+      { href: "/csv-import", label: "実績データ取り込み", icon: "📁" },
       { href: "/csv-import/batch", label: "一括取込 (フォルダ)", icon: "📂" },
     ],
   },
