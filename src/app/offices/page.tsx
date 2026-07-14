@@ -28,13 +28,22 @@ export default async function OfficesPage() {
       .order("created_at"),
     supabase
       .from("offices")
-      .select("id, name, address, business_number")
+      .select("id, name, address, business_number, short_name, service_type, is_active, company_id")
       .order("name"),
     supabase
       .from("payroll_companies")
       .select(`*, ${COMPANY_MASTER_JOIN}`)
       .order("created_at"),
   ]);
+
+  const fetchErrors = [
+    offRes.error && `事業所: ${offRes.error.message}`,
+    mastersRes.error && `共通マスタ: ${mastersRes.error.message}`,
+    coRes.error && `法人: ${coRes.error.message}`,
+  ].filter((e): e is string => !!e);
+  if (fetchErrors.length > 0) {
+    console.error("offices page fetch failed:", fetchErrors.join(" / "));
+  }
 
   const offices: Office[] = offRes.data
     ? (flattenOfficeMaster(offRes.data as never) as unknown as Office[])
@@ -45,10 +54,17 @@ export default async function OfficesPage() {
     : [];
 
   return (
-    <OfficesList
-      initialOffices={offices}
-      masters={masters}
-      initialCompanies={companies}
-    />
+    <>
+      {fetchErrors.length > 0 && (
+        <p className="mb-4 rounded border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+          データ取得エラー: {fetchErrors.join(" / ")}
+        </p>
+      )}
+      <OfficesList
+        initialOffices={offices}
+        masters={masters}
+        initialCompanies={companies}
+      />
+    </>
   );
 }

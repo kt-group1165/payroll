@@ -45,6 +45,20 @@ export type MasterOffice = {
   name: string;
   address: string | null;
   business_number: string | null;
+  short_name: string | null;
+  service_type: string | null;
+  is_active: boolean | null;
+  company_id: string | null;
+};
+
+/** 共通マスタ offices.service_type → payroll_offices.office_type のマッピング */
+const SERVICE_TYPE_TO_OFFICE_TYPE: Record<string, OfficeType> = {
+  "訪問介護": "訪問介護",
+  "訪問看護": "訪問看護",
+  "訪問入浴": "訪問入浴",
+  "居宅介護支援": "居宅介護支援",
+  "福祉用具": "福祉用具貸与",
+  "本社": "本社",
 };
 
 function downloadCsv(filename: string, rows: string[][]): void {
@@ -205,6 +219,89 @@ export function OfficesList({
   );
   const availableMasters = masters.filter((m) => !linkedMasterIds.has(m.id));
   const selectedMaster = masters.find((m) => m.id === form.office_id);
+
+  // ─── 共通マスタから取込 ─────────────────────────────────────────
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importChecked, setImportChecked] = useState<Record<string, boolean>>({});
+  const [importTypes, setImportTypes] = useState<Record<string, OfficeType | "">>({});
+
+  // editingId に関係なく「payroll_offices にリンク済みの master id」全件
+  const allLinkedMasterIds = new Set(
+    offices.filter((o) => o.office_id).map((o) => o.office_id as string),
+  );
+  const existingOfficeNumbers = new Set(offices.map((o) => o.office_number));
+  const activeMasters = masters.filter((m) => m.is_active !== false);
+  const unimportedMasters = activeMasters.filter((m) => !allLinkedMasterIds.has(m.id));
+
+  /** master 行の取込可否と警告理由 */
+  const importBlockReason = (m: MasterOffice): string | null => {
+    if (!m.business_number) return "事業所番号(business_number)が未設定のため取込不可";
+    if (existingOfficeNumbers.has(m.business_number)) return "同じ事業所番号が既に登録済み";
+    return null;
+  };
+
+  /** master 行の office_type (ユーザー選択 > service_type マッピング) */
+  const resolvedImportType = (m: MasterOffice): OfficeType | "" =>
+    importTypes[m.id] ?? SERVICE_TYPE_TO_OFFICE_TYPE[m.service_type ?? ""] ?? "";
+
+  /** master.company_id → payroll_companies の対応行 */
+  const payrollCompanyForMaster = (m: MasterOffice): Company | undefined =>
+    m.company_id
+      ? companies.find((c) => c.master_company_id === m.company_id)
+      : undefined;
+
+  const resetImportState = () => {
+    setImportChecked({});
+    setImportTypes({});
+  };
+
+  const checkedMasters = unimportedMasters.filter(
+    (m) => importChecked[m.id] && !importBlockReason(m),
+  );
+
+  const handleImportSubmit = async () => {
+    if (checkedMasters.length === 0) {
+      toast.error("取込む事業所を選択してください");
+      return;
+    }
+    const missingType = checkedMasters.filter((m) => !resolvedImportType(m));
+    if (missingType.length > 0) {
+      toast.error(`事業所種別を選択してください: ${missingType.map((m) => m.name).slice(0, 3).join(", ")}`);
+      return;
+    }
+    const numCounts = new Map<string, number>();
+    for (const m of checkedMasters) {
+      const n = m.business_number as string;
+      numCounts.set(n, (numCounts.get(n) ?? 0) + 1);
+    }
+    const dupNums = [...numCounts.entries()].filter(([, c]) => c > 1).map(([n]) => n);
+    if (dupNums.length > 0) {
+      toast.error(`同じ事業所番号の行が複数選択されています: ${dupNums.join(", ")}`);
+      return;
+    }
+
+    // 単価系パラメータは DB デフォルト (0 / 100) 任せで INSERT に含めない
+    const payload = checkedMasters.map((m) => ({
+      office_id: m.id,
+      office_number: m.business_number as string,
+      short_name: m.short_name ?? "",
+      office_type: resolvedImportType(m) as OfficeType,
+      company_id: payrollCompanyForMaster(m)?.id ?? null,
+    }));
+
+    setImporting(true);
+    const { error } = await supabase.from("payroll_offices").insert(payload);
+    setImporting(false);
+    if (error) {
+      toast.error(`取込エラー: ${error.message}`);
+      return;
+    }
+    toast.success(`${payload.length}件を共通マスタから取込みました`);
+    setImportOpen(false);
+    resetImportState();
+    router.refresh();
+  };
 
   const onMasterChange = (id: string) => {
     const m = masters.find((x) => x.id === id);
@@ -412,6 +509,122 @@ export function OfficesList({
           <Button variant="outline" onClick={() => importRef.current?.click()}>
             📤 CSV取り込み
           </Button>
+          <Dialog
+            open={importOpen}
+            onOpenChange={(open) => {
+              setImportOpen(open);
+              if (!open) resetImportState();
+            }}
+          >
+            <DialogTrigger render={<Button variant="outline" />}>
+              🔗 共通マスタから取込{unimportedMasters.length > 0 ? ` (${unimportedMasters.length})` : ""}
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>共通マスタから取込</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  事業所の新規作成は介護アプリ側 (共通マスタ) で行い、ここから取込みます。
+                  取込済: {activeMasters.length - unimportedMasters.length}件 / 未取込: {unimportedMasters.length}件
+                </p>
+                {unimportedMasters.length === 0 ? (
+                  <p className="text-sm text-muted-foreground border rounded p-4 text-center">
+                    未取込の事業所はありません。共通マスタの有効な事業所はすべて取込済です。
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[36px]"></TableHead>
+                        <TableHead>名称</TableHead>
+                        <TableHead>種別(マスタ)</TableHead>
+                        <TableHead>事業所番号</TableHead>
+                        <TableHead>事業所種別(給与)</TableHead>
+                        <TableHead>法人</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {unimportedMasters.map((m) => {
+                        const blockReason = importBlockReason(m);
+                        const company = payrollCompanyForMaster(m);
+                        const typeValue = resolvedImportType(m);
+                        return (
+                          <TableRow key={m.id} className={blockReason ? "opacity-50" : ""}>
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-primary"
+                                checked={!!importChecked[m.id] && !blockReason}
+                                disabled={!!blockReason || importing}
+                                onChange={(e) =>
+                                  setImportChecked((prev) => ({ ...prev, [m.id]: e.target.checked }))
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <p className="font-medium">{m.name}</p>
+                              {blockReason && (
+                                <p className="text-xs text-destructive">{blockReason}</p>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm">{m.service_type || "—"}</TableCell>
+                            <TableCell className="text-sm">{m.business_number || "—"}</TableCell>
+                            <TableCell>
+                              {blockReason ? (
+                                <span className="text-sm">{typeValue || "—"}</span>
+                              ) : (
+                                <Select
+                                  value={typeValue || "__none__"}
+                                  onValueChange={(v) =>
+                                    setImportTypes((prev) => ({
+                                      ...prev,
+                                      [m.id]: !v || v === "__none__" ? "" : (v as OfficeType),
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger className="w-[150px]">
+                                    <SelectValue placeholder="種別を選択">
+                                      {(v: string) =>
+                                        !v || v === "__none__" ? "種別を選択" : v
+                                      }
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">種別を選択</SelectItem>
+                                    {OFFICE_TYPES.map((t) => (
+                                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                              {!blockReason && !typeValue && (
+                                <p className="text-xs text-destructive mt-1">種別を選択してください</p>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {company
+                                ? company.name
+                                : <span className="text-muted-foreground">未紐付け (法人なしで取込)</span>}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+                {unimportedMasters.length > 0 && (
+                  <Button
+                    onClick={handleImportSubmit}
+                    className="w-full"
+                    disabled={checkedMasters.length === 0 || importing}
+                  >
+                    {importing ? "取込中..." : `選択した ${checkedMasters.length} 件を取込`}
+                  </Button>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
           <Dialog
             open={isOpen}
             onOpenChange={(open) => {
