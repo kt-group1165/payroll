@@ -48,6 +48,10 @@ const EMPTY_MONTHLY: KyotakuMonthlyRow = {
   yobou_count: 0,
 };
 
+// data 未取得時に毎 render 新 [] を返すと、これを deps に持つ effect が
+// setState → 再 render → 新 [] の無限ループになる (feedback_swr_empty_array_freeze)
+const EMPTY_KASAN: KyotakuKasanRow[] = [];
+
 async function fetchMonthly(
   employeeId: string,
   month: string,
@@ -106,7 +110,7 @@ export function useKyotakuMonthly(
   );
   return {
     monthly: data?.monthly ?? EMPTY_MONTHLY,
-    kasanRows: data?.kasanRows ?? [],
+    kasanRows: data?.kasanRows ?? EMPTY_KASAN,
     isLoading,
     error: error ?? null,
     mutate: () => {

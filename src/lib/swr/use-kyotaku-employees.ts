@@ -49,6 +49,9 @@ export type UseKyotakuEmployeesResult = {
   mutate: () => void;
 };
 
+// 参照安定化用 (毎 render 新 [] を返すと consumer の effect/memo が毎回発火する)
+const EMPTY_EMPLOYEES: KyotakuEmployeeRow[] = [];
+
 export function useKyotakuEmployees(
   officeId: string,
 ): UseKyotakuEmployeesResult {
@@ -63,7 +66,7 @@ export function useKyotakuEmployees(
     },
   );
   return {
-    employees: data ?? [],
+    employees: data ?? EMPTY_EMPLOYEES,
     isLoading,
     error: error ?? null,
     mutate: () => {
