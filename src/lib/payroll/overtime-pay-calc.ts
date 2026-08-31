@@ -9,18 +9,37 @@
 //   payroll/page.tsx の computeOvertimePay() と同じ base/hourly_rate 算出ロジックを共有可能な
 //   薄い純関数として切り出す。MonthlySummary (attendance-calc.ts) を入力に取る。
 //
-// 計算式 (シンプル合算):
+// 計算式 (労基法37条):
 //   hourlyRate = base / scheduled_hours_per_month
-//   通常残業代 = (total_daily_overtime + total_weekly_overtime) / 60 * hourlyRate * 1.25
-//   深夜割増   = total_midnight                                 / 60 * hourlyRate * 0.25
-//   法休割増   = total_holiday                                  / 60 * hourlyRate * 0.35
-//   合計実残業代 = 通常残業代 + 深夜割増 + 法休割増
+//   時間外    = total_daily_overtime + total_weekly_overtime
+//     └ 月 60h まで      … × 1.25
+//     └ 月 60h を超えた分 … × 1.50   (37条1項但書)
+//   深夜割増   = total_midnight / 60 * hourlyRate * 0.25
+//       (深夜帯の「本体」は所定 or 時間外で既に払われているので割増 0.25 のみ)
+//   法定休日   = total_holiday  / 60 * hourlyRate * 1.35
+//       (100% + 35%。attendance-calc は法定休日を daily/weekly_overtime からも
+//        scheduled_minutes からも外している = 本体がどこでも払われないため、
+//        ここで 1.35 を払わないと**法定休日の賃金が丸ごと未払い**になる)
+//   合計実残業代 = 時間外 + 深夜割増 + 法定休日
 //   超過額     = max(0, 合計実残業代 - fixed_overtime_pay)
 //
-// 注: 深夜かつ残業 / 深夜かつ法休 の重複は厳密に分けていない (簡易合算)。
-//     固定残業代との比較目的では十分。詳細は payroll/page.tsx 本計算に従う。
+// 2026-08-31 監査での是正:
+//   ① 月60時間超の 50% 割増がコード上どこにも無かった
+//      (実データで 澤田拓馬 2026-06 が OT 64.0h に到達済)
+//   ② 法定休日が 0.35 の上乗せだけで本体 100% が支払われていなかった
+//      (同 2026-06 に法休 7h 実在。3,297円しか出ず、正は 12,716円)
+//
+// 注: 深夜かつ法休 は 1.35 + 0.25 = 1.60 相当になる (法定どおり)。
 
 import type { MonthlySummary } from "@/lib/payroll/attendance-calc";
+
+/** 労基法37条の割増率 */
+const OT_RATE = 1.25;              // 時間外 (月60hまで)
+const OT_RATE_OVER_60H = 1.5;      // 時間外のうち月60hを超えた分
+const MIDNIGHT_EXTRA_RATE = 0.25;  // 深夜の割増ぶんのみ (本体は所定/時間外で支払済)
+const HOLIDAY_RATE = 1.35;         // 法定休日 = 本体100% + 割増35%
+/** 月間時間外 60 時間 (分) */
+const MONTHLY_OT_THRESHOLD_MIN = 60 * 60;
 
 export type SalarySettingsForOvertime = {
   base_personal_salary: number;
@@ -50,12 +69,14 @@ export type OvertimeSettingForCalc = {
 };
 
 export type OvertimePayBreakdown = {
-  /** 通常残業代 (日OT + 週OT を 1.25 倍した円額) */
+  /** 通常残業代 (日OT + 週OT のうち月 60h まで。1.25 倍) */
   regularOvertimePay: number;
+  /** 月 60h を超えた時間外の円額 (1.50 倍) */
+  over60OvertimePay: number;
   /** 深夜割増のみの円額 (0.25 倍) */
   midnightExtraPay: number;
-  /** 法休割増のみの円額 (0.35 倍) */
-  holidayExtraPay: number;
+  /** 法定休日労働の円額 (1.35 倍 = 本体 100% + 割増 35%) */
+  holidayPay: number;
   /** 上記 3 種の合計 (= 実残業代総額) */
   totalOvertimePay: number;
   /** 固定残業代 (settings.fixed_overtime_pay そのまま) */
@@ -79,8 +100,9 @@ export function calcOvertimePayBreakdown(
 ): OvertimePayBreakdown {
   const empty: OvertimePayBreakdown = {
     regularOvertimePay: 0,
+    over60OvertimePay: 0,
     midnightExtraPay: 0,
-    holidayExtraPay: 0,
+    holidayPay: 0,
     totalOvertimePay: 0,
     fixedOvertimePay: salary?.fixed_overtime_pay ?? 0,
     exceedAmount: 0,
@@ -104,12 +126,19 @@ export function calcOvertimePayBreakdown(
   const hourlyRate = base / ot.scheduled_hours_per_month;
   if (hourlyRate <= 0) return empty;
 
+  // 時間外は月 60h を境に率が変わる (労基法37条1項但書)。
+  // 法定休日労働は「時間外労働」ではないので 60h の計算には入れない。
   const otMin = summary.total_daily_overtime + summary.total_weekly_overtime;
-  const regularOvertimePay = Math.round((otMin / 60) * hourlyRate * 1.25);
-  const midnightExtraPay = Math.round((summary.total_midnight / 60) * hourlyRate * 0.25);
-  const holidayExtraPay = Math.round((summary.total_holiday / 60) * hourlyRate * 0.35);
+  const otWithin60 = Math.min(otMin, MONTHLY_OT_THRESHOLD_MIN);
+  const otOver60 = Math.max(0, otMin - MONTHLY_OT_THRESHOLD_MIN);
 
-  const totalOvertimePay = regularOvertimePay + midnightExtraPay + holidayExtraPay;
+  const regularOvertimePay = Math.round((otWithin60 / 60) * hourlyRate * OT_RATE);
+  const over60OvertimePay = Math.round((otOver60 / 60) * hourlyRate * OT_RATE_OVER_60H);
+  const midnightExtraPay = Math.round((summary.total_midnight / 60) * hourlyRate * MIDNIGHT_EXTRA_RATE);
+  const holidayPay = Math.round((summary.total_holiday / 60) * hourlyRate * HOLIDAY_RATE);
+
+  const totalOvertimePay =
+    regularOvertimePay + over60OvertimePay + midnightExtraPay + holidayPay;
   const fixedOvertimePay = salary.fixed_overtime_pay ?? 0;
   const exceedAmount = Math.max(0, totalOvertimePay - fixedOvertimePay);
   const isExceeding = exceedAmount > 0 && fixedOvertimePay > 0;
@@ -117,8 +146,9 @@ export function calcOvertimePayBreakdown(
 
   return {
     regularOvertimePay,
+    over60OvertimePay,
     midnightExtraPay,
-    holidayExtraPay,
+    holidayPay,
     totalOvertimePay,
     fixedOvertimePay,
     exceedAmount,

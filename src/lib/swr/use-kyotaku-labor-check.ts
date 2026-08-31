@@ -294,7 +294,7 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
         midnightMin: sum.total_midnight,
         midnightPay: ot.midnightExtraPay,
         holidayMin: sum.total_holiday,
-        holidayPay: ot.holidayExtraPay,
+        holidayPay: ot.holidayPay,
         totalOvertimePay: ot.totalOvertimePay,
         fixedOvertimePay: ot.fixedOvertimePay,
         exceedAmount: ot.exceedAmount,

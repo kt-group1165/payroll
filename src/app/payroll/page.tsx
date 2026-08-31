@@ -77,6 +77,7 @@ type AttendanceRecord = {
   start_time_1: string;
   work_hours: string;
   overtime_daily: string;
+  overtime_weekly: string;
 };
 
 type OvertimeSetting = {
@@ -477,8 +478,17 @@ function computeOvertimePay(
   if (ot.include_special_bonus)           base += s.special_bonus;
 
   const hourlyRate = base / ot.scheduled_hours_per_month;
-  return Math.round((overtimeMin / 60) * hourlyRate * 1.25);
+  // 労基法37条1項但書: 月 60 時間を超える時間外は 50% 割増。
+  //   2026-08-31 監査まで一律 1.25 だった (実データで OT 64.0h の職員が居る)。
+  const within60 = Math.min(overtimeMin, MONTHLY_OT_THRESHOLD_MIN);
+  const over60 = Math.max(0, overtimeMin - MONTHLY_OT_THRESHOLD_MIN);
+  return Math.round(
+    (within60 / 60) * hourlyRate * 1.25 + (over60 / 60) * hourlyRate * 1.5,
+  );
 }
+
+/** 月間時間外 60 時間 (分)。これを超えた分は 50% 割増 (労基法37条1項但書) */
+const MONTHLY_OT_THRESHOLD_MIN = 60 * 60;
 
 function effectiveTravelKm(p: MonthlyPayroll): number {
   return p.travel_km > 0 ? p.travel_km : p.travel_km_auto;
@@ -508,6 +518,51 @@ function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, OvertimeSe
     careOvertimePay(p) +
     yochoAllowance(p) +
     overtimeExcessPay(p, otSettings)
+  );
+}
+
+// ── 時給者の 勤続手当 / 総支給額 は 1 か所で組み立てる ───────────────
+//
+// 2026-08-31 監査での是正:
+//   同じ「総支給額」を 3 か所が別々の式で計算しており、値が食い違っていた。
+//     CSV 出力 (外部給与ソフトへの入力) … 保育手当・過誤調整 を含まない
+//     一覧の行                          … 両方含む
+//     フッタ合計                        … 過誤調整を含まない
+//                                        + 勤続手当の実績を workHoursMin で計算
+//                                          (行と CSV は visitMinutesExcludingAccompanied)
+//   = 「行の合計」と「フッタの合計」が一致しない。CSV は支給額そのものなので
+//     欠けると未払いになる。1 つの関数に集約して食い違いを構造的に無くす。
+//
+// ⚠ 土日祝手当 (weekendHolidayMinutes / 60 * 100) は CSV の列にも一覧にも出るが、
+//   3 つの式のいずれにも入っていなかった。2026-03 の全社実績で 635,967 円ぶん。
+//   支給対象なのか表示だけなのかは業務判断なので**ここでは足していない**。
+//   支給する運用なら hourlyTenure/hourlyTotal に加算すること。
+function hourlyTenure(e: HourlyPayroll): number {
+  return computeTenureAllowance(
+    e.has_care_qualification,
+    e.effective_service_months,
+    "時給",
+    e.job_type,
+    e.summary.visitMinutesExcludingAccompanied,
+    e.summary.recordCount,
+    e.care_plan_count,
+  );
+}
+
+function hourlyTotalPay(e: HourlyPayroll): number {
+  return (
+    e.totalPay +
+    hourlyTenure(e) +
+    e.treatment_subsidy +
+    e.paid_leave_allowance +
+    e.cancel_allowance +
+    e.travel_allowance +
+    e.communication_fee +
+    e.meeting_fee +
+    e.childcare_allowance +
+    e.commute_fee +
+    e.business_trip_fee +
+    e.error_adjustment
   );
 }
 
@@ -630,7 +685,7 @@ export default function PayrollPage() {
         let aFrom = 0;
         while (true) {
           const { data } = await supabase.from("payroll_attendance_records")
-            .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,commute_km,business_km")
+            .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,overtime_weekly,commute_km,business_km")
             .eq("year", year).eq("month", month)
             .eq("office_number", selectedOffice.office_number)
             .range(aFrom, aFrom + 999);
@@ -765,10 +820,18 @@ export default function PayrollPage() {
           s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
 
         const workHoursMin    = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
-        // overtime_daily があれば使用（Format B）、なければ work_hours - 8h で計算（Format A）
+        // 日残業 + 週残業 (Format B)。どちらも無ければ work_hours - 8h (Format A)。
+        //
+        // 2026-08-31 監査での是正:
+        //   CSV 取込は 週残業/休日/法内残業 を保存しているのに、ここは
+        //   overtime_daily しか見ておらず select にも入れていなかった。
+        //   = 週残業が丸ごと未払い。実データで 小原奈保子 2026-02-07 に
+        //     overtime_weekly="08:00" が実在し、13,333円 が 0円 になっていた。
+        //   日残業(1日8h超) と 週残業(週40h超) は排他なので単純加算でよい。
         const overtimeMinutes = attDays.reduce((s, r) => {
           const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
-          if (od > 0) return s + od;
+          const ow = parseWorkHoursMinutes(r.overtime_weekly ?? "");
+          if (od > 0 || ow > 0) return s + od + ow;
           return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
         }, 0);
         const recordCount      = empRecs.length;
@@ -1161,11 +1224,8 @@ export default function PayrollPage() {
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
-      const tenure = computeTenureAllowance(
-        e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-        s.visitMinutesExcludingAccompanied, s.recordCount, e.care_plan_count
-      );
-      const total = e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.commute_fee + e.business_trip_fee;
+      const tenure = hourlyTenure(e);
+      const total = hourlyTotalPay(e);
       rows.push([
         e.employee_number, e.employee_name, e.role_type,
         String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.halfLeave), String(s.specialLeave),
@@ -1318,19 +1378,8 @@ export default function PayrollPage() {
     downloadCsv(`給与計算_${label}_月給者.csv`, rows);
   }
 
-  const hourlyTenureTotal  = hourlyResults.reduce((s, e) => {
-    return s + computeTenureAllowance(
-      e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-      e.summary.visitMinutesExcludingAccompanied, e.summary.recordCount, e.care_plan_count
-    );
-  }, 0);
-  const hourlyGrandTotal   = hourlyResults.reduce((s, e) => {
-    const tenure = computeTenureAllowance(
-      e.has_care_qualification, e.effective_service_months, "時給", e.job_type,
-      e.summary.workHoursMin, e.summary.recordCount, e.care_plan_count
-    );
-    return s + e.totalPay + tenure + e.treatment_subsidy + e.paid_leave_allowance + e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.childcare_allowance + e.commute_fee + e.business_trip_fee;
-  }, 0);
+  const hourlyTenureTotal  = hourlyResults.reduce((s, e) => s + hourlyTenure(e), 0);
+  const hourlyGrandTotal   = hourlyResults.reduce((s, e) => s + hourlyTotalPay(e), 0);
   const hourlyGrandMinutes = hourlyResults.reduce((s, e) => s + e.totalMinutes, 0);
   const monthlyGrandSum    = monthlyResults.reduce((s, p) => s + monthlyGrandTotal(p, otSettings), 0);
 
@@ -1630,11 +1679,8 @@ export default function PayrollPage() {
                     <tbody>
                       {hourlyResults.map((emp) => {
                         const sm = emp.summary;
-                        const tenure = computeTenureAllowance(
-                          emp.has_care_qualification, emp.effective_service_months, "時給", emp.job_type,
-                          sm.visitMinutesExcludingAccompanied, sm.recordCount, emp.care_plan_count
-                        );
-                        const grandTotal = emp.totalPay + tenure + emp.treatment_subsidy + emp.paid_leave_allowance + emp.cancel_allowance + emp.travel_allowance + emp.communication_fee + emp.meeting_fee + emp.childcare_allowance + emp.commute_fee + emp.business_trip_fee + emp.error_adjustment;
+                        const tenure = hourlyTenure(emp);
+                        const grandTotal = hourlyTotalPay(emp);
                         return (
                           <>
                             <tr
