@@ -1,4 +1,17 @@
 -- apps/payroll-app/migrations/fix_overtime_base_rule21.sql
+--
+-- ✅ 2026-09-01 **適用済み**。ただし SQL Editor ではなく
+--    `apply_overtime_base_rule21.mjs --execute` (REST 版・同じ内容) で流した。
+--    再実行は不要 (どちらも冪等)。バックアップは SQL 内の一時テーブルではなく
+--    `_backup_payroll_overtime_settings_20260831.json` にある。
+--
+--    適用前に確認したこと:
+--      ・下の【影響】で「未確認」としていた 家族/通勤/住宅 手当の列は
+--        payroll_overtime_settings にも payroll_salary_settings にも **無い**。
+--        施行規則21条で除外すべきものは 1 つも混ざらない。
+--      ・影響は 733 レコード中 154 (兼務の重複を含む)。
+--        訪問介護 153 が +27.9円/h、訪問入浴 1 名が +750円/h。
+--
 -- 2026-08-31 全体監査での是正: 割増賃金の算定基礎に法定必須の手当が入っていない。
 --
 -- 【根拠】労働基準法37条5項 + 労働基準法施行規則21条
