@@ -32,7 +32,7 @@ export async function POST(request: Request) {
         .from("payroll_distance_cache")
         .select("origin_address,destination_address,distance_meters,duration_seconds")
         .in("origin_address", uniqueOrigins)
-        .range(cFrom, cFrom + PAGE - 1);
+        .order("id").range(cFrom, cFrom + PAGE - 1);
       if (!data || data.length === 0) break;
       cachedRows.push(...(data as CacheRow[]));
       if (data.length < PAGE) break;

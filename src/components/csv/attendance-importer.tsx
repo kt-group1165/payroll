@@ -49,7 +49,7 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
       const { data } = await supabase
         .from("payroll_attendance_records")
         .select("year, month, office_number")
-        .range(from, from + pageSize - 1);
+        .order("id").range(from, from + pageSize - 1);
       if (!data || data.length === 0) break;
       for (const r of data as { year: number; month: number; office_number: string }[]) {
         const ym = `${r.year}${String(r.month).padStart(2, "0")}`;

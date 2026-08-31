@@ -97,7 +97,7 @@ export default function DistancePage() {
             .from("payroll_clients")
             .select("client_number,address")
             .eq("office_id", selectedOfficeId)
-            .range(cFrom, cFrom + PAGE - 1);
+            .order("id").range(cFrom, cFrom + PAGE - 1);
           if (!data || data.length === 0) break;
           allClients.push(...(data as Client[]));
           if (data.length < PAGE) break;

@@ -71,7 +71,7 @@ export default async function BillingPage({
         supabase
           .from("payroll_clients")
           .select("*")
-          .range(from, to) as unknown as PromiseLike<{ data: Client[] | null }>,
+          .order("id").range(from, to) as unknown as PromiseLike<{ data: Client[] | null }>,
     ),
     fetchAllPagesParallel<{ billing_month: string }>(
       () =>

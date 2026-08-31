@@ -688,7 +688,7 @@ export default function PayrollPage() {
             .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,overtime_weekly,commute_km,business_km")
             .eq("year", year).eq("month", month)
             .eq("office_number", selectedOffice.office_number)
-            .range(aFrom, aFrom + 999);
+            .order("id").range(aFrom, aFrom + 999);
           if (!data || data.length === 0) break;
           all.push(...(data as AttendanceRecord[]));
           if (data.length < 1000) break;
@@ -1039,7 +1039,7 @@ export default function PayrollPage() {
                 .from("payroll_clients")
                 .select("client_number,address,map_latitude,map_longitude")
                 .eq("office_id", selectedOfficeId)
-                .range(cFrom, cFrom + PAGE - 1);
+                .order("id").range(cFrom, cFrom + PAGE - 1);
               if (!data || data.length === 0) break;
               clientData.push(...(data as { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }[]));
               if (data.length < PAGE) break;

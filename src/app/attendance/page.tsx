@@ -51,7 +51,7 @@ export default async function AttendancePage({
         supabase
           .from("payroll_employees")
           .select("employee_number,name,role_type,salary_type")
-          .range(from, to) as unknown as PromiseLike<{ data: Employee[] | null }>,
+          .order("id").range(from, to) as unknown as PromiseLike<{ data: Employee[] | null }>,
     ),
     supabase
       .from("payroll_offices")
