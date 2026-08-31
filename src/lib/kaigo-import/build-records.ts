@@ -467,6 +467,13 @@ export async function buildKaigoMeisaiRecords(
           holiday_type: holidayTypeOf(s.visit_date),
           time_period: "通常",
           service_category: categoryOf(s.service_type),
+          // ⚠ 空のままで正しい。「埋め忘れ」に見えるが直さないこと (2026-08-31 実測)。
+          //   ・材料が無い: kaigo_visit_schedule の staff_id_2 / staff_id_3 /
+          //     additional_staff は 2026-06 の 36,728 件すべて空
+          //   ・そもそも 同行訪問 ≠ 2人派遣。ほのぼのの MEISAI で「同行」が付くのは
+          //     15,434 行中 62 行 (0.4%) だけで、研修等で付き添う稀なケースを指す
+          //   ここを 2人派遣で埋めると、その時間が通常時間の集計から外れて
+          //   (payroll/page.tsx が accompanied_visit 非空を除外する) **給与が狂う**。
           accompanied_visit: "",
           service_code: code ?? "",
         });
@@ -564,6 +571,7 @@ export async function buildKaigoMeisaiRecords(
         holiday_type: holidayTypeOf(b.visit_date),
         time_period: "通常",
         service_category: "訪問入浴",
+        // 空のままで正しい。理由は訪問介護側の同名フィールドのコメントを参照
         accompanied_visit: "",
         service_code: b.service_code ?? "",
       });

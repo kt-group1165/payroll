@@ -161,17 +161,30 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
     ? []
     : ((salaryData ?? []) as unknown as KyotakuSalary[]);
 
-  // 3) 全期間の出勤簿 record を fetch (1000 行制限を回避するため pagination)
-  //    select() の default limit 1000 を超える可能性があるので明示的に大きく取る。
-  const { data: attData, error: attErr } = await supabase
-    .from("payroll_kyotaku_attendance_records")
-    .select(
-      "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, substitute_for_date",
-    )
-    .in("employee_id", empIds)
-    .limit(100000);
-  if (attErr) throw attErr;
-  const attRows = (attData ?? []) as AttendanceDbRow[];
+  // 3) 全期間の出勤簿 record を fetch
+  //
+  // ⚠ **PostgREST の 1000 行はハードキャップ。`.limit(100000)` を付けても効かない**
+  //   (同ディレクトリの use-kyotaku-summary.ts / use-kyotaku-dashboard-data.ts に
+  //    2026-08-31 の実測コメントあり)。以前はここが limit だけで、コメントには
+  //   「pagination」と書いてあるのに実装されていなかった。全ケアマネ × 全期間の
+  //   出勤簿なので確実に 1000 行を超え、**週40h・36協定のチェックが黙って
+  //   取りこぼしていた**。必ず range() で回しきる。
+  const ATT_PAGE = 1000;
+  const attRows: AttendanceDbRow[] = [];
+  for (let from = 0; ; from += ATT_PAGE) {
+    const { data, error: attErr } = await supabase
+      .from("payroll_kyotaku_attendance_records")
+      .select(
+        "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, substitute_for_date",
+      )
+      .in("employee_id", empIds)
+      .order("employee_id")
+      .order("work_date")
+      .range(from, from + ATT_PAGE - 1);
+    if (attErr) throw attErr;
+    attRows.push(...((data ?? []) as AttendanceDbRow[]));
+    if (!data || data.length < ATT_PAGE) break;
+  }
 
   // 4) employee_id + 月 でグルーピング (YYYY-MM)
   const byEmpMonth = new Map<string, Map<string, AttendanceDbRow[]>>();
