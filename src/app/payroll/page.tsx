@@ -1617,6 +1617,74 @@ export default function PayrollPage() {
                 );
               })()}
 
+              {/*
+                有給を取っているのに手当が 0 円になっている職員。
+
+                労基法39条9項は有給の日に「平均賃金」「通常の賃金」「標準報酬日額」の
+                いずれかを支払うことを求めていて、**0 円は選択肢に無い**。
+                2026-09-01 時点で payroll_employees.paid_leave_unit_price は
+                在職 778 名すべて 0 で、実績側には 53 行 / 25 名の有給がある。
+
+                ⚠ いくら払うかは就業規則で決めるものなので **ここで金額を作らない**。
+                  黙って 0 円で CSV に出るのを止めて、設定へ誘導するだけにする。
+
+                ⚠ 半有給 (halfLeave) は CSV と一覧には出るが **どの支給式にも入っていない**。
+                  単価を設定しても半休ぶんは 0 円のままなので、それも併せて出す。
+              */}
+              {(() => {
+                const rows = hourlyResults
+                  .filter((e) => (e.summary.paidLeave > 0 || e.summary.halfLeave > 0) && e.paid_leave_allowance <= 0)
+                  .map((e) => ({ name: e.employee_name, no: e.employee_number,
+                                 full: e.summary.paidLeave, half: e.summary.halfLeave }))
+                  .sort((a, b) => (b.full + b.half) - (a.full + a.half));
+                if (rows.length === 0) return null;
+                const totalFull = rows.reduce((s, r) => s + r.full, 0);
+                const totalHalf = rows.reduce((s, r) => s + r.half, 0);
+                return (
+                  <Card className="mb-4 border-red-300 bg-red-50/50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm text-red-900">
+                        ⚠ 有給を取得しているのに手当が 0 円: {rows.length}名 / 全休{totalFull}日
+                        {totalHalf > 0 ? ` ・半休${totalHalf}日` : ""}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <p className="px-3 pb-2 text-xs text-red-800">
+                        従業員マスタの<strong>有給単価</strong>が未設定です。労基法39条9項は有給の日に
+                        「平均賃金」「通常の賃金」「標準報酬日額」のいずれかを払うことを求めており、0 円は選択肢にありません。
+                        <a href="/employees" className="underline ml-1">従業員マスタで設定する</a>
+                        {totalHalf > 0 && (
+                          <>
+                            <br />
+                            なお<strong>半有給はどの支給式にも入っていない</strong>ため、単価を設定しても半休ぶんは 0 円のままです。
+                          </>
+                        )}
+                      </p>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-red-200 bg-red-100/50">
+                            <th className="text-left px-3 py-1.5 font-medium">社員No</th>
+                            <th className="text-left px-3 py-1.5 font-medium">氏名</th>
+                            <th className="text-right px-3 py-1.5 font-medium">全休</th>
+                            <th className="text-right px-3 py-1.5 font-medium">半休</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => (
+                            <tr key={r.no} className="border-b border-red-100">
+                              <td className="px-3 py-1 font-mono">{r.no}</td>
+                              <td className="px-3 py-1">{r.name}</td>
+                              <td className="px-3 py-1 text-right">{r.full || "—"}</td>
+                              <td className="px-3 py-1 text-right">{r.half || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
                   <CardTitle>{formatProcessingMonth(selectedMonth)} 時給者 給与計算結果</CardTitle>
