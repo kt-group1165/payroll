@@ -229,7 +229,9 @@ async function fetchKyotakuDashboardData(
         .in("office_id", officeIds),
       // 居宅ケアマネ給与履歴。append-only / per-employee × effective_from。
       // 件数は ~30 office × ~ケアマネ数 × (履歴件数 ~1-数件) で数百〜数千 row の見込み。
-      // 1000 行 PostgREST default 対策で limit(10000) を明示。
+      // ⚠ PostgREST の 1000 行は**ハードキャップ**で .limit(10000) は効かない
+      //   (2026-08-31 実測)。下記は現時点で 1000 行未満なので実害は無いが、
+      //   超えたら fetchAllPagesParallel に切り替えること。
       // DB 未 apply 段階は error 握り潰し → 空配列 fallback (= 旧仕様互換挙動)。
       supabase
         .from("payroll_kyotaku_salary")
@@ -253,8 +255,8 @@ async function fetchKyotakuDashboardData(
         .in("office_number", officeNumbers),
       // 出勤簿 (出張距離手当 算出用)。employee_id + work_date + business_km のみ。
       // ~30 office × ~ケアマネ数 × ~日数 = 数千〜数万行になり得る。1000 行 PostgREST
-      // limit を超える前提なら fetchAllPagesParallel に切替が必要だが、まずは
-      // .limit(10000) で運用 (DB 未 apply 時は error 握り潰し → 空 fallback)。
+      // 実測 401 行なので現状は上限に当たらない。超えたら fetchAllPagesParallel へ。
+      // (DB 未 apply 時は error 握り潰し → 空 fallback)
       // business_km は migration apply 前は列が無いので error になり得る → 同じく
       // 空 fallback。
       supabase
@@ -270,7 +272,9 @@ async function fetchKyotakuDashboardData(
         .in("office_number", officeNumbers),
       // 出勤簿 月次本体 (件数)。1 row = staff × month、~30 office × ~12 ヶ月 ×
       // ~ケアマネ数 で数千行に収まる前提。DB 未 apply 段階は error 握り潰し。
-      // 1000 行 PostgREST default 対策で limit(10000) を明示。
+      // ⚠ PostgREST の 1000 行は**ハードキャップ**で .limit(10000) は効かない
+      //   (2026-08-31 実測)。下記は現時点で 1000 行未満なので実害は無いが、
+      //   超えたら fetchAllPagesParallel に切り替えること。
       supabase
         .from("payroll_kyotaku_attendance_monthly")
         .select("employee_id, month_start, kaigo_count, yobou_count, office_id")

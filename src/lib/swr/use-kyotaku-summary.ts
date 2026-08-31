@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
+import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import {
   calcDailyListWithWeekly,
   calcMonthlySummary,
@@ -151,18 +152,32 @@ async function fetchKyotakuSummary(
   //   居宅ケアマネ給与設定は payroll_employees.kyotaku_* (旧) から
   //   payroll_kyotaku_salary (履歴 table) に移行済。対象月の active row を
   //   getActiveKyotakuSalary(rows, employee_id, monthStart) で解決する。
-  const [empRes, recRes, unitRes, rateRes, yobouRes, salaryRes] =
+  const [empRes, recRows, unitRes, rateRes, yobouRes, salaryRes] =
     await Promise.all([
       supabase
         .from("payroll_employees")
         .select("id, employee_number, name, role_type")
         .eq("office_id", officeId)
         .order("name"),
-      supabase
-        .from("payroll_kyotaku_records")
-        .select("*")
-        .eq("office_number", officeNumber)
-        .limit(10000),
+      // ⚠ PostgREST の 1000 行は**ハードキャップ**。`.limit(10000)` を付けても
+      //   1000 行しか返らない (2026-08-31 に実測)。
+      //   payroll_kyotaku_records は 1,346 行が単一の office_number に集中しており、
+      //   事業所で絞っても上限に当たって **346 行が黙って落ちていた**。
+      //   count → 並列 range のヘルパで全件取る。
+      fetchAllPagesParallel<KyotakuRecord>(
+        () =>
+          supabase
+            .from("payroll_kyotaku_records")
+            .select("*", { count: "exact", head: true })
+            .eq("office_number", officeNumber),
+        (from, to) =>
+          supabase
+            .from("payroll_kyotaku_records")
+            .select("*")
+            .eq("office_number", officeNumber)
+            .order("id")
+            .range(from, to) as unknown as PromiseLike<{ data: KyotakuRecord[] | null }>,
+      ),
       supabase.from("payroll_kyotaku_service_units").select("*"),
       supabase.from("payroll_kyotaku_regional_rates").select("*"),
       supabase
@@ -226,7 +241,7 @@ async function fetchKyotakuSummary(
       shien_rate: active ? active.shien_rate : null,
     };
   });
-  const allKyotakuRecords = (recRes.data ?? []) as KyotakuRecord[];
+  const allKyotakuRecords = recRows;
   const allYobou = (yobouRes.error ? [] : (yobouRes.data ?? [])) as YobouRecord[];
   const attendanceForCalc: KyotakuAttendanceRecord[] = [];
   for (const ar of attRows) {

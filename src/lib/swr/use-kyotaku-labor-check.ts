@@ -154,7 +154,9 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
       "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
     )
     .in("employee_id", empIds)
-    .limit(10000);
+    // payroll_kyotaku_salary は実測 9 行。1000 行を超えたら fetchAllPagesParallel へ
+    // (.limit(10000) はハードキャップに阻まれて効かない — 2026-08-31 実測)
+    .limit(1000);
   const kyotakuSalaryRows: KyotakuSalary[] = salaryErr
     ? []
     : ((salaryData ?? []) as unknown as KyotakuSalary[]);

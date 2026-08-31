@@ -42,7 +42,9 @@ export default async function WithdrawalsImportPage({
       .eq("company_id", selectedCompanyId);
     const officeNums = ((offData ?? []) as { office_number: string }[]).map((o) => o.office_number);
     if (officeNums.length > 0) {
-      const { data } = await supabase
+      // error を捨てていたので、取得失敗が「該当 0 件」に化けていた (2026-08-31 監査)。
+      // 件数は実測 344 行なので 1000 行キャップには当たっていない。
+      const { data, error } = await supabase
         .from("payroll_billing_amount_items")
         .select(
           "id, segment, office_number, client_number, client_name, billing_month, invoiced_amount, amount, billing_status",
@@ -50,7 +52,10 @@ export default async function WithdrawalsImportPage({
         .eq("billing_month", billingMonth)
         .in("office_number", officeNums)
         .in("billing_status", ["invoiced", "overdue"])
-        .limit(10000);
+        .limit(1000);
+      if (error) {
+        console.error("[withdrawals] 請求明細の取得に失敗:", error.message);
+      }
       invoicedRows = (data ?? []) as BillingRow[];
     }
   }
