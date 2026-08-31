@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { Client, Company, Payment, CompanyInvoiceFormat } from "@/types/database";
+import { todayYmd } from "@/lib/date-jst";
 import {
   COMPANY_MASTER_JOIN,
   OFFICE_MASTER_JOIN,
@@ -298,7 +299,7 @@ function InvoicePrintInner() {
                   .in("office_number", companyOfficeNums)
                   .eq("billing_status", "scheduled");
 
-                const today = new Date().toISOString().slice(0, 10);
+                const today = todayYmd();
                 if (targets && targets.length > 0) {
                   // 各行を invoiced に更新 (invoiced_amount = amount をコピー)
                   await Promise.all(

@@ -12,6 +12,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import type { Company } from "@/types/database";
+import { todayYmd } from "@/lib/date-jst";
 
 export type BillingSegment = "介護" | "障害" | "自費";
 export type PaymentMethod = "withdrawal" | "transfer" | "cash" | "other" | "";
@@ -412,7 +413,7 @@ function PaymentQuickDialog({
   const [open, setOpen] = useState(false);
   const [clientNumber, setClientNumber] = useState("");
   const [amount, setAmount] = useState("");
-  const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paidAt, setPaidAt] = useState(() => todayYmd());
   const [method, setMethod] = useState("withdrawal");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -560,7 +561,7 @@ function BulkIssueButton({
 
     setBusy(true);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayYmd();
       const chunkSize = 100;
       for (let i = 0; i < list.length; i += chunkSize) {
         const chunk = list.slice(i, i + chunkSize);
@@ -745,7 +746,7 @@ function CellDetailDialog({
       toast.error("invoiced または overdue の行のみ入金記録できます");
       return;
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmd();
     const { error } = await supabase
       .from("payroll_billing_amount_items")
       .update({

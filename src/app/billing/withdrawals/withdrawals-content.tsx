@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import type { Company } from "@/types/database";
+import { todayYmd } from "@/lib/date-jst";
 
 /**
  * 引落結果（不可データ）取り込み
@@ -89,7 +90,7 @@ export function WithdrawalsContent({
   invoicedRows: BillingRow[];
 }) {
   const router = useRouter();
-  const [withdrawalDate, setWithdrawalDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [withdrawalDate, setWithdrawalDate] = useState(() => todayYmd());
   // CSV (client-only)
   const [csvRows, setCsvRows] = useState<string[][] | null>(null);
   const [clientColIdx, setClientColIdx] = useState<number | null>(null);
