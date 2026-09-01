@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { toast } from "sonner";
 import type {
   Employee,
@@ -586,35 +587,42 @@ export function EmployeesList({
     let success = 0;
     let fail = 0;
 
-    for (const row of validRows) {
-      const office = officeByNumber.get(row.office_number);
-      if (!office) { fail++; continue; }
+    // 行は互いに独立 (office_number,employee_number で一意) なので上限付き並列
+    // (concurrency=6) で処理する。直列時と同じく「1件失敗しても他は続行・
+    // success/fail をカウントするだけ」という挙動を維持する。
+    await mapWithConcurrency(
+      validRows,
+      async (row) => {
+        const office = officeByNumber.get(row.office_number);
+        if (!office) { fail++; return; }
 
-      const payload = {
-        employee_number: row.employee_number,
-        name: row.name,
-        address: row.address,
-        office_id: office.id,
-        employment_status: row.employment_status,
-        hire_date: row.hire_date || null,
-        resignation_date: row.resignation_date || null,
-        effective_service_months: row.effective_service_months,
-        job_type: row.job_type,
-        role_type: row.role_type,
-        salary_type: row.salary_type,
-        transport_type: row.transport_type,
-        has_care_qualification: row.has_care_qualification,
-        social_insurance: row.social_insurance,
-        paid_leave_unit_price: row.paid_leave_unit_price,
-      };
+        const payload = {
+          employee_number: row.employee_number,
+          name: row.name,
+          address: row.address,
+          office_id: office.id,
+          employment_status: row.employment_status,
+          hire_date: row.hire_date || null,
+          resignation_date: row.resignation_date || null,
+          effective_service_months: row.effective_service_months,
+          job_type: row.job_type,
+          role_type: row.role_type,
+          salary_type: row.salary_type,
+          transport_type: row.transport_type,
+          has_care_qualification: row.has_care_qualification,
+          social_insurance: row.social_insurance,
+          paid_leave_unit_price: row.paid_leave_unit_price,
+        };
 
-      const { error } = await supabase
-        .from("payroll_employees")
-        .upsert(payload, { onConflict: "employee_number,office_id" });
+        const { error } = await supabase
+          .from("payroll_employees")
+          .upsert(payload, { onConflict: "employee_number,office_id" });
 
-      if (error) fail++;
-      else success++;
-    }
+        if (error) fail++;
+        else success++;
+      },
+      6,
+    );
 
     setImporting(false);
     setImportDialogOpen(false);

@@ -15,6 +15,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { toast } from "sonner";
 import type { Client, Office } from "@/types/database";
 import dynamic from "next/dynamic";
@@ -359,11 +360,17 @@ export function ClientsList({
       }
 
       let ok = 0; let fail = 0;
-      // 更新は個別（バッチupdateはmaster_id違いの複数行を1クエリでできない）
-      for (const u of toUpdate) {
-        const { error } = await supabase.from("payroll_clients").update(u.patch).eq("master_id", u.master_id);
-        if (error) { console.error(error); fail++; } else ok++;
-      }
+      // 更新は個別（バッチupdateはmaster_id違いの複数行を1クエリでできない）。
+      // 行 (master_id) ごとに独立しているので上限付き並列 (concurrency=6) で処理する。
+      // 直列時と同じく「1件失敗しても他は続行・ok/fail をカウントするだけ」を維持する。
+      await mapWithConcurrency(
+        toUpdate,
+        async (u) => {
+          const { error } = await supabase.from("payroll_clients").update(u.patch).eq("master_id", u.master_id);
+          if (error) { console.error(error); fail++; } else ok++;
+        },
+        6,
+      );
       // 新規はまとめてinsert
       if (toInsert.length > 0) {
         const chunkSize = 500;
