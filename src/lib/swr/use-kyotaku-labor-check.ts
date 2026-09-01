@@ -16,6 +16,7 @@ import {
   getActiveKyotakuSalary,
   type KyotakuSalary,
 } from "@/lib/payroll/kyotaku-salary-history";
+import { fetchAllPagesParallel } from "@/lib/fetch-all";
 
 /**
  * 居宅介護支援 労働時間チェック用データ取得 hook (SWR ベース)。
@@ -169,22 +170,26 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
   //   「pagination」と書いてあるのに実装されていなかった。全ケアマネ × 全期間の
   //   出勤簿なので確実に 1000 行を超え、**週40h・36協定のチェックが黙って
   //   取りこぼしていた**。必ず range() で回しきる。
-  const ATT_PAGE = 1000;
-  const attRows: AttendanceDbRow[] = [];
-  for (let from = 0; ; from += ATT_PAGE) {
-    const { data, error: attErr } = await supabase
-      .from("payroll_kyotaku_attendance_records")
-      .select(
-        "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, substitute_for_date",
-      )
-      .in("employee_id", empIds)
-      .order("employee_id")
-      .order("work_date")
-      .range(from, from + ATT_PAGE - 1);
-    if (attErr) throw attErr;
-    attRows.push(...((data ?? []) as AttendanceDbRow[]));
-    if (!data || data.length < ATT_PAGE) break;
-  }
+  // 全ケアマネ × 全期間なので確実に 1000 行を超える。count + 並列 range で
+  // 直列 page-loop の往復レイテンシを避ける (grouping は employee_id/work_date の
+  // 順序に依存しないので並列取得後の順不同で問題ない)。
+  const attRows: AttendanceDbRow[] = await fetchAllPagesParallel<AttendanceDbRow>(
+    () =>
+      supabase
+        .from("payroll_kyotaku_attendance_records")
+        .select("employee_id", { count: "exact", head: true })
+        .in("employee_id", empIds),
+    (from, to) =>
+      supabase
+        .from("payroll_kyotaku_attendance_records")
+        .select(
+          "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, substitute_for_date",
+        )
+        .in("employee_id", empIds)
+        .order("employee_id")
+        .order("work_date")
+        .range(from, to),
+  );
 
   // 4) employee_id + 月 でグルーピング (YYYY-MM)
   const byEmpMonth = new Map<string, Map<string, AttendanceDbRow[]>>();
