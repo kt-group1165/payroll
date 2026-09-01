@@ -725,12 +725,15 @@ export function BillingImporter() {
       }
 
       for (const s of scopeList) {
-        await supabase.from("payroll_billing_amount_items").delete()
+        const del1 = await supabase.from("payroll_billing_amount_items").delete()
           .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
-        await supabase.from("payroll_billing_unit_items").delete()
+        if (del1.error) throw del1.error;
+        const del2 = await supabase.from("payroll_billing_unit_items").delete()
           .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
-        await supabase.from("payroll_billing_daily_items").delete()
+        if (del2.error) throw del2.error;
+        const del3 = await supabase.from("payroll_billing_daily_items").delete()
           .eq("segment", s.segment).eq("office_number", s.office_number).eq("service_month", s.service_month);
+        if (del3.error) throw del3.error;
       }
 
       // INSERT (chunk)
