@@ -563,9 +563,10 @@ function BulkIssueButton({
     try {
       const today = todayYmd();
       const chunkSize = 100;
+      let failed = 0;
       for (let i = 0; i < list.length; i += chunkSize) {
         const chunk = list.slice(i, i + chunkSize);
-        await Promise.all(
+        const results = await Promise.all(
           chunk.map((t) =>
             supabase
               .from("payroll_billing_amount_items")
@@ -577,8 +578,13 @@ function BulkIssueButton({
               .eq("id", t.id)
           )
         );
+        failed += results.filter((r) => r.error).length;
       }
-      toast.success(`${list.length} 件を発行済にしました`);
+      if (failed > 0) {
+        toast.error(`${failed} 件が更新失敗しました（${list.length - failed} 件は発行済）。再実行してください`);
+      } else {
+        toast.success(`${list.length} 件を発行済にしました`);
+      }
       onDone();
     } catch (e) {
       toast.error(`更新エラー: ${e instanceof Error ? e.message : String(e)}`);

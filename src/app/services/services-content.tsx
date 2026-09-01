@@ -430,10 +430,14 @@ function MappingsTab({
       return;
 
     // 全削除して再挿入
-    await supabase
+    const { error: deleteError } = await supabase
       .from("payroll_service_type_mappings")
       .delete()
       .neq("id", "00000000-0000-0000-0000-000000000000");
+    if (deleteError) {
+      toast.error(`既存マッピングの削除に失敗しました: ${deleteError.message}`);
+      return;
+    }
 
     const { error } = await supabase
       .from("payroll_service_type_mappings")

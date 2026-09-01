@@ -291,18 +291,22 @@ function InvoicePrintInner() {
               const companyOfficeNums = offices.map((o) => o.office_number);
               if (companyOfficeNums.length > 0) {
                 // 対象行を取得
-                const { data: targets } = await supabase
+                const { data: targets, error: selectError } = await supabase
                   .from("payroll_billing_amount_items")
                   .select("id, amount")
                   .eq("client_number", clientNumber)
                   .eq("billing_month", month)
                   .in("office_number", companyOfficeNums)
                   .eq("billing_status", "scheduled");
+                if (selectError) {
+                  alert(`発行対象の取得に失敗しました: ${selectError.message}\nステータスは変更されていません。`);
+                  return;
+                }
 
                 const today = todayYmd();
                 if (targets && targets.length > 0) {
                   // 各行を invoiced に更新 (invoiced_amount = amount をコピー)
-                  await Promise.all(
+                  const results = await Promise.all(
                     (targets as { id: string; amount: number }[]).map((t) =>
                       supabase
                         .from("payroll_billing_amount_items")
@@ -314,10 +318,17 @@ function InvoicePrintInner() {
                         .eq("id", t.id)
                     )
                   );
+                  const failed = results.filter((r) => r.error).length;
+                  if (failed > 0) {
+                    alert(`${failed} / ${targets.length} 件の発行済ステータス更新に失敗しました。再実行してください。`);
+                    return;
+                  }
                 }
               }
             } catch (e) {
               console.warn("請求書発行ステータスの更新に失敗:", e);
+              alert("発行済ステータスの更新に失敗しました。印刷前に状況を確認してください。");
+              return;
             }
             window.print();
           }}
