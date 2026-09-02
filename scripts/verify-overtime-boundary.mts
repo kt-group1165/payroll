@@ -5,7 +5,11 @@
 // 労基法37条の割増率が実装どおりかを in-memory で確かめる。実データが薄い
 // (payroll_kyotaku_attendance_records 401 行 / 出勤簿を持つのは実測 10 名) ので、
 // データ量に依存しない形で計算そのものを固定するのが目的。
-import { calcDaily } from "../src/lib/payroll/attendance-calc";
+import {
+  calcDaily,
+  calcDailyListWithWeekly,
+  extendedMonthRange,
+} from "../src/lib/payroll/attendance-calc";
 import { calcOvertimePayBreakdown } from "../src/lib/payroll/overtime-pay-calc";
 
 let pass = 0;
@@ -103,7 +107,72 @@ eq("超過額 = 実残業代 - 固定", withFixed.exceedAmount, withFixed.totalO
 eq("salary が null なら空", calcOvertimePayBreakdown(sum({}), null, ot).totalOvertimePay, 0);
 eq("ot が null なら空", calcOvertimePayBreakdown(sum({}), salary, null).totalOvertimePay, 0);
 
+// ── 集計側 (calcDailyListWithWeekly) ─────────────────────────────────────
+// ⚠ 週起算日・法定休日をどの曜日にするかは **就業規則で決まる**。ここで確かめるのは
+//   「実装がどう動くか」だけで、「それが正しいか」は user 判断 (DECISIONS_PENDING)。
+//   実測 (2026-09-03): payroll_offices 59 件すべて work_week_start = 0 (日曜起算)。
+const rec = (d: string, o: Record<string, unknown> = {}) =>
+  ({
+    work_date: d, start_time: "09:00", end_time: "18:00", break_minutes: 60,
+    is_legal_holiday: false, paid_leave_type: null, substitute_for_date: null, ...o,
+  }) as never;
+
+// 2026-06-07(日) 〜 06-13(土) の 7 日。日曜起算なので 1 週ちょうど。
+const week = ["07", "08", "09", "10", "11", "12", "13"].map((d) => rec(`2026-06-${d}`));
+const full = calcDailyListWithWeekly(week, 0);
+eq("休み無しの週: 最終日 (土) が法定休日労働になる",
+  [full[6].holiday_work > 0, full[6].daily_overtime], [true, 0]);
+eq("休み無しの週: 最終日以外は法定休日にしない",
+  full.slice(0, 6).every((d) => d.holiday_work === 0), true);
+
+// 1 日でも休み (work_minutes=0) があれば auto-detect しない
+const withRest = calcDailyListWithWeekly(
+  week.map((r, i) => (i === 3 ? rec("2026-06-10", { start_time: null, end_time: null }) : r)), 0);
+eq("週に休みが1日でもあれば法定休日を自動付与しない",
+  withRest.every((d) => d.holiday_work === 0), true);
+
+// 週次残業: 8h/日 × 6 日 = 48h → 40h 超過分 8h が weekly_overtime
+const six = ["07", "08", "09", "10", "11", "12"].map((d) => rec(`2026-06-${d}`));
+const w6 = calcDailyListWithWeekly(six, 0);
+eq("8h×6日 = 48h → 週次残業 合計 8h",
+  w6.reduce((s, d) => s + d.weekly_overtime, 0), 8 * 60);
+
+// ── なぜ呼出側が extendedMonthRange を使わなければならないか (回帰ガード) ──
+//   calcDailyListWithWeekly は **渡された記録だけ** で週 40h を積む。暦月で切った
+//   記録をそのまま渡すと、月をまたぐ週が分断されて週次残業が消える。
+//   ⚠ 本番はこれを踏んでいない: use-kyotaku-summary が extendedMonthRange で
+//     **週全体を含む範囲**を取ってから渡している。ここはその前提を固定するための試験で、
+//     「今バグっている」という意味ではない。
+const may = ["2026-05-31"].map((d) => rec(d));                       // 日曜 1 日
+const jun = ["01", "02", "03", "04", "05"].map((d) => rec(`2026-06-${d}`)); // 月〜金 5 日
+eq("暦月で切ると 5月側 (1日) の週次残業は 0",
+  calcDailyListWithWeekly(may, 0).reduce((s, d) => s + d.weekly_overtime, 0), 0);
+eq("暦月で切ると 6月側 (5日=40h ちょうど) の週次残業も 0",
+  calcDailyListWithWeekly(jun, 0).reduce((s, d) => s + d.weekly_overtime, 0), 0);
+// → 同じ 6 日 48h でも、暦月で分けると 8h ぶんの週次残業が出ない。
+//   だから extendedMonthRange が要る。以下でその範囲が週境界に揃うことを確かめる。
+const ext = extendedMonthRange("2026-06", 0);
+eq("extendedMonthRange: 週起算(日)から週末(土)まで広げる",
+  [new Date(`${ext.start}T00:00:00Z`).getUTCDay(), new Date(`${ext.end}T00:00:00Z`).getUTCDay()],
+  [0, 6]);
+eq("extendedMonthRange: 月初・月末を必ず含む",
+  [ext.start <= "2026-06-01", ext.end >= "2026-06-30"], [true, true]);
+
+// 有給: full は所定 0 / 欠勤 0、かつ効果労働時間に 8h クレジット
+const withLeave = calcDailyListWithWeekly(
+  [rec("2026-06-08", { start_time: null, end_time: null, paid_leave_type: "full" })], 0);
+eq("全有給の日は 欠勤 0 / 所定 0",
+  [withLeave[0].absence_minutes, withLeave[0].scheduled_minutes], [0, 0]);
+const halfLeave = calcDailyListWithWeekly(
+  [rec("2026-06-08", { start_time: "09:00", end_time: "13:00", break_minutes: 0, paid_leave_type: "half" })], 0);
+eq("半有給の所定は 4h", halfLeave[0].scheduled_minutes, 4 * 60);
+
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
-console.log("⚠ この検証が証明していないこと: total_midnight/total_holiday の **集計側** (attendance-calc の");
-console.log("   週次按分・法定休日 auto-detect・欠勤補填) と、実データでの妥当性。純関数の境界のみ。");
+console.log("");
+console.log("⚠ この検証が証明していないこと:");
+console.log("   ・欠勤分数を **金額に変える側** (呼出元)。月給者/時給者の出し分けはこの lib には無い");
+console.log("     (calcDailyListWithWeekly は salary_type を一切見ない)");
+console.log("   ・「残業時間も欠勤の補填源にする」が賃金全額払いの原則に照らして妥当か (運用ポリシー)");
+console.log("   ・法定休日をどの曜日にするか (就業規則。実装は 週の最終日 = 日曜起算なら土曜)");
+console.log("   ・実データでの妥当性 (出勤簿を持つ職員は実測 10 名)");
