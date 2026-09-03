@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import type { Company } from "@/types/database";
 import { todayYmd } from "@/lib/date-jst";
+import { buildIssuePatch, ISSUE_TARGET_STATUS, amountEditMode, buildAdjustmentRow, nextBillingMonth } from "@/lib/billing/billing-issue";
 
 export type BillingSegment = "介護" | "障害" | "自費";
 export type PaymentMethod = "withdrawal" | "transfer" | "cash" | "other" | "";
@@ -544,7 +545,7 @@ function BulkIssueButton({
           .select("id, amount")
           .eq("billing_month", billingMonth)
           .in("office_number", officeNumbers)
-          .eq("billing_status", "scheduled")
+          .eq("billing_status", ISSUE_TARGET_STATUS)
           .range(from, from + PAGE - 1);
         if (e1) { toast.error(`取得エラー: ${e1.message}`); return; }
         if (!data || data.length === 0) break;
@@ -570,11 +571,7 @@ function BulkIssueButton({
           chunk.map((t) =>
             supabase
               .from("payroll_billing_amount_items")
-              .update({
-                billing_status: "invoiced",
-                actual_issue_date: today,
-                invoiced_amount: t.amount,
-              })
+              .update(buildIssuePatch(t, today))
               .eq("id", t.id)
           )
         );
@@ -658,13 +655,6 @@ function CellDetailDialog({
   }, [fetchItems]);
 
   const monthLabel = `${detail.billing_month.slice(0, 4)}年${parseInt(detail.billing_month.slice(4, 6), 10)}月`;
-  const nextMonth = (m: string) => {
-    const y = parseInt(m.slice(0, 4), 10);
-    const mm = parseInt(m.slice(4, 6), 10);
-    const d = new Date(y, mm, 1);
-    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
-  };
-
   const handleSaveAmount = async (item: DetailItem) => {
     const raw = editAmount[item.id];
     if (raw === undefined || raw === "") return;
@@ -672,7 +662,7 @@ function CellDetailDialog({
     if (isNaN(newAmt)) { toast.error("金額が不正です"); return; }
     setSaving(true);
     try {
-      if (item.billing_status === "scheduled" || item.billing_status === "draft") {
+      if (amountEditMode(item.billing_status) === "overwrite") {
         // 発行前: 直接上書き
         const { error } = await supabase
           .from("payroll_billing_amount_items")
@@ -682,29 +672,15 @@ function CellDetailDialog({
         toast.success("金額を修正しました");
       } else {
         // 発行後: 差額で調整行を自動作成（元はそのまま）
-        const diff = newAmt - item.amount;
-        if (diff === 0) {
+        const row = buildAdjustmentRow({ item, detail }, newAmt);
+        if (row === null) {
           toast.info("差額がありません");
           setSaving(false);
           return;
         }
-        const adjustmentMonth = nextMonth(detail.billing_month);
-        const { error } = await supabase.from("payroll_billing_amount_items").insert({
-          segment: detail.segment,
-          office_number: detail.office_number,
-          client_number: detail.client_number,
-          client_name: detail.client_name,
-          billing_month: adjustmentMonth,
-          service_month: item.service_month,
-          service_item: item.service_item,
-          amount: diff,
-          billing_status: "adjustment",
-          parent_item_id: item.id,
-          source: "manual",
-          lifecycle_note: `過誤調整（元請求${item.amount}→${newAmt}の差額）`,
-        });
+        const { error } = await supabase.from("payroll_billing_amount_items").insert(row);
         if (error) throw error;
-        toast.success(`差額 ${diff > 0 ? "+" : ""}${diff} の調整行を ${adjustmentMonth.slice(0, 4)}/${adjustmentMonth.slice(4, 6)} 請求月に作成しました`);
+        toast.success(`差額 ${row.amount > 0 ? "+" : ""}${row.amount} の調整行を ${row.billing_month.slice(0, 4)}/${row.billing_month.slice(4, 6)} 請求月に作成しました`);
       }
       setEditAmount((p) => { const n = { ...p }; delete n[item.id]; return n; });
       fetchItems();
@@ -721,7 +697,7 @@ function CellDetailDialog({
       toast.error("scheduled（未発行）の行のみ翌月繰越できます");
       return;
     }
-    const newMonth = nextMonth(item.billing_month);
+    const newMonth = nextBillingMonth(item.billing_month);
     const { error } = await supabase
       .from("payroll_billing_amount_items")
       .update({
