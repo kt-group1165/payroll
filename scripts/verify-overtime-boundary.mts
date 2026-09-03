@@ -108,8 +108,11 @@ eq("salary が null なら空", calcOvertimePayBreakdown(sum({}), null, ot).tota
 eq("ot が null なら空", calcOvertimePayBreakdown(sum({}), salary, null).totalOvertimePay, 0);
 
 // ── 集計側 (calcDailyListWithWeekly) ─────────────────────────────────────
-// ⚠ 週起算日・法定休日をどの曜日にするかは **就業規則で決まる**。ここで確かめるのは
-//   「実装がどう動くか」だけで、「それが正しいか」は user 判断 (DECISIONS_PENDING)。
+// ⚠ 法定休日は **日曜で固定** (2026-07-31 user 確定 / order-app が正本)。
+//   日曜に出勤しても、その週に休みがあれば通常労働。週内に日曜が無い (月跨ぎで
+//   欠けている) 場合だけ最終日にフォールバックする。
+//   ★ 2026-09-03 に 3 app を order-app に揃えたので、**期待値を「最終日 (土)」から
+//     「日曜」に直した**。それ以前は payroll だけ週最終日 = 土曜になっていた。
 //   実測 (2026-09-03): payroll_offices 59 件すべて work_week_start = 0 (日曜起算)。
 const rec = (d: string, o: Record<string, unknown> = {}) =>
   ({
@@ -120,10 +123,34 @@ const rec = (d: string, o: Record<string, unknown> = {}) =>
 // 2026-06-07(日) 〜 06-13(土) の 7 日。日曜起算なので 1 週ちょうど。
 const week = ["07", "08", "09", "10", "11", "12", "13"].map((d) => rec(`2026-06-${d}`));
 const full = calcDailyListWithWeekly(week, 0);
-eq("休み無しの週: 最終日 (土) が法定休日労働になる",
-  [full[6].holiday_work > 0, full[6].daily_overtime], [true, 0]);
-eq("休み無しの週: 最終日以外は法定休日にしない",
-  full.slice(0, 6).every((d) => d.holiday_work === 0), true);
+// week[0] = 2026-06-07(日)。日曜が法定休日になる (最終日 06-13(土) ではない)
+eq("★ 休み無しの週: 日曜が法定休日労働になる",
+  [full[0].holiday_work > 0, full[0].daily_overtime], [true, 0]);
+eq("★ 休み無しの週: 日曜以外は法定休日にしない",
+  full.slice(1).every((d) => d.holiday_work === 0), true);
+// 週内に日曜が無い (月跨ぎで欠けている) ときだけ最終日にフォールバック
+const noSunday = ["08", "09", "10", "11", "12", "13", "14"].map((d) => rec(`2026-06-${d}`));
+const fb = calcDailyListWithWeekly(noSunday, 1); // 月曜起算 = 06-08(月)〜06-14(日)
+eq("週内に日曜があれば (月曜起算でも) 日曜が法定休日",
+  [fb[6].holiday_work > 0, fb.slice(0, 6).every((d) => d.holiday_work === 0)], [true, true]);
+
+// ── ★ 代休 / 未入力 — 2026-09-03 に order-app へ揃えたぶん ──────────────
+// substitute_for_date が set の日は「代休 (= 休み扱い、所定 0h)」。
+// ⚠ 揃える前の payroll は逆に読んで **所定 8h を強制**していたので、
+//   代休の日がまるごと欠勤になり控除が立っていた (実データで 15 日該当)。
+const daikyu = calcDailyListWithWeekly(
+  [rec("2026-06-03", { start_time: null, end_time: null, substitute_for_date: "2026-05-05" })], 0);
+eq("★ 代休の日 (substitute_for_date あり) は所定 0h", daikyu[0].scheduled_minutes, 0);
+eq("★ 代休の日は欠勤にしない", daikyu[0].absence_minutes, 0);
+
+// 完全未入力の平日は欠勤にしない (2026-07-29 user 確定)。
+// 月の途中で「これから来る平日」が欠勤として積み上がるのを防ぐ。
+const mikinyu = calcDailyListWithWeekly(
+  [rec("2026-06-03", { start_time: null, end_time: null })], 0);
+eq("★ 完全未入力の平日は欠勤にしない", mikinyu[0].absence_minutes, 0);
+// 逆に、短く働いた日はちゃんと欠勤が立つ (上を「何でも 0」にしていないことの確認)
+const tanjikan = calcDailyListWithWeekly([rec("2026-06-03", { end_time: "14:00" })], 0);
+eq("★ 短時間勤務の平日は欠勤が立つ (4h)", tanjikan[0].absence_minutes, 240);
 
 // 1 日でも休み (work_minutes=0) があれば auto-detect しない
 const withRest = calcDailyListWithWeekly(
@@ -174,5 +201,5 @@ console.log("⚠ この検証が証明していないこと:");
 console.log("   ・欠勤分数を **金額に変える側** (呼出元)。月給者/時給者の出し分けはこの lib には無い");
 console.log("     (calcDailyListWithWeekly は salary_type を一切見ない)");
 console.log("   ・「残業時間も欠勤の補填源にする」が賃金全額払いの原則に照らして妥当か (運用ポリシー)");
-console.log("   ・法定休日をどの曜日にするか (就業規則。実装は 週の最終日 = 日曜起算なら土曜)");
+console.log("   ・日曜を法定休日とすること自体の妥当性 (就業規則。2026-07-31 user 確定として実装)");
 console.log("   ・実データでの妥当性 (出勤簿を持つ職員は実測 10 名)");

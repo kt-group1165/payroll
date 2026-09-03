@@ -15,6 +15,18 @@
 //   - 深夜割増は他の割増と独立して上乗せされるため、本 lib では別 field で集計
 //
 // 入出力単位は分 (minute)。出力 field は全て非負整数を期待する。
+//
+// ⚠ **この file が正本 (2026-09-03 統合)。**同じ内容が 3 か所にある:
+//     order-app    lib/attendance/attendance-calc.ts          ← ★ ここが正
+//     kaigo-app    src/lib/attendance/attendance-calc.ts
+//     payroll-app  src/lib/payroll/attendance-calc.ts
+//   app が別 git リポジトリなので物理的に共有できない。**直すときは 3 つとも直す。**
+//   3 つは同じ table (`payroll_kyotaku_attendance_records`) を読むので、
+//   ズレると **同じ職員・同じ月なのに開く画面で金額が変わる**。
+//   実際 2026-09-03 まで 3 実装が食い違っていて、代休 15 日 + 法定休日 12 日ぶん
+//   (10 名 2 か月で 参考時給 ¥1,947 換算 約 ¥12.9 万) の差が出ていた。
+//   ズレたら気づけるように:
+//     cd apps/order-app && npx tsx scripts/attendance-calc-parity.mts
 
 import { isJapaneseHoliday } from "./japan-holidays";
 
@@ -41,9 +53,12 @@ export type AttendanceRecord = {
    */
   paid_leave_type: "full" | "half" | null;
   /**
-   * 振替元日付 (YYYY-MM-DD)。null = 振替ではない通常の出勤。
-   * NOT NULL の場合、この record の work_date が振替出勤日 (= 所定労働日)、
-   * substitute_for_date は振替先の休日 (= 所定労働日でなくなる)。
+   * 振替・代休元の日付 (YYYY-MM-DD)。null = 通常の日。
+   * NOT NULL の場合、この record の work_date は「代休 (= 休み扱い、所定 0h)」で、
+   * substitute_for_date はその元になった出勤日 (参照情報。計算には使わない)。
+   * ※ 2026-07-29 に order-app の運用 (Excel 出勤簿の向き) に合わせて意味を反転。
+   *    元日付が 2 つある場合 (半日出勤×2 の組合せ) も「set されているか」だけを見るので
+   *    呼出側はどちらか 1 つを入れて渡せばよい。
    */
   substitute_for_date: string | null;
 };
@@ -438,22 +453,21 @@ export function calcDailyListWithWeekly(
     weekGroups.get(wk)!.push(it);
   }
 
-  // 振替先 (= 他の日から休日を振り替えられた日) を pre-build (per-week 処理で必要)
-  const substituteTargetDates = new Set<string>();
-  for (const it of items) {
-    if (it.r.substitute_for_date) {
-      substituteTargetDates.add(it.r.substitute_for_date);
-    }
-  }
-
   for (const list of weekGroups.values()) {
     list.sort((a, b) => a.r.work_date.localeCompare(b.r.work_date));
 
     // ─── 法定休日労働 auto-detect (労基 §35) ───
-    // 7 日揃った週で全日 work_minutes>0 (= 休み無し) なら、最終日を法定休日労働扱いに。
-    // ユーザーが既に該当日を manual 法休指定済みの場合は何もしない (manual 優先)。
+    // 週 1 日の休みが無かった場合 (= 7 日揃った週で全日 work_minutes>0) にだけ
+    // 法定休日労働が発生する。どの日を法定休日とみなすかは 日曜 で固定する
+    // (2026-07-31 user 確定。日曜に出勤しても、その週に休みがあれば通常労働)。
+    // 週内に日曜が無い (月跨ぎで欠けている) 場合は最終日にフォールバック。
+    // manual 法休指定済みの場合は何もしない (manual 優先)。
     if (list.length === 7 && list.every((it) => it.daily.work_minutes > 0)) {
-      const last = list[list.length - 1];
+      const sunday = list.find((it) => {
+        const dt = parseDateUTC(it.r.work_date);
+        return dt?.getUTCDay() === 0;
+      });
+      const last = sunday ?? list[list.length - 1];
       if (!last.r.is_legal_holiday) {
         // holiday_work に work_minutes 全部を移動、日次/週次残業はリセット
         // (calcDaily の is_legal_holiday=true と同じ扱い。深夜は別割増として残す)
@@ -484,14 +498,26 @@ export function calcDailyListWithWeekly(
 
     // ─── 欠勤 (raw per-day) ───
     // 所定労働日の判定:
-    //   - 平日 (月-金) かつ 祝日でない → 所定日 (= 8h)
-    //   - 振替出勤日 (substitute_for_date が set) → 強制で所定日 (= 8h)
-    //   - 振替先 (= 他の record の substitute_for_date が この日) → 所定日でなくなる (= 0h)
+    //   - 平日 (月-金) かつ 祝日・会社休日でない → 所定日 (= 8h)
+    //   - 代休の日 (substitute_for_date が set = 元出勤日を持つ休み) → 所定日でなくなる (= 0h)
     //   - 全有給 → 所定日でなくなる (= 0h)
     //   - 半有給 → 所定時間 4h
     //   - 法定休日労働日 (manual/auto) → 所定日でない (= 0h)、欠勤判定対象外
     // raw 欠勤時間 = max(0, scheduled_minutes - work_minutes)
     for (const it of list) {
+      // 完全未入力の日は欠勤にしない (2026-07-29 user 確定)。
+      // 月の途中で「これから来る平日」が欠勤として積み上がるのを防ぐ。
+      // 休んだ日を欠勤として出したい場合は 有給/代休 等を明示的に入力する運用。
+      const isUnfilled =
+        it.r.start_time === null &&
+        it.r.end_time === null &&
+        it.r.paid_leave_type === null &&
+        it.r.substitute_for_date === null;
+      if (isUnfilled) {
+        it.daily.scheduled_minutes = 0;
+        it.daily.absence_minutes = 0;
+        continue;
+      }
       if (it.r.is_legal_holiday || it.autoLegalHoliday) {
         it.daily.scheduled_minutes = 0;
         it.daily.absence_minutes = 0;
@@ -502,19 +528,19 @@ export function calcDailyListWithWeekly(
         it.daily.absence_minutes = 0;
         continue;
       }
-      if (substituteTargetDates.has(it.r.work_date)) {
+      // 代休 (振替元あり) = 休み扱い
+      if (it.r.substitute_for_date !== null) {
         it.daily.scheduled_minutes = 0;
         it.daily.absence_minutes = 0;
         continue;
       }
-      const isSubstituteWorkDay = it.r.substitute_for_date !== null;
       const dt = parseDateUTC(it.r.work_date);
       const dow = dt ? dt.getUTCDay() : 0;
       const isWeekday = dow >= 1 && dow <= 5;
       const isHoliday =
         isJapaneseHoliday(it.r.work_date) ||
         (companyHolidayDates?.has(it.r.work_date) ?? false);
-      const isScheduledDay = isSubstituteWorkDay || (isWeekday && !isHoliday);
+      const isScheduledDay = isWeekday && !isHoliday;
       if (!isScheduledDay) {
         it.daily.scheduled_minutes = 0;
         it.daily.absence_minutes = 0;
