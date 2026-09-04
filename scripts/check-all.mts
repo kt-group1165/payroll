@@ -23,7 +23,7 @@ const CHECKS: Check[] = [
   { name: "payroll-calc-boundary", script: "check:payroll-calc-boundary", why: "訪問介護の給与計算 (月給・時給・残業・勤続・移動手当) の境界値" },
   { name: "payroll-sample", script: "check:payroll-sample", why: "DB→集計→残業代 の経路 (手計算の期待値と突合)" },
   { name: "billing-issue", script: "check:billing-issue", why: "請求の発行・調整行ロジック (実データ + fixture)" },
-  { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (xlsx読込で遅め)", slow: true },
+  { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)" },
 ];
 
 /** ★ この一覧が見ていないもの。緑でも安心しないための明示 */

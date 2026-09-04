@@ -19,10 +19,11 @@
 //     両者を合算した normal_kaigo しか持たないので、合計でしか照合できない
 //   ・DB からの取り出し (SWR hook) と画面表示。純関数の入出力だけを見ている
 //   ・出張距離手当 / 資格手当 / 固定 / 特定処遇改善 (Python 版に無い TS 独自の項目)
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, join } from "node:path";
 
 import { parseKokuhoCsv } from "../src/lib/csv/kokuho-parser";
 import {
@@ -48,6 +49,9 @@ const CSV_PATH = resolve(KYOTAKU_DIR, "元データ/袖ヶ浦2503取り込み用
 
 /** 期待値を 1 か所だけ壊して、検査が本当に落ちるかを見る (VERIFICATION_RULES 3-9) */
 const NEGATIVE_CONTROL = process.env.NEGATIVE_CONTROL === "1";
+
+const BASELINE = join(HERE, "verify-kyotaku-vs-python-baseline.json");
+const UPDATE = process.argv.includes("--update");
 
 // =====================================================================
 // 0. 最小 xlsx リーダ (zip + sheet XML)
@@ -955,4 +959,86 @@ console.log("   ・売上表 / 利用者内訳 / 差異明細 sheet と 地域�
 console.log("   ・出張距離手当 / 資格手当 / 固定 / 特定処遇改善 (Python 版に無い TS 独自項目)");
 console.log("   ・DB 取得層 (SWR hook) と画面表示");
 
-if (failures.length > 0 || xfailUnexpectedPass.length > 0) process.exit(1);
+// =====================================================================
+// 8. 基準値方式 (2026-09-05 / B-2y・B-2x)
+//    ★ 「常に赤い検査」は見なくなるので最悪だが、外すと見えなくなる。
+//    現状の不一致件数を基準値として焼き付け、増えたら FAIL・減ったら --update を促す。
+//    (check:ceiling / check:service-code-gap と同じ形。0件を目指さない)
+// =====================================================================
+type Baseline = {
+  _readme: string[];
+  fingerprint: string;
+  asOf: string;
+  failureCount: number;
+};
+
+const fingerprint = createHash("sha256")
+  .update(readFileSync(XLSX_PATH))
+  .update(readFileSync(CSV_PATH))
+  .digest("hex")
+  .slice(0, 16);
+const today = new Date().toISOString().slice(0, 10);
+
+// ★ xfailUnexpectedPass (意図的差異のはずが一致した) は基準値化しない。
+//   「検査か実装がいつのまにか変わっている」という別種の異常信号なので、
+//   件数の多寡によらず常に人に見せる (VERIFICATION_RULES: 0件を無害と決めつけない)。
+if (xfailUnexpectedPass.length > 0) {
+  console.log("\n★★ XFAIL のはずが一致した項目がある — 基準値の対象外。常に FAIL とする。");
+  process.exit(1);
+}
+
+let baseline: Baseline | null = null;
+if (existsSync(BASELINE)) baseline = JSON.parse(readFileSync(BASELINE, "utf8"));
+
+if (UPDATE || !baseline) {
+  const out: Baseline = {
+    _readme: [
+      "npm run verify:kyotaku-python の基準値。",
+      "",
+      "■ なぜ 9 件なのか (2026-09-05 実測。B-2y 参照)",
+      "  全部 1 つの原因: 実績0件の月に基本給を払うか。",
+      "  Python版は払う / TS(kyotaku-calc.ts)は払わない。",
+      "  森田尚子 2025-02 で ¥250,000 (合計額 Python=250000 / TS=0)。",
+      "  user 判断待ち (DECISIONS_PENDING.md B-2y)。直ったら 9→0 になるはずなので、",
+      "  そのとき基準値を 0 に更新すること。",
+      "",
+      "■ kyotaku-calc.ts 本体は触らないこと",
+      "  別セッションの作業対象として予約中。このファイル (基準値) と",
+      "  verify-kyotaku-vs-python.mts (ハーネス) 側だけを更新する。",
+      "",
+      "■ 指紋 (xlsx + CSV の内容ハッシュ)",
+      "  期待値の元データ (Python実出力 xlsx / 入力CSV) が変わっていないか。",
+      "  指紋が変わっているのに件数が同じなら、たまたま偶然一致した可能性がある",
+      "  ので中身を読んでから --update すること。",
+      "",
+      "■ 0件を目指さない",
+      "  kyotaku-calc.ts の是正 (B-2y の user 判断) が入るまでは 9 件のまま。",
+      "  減ったら「改善した」と出す。増えたら新しい乖離として FAIL する。",
+    ],
+    fingerprint,
+    asOf: today,
+    failureCount: failures.length,
+  };
+  writeFileSync(BASELINE, JSON.stringify(out, null, 2) + "\n", "utf8");
+  console.log(`\n--update: 基準値を書きました (${BASELINE})`);
+  process.exit(0);
+}
+
+const fingerprintMatch = baseline.fingerprint === fingerprint;
+console.log(`\n指紋 (xlsx+CSV): ${fingerprintMatch ? "一致" : "★ 不一致"}`);
+console.log(`基準値 (${baseline.asOf} 時点): 不一致 ${baseline.failureCount} 件`);
+
+if (failures.length > baseline.failureCount) {
+  console.log(`\n★ FAIL — 不一致が基準値 (${baseline.failureCount}件) より増えた (現在 ${failures.length}件)。`);
+  console.log("  新しい乖離が出た可能性が高い。中身を確認すること。");
+  process.exit(1);
+}
+if (failures.length < baseline.failureCount) {
+  console.log(`\n✓ PASS — 不一致が基準値 (${baseline.failureCount}件) より減った (現在 ${failures.length}件)。`);
+  console.log("  改善している。中身を確認したうえで --update で基準値を下げてよい。");
+  process.exit(0);
+}
+console.log(`\n✓ PASS — 基準値どおり ${failures.length} 件 (既知・DECISIONS_PENDING.md B-2y で user 判断待ち)。`);
+if (!fingerprintMatch) {
+  console.log("  ⚠ 指紋は不一致だが件数は変わっていない。元データが変わった場合は中身を確認のうえ --update すること。");
+}
