@@ -7,7 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "verify:kyotaku-python": "tsx scripts/verify-kyotaku-vs-python.mts"
+    "verify:kyotaku-python": "tsx scripts/verify-kyotaku-vs-python.mts",
+    "check:overtime-boundary": "tsx scripts/verify-overtime-boundary.mts",
+    "check:payroll-calc-boundary": "tsx scripts/verify-payroll-calc-boundary.mts",
+    "check:payroll-sample": "tsx scripts/payroll-sample-check.mts",
+    "check:billing-issue": "tsx scripts/billing-issue-check.mts",
+    "check:all": "tsx scripts/check-all.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

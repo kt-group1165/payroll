@@ -123,3 +123,6 @@ else {
   eq("★ ② 実データを buildIssuePatch に通しても同じ金額", mismatch.length, 0);
 }
 console.log(`\n══ 検査 ${n} 件 / NG ${ng} 件 ══`);
+// ⚠ 2026-09-05 是正: ng を数えるだけで exit code に反映していなかった。
+//   NG が出ても常に exit 0 = check:all 等のゲートで検知できない (silent pass)。
+process.exitCode = ng > 0 ? 1 : 0;

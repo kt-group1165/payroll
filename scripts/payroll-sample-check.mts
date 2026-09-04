@@ -178,3 +178,5 @@ console.log("\n══ ⑤ 異常系 (純関数) ══");
 }
 
 console.log(`\n══ 検査 ${n} 件 / NG ${ng} 件 ══`);
+// ⚠ 2026-09-05 是正: ng を数えるだけで exit code に反映していなかった (billing-issue-check.mts と同じ穴)。
+process.exitCode = ng > 0 ? 1 : 0;
