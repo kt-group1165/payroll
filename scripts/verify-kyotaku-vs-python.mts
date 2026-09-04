@@ -842,6 +842,36 @@ const fxCfg = (over: Partial<CalcConfig> = {}): CalcConfig => ({
   );
 }
 
+// B-15. ★ normalizeMonth の Date fallback が SPEC §6 の書式を黙って壊す
+//   Python の normalize_month は %y-%b / %b-%y / %Y-%b … の英語月名も解釈し、
+//   未マッチなら **そのまま返す** (SPEC §6「未マッチはそのまま返却」)。
+//   kyotaku-calc の normalizeMonth は最後に new Date() へ落ちるので、
+//   解釈できない文字列が **もっともらしい別の月** に化ける。
+//   ⚠ ただし本 function は app 内から呼ばれていない (取込は kokuho-parser 側の
+//     同名別実装を使う)。今は実害が無いので XFAIL 扱いにして事実だけ残す。
+{
+  const s2n = (v: string | null, want: string) => (v === want ? 1 : 0);
+  eqXfail(
+    `B-15 "25-Feb" → 2025-02-01 (実際 ${normalizeMonth("25-Feb")})`,
+    s2n(normalizeMonth("25-Feb"), "2025-02-01"),
+    1,
+    "Date fallback が 2001-02-01 にする (24 年ずれる)。app 内で未使用",
+  );
+  eqXfail(
+    `B-15 "2025-Feb" → 2025-02-01 (実際 ${normalizeMonth("2025-Feb")})`,
+    s2n(normalizeMonth("2025-Feb"), "2025-02-01"),
+    1,
+    "Date fallback が 2025-01-01 にする (月が 1 月に化ける)。app 内で未使用",
+  );
+  const ymm = normalizeMonth("202502");
+  eqXfail(
+    `B-15 "202502" は壊れた値を返さない (実際 ${ymm})`,
+    ymm === null || ymm === "2025-02-01" ? 1 : 0,
+    1,
+    "Date fallback が 202501-12-01 を返す。kokuho-parser 側は 2025-02-01。app 内で未使用",
+  );
+}
+
 // B-12. ★ 既知の意図的差異: 請求月が提供月より前 (delay < 0)
 //   Python (集計.py 342-351): if 0 / elif 1 / elif 2 / else → 負値は **else = late2**
 //   TS   (kyotaku-calc.ts 354): delay <= 0 を same に倒す (コメントで明示)
