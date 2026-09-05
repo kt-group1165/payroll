@@ -538,3 +538,197 @@ export function hourlyBusinessTripFeeAmount(businessKmTotal: number, travelUnitP
 export function hourlyRecordPay(minutes: number, hourlyRate: number | null): number | null {
   return hourlyRate !== null ? Math.round((minutes / 60) * hourlyRate) : null;
 }
+
+// ─── 勤怠サマリー (computeSummary) の依存 helper。page.tsx から一言一句転記
+// (2026-09-05 切り出し)。★ 2026-08-31 に「週残業まるごと未払い」の実バグが
+// 出た箇所 (小原奈保子 2026-02-07 で ¥13,333 が 0円になっていた)。
+
+const JAPAN_HOLIDAYS = new Set([
+  // 2024
+  "20240101", "20240108", "20240211", "20240212", "20240223", "20240320",
+  "20240429", "20240503", "20240504", "20240505", "20240506",
+  "20240715", "20240811", "20240812", "20240916", "20240923", "20241014",
+  "20241103", "20241104", "20241123",
+  // 2025
+  "20250101", "20250113", "20250211", "20250224", "20250320",
+  "20250429", "20250503", "20250504", "20250505", "20250506",
+  "20250721", "20250811", "20250915", "20250923", "20251013",
+  "20251103", "20251123", "20251124",
+  // 2026
+  "20260101", "20260112", "20260211", "20260223", "20260320",
+  "20260429", "20260503", "20260504", "20260505", "20260506",
+  "20260720", "20260811", "20260921", "20260923", "20261012",
+  "20261103", "20261123",
+  // 2027
+  "20270101", "20270111", "20270211", "20270223", "20270321",
+  "20270429", "20270503", "20270504", "20270505",
+  "20270719", "20270811", "20270920", "20270923", "20271011",
+  "20271103", "20271123",
+]);
+
+/** YYYYMMDD 形式の日付が土日または祝日かどうかを判定 */
+export function isWeekendOrHoliday(dateStr: string): boolean {
+  const d = dateStr.replace(/\D/g, "");
+  if (d.length < 8) return false;
+  const date = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+  const dow = date.getDay();
+  return dow === 0 || dow === 6 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
+}
+
+export function parseDurationMinutes(str: string): number {
+  if (!str) return 0;
+  str = str.trim();
+  let result: number;
+  if (str.includes(":")) {
+    const [h, m] = str.split(":").map(Number);
+    result = (h || 0) * 60 + (m || 0);
+  } else {
+    result = parseInt(str, 10) || 0;
+  }
+  // 開始時刻＝終了時刻のとき24時間になる場合は0として扱う
+  return result >= 1440 ? 0 : result;
+}
+
+export function parseWorkHoursMinutes(s: string): number {
+  if (!s || !s.trim()) return 0;
+  s = s.trim();
+  let result: number;
+  if (s.includes(":")) {
+    const [h, m] = s.split(":").map(Number);
+    result = (h || 0) * 60 + (m || 0);
+  } else {
+    const n = parseFloat(s);
+    result = isNaN(n) ? 0 : Math.round(n * 60);
+  }
+  // 開始時刻＝終了時刻のとき24時間になる場合は0として扱う
+  return result >= 1440 ? 0 : result;
+}
+
+/** service_date 文字列から「日」の数値を抽出（YYYYMMDD / YYYY/MM/DD 等に対応） */
+export function extractDay(serviceDate: string): number {
+  const digits = serviceDate.replace(/\D/g, ""); // 数字のみ
+  if (digits.length >= 8) return parseInt(digits.slice(6, 8), 10);
+  return 0;
+}
+
+/** 訪問介護実績記録 (payroll_service_records 由来)。page.tsx の旧 ServiceRecord。 */
+export type VisitServiceRecord = {
+  id: string;
+  employee_number: string;
+  employee_name: string;
+  service_date: string;
+  calc_duration: string;
+  service_code: string;
+  office_number: string;
+  accompanied_visit: string;
+  client_number: string;
+  dispatch_start_time: string;
+  dispatch_end_time: string;
+};
+
+/**
+ * 事業所書式の出勤簿1日ぶん (payroll_office_attendance 由来)。page.tsx の旧 AttendanceRecord。
+ * ⚠ attendance-calc.ts の `AttendanceRecord` (居宅ケアマネ向け) とは別物。名前が同じでも中身が違う。
+ */
+export type OfficeAttendanceRecord = {
+  employee_number: string;
+  day: number;
+  work_note_1: string;
+  work_note_2: string;
+  work_note_3: string;
+  work_note_4: string;
+  work_note_5: string;
+  start_time_1: string;
+  work_hours: string;
+  overtime_daily: string;
+  overtime_weekly: string;
+  // ⚠ 実データには commute_km / business_km も入っているが、元の型定義には
+  //   無く unsafe cast で読んでいた (page.tsx 由来の既存の型安全性の穴。
+  //   ここでの切り出しでは挙動を変えないためそのまま踏襲する)。
+};
+
+/**
+ * 職員1名ぶんの勤怠サマリーを組み立てる。
+ * @param empRecs 対象職員の訪問実績 (呼出元で employee_number フィルタ済み)
+ * @param attDays 対象職員の出勤簿 (同上)
+ * @param ofRecs 対象職員の事業所書式レコード (同上)
+ */
+export function computeSummary(
+  empRecs: VisitServiceRecord[],
+  attDays: OfficeAttendanceRecord[],
+  ofRecs: OfficeFormRecord[],
+): AttendanceSummary {
+  // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
+  const helperDateSet = new Set(empRecs.map((r) => r.service_date));
+  const helperDays = helperDateSet.size;
+
+  // 出勤日数：実績の「日」+ 出勤簿の実勤務日の和集合
+  // 半有給・半欠勤等の半日事象がある日は 0.5 として計算
+  const helperDayNums = new Set(empRecs.map((r) => extractDay(r.service_date)).filter((d) => d > 0));
+  const attWorkDayNums = new Set(
+    attDays.filter((r) => r.start_time_1 && r.start_time_1.trim() !== "").map((r) => r.day),
+  );
+  const halfDayNums = new Set(
+    ofRecs
+      .filter((r) => r.item_name.startsWith("半"))
+      .map((r) => extractDay(r.item_date ?? ""))
+      .filter((d) => d > 0),
+  );
+  const allWorkedDays = new Set([...helperDayNums, ...attWorkDayNums]);
+  const workDays = [...allWorkedDays].reduce((s, d) => s + (halfDayNums.has(d) ? 0.5 : 1.0), 0);
+
+  // 有給・半有給・特休・HRDは事業所書式から取得
+  // record_type を問わず item_name で判定（数値スロット＝"km"で保存されるケースを吸収）
+  // 数値スロットの場合は numeric_value が件数、日付スロットの場合は1件として計算
+  const paidLeaveRecs = ofRecs.filter((r) => r.item_name.includes("有給") && !r.item_name.includes("半"));
+  const paidLeaveFromOf = paidLeaveRecs.reduce((s, r) =>
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+  const paidLeave = paidLeaveFromOf;
+  const halfLeave = ofRecs.filter((r) => r.item_name.includes("半有給")).reduce((s, r) =>
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+  const specialLeave = ofRecs.filter((r) => r.item_name.includes("特休")).reduce((s, r) =>
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+  const hrdCount = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) =>
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+  const hrdMinutes = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) => {
+    if (r.start_time && r.end_time) {
+      const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+      return s + Math.max(0, toMin(r.end_time) - toMin(r.start_time));
+    }
+    return s + Math.round((r.numeric_value ?? 0) * 60);
+  }, 0);
+  const meetingCount = ofRecs.filter((r) => r.item_name.includes("会議1")).reduce((s, r) =>
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+
+  const workHoursMin = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
+  // 日残業 + 週残業 (Format B)。どちらも無ければ work_hours - 8h (Format A)。
+  //
+  // 2026-08-31 監査での是正:
+  //   CSV 取込は 週残業/休日/法内残業 を保存しているのに、ここは
+  //   overtime_daily しか見ておらず select にも入れていなかった。
+  //   = 週残業が丸ごと未払い。実データで 小原奈保子 2026-02-07 に
+  //     overtime_weekly="08:00" が実在し、13,333円 が 0円 になっていた。
+  //   日残業(1日8h超) と 週残業(週40h超) は排他なので単純加算でよい。
+  const overtimeMinutes = attDays.reduce((s, r) => {
+    const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
+    const ow = parseWorkHoursMinutes(r.overtime_weekly ?? "");
+    if (od > 0 || ow > 0) return s + od + ow;
+    return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
+  }, 0);
+  const recordCount = empRecs.length;
+  const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
+  const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  const visitMinutesExcludingAccompanied = empRecs
+    .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
+    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  const commuteKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
+  const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
+  const weekendHolidayMinutes = empRecs
+    .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  const weekendHolidayAccompaniedMinutes = empRecs
+    .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
+    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+
+  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
+}

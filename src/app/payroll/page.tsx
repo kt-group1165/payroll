@@ -38,11 +38,15 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
+  parseDurationMinutes,
+  computeSummary,
   type OvertimeSetting,
   type SalarySettings,
   type AttendanceSummary,
   type HourlyPayroll,
   type MonthlyPayroll,
+  type VisitServiceRecord,
+  type OfficeAttendanceRecord,
   type OfficeFormRecord,
 } from "@/lib/payroll/payroll-calc";
 
@@ -52,68 +56,13 @@ import {
 const TENURE_BASE_YEAR  = 2026;
 const TENURE_BASE_MONTH = 3;
 
-// ─── 日本の祝日一覧（YYYYMMDD） ──────────────────────────────
-const JAPAN_HOLIDAYS = new Set([
-  // 2024
-  "20240101","20240108","20240211","20240212","20240223","20240320",
-  "20240429","20240503","20240504","20240505","20240506",
-  "20240715","20240811","20240812","20240916","20240923","20241014",
-  "20241103","20241104","20241123",
-  // 2025
-  "20250101","20250113","20250211","20250224","20250320",
-  "20250429","20250503","20250504","20250505","20250506",
-  "20250721","20250811","20250915","20250923","20251013",
-  "20251103","20251123","20251124",
-  // 2026
-  "20260101","20260112","20260211","20260223","20260320",
-  "20260429","20260503","20260504","20260505","20260506",
-  "20260720","20260811","20260921","20260923","20261012",
-  "20261103","20261123",
-  // 2027
-  "20270101","20270111","20270211","20270223","20270321",
-  "20270429","20270503","20270504","20270505",
-  "20270719","20270811","20270920","20270923","20271011",
-  "20271103","20271123",
-]);
-
-/** YYYYMMDD 形式の日付が土日または祝日かどうかを判定 */
-function isWeekendOrHoliday(dateStr: string): boolean {
-  const d = dateStr.replace(/\D/g, "");
-  if (d.length < 8) return false;
-  const date = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
-  const dow = date.getDay();
-  return dow === 0 || dow === 6 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
-}
-
 // ─── 型定義 ──────────────────────────────────────────────────
+// JAPAN_HOLIDAYS / isWeekendOrHoliday は src/lib/payroll/payroll-calc.ts からimport
+// (2026-09-05 切り出し)。ServiceRecord/AttendanceRecord は同ファイルの
+// VisitServiceRecord/OfficeAttendanceRecord の型エイリアス (既存の呼び出し箇所を変えないため)。
 
-type ServiceRecord = {
-  id: string;
-  employee_number: string;
-  employee_name: string;
-  service_date: string;
-  calc_duration: string;
-  service_code: string;
-  office_number: string;
-  accompanied_visit: string;
-  client_number: string;
-  dispatch_start_time: string;
-  dispatch_end_time: string;
-};
-
-type AttendanceRecord = {
-  employee_number: string;
-  day: number;
-  work_note_1: string;
-  work_note_2: string;
-  work_note_3: string;
-  work_note_4: string;
-  work_note_5: string;
-  start_time_1: string;
-  work_hours: string;
-  overtime_daily: string;
-  overtime_weekly: string;
-};
+type ServiceRecord = VisitServiceRecord;
+type AttendanceRecord = OfficeAttendanceRecord;
 
 // OfficeFormRecord は src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
 
@@ -146,36 +95,8 @@ type Employee = {
 // 月給者
 // ─── ユーティリティ ──────────────────────────────────────────
 
-// normalizeYM は src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
-
-function parseDurationMinutes(str: string): number {
-  if (!str) return 0;
-  str = str.trim();
-  let result: number;
-  if (str.includes(":")) {
-    const [h, m] = str.split(":").map(Number);
-    result = (h || 0) * 60 + (m || 0);
-  } else {
-    result = parseInt(str, 10) || 0;
-  }
-  // 開始時刻＝終了時刻のとき24時間になる場合は0として扱う
-  return result >= 1440 ? 0 : result;
-}
-
-function parseWorkHoursMinutes(s: string): number {
-  if (!s || !s.trim()) return 0;
-  s = s.trim();
-  let result: number;
-  if (s.includes(":")) {
-    const [h, m] = s.split(":").map(Number);
-    result = (h || 0) * 60 + (m || 0);
-  } else {
-    const n = parseFloat(s);
-    result = isNaN(n) ? 0 : Math.round(n * 60);
-  }
-  // 開始時刻＝終了時刻のとき24時間になる場合は0として扱う
-  return result >= 1440 ? 0 : result;
-}
+// normalizeYM / parseDurationMinutes / parseWorkHoursMinutes / extractDay は
+// src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
 
 function formatMinutes(min: number): string {
   const h = Math.floor(min / 60), m = min % 60;
@@ -206,13 +127,6 @@ function formatDate(d: string): string {
   const digits = d.replace(/\D/g, "");
   if (digits.length < 8) return d;
   return `${parseInt(digits.slice(4, 6), 10)}/${parseInt(digits.slice(6, 8), 10)}`;
-}
-
-/** service_date 文字列から「日」の数値を抽出（YYYYMMDD / YYYY/MM/DD 等に対応） */
-function extractDay(serviceDate: string): number {
-  const digits = serviceDate.replace(/\D/g, ""); // 数字のみ
-  if (digits.length >= 8) return parseInt(digits.slice(6, 8), 10);
-  return 0;
 }
 
 function downloadCsv(filename: string, rows: string[][]): void {
@@ -421,85 +335,11 @@ export default function PayrollPage() {
         ofByEmp.get(key)!.push(r);
       }
 
-      // 勤怠サマリー計算
-      function computeSummary(empNum: string, empRecs: ServiceRecord[]): AttendanceSummary {
-        const attDays = attByEmp.get(normEmp(empNum)) ?? [];
-        const ofRecs  = ofByEmp.get(normEmp(empNum)) ?? [];
-
-        // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
-        const helperDateSet = new Set(empRecs.map((r) => r.service_date));
-        const helperDays    = helperDateSet.size;
-
-        // 出勤日数：実績の「日」+ 出勤簿の実勤務日の和集合
-        // 半有給・半欠勤等の半日事象がある日は 0.5 として計算
-        const helperDayNums = new Set(empRecs.map((r) => extractDay(r.service_date)).filter((d) => d > 0));
-        const attWorkDayNums = new Set(
-          attDays.filter((r) => r.start_time_1 && r.start_time_1.trim() !== "").map((r) => r.day)
-        );
-        const halfDayNums = new Set(
-          ofRecs
-            .filter((r) => r.item_name.startsWith("半"))
-            .map((r) => extractDay(r.item_date ?? ""))
-            .filter((d) => d > 0)
-        );
-        const allWorkedDays = new Set([...helperDayNums, ...attWorkDayNums]);
-        const workDays = [...allWorkedDays].reduce((s, d) => s + (halfDayNums.has(d) ? 0.5 : 1.0), 0);
-
-        // 有給・半有給・特休・HRDは事業所書式から取得
-        // record_type を問わず item_name で判定（数値スロット＝"km"で保存されるケースを吸収）
-        // 数値スロットの場合は numeric_value が件数、日付スロットの場合は1件として計算
-        const paidLeaveRecs = ofRecs.filter((r) => r.item_name.includes("有給") && !r.item_name.includes("半"));
-        const paidLeaveFromOf = paidLeaveRecs.reduce((s, r) =>
-          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-        const paidLeave    = paidLeaveFromOf;
-        const halfLeave    = ofRecs.filter((r) => r.item_name.includes("半有給")).reduce((s, r) =>
-          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-        const specialLeave = ofRecs.filter((r) => r.item_name.includes("特休")).reduce((s, r) =>
-          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-        const hrdCount     = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) =>
-          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-        const hrdMinutes   = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) => {
-          if (r.start_time && r.end_time) {
-            const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
-            return s + Math.max(0, toMin(r.end_time) - toMin(r.start_time));
-          }
-          return s + Math.round((r.numeric_value ?? 0) * 60);
-        }, 0);
-        const meetingCount = ofRecs.filter((r) => r.item_name.includes("会議1")).reduce((s, r) =>
-          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-
-        const workHoursMin    = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
-        // 日残業 + 週残業 (Format B)。どちらも無ければ work_hours - 8h (Format A)。
-        //
-        // 2026-08-31 監査での是正:
-        //   CSV 取込は 週残業/休日/法内残業 を保存しているのに、ここは
-        //   overtime_daily しか見ておらず select にも入れていなかった。
-        //   = 週残業が丸ごと未払い。実データで 小原奈保子 2026-02-07 に
-        //     overtime_weekly="08:00" が実在し、13,333円 が 0円 になっていた。
-        //   日残業(1日8h超) と 週残業(週40h超) は排他なので単純加算でよい。
-        const overtimeMinutes = attDays.reduce((s, r) => {
-          const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
-          const ow = parseWorkHoursMinutes(r.overtime_weekly ?? "");
-          if (od > 0 || ow > 0) return s + od + ow;
-          return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
-        }, 0);
-        const recordCount      = empRecs.length;
-        const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
-        const visitMinutes     = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-        const visitMinutesExcludingAccompanied = empRecs
-          .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
-          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-        const commuteKmTotal   = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
-        const businessKmTotal  = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
-        const weekendHolidayMinutes = empRecs
-          .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
-          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-        const weekendHolidayAccompaniedMinutes = empRecs
-          .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
-          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-
-        return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
-      }
+      // 勤怠サマリー計算 (computeSummary) は
+      // src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)。
+      // 呼出側で対象職員ぶんの出勤簿・事業所書式レコードを絞ってから渡す (verbatim移植)。
+      const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[]): AttendanceSummary =>
+        computeSummary(empRecs, attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? []);
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
@@ -579,7 +419,7 @@ export default function PayrollPage() {
         const empRecs = recsByEmp.get(empNum) ?? [];
         const firstRec = empRecs[0];
         const sal = info ? salMap.get(info.empId) : null;
-        const empSummary = computeSummary(empNum, empRecs);
+        const empSummary = computeSummaryOf(empNum, empRecs);
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
         const hasSocialInsurance = info?.socialInsurance ?? false;
@@ -760,7 +600,11 @@ export default function PayrollPage() {
           );
           const resolvedTenure = resolveTenureAllowance(sal, computedTenure);
           const settingsWithTenure = sal ? { ...sal, tenure_allowance: resolvedTenure } : null;
-          const summary = computeSummary(String(e.employee_number), recsByEmp.get(String(e.employee_number)) ?? []);
+          // ⚠ 2026-09-05 是正: recsByEmp は normEmp() 済みキーで格納されているが、
+          //   ここだけ生の employee_number でlookupしていた (直下のofByEmp.get は
+          //   正しくnormEmp済み)。実データ(月給者355名)では先頭ゼロ付きemployee_numberが
+          //   0件のため現状の影響は無いが、揃えておく。
+          const summary = computeSummaryOf(String(e.employee_number), recsByEmp.get(normEmp(e.employee_number)) ?? []);
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
           const ofTravelKm = empOfRecs
