@@ -15,7 +15,13 @@ import { spawnSync } from "node:child_process";
 
 const FAST = process.argv.includes("--fast");
 
-type Check = { name: string; script: string; why: string; slow?: boolean };
+/**
+ * kind
+ *   "strict"   ★ 0 を目指す。壊れたら (=差が出たら) 落ちる
+ *   "baseline" ★ 既知の差を基準値として許容したうえでの PASS。0件PASSではない
+ * knownDiff — baseline のとき、現在許容している既知差の件数 (2026-09-05 時点)。
+ */
+type Check = { name: string; script: string; why: string; slow?: boolean; kind?: "strict" | "baseline"; knownDiff?: number };
 
 /** ★ 落ちたら金額に効くものだけ */
 const CHECKS: Check[] = [
@@ -24,8 +30,20 @@ const CHECKS: Check[] = [
   { name: "payroll-sample", script: "check:payroll-sample", why: "DB→集計→残業代 の経路 (手計算の期待値と突合)" },
   { name: "billing-issue", script: "check:billing-issue", why: "請求の発行・調整行ロジック (実データ + fixture)" },
   { name: "distance-calc", script: "check:distance-calc", why: "移動手当の距離・時間算出 calcDayRoute (API/DB非依存の純関数境界値)" },
-  { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)" },
+  { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)",
+    kind: "baseline", knownDiff: 9 }, // 実績0件月の基本給の扱い (既知・B-2y。user判断待ち)
 ];
+
+/**
+ * ★ 「サンプル未投入で分母0のためPASS(exit 0)」を、出力本文の文言から機械的に検出する。
+ * payroll-sample-check.mts は分母0のとき exit 0 のまま「合格とは言わない」と明示するが、
+ * この一覧の PASS/FAIL 表示だけでは判別できなかった (2026-09-05 claude-06 指摘)。
+ * kaigo-app 側の verify-jogen-kanri.mts / *-sample-verify.mts と同じ言い回しの規約に依存する。
+ */
+const NO_SAMPLE_MARKERS = ["サンプル未投入", "合格とは言わない", "合格でも不合格でもありません"];
+function looksLikeNoSampleSkip(out: string): boolean {
+  return NO_SAMPLE_MARKERS.some((m) => out.includes(m));
+}
 
 /** ★ この一覧が見ていないもの。緑でも安心しないための明示 */
 const NOT_COVERED = [
@@ -41,28 +59,48 @@ const NOT_COVERED = [
   "payroll-sample-check は サンプル未投入 (分母0) だと PASS 扱いで exit 0 になる — 「検証していない」と「合格」の区別は出力本文でしか分からない",
 ];
 
-const results: { name: string; ok: boolean; ms: number; skipped?: boolean; out?: string }[] = [];
+const results: { name: string; ok: boolean; ms: number; skipped?: boolean; out?: string; kind: "strict" | "baseline"; knownDiff?: number; noSample?: boolean }[] = [];
 for (const c of CHECKS) {
-  if (FAST && c.slow) { results.push({ name: c.name, ok: true, ms: 0, skipped: true }); continue; }
+  const kind = c.kind ?? "strict";
+  if (FAST && c.slow) { results.push({ name: c.name, ok: true, ms: 0, skipped: true, kind, knownDiff: c.knownDiff }); continue; }
   process.stdout.write(`\n${"=".repeat(70)}\n▶ ${c.name}  — ${c.why}\n${"=".repeat(70)}\n`);
   const t = Date.now();
   // stdio:"inherit" だと tail 等に通したとき子の出力だけ落ちる (kaigo-app check-all.mts と同じ教訓)。
   const r = spawnSync("npm", ["run", c.script], { shell: true, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   process.stdout.write(out);
-  results.push({ name: c.name, ok: r.status === 0, ms: Date.now() - t, out });
+  results.push({ name: c.name, ok: r.status === 0, ms: Date.now() - t, out, kind, knownDiff: c.knownDiff, noSample: looksLikeNoSampleSkip(out) });
 }
 
 console.log(`\n${"=".repeat(70)}\n結果\n${"=".repeat(70)}`);
 for (const r of results) {
-  const mark = r.skipped ? "－ skip" : r.ok ? "  PASS" : "★ FAIL";
-  console.log(`${mark}  ${r.name.padEnd(24)} ${r.skipped ? "" : `${(r.ms / 1000).toFixed(1)}s`}`);
+  const mark = r.skipped ? "－ skip" : r.noSample ? "？ 未検証" : r.ok ? "  PASS" : "★ FAIL";
+  const kindTag = r.kind === "baseline" ? " [基準値]" : "";
+  const noSampleTag = r.noSample ? " (サンプル未投入。合格ではない)" : "";
+  console.log(`${mark}  ${r.name.padEnd(24)} ${r.skipped ? "" : `${(r.ms / 1000).toFixed(1)}s`}${kindTag}${noSampleTag}`);
 }
 const failed = results.filter((r) => !r.ok);
 console.log("");
 console.log("⚠ この一覧が ★ 見ていないもの:");
 for (const n of NOT_COVERED) console.log(`   ${n}`);
 console.log("");
+
+const baselineChecks = results.filter((r) => r.kind === "baseline" && !r.skipped);
+if (baselineChecks.length) {
+  console.log("★ 基準値方式の検査 (既知の差を許容したうえでのPASS。0件PASSではない):");
+  for (const r of baselineChecks) {
+    console.log(`   ${r.name.padEnd(24)} ${r.knownDiff != null ? `既知 ${r.knownDiff} 件` : "(件数は出力本文を参照)"}`);
+  }
+  const summable = baselineChecks.filter((r) => r.knownDiff != null);
+  const total = summable.reduce((s, r) => s + (r.knownDiff ?? 0), 0);
+  console.log(`   → 合計 (同一単位=既知差件数で数えられるもののみ): ${total} 件 (${summable.map((r) => r.name).join(" + ")})`);
+  console.log("");
+}
+const noSampleChecks = results.filter((r) => r.noSample);
+if (noSampleChecks.length) {
+  console.log(`？ サンプル未投入で「合格」でも「不合格」でもない検査: ${noSampleChecks.map((r) => r.name).join("、")}`);
+  console.log("");
+}
 if (failed.length) {
   const bar = "=".repeat(70);
   for (const f of failed) {
