@@ -49,12 +49,18 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
+  computeSummary,
+  isWeekendOrHoliday,
+  parseWorkHoursMinutes,
+  extractDay,
   type SalarySettings,
   type OvertimeSetting,
   type MonthlyPayroll,
   type HourlyPayroll,
   type AttendanceSummary,
   type OfficeFormRecord,
+  type VisitServiceRecord,
+  type OfficeAttendanceRecord,
 } from "../src/lib/payroll/payroll-calc";
 
 let pass = 0;
@@ -353,6 +359,114 @@ eq("出張費(時給): 5km×200円/km", hourlyBusinessTripFeeAmount(5, 200), 100
 eq("実績1件の支給額: 60分×時給2000円 = 2000円", hourlyRecordPay(60, 2000), 2000);
 eq("実績1件の支給額: 30分×時給2000円 = 1000円 (端数切り上げ丸め)", hourlyRecordPay(30, 2000), 1000);
 eq("★ 実績1件の支給額: 単価が引けない(null)場合は null (未マッピング扱い)", hourlyRecordPay(60, null), null);
+
+// ── 勤怠サマリー (computeSummary) (2026-09-05 追加) ───────────────────────
+// 2026-08-31に「週残業まるごと未払い」の実バグが出た箇所 (小原奈保子2026-02-07 ¥13,333)。
+const vRec = (o: Partial<VisitServiceRecord>): VisitServiceRecord =>
+  ({ id: "1", employee_number: "1", employee_name: "テスト", service_date: "20260601",
+    calc_duration: "1:00", service_code: "111111", office_number: "1",
+    accompanied_visit: "", client_number: "1", dispatch_start_time: "09:00", dispatch_end_time: "10:00", ...o });
+const aRec = (o: Partial<OfficeAttendanceRecord>): OfficeAttendanceRecord =>
+  ({ employee_number: "1", day: 1, work_note_1: "", work_note_2: "", work_note_3: "",
+    work_note_4: "", work_note_5: "", start_time_1: "09:00", work_hours: "8:00",
+    overtime_daily: "", overtime_weekly: "", ...o });
+const oRec = (o: Partial<OfficeFormRecord>): OfficeFormRecord =>
+  ({ employee_number: "1", record_type: "date", item_name: "", item_date: null,
+    numeric_value: null, start_time: null, end_time: null, year_month: null,
+    child_name: null, amount: null, ...o });
+
+const empty = computeSummary([], [], []);
+eq("空のrecsは全部0", empty, {
+  workDays: 0, helperDays: 0, paidLeave: 0, halfLeave: 0, specialLeave: 0, workHoursMin: 0,
+  overtimeMinutes: 0, recordCount: 0, accompaniedCount: 0, visitMinutes: 0,
+  visitMinutesExcludingAccompanied: 0, hrdCount: 0, hrdMinutes: 0, meetingCount: 0,
+  commuteKmTotal: 0, businessKmTotal: 0, weekendHolidayMinutes: 0, weekendHolidayAccompaniedMinutes: 0,
+});
+eq("helperDays: 同じ日付の複数訪問は1日として数える",
+  computeSummary([vRec({ service_date: "20260601" }), vRec({ id: "2", service_date: "20260601" }), vRec({ id: "3", service_date: "20260602" })], [], []).helperDays, 2);
+
+eq("★ workDays: 半有給(半日)がある日は0.5換算 (通常1日+半日1日=1.5)",
+  computeSummary(
+    [vRec({ service_date: "20260601" }), vRec({ id: "2", service_date: "20260602" })],
+    [], [oRec({ item_name: "半有給", item_date: "20260602" })],
+  ).workDays, 1.5);
+eq("★ workDays: helper日と出勤簿日の和集合 (重複しない日は加算)",
+  computeSummary([vRec({ service_date: "20260601" })], [aRec({ day: 2, start_time_1: "09:00" })], []).workDays, 2);
+eq("workDays: 出勤簿のstart_time_1が空の日はカウントしない",
+  computeSummary([], [aRec({ day: 1, start_time_1: "" })], []).workDays, 0);
+
+eq("有給(date型): 1件=1日", computeSummary([], [], [oRec({ item_name: "有給" })]).paidLeave, 1);
+eq("★ 有給(km型): numeric_valueを丸めて日数扱い (2.4→2)",
+  computeSummary([], [], [oRec({ item_name: "有給", record_type: "km", numeric_value: 2.4 })]).paidLeave, 2);
+eq("★ 「半有給」は有給(paidLeave)には含めない (半排除フィルタ)",
+  computeSummary([], [], [oRec({ item_name: "半有給" })]).paidLeave, 0);
+eq("「半有給」はhalfLeaveとして数える", computeSummary([], [], [oRec({ item_name: "半有給" })]).halfLeave, 1);
+eq("特休(date型): 1件", computeSummary([], [], [oRec({ item_name: "特休" })]).specialLeave, 1);
+
+eq("★ HRD時間: start/end timeがあれば差分(9:00-11:30=150分)",
+  computeSummary([], [], [oRec({ item_name: "HRD研修", start_time: "09:00", end_time: "11:30" })]).hrdMinutes, 150);
+eq("★ HRD時間: start/endが無ければ numeric_value×60分 (2.5h→150分)",
+  computeSummary([], [], [oRec({ item_name: "HRD研修", record_type: "km", numeric_value: 2.5 })]).hrdMinutes, 150);
+eq("hrdCount: km型は丸めた値を件数として数える (round(2.5)=3)",
+  computeSummary([], [], [oRec({ item_name: "HRD研修", record_type: "km", numeric_value: 2.5 })]).hrdCount, 3);
+eq("meetingCount: date型1件+km型1件(round(1)=1) = 2",
+  computeSummary([], [], [oRec({ item_name: "会議1" }), oRec({ item_name: "会議1", record_type: "km", numeric_value: 1 })]).meetingCount, 2);
+
+eq("残業: 日残業のみ(1h、週残業0) → 60分",
+  computeSummary([], [aRec({ overtime_daily: "1:00", overtime_weekly: "", work_hours: "9:00" })], []).overtimeMinutes, 60);
+eq("★★ 残業: 週残業のみ(8h、日残業0) → 480分 (2026-08-31に丸ごと未払いだった型そのもの)",
+  computeSummary([], [aRec({ overtime_daily: "", overtime_weekly: "8:00", work_hours: "8:00" })], []).overtimeMinutes, 480);
+eq("残業: 日残業(1h)+週残業(8h) → 540分 (単純加算)",
+  computeSummary([], [aRec({ overtime_daily: "1:00", overtime_weekly: "8:00", work_hours: "9:00" })], []).overtimeMinutes, 540);
+eq("残業: 日・週とも無ければ work_hours-8h (9h-8h=1h=60分)",
+  computeSummary([], [aRec({ work_hours: "9:00" })], []).overtimeMinutes, 60);
+eq("残業: フォールバックはmax(0,...)で負にならない (7h-8h→0)",
+  computeSummary([], [aRec({ work_hours: "7:00" })], []).overtimeMinutes, 0);
+
+eq("visitMinutes: 同伴あり/なし両方を合算", computeSummary(
+  [vRec({ calc_duration: "1:00", accompanied_visit: "" }), vRec({ id: "2", calc_duration: "0:30", accompanied_visit: "同伴A" })], [], [],
+).visitMinutes, 90);
+eq("visitMinutesExcludingAccompanied: 同伴ありは除外", computeSummary(
+  [vRec({ calc_duration: "1:00", accompanied_visit: "" }), vRec({ id: "2", calc_duration: "0:30", accompanied_visit: "同伴A" })], [], [],
+).visitMinutesExcludingAccompanied, 60);
+eq("accompaniedCount: 同伴ありの件数", computeSummary(
+  [vRec({ accompanied_visit: "" }), vRec({ id: "2", accompanied_visit: "同伴A" })], [], [],
+).accompaniedCount, 1);
+eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (2026-06-06は土曜)",
+  computeSummary([vRec({ service_date: "20260606", calc_duration: "1:00", accompanied_visit: "" })], [], []).weekendHolidayMinutes, 60);
+eq("weekendHolidayMinutes: 平日は集計しない (2026-06-01は月曜)",
+  computeSummary([vRec({ service_date: "20260601", calc_duration: "1:00" })], [], []).weekendHolidayMinutes, 0);
+eq("★ weekendHolidayAccompaniedMinutes: 休日かつ同伴ありは別枠で集計",
+  computeSummary([vRec({ service_date: "20260606", calc_duration: "1:00", accompanied_visit: "同伴A" })], [], []).weekendHolidayAccompaniedMinutes, 60);
+eq("commuteKmTotal: 出勤簿のcommute_km(unsafe cast経由)を合算",
+  computeSummary([], [{ ...aRec({}), commute_km: 5 } as OfficeAttendanceRecord], []).commuteKmTotal, 5);
+eq("businessKmTotal: 出勤簿のbusiness_km(unsafe cast経由)を合算",
+  computeSummary([], [{ ...aRec({}), business_km: 3 } as OfficeAttendanceRecord], []).businessKmTotal, 3);
+
+console.log("\n══ 負のコントロール: 週残業を落とす実装を再現 (2026-08-31の実バグそのもの) ══");
+{
+  // ★ 2026-08-31以前の壊れた実装をそのまま再現: overtime_weeklyを一切見ない
+  function computeOvertimeMinutesBuggy(attDays: OfficeAttendanceRecord[]): number {
+    return attDays.reduce((s, r) => {
+      const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
+      if (od > 0) return s + od; // ★ overtime_weekly を見ていない (旧バグ)
+      return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
+    }, 0);
+  }
+  const buggyDays = [aRec({ overtime_daily: "", overtime_weekly: "8:00", work_hours: "8:00" })];
+  const buggyResult = computeOvertimeMinutesBuggy(buggyDays);
+  const realResult = computeSummary([], buggyDays, []).overtimeMinutes;
+  eq("★★ 壊れた実装(週残業無視)と正しい実装は異なる値を返す (=このテストは差を検出できる)",
+    buggyResult !== realResult, true);
+  console.log(`  (参考: 壊れた実装=${buggyResult}分 / 正しい実装=${realResult}分)`);
+}
+
+// isWeekendOrHoliday / extractDay 単体の境界値 (computeSummary内部で使われる)
+eq("isWeekendOrHoliday: 土曜(2026-06-06)はtrue", isWeekendOrHoliday("20260606"), true);
+eq("isWeekendOrHoliday: 平日(2026-06-01・月曜)はfalse", isWeekendOrHoliday("20260601"), false);
+eq("★ isWeekendOrHoliday: 祝日(2026-06-... 該当なしのため2026-07-20海の日)はtrue", isWeekendOrHoliday("20260720"), true);
+eq("extractDay: YYYYMMDDから日を抽出", extractDay("20260615"), 15);
+eq("extractDay: 8桁未満は0", extractDay("2026"), 0);
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
