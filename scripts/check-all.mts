@@ -19,7 +19,7 @@ type Check = { name: string; script: string; why: string; slow?: boolean };
 
 /** ★ 落ちたら金額に効くものだけ */
 const CHECKS: Check[] = [
-  { name: "overtime-boundary", script: "check:overtime-boundary", why: "労基法37条の割増率 (純関数・境界値)" },
+  { name: "overtime-boundary", script: "check:overtime-boundary", why: "労基法37条の割増率 + calcMonthlySummary の月次集計 (純関数・境界値)" },
   { name: "payroll-calc-boundary", script: "check:payroll-calc-boundary", why: "訪問介護の給与計算 (月給・時給・残業・勤続・移動手当) の境界値" },
   { name: "payroll-sample", script: "check:payroll-sample", why: "DB→集計→残業代 の経路 (手計算の期待値と突合)" },
   { name: "billing-issue", script: "check:billing-issue", why: "請求の発行・調整行ロジック (実データ + fixture)" },
@@ -28,7 +28,9 @@ const CHECKS: Check[] = [
 
 /** ★ この一覧が見ていないもの。緑でも安心しないための明示 */
 const NOT_COVERED = [
-  "訪問介護の勤怠集計 (AttendanceSummaryの元になる出勤簿集計) — attendance-calc-parity.mts (order-app側) が3app横断で見る",
+  "AttendanceSummaryの元になる出勤簿集計の日次・週次ロジック (calcDaily/calcDailyListWithWeekly) と" +
+    "calcMonthlySummaryの集計ロジック (monthFilter/total_paid_leave_days) は overtime-boundaryで境界値検証済み(2026-09-05)。" +
+    "3app(kaigo/payroll/order)間で実装が食い違わないかは attendance-calc-parity.mts (order-app側) が実データで見る",
   "移動手当の距離・時間算出 (Google Distance Matrix API 経由) — 実行していない",
   "kyotaku-calc.ts (居宅給与) の DB からの取り出し (SWR hook) と画面表示 — 純関数の入出力だけを見ている",
   "kyotaku-calc.ts の 地域区分(regional rates) — 受け取るが給与計算では使わない",

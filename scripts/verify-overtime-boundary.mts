@@ -8,6 +8,7 @@
 import {
   calcDaily,
   calcDailyListWithWeekly,
+  calcMonthlySummary,
   extendedMonthRange,
 } from "../src/lib/payroll/attendance-calc";
 import { calcOvertimePayBreakdown } from "../src/lib/payroll/overtime-pay-calc";
@@ -194,6 +195,46 @@ const halfLeave = calcDailyListWithWeekly(
   [rec("2026-06-08", { start_time: "09:00", end_time: "13:00", break_minutes: 0, paid_leave_type: "half" })], 0);
 eq("半有給の所定は 4h", halfLeave[0].scheduled_minutes, 4 * 60);
 
+// ── calcMonthlySummary (2026-09-05 追加) ─────────────────────────────────
+// ⚠ この関数自体は payroll-sample-check.mts でも実データ突合しているが、
+//   **サンプル未投入だと分母0でスキップされる** (この環境では現に分母0)。
+//   calcMonthlySummary の中身は calcDailyListWithWeekly (境界値は上でテスト済み) の
+//   結果を「月合計」に潰すだけの薄いラッパーで、そのラップ自体のロジックは
+//   ①monthFilter (対象月だけ合計に含める。週計算には拡張範囲の日も使う) と
+//   ②total_paid_leave_days の加算 の2つだけ。ここが今まで純関数の境界値では
+//   未検証だった (= AttendanceSummary が「合計されている」ことの検証)。
+// 実際の呼び出し元 (use-kyotaku-summary.ts) は extendedMonthRange で月またぎの
+// 週を含む範囲を取得し、calcMonthlySummary(records, weekStart, month) に渡している
+// (=下のケースは production の実際の呼び出しパターンそのまま)。
+const monthRec = (d: string, o: Record<string, unknown> = {}) =>
+  ({ work_date: d, start_time: "09:00", end_time: "18:00", break_minutes: 60,
+    is_legal_holiday: false, paid_leave_type: null, substitute_for_date: null, ...o }) as never;
+
+// 5/31(日) + 6/1〜6/5(月〜金) の6日、すべて8h勤務。同じ週(日曜起算)にまたがる。
+// 週計算: 5/31から累積し、6/5で 2400分(40h)を超えて 480分(8h)が weekly_overtime になる。
+const extendedRecords = ["2026-05-31", "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"].map((d) => monthRec(d));
+const monthSum = calcMonthlySummary(extendedRecords, 0, "2026-06");
+eq("★ monthFilter: 5/31 (前月) は total_work から除外される (6日ぶんの480分×5=2400分)",
+  monthSum.total_work, 480 * 5);
+eq("★ monthFilter: だが 5/31 は週の累積計算には使われ、6/5 に週次残業480分(8h)が乗る",
+  monthSum.total_weekly_overtime, 480);
+eq("日次残業は無し (各日ちょうど8h)", monthSum.total_daily_overtime, 0);
+
+// total_paid_leave_days: full=+1 / half=+0.5 の加算
+const leaveRecords = [
+  monthRec("2026-06-01", { start_time: null, end_time: null, paid_leave_type: "full" }),
+  monthRec("2026-06-02", { start_time: "09:00", end_time: "13:00", break_minutes: 0, paid_leave_type: "half" }),
+  monthRec("2026-06-03"), // 通常勤務 (加算されない)
+];
+const leaveSum = calcMonthlySummary(leaveRecords, 0, "2026-06");
+eq("★ total_paid_leave_days = full(1) + half(0.5) + 通常(0) = 1.5",
+  leaveSum.total_paid_leave_days, 1.5);
+
+// monthFilter が無い (undefined) ときは records 全部を合計する (呼出元の一部が使う形)
+const noFilterSum = calcMonthlySummary(extendedRecords, 0);
+eq("★ monthFilter 省略時は 6日分すべて total_work に入る (480*6)",
+  noFilterSum.total_work, 480 * 6);
+
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
 console.log("");
@@ -202,4 +243,5 @@ console.log("   ・欠勤分数を **金額に変える側** (呼出元)。月�
 console.log("     (calcDailyListWithWeekly は salary_type を一切見ない)");
 console.log("   ・「残業時間も欠勤の補填源にする」が賃金全額払いの原則に照らして妥当か (運用ポリシー)");
 console.log("   ・日曜を法定休日とすること自体の妥当性 (就業規則。2026-07-31 user 確定として実装)");
-console.log("   ・実データでの妥当性 (出勤簿を持つ職員は実測 10 名)");
+console.log("   ・実データでの妥当性 (出勤簿を持つ職員は実測 10 名。payroll-sample-check.mts は");
+console.log("     サンプル未投入だとスキップされるため、この環境では実データ突合が動いていない)");
