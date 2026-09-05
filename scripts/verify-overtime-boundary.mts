@@ -243,5 +243,5 @@ console.log("   ・欠勤分数を **金額に変える側** (呼出元)。月�
 console.log("     (calcDailyListWithWeekly は salary_type を一切見ない)");
 console.log("   ・「残業時間も欠勤の補填源にする」が賃金全額払いの原則に照らして妥当か (運用ポリシー)");
 console.log("   ・日曜を法定休日とすること自体の妥当性 (就業規則。2026-07-31 user 確定として実装)");
-console.log("   ・実データでの妥当性 (出勤簿を持つ職員は実測 10 名。payroll-sample-check.mts は");
-console.log("     サンプル未投入だとスキップされるため、この環境では実データ突合が動いていない)");
+console.log("   ・実データでの妥当性 (出勤簿を持つ職員は実測 10 名。実データ突合は別途");
+console.log("     payroll-sample-check.mts が担当するが、この環境ではその前提データが無く動いていない)");

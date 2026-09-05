@@ -56,7 +56,10 @@ const NOT_COVERED = [
   "kyotaku-calc.ts (居宅給与) の DB からの取り出し (SWR hook) と画面表示 — 純関数の入出力だけを見ている",
   "kyotaku-calc.ts の 地域区分(regional rates) — 受け取るが給与計算では使わない",
   "kaigo-app / order-app の集計 — 別アプリ。各app側で回す",
-  "payroll-sample-check は サンプル未投入 (分母0) だと PASS 扱いで exit 0 になる — 「検証していない」と「合格」の区別は出力本文でしか分からない",
+  "payroll-sample-check / overtime-boundary は サンプル未投入 (分母0) だと exit 0 になる — " +
+    "結果表では「？ 未検証」として区別している (2026-09-05 対応済)。ただし出力本文の特定マーカー文言に" +
+    "依存した検出のため、別スクリプトが同じ文言を無関係な文脈で出すと誤検出しうる " +
+    "(2026-09-05 に verify-overtime-boundary.mts の disclaimer 文で実際に誤検出したのを是正済み)",
 ];
 
 const results: { name: string; ok: boolean; ms: number; skipped?: boolean; out?: string; kind: "strict" | "baseline"; knownDiff?: number; noSample?: boolean }[] = [];
