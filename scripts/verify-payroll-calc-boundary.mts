@@ -42,6 +42,13 @@ import {
   normalizeYM,
   computeChildcareAllowance,
   computeMeetingFee,
+  treatmentSubsidyAmount,
+  cancelAllowanceAmount,
+  paidLeaveAllowanceAmount,
+  communicationFeeAmount,
+  hourlyCommuteFeeAmount,
+  hourlyBusinessTripFeeAmount,
+  hourlyRecordPay,
   type SalarySettings,
   type OvertimeSetting,
   type MonthlyPayroll,
@@ -321,6 +328,31 @@ eq("★ 会議費: record_type=km は numeric_value を回数として丸めて�
   computeMeetingFee([mRec("会議1", "km", 2.6)], 1000), 3000);
 eq("会議費: 複数レコード合算 (1回+1回)×単価1000円",
   computeMeetingFee([mRec("会議1"), mRec("会議1")], 1000), 2000);
+
+// ── 時給者の各種手当 (2026-09-05 追加) ───────────────────────────────────
+eq("処遇改善支援費: 訪問介護+社保加入+当月実績あり → 事業所単価",
+  treatmentSubsidyAmount(true, true, 60, 5000, 3000), 5000);
+eq("★ 処遇改善支援費: 当月実績なし(0分) → 給与設定の額 (事業所単価は使わない)",
+  treatmentSubsidyAmount(true, true, 0, 5000, 3000), 3000);
+eq("処遇改善支援費: 訪問介護でない → 給与設定の額", treatmentSubsidyAmount(false, true, 60, 5000, 3000), 3000);
+eq("処遇改善支援費: 社保未加入 → 給与設定の額", treatmentSubsidyAmount(true, false, 60, 5000, 3000), 3000);
+
+eq("キャンセル手当: 3件×500円", cancelAllowanceAmount(3, 500), 1500);
+eq("キャンセル手当: 0件は0円", cancelAllowanceAmount(0, 500), 0);
+eq("有給手当: 2.5日×1000円 (半休を含む端数)", paidLeaveAllowanceAmount(2.5, 1000), 2500);
+
+eq("通信手当: 社保加入なら0円固定 (時間に関わらず)", communicationFeeAmount(true, 999999), 0);
+eq("通信手当: 未加入・0分は0円", communicationFeeAmount(false, 0), 0);
+eq("★ 通信手当: 未加入・ちょうど50h(3000分) は境界含まず500円", communicationFeeAmount(false, 3000), 500);
+eq("★ 通信手当: 未加入・50h+1分(3001分) は1000円", communicationFeeAmount(false, 3001), 1000);
+eq("通信手当: 未加入・1分でも勤務あれば500円", communicationFeeAmount(false, 1), 500);
+
+eq("通勤費(時給): 10km×100円/km", hourlyCommuteFeeAmount(10, 100), 1000);
+eq("出張費(時給): 5km×200円/km", hourlyBusinessTripFeeAmount(5, 200), 1000);
+
+eq("実績1件の支給額: 60分×時給2000円 = 2000円", hourlyRecordPay(60, 2000), 2000);
+eq("実績1件の支給額: 30分×時給2000円 = 1000円 (端数切り上げ丸め)", hourlyRecordPay(30, 2000), 1000);
+eq("★ 実績1件の支給額: 単価が引けない(null)場合は null (未マッピング扱い)", hourlyRecordPay(60, null), null);
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }

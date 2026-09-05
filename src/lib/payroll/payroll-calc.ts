@@ -485,3 +485,56 @@ export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: 
     .reduce((s, r) => s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
   return Math.round(meetingCount * meetingUnitPrice);
 }
+
+// ─── 時給者の各種手当 (page.tsx から一言一句転記。2026-09-05 切り出し) ────
+
+/**
+ * 処遇改善支援費 (訪問介護・社保加入・当月実績ありなら事業所単価、それ以外は給与設定の額)。
+ * ⚠ 手当というより「どちらの単価を採用するか」の選択ロジック。
+ */
+export function treatmentSubsidyAmount(
+  isVisitCare: boolean,
+  hasSocialInsurance: boolean,
+  visitMinutes: number,
+  officeSubsidyAmount: number,
+  salaryTreatmentSubsidy: number,
+): number {
+  return isVisitCare && hasSocialInsurance && visitMinutes > 0 ? officeSubsidyAmount : salaryTreatmentSubsidy;
+}
+
+/** キャンセル手当 (時給者) */
+export function cancelAllowanceAmount(cancelCount: number, cancelUnitPrice: number): number {
+  return Math.round(cancelCount * cancelUnitPrice);
+}
+
+/** 有給手当 (時給者) */
+export function paidLeaveAllowanceAmount(paidLeaveDays: number, paidLeaveUnitPrice: number): number {
+  return Math.round(paidLeaveDays * paidLeaveUnitPrice);
+}
+
+/**
+ * 通信手当 (時給者・社保未加入のみ変動支給)。
+ * 社保加入者は0円固定。未加入者は当月訪問時間で 50h超=1000円 / 0〜50h=500円 / 0h=0円。
+ */
+export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes: number): number {
+  if (hasSocialInsurance) return 0;
+  const visitHours = visitMinutes / 60;
+  if (visitHours > 50) return 1000;
+  if (visitHours > 0) return 500;
+  return 0;
+}
+
+/** 通勤費 (時給者) */
+export function hourlyCommuteFeeAmount(commuteKmTotal: number, commuteUnitPrice: number): number {
+  return Math.round(commuteKmTotal * commuteUnitPrice);
+}
+
+/** 出張費 (時給者) */
+export function hourlyBusinessTripFeeAmount(businessKmTotal: number, travelUnitPrice: number): number {
+  return Math.round(businessKmTotal * travelUnitPrice);
+}
+
+/** 実績1件ぶんの支給額 (時給 × 時間)。単価が引けない (hourlyRate=null) 明細は null (未マッピング扱い) */
+export function hourlyRecordPay(minutes: number, hourlyRate: number | null): number | null {
+  return hourlyRate !== null ? Math.round((minutes / 60) * hourlyRate) : null;
+}

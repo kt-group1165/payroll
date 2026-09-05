@@ -31,6 +31,13 @@ import {
   normalizeYM,
   computeChildcareAllowance,
   computeMeetingFee,
+  treatmentSubsidyAmount,
+  cancelAllowanceAmount,
+  paidLeaveAllowanceAmount,
+  communicationFeeAmount,
+  hourlyCommuteFeeAmount,
+  hourlyBusinessTripFeeAmount,
+  hourlyRecordPay,
   type OvertimeSetting,
   type SalarySettings,
   type AttendanceSummary,
@@ -576,24 +583,19 @@ export default function PayrollPage() {
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
         const hasSocialInsurance = info?.socialInsurance ?? false;
-        const treatmentSubsidy = (isVisitCare && hasSocialInsurance && empSummary.visitMinutes > 0)
-          ? (empOffice?.treatment_subsidy_amount ?? 0)
-          : (sal?.treatment_subsidy ?? 0);
+        const treatmentSubsidy = treatmentSubsidyAmount(
+          isVisitCare, hasSocialInsurance, empSummary.visitMinutes,
+          empOffice?.treatment_subsidy_amount ?? 0, sal?.treatment_subsidy ?? 0,
+        );
         const cancelCount = empRecs.filter((r) => {
           const catId = mappingMap.get(r.service_code) ?? null;
           return catId ? categoryMap.get(catId) === "キャンセル" : false;
         }).length;
-        const cancelAllowance = Math.round(cancelCount * (empOffice?.cancel_unit_price ?? 0));
-        const paidLeaveAllowance = Math.round(empSummary.paidLeave * (info?.paidLeaveUnitPrice ?? 0));
-        // 通信手当：社保未加入者のみ変動支給（50時間超:1000円、0〜50時間:500円）
-        let communicationFee = 0;
-        if (!(info?.socialInsurance ?? false)) {
-          const visitHours = empSummary.visitMinutes / 60;
-          if (visitHours > 50) communicationFee = 1000;
-          else if (visitHours > 0) communicationFee = 500;
-        }
-        const commuteFee = Math.round(empSummary.commuteKmTotal * (empOffice?.commute_unit_price ?? 0));
-        const businessTripFee = Math.round(empSummary.businessKmTotal * (empOffice?.travel_unit_price ?? 0));
+        const cancelAllowance = cancelAllowanceAmount(cancelCount, empOffice?.cancel_unit_price ?? 0);
+        const paidLeaveAllowance = paidLeaveAllowanceAmount(empSummary.paidLeave, info?.paidLeaveUnitPrice ?? 0);
+        const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes);
+        const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
+        const businessTripFee = hourlyBusinessTripFeeAmount(empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
         const meetingFee = computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""));
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
@@ -632,7 +634,7 @@ export default function PayrollPage() {
         const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
         const officeId   = officeMap.get(rec.office_number) ?? null;
         const hourlyRate = categoryId && officeId ? (rateMap.get(`${officeId}:${categoryId}`) ?? null) : null;
-        const pay        = hourlyRate !== null ? Math.round((minutes / 60) * hourlyRate) : null;
+        const pay        = hourlyRecordPay(minutes, hourlyRate);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
