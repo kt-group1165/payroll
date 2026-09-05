@@ -23,6 +23,7 @@ const CHECKS: Check[] = [
   { name: "payroll-calc-boundary", script: "check:payroll-calc-boundary", why: "訪問介護の給与計算 (月給・時給・残業・勤続・移動手当) の境界値" },
   { name: "payroll-sample", script: "check:payroll-sample", why: "DB→集計→残業代 の経路 (手計算の期待値と突合)" },
   { name: "billing-issue", script: "check:billing-issue", why: "請求の発行・調整行ロジック (実データ + fixture)" },
+  { name: "distance-calc", script: "check:distance-calc", why: "移動手当の距離・時間算出 calcDayRoute (API/DB非依存の純関数境界値)" },
   { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)" },
 ];
 
@@ -31,7 +32,9 @@ const NOT_COVERED = [
   "AttendanceSummaryの元になる出勤簿集計の日次・週次ロジック (calcDaily/calcDailyListWithWeekly) と" +
     "calcMonthlySummaryの集計ロジック (monthFilter/total_paid_leave_days) は overtime-boundaryで境界値検証済み(2026-09-05)。" +
     "3app(kaigo/payroll/order)間で実装が食い違わないかは attendance-calc-parity.mts (order-app側) が実データで見る",
-  "移動手当の距離・時間算出 (Google Distance Matrix API 経由) — 実行していない",
+  "calcDayRoute自体 (通勤/移動の区別・2時間ギャップ除外・15分控除) は distance-calcで境界値検証済み(2026-09-05)。" +
+    "ただしdistMapの中身 (Google Distance Matrix API / payroll_distance_cacheの値そのもの) と" +
+    "呼出元がdistMapをどう組み立てるかは未検証",
   "kyotaku-calc.ts (居宅給与) の DB からの取り出し (SWR hook) と画面表示 — 純関数の入出力だけを見ている",
   "kyotaku-calc.ts の 地域区分(regional rates) — 受け取るが給与計算では使わない",
   "kaigo-app / order-app の集計 — 別アプリ。各app側で回す",

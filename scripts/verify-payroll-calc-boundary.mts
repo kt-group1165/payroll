@@ -11,7 +11,12 @@
 //
 // ⚠ この検証が証明していないこと (VERIFICATION_RULES 3-1):
 //   - 勤怠集計 (AttendanceSummary の元になる出勤簿の集計) 自体の正しさ
-//   - 移動手当のうち 距離・時間の算出 (calcDayRoute / Google Distance Matrix 経由)
+//     → calcDaily/calcDailyListWithWeekly/calcMonthlySummary は
+//       verify-overtime-boundary.mts で境界値検証済み (2026-09-05)
+//   - 移動手当のうち 距離・時間の算出 (calcDayRoute)
+//     → calcDayRoute自体は verify-distance-calculator.mts で境界値検証済み (2026-09-05)。
+//       ただし distMap の中身 (Google Distance Matrix API / payroll_distance_cache の
+//       値そのもの) は未検証
 //   - 実データでの妥当性
 import {
   hasTenureQualification,
@@ -268,5 +273,6 @@ eq("出張費: 距離1000m(調整後)×単価100円/km = 100円",
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
-console.log("\n⚠ この検証が証明していないこと: 出勤簿の集計 (AttendanceSummary の元) /");
-console.log("   移動手当の距離・時間算出 (calcDayRoute 経由) / 実データでの妥当性。");
+console.log("\n⚠ この検証が証明していないこと: 出勤簿の集計・移動手当の距離算出自体は");
+console.log("   verify-overtime-boundary.mts / verify-distance-calculator.mts で別途検証済み。");
+console.log("   ここで証明していないのは distMap の中身の妥当性と実データでの妥当性。");

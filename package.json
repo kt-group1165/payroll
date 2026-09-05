@@ -12,6 +12,7 @@
     "check:payroll-calc-boundary": "tsx scripts/verify-payroll-calc-boundary.mts",
     "check:payroll-sample": "tsx scripts/payroll-sample-check.mts",
     "check:billing-issue": "tsx scripts/billing-issue-check.mts",
+    "check:distance-calc": "tsx scripts/verify-distance-calculator.mts",
     "check:all": "tsx scripts/check-all.mts"
   },
   "dependencies": {
