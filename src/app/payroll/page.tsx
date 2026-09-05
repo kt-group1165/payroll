@@ -28,11 +28,15 @@ import {
   travelAllowanceAmount,
   adjustedCommuteDistanceM,
   businessTripFeeAmount,
+  normalizeYM,
+  computeChildcareAllowance,
+  computeMeetingFee,
   type OvertimeSetting,
   type SalarySettings,
   type AttendanceSummary,
   type HourlyPayroll,
   type MonthlyPayroll,
+  type OfficeFormRecord,
 } from "@/lib/payroll/payroll-calc";
 
 // ─── 実勤続月数の基準月 ─────────────────────────────────────
@@ -104,18 +108,7 @@ type AttendanceRecord = {
   overtime_weekly: string;
 };
 
-type OfficeFormRecord = {
-  employee_number: string;
-  record_type: string;
-  item_name: string;
-  item_date: string | null;
-  numeric_value: number | null;
-  start_time: string | null;
-  end_time: string | null;
-  year_month: string | null;  // childcare: 何月分か (YYYYMM)
-  child_name: string | null;  // childcare: 子供の名前
-  amount: number | null;      // childcare: 支払い金額
-};
+// OfficeFormRecord は src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
@@ -146,44 +139,7 @@ type Employee = {
 // 月給者
 // ─── ユーティリティ ──────────────────────────────────────────
 
-/** year_month を YYYYMM 形式に正規化
- *  対応フォーマット:
- *    "2025/12" → "202512"
- *    "2026/1"  → "202601"
- *    "Dec-25"  → "202512"
- *    "Jan-26"  → "202601"
- */
-const MONTH_ABBR: Record<string, string> = {
-  Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06",
-  Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12",
-};
-function normalizeYM(ym: string): string {
-  if (!ym) return ym;
-  // "YYYY/M" or "YYYY/MM"
-  const slashIdx = ym.indexOf("/");
-  if (slashIdx !== -1) {
-    const y = ym.slice(0, slashIdx);
-    const m = ym.slice(slashIdx + 1).padStart(2, "0");
-    return y + m;
-  }
-  // "MMM-YY" or "YY-MMM" (e.g. "Dec-25" or "25-Dec" → "202512")
-  const dashIdx = ym.indexOf("-");
-  if (dashIdx !== -1) {
-    const left  = ym.slice(0, dashIdx);
-    const right = ym.slice(dashIdx + 1);
-    // Dec-25 形式
-    if (MONTH_ABBR[left]) {
-      const fullYear = "20" + right.padStart(2, "0");
-      return fullYear + MONTH_ABBR[left];
-    }
-    // 25-Dec 形式
-    if (MONTH_ABBR[right]) {
-      const fullYear = "20" + left.padStart(2, "0");
-      return fullYear + MONTH_ABBR[right];
-    }
-  }
-  return ym;
-}
+// normalizeYM は src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
 
 function parseDurationMinutes(str: string): number {
   if (!str) return 0;
@@ -585,40 +541,13 @@ export default function PayrollPage() {
         }
       }
 
-      /** 保育手当を計算する */
-      function computeChildcareAllowance(empNum: string, salaryType: string): number {
-        const recs = childcareRecs.filter((r) => normEmp(r.employee_number) === empNum);
-        if (recs.length === 0) return 0;
-        const uniqueChildren = new Set(recs.map((r) => r.child_name ?? "不明")).size;
-        const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
-        let total = 0;
-        for (const rec of recs) {
-          const amount = rec.amount ?? 0;
-          if (amount <= 0) continue;
-          const isKindergarten = rec.item_name.includes("幼稚園");
-          const baseRate = isKindergarten ? 0.2 : 0.4;
-          if (salaryType === "月給") {
-            total += Math.round(amount * baseRate);
-          } else {
-            // year_month を YYYYMM に正規化してからルックアップ
-            const rawYm = rec.year_month ?? selectedMonth;
-            const ym = normalizeYM(rawYm);
-            const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
-            const ratio = Math.min(visitMin / (120 * 60), 1.0);
-            total += Math.round(amount * baseRate * ratio);
-          }
-        }
-        return Math.min(total, ceiling);
-      }
-
-      /** 会議費を計算する（月給・時給共通） */
-      function computeMeetingFee(empNum: string, officeId: string): number {
-        const ofRecs = ofByEmp.get(empNum) ?? [];
-        const meetingCount = ofRecs.filter((r) => r.item_name.includes("会議1")).reduce((s, r) =>
-          s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-        const empOffice = officeByIdMap.get(officeId);
-        return Math.round(meetingCount * (empOffice?.meeting_unit_price ?? 0));
-      }
+      // computeChildcareAllowance / computeMeetingFee は
+      // src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)。
+      // 呼出側で対象職員ぶんのフィルタ・lookupを済ませてから渡す (verbatim移植)。
+      const childcareRecsOf = (empNum: string) =>
+        childcareRecs.filter((r) => normEmp(r.employee_number) === empNum);
+      const meetingUnitPriceOf = (officeId: string) =>
+        officeByIdMap.get(officeId)?.meeting_unit_price ?? 0;
 
       // 時給者
       const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
@@ -665,7 +594,7 @@ export default function PayrollPage() {
         }
         const commuteFee = Math.round(empSummary.commuteKmTotal * (empOffice?.commute_unit_price ?? 0));
         const businessTripFee = Math.round(empSummary.businessKmTotal * (empOffice?.travel_unit_price ?? 0));
-        const meetingFee = computeMeetingFee(empNum, info?.officeId ?? "");
+        const meetingFee = computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""));
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
           employee_name: firstRec?.employee_name || (attByEmp.get(empNum)?.[0] as {employee_name?: string})?.employee_name || empNum,
@@ -683,7 +612,7 @@ export default function PayrollPage() {
           travel_allowance: 0,
           communication_fee: communicationFee,
           meeting_fee: meetingFee,
-          childcare_allowance: computeChildcareAllowance(empNum, "時給"),
+          childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth),
           commute_fee: commuteFee,
           commute_distance_m: 0,
           business_trip_fee: businessTripFee,
@@ -852,7 +781,7 @@ export default function PayrollPage() {
             office_travel_unit_price: office?.travel_unit_price ?? 0,
             office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
-            childcare_allowance: computeChildcareAllowance(normEmp(e.employee_number), "月給"),
+            childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
             yocho_hours: 0,
             summary,
           };

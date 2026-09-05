@@ -39,11 +39,15 @@ import {
   travelAllowanceAmount,
   adjustedCommuteDistanceM,
   businessTripFeeAmount,
+  normalizeYM,
+  computeChildcareAllowance,
+  computeMeetingFee,
   type SalarySettings,
   type OvertimeSetting,
   type MonthlyPayroll,
   type HourlyPayroll,
   type AttendanceSummary,
+  type OfficeFormRecord,
 } from "../src/lib/payroll/payroll-calc";
 
 let pass = 0;
@@ -270,6 +274,53 @@ eq("距離調整: 50%なら半分",
   adjustedCommuteDistanceM(10000, 50), 5000);
 eq("出張費: 距離1000m(調整後)×単価100円/km = 100円",
   businessTripFeeAmount(1000, 100), 100);
+
+// ── 保育手当 (computeChildcareAllowance) / 会議費 (computeMeetingFee) (2026-09-05 追加) ──
+// page.tsx に埋め込まれていて呼べなかったロジック (2026-09-05 に payroll-calc.ts へ切り出し)。
+const cRec = (o: Partial<OfficeFormRecord>): OfficeFormRecord =>
+  ({ employee_number: "1", record_type: "childcare", item_name: "保育園", item_date: null,
+    numeric_value: null, start_time: null, end_time: null, year_month: null, child_name: "子1",
+    amount: 10000, ...o });
+
+eq("保育手当: recsが空なら0", computeChildcareAllowance([], "月給", new Map(), "1", "202606"), 0);
+eq("保育手当: 幼稚園(20%) 月給 amount=10000 → round(2000)",
+  computeChildcareAllowance([cRec({ item_name: "○○幼稚園" })], "月給", new Map(), "1", "202606"), 2000);
+eq("保育手当: 保育園等(40%・幼稚園以外) 月給 amount=10000 → round(4000)",
+  computeChildcareAllowance([cRec({ item_name: "○○保育園" })], "月給", new Map(), "1", "202606"), 4000);
+eq("★ 保育手当: amount<=0 は加算されない (スキップ)",
+  computeChildcareAllowance([cRec({ amount: 0 })], "月給", new Map(), "1", "202606"), 0);
+eq("★ 保育手当: 子1名の上限は20,000円 (40%換算で50,000円分入れても頭打ち)",
+  computeChildcareAllowance([cRec({ amount: 50000, item_name: "保育園" })], "月給", new Map(), "1", "202606"), 20000);
+eq("★ 保育手当: 子2名以上の上限は30,000円",
+  computeChildcareAllowance(
+    [cRec({ amount: 50000, item_name: "保育園", child_name: "子1" }), cRec({ amount: 50000, item_name: "保育園", child_name: "子2" })],
+    "月給", new Map(), "1", "202606"), 30000);
+// 時給者: visitMinutesByEmpMonth の按分。120h(7200分)で満額、60h(3600分)で半額
+eq("★ 保育手当(時給): visitMin=7200分(120h)以上 → ratio=1.0 (満額)",
+  computeChildcareAllowance([cRec({ item_name: "保育園" })], "時給", new Map([["1:202606", 7200]]), "1", "202606"), 4000);
+eq("★ 保育手当(時給): visitMin=3600分(60h) → ratio=0.5 → round(4000*0.5)=2000",
+  computeChildcareAllowance([cRec({ item_name: "保育園" })], "時給", new Map([["1:202606", 3600]]), "1", "202606"), 2000);
+eq("★ 保育手当(時給): visitMin=14400分(240h) でも ratio は 1.0 で頭打ち (2倍にならない)",
+  computeChildcareAllowance([cRec({ item_name: "保育園" })], "時給", new Map([["1:202606", 14400]]), "1", "202606"), 4000);
+eq("★ 保育手当(時給): visitMinutesByEmpMonthに無い月は0扱い (ratio=0)",
+  computeChildcareAllowance([cRec({ item_name: "保育園" })], "時給", new Map(), "1", "202606"), 0);
+// year_month の正規化 (normalizeYM 経由のlookup)
+eq("★ 保育手当(時給): year_month='2026/6' が normalizeYM で '202606' に正規化されてlookupされる",
+  computeChildcareAllowance([cRec({ item_name: "保育園", year_month: "2026/6" })], "時給", new Map([["1:202606", 7200]]), "1", "209912"), 4000);
+eq("★ 保育手当(時給): year_month が無ければ selectedMonth にフォールバック",
+  computeChildcareAllowance([cRec({ item_name: "保育園", year_month: null })], "時給", new Map([["1:202607", 7200]]), "1", "202607"), 4000);
+eq("normalizeYM 単体: '2026/6' → '202606'", normalizeYM("2026/6"), "202606");
+eq("normalizeYM 単体: 'Dec-25' → '202512'", normalizeYM("Dec-25"), "202512");
+
+const mRec = (item_name: string, record_type = "count", numeric_value: number | null = null): OfficeFormRecord =>
+  ({ employee_number: "1", record_type, item_name, item_date: null, numeric_value,
+    start_time: null, end_time: null, year_month: null, child_name: null, amount: null });
+eq("会議費: 会議1以外の記録は数えない", computeMeetingFee([mRec("会議2")], 1000), 0);
+eq("会議費: 会議1 かつ record_type!=km は1件=1回", computeMeetingFee([mRec("会議1")], 1000), 1000);
+eq("★ 会議費: record_type=km は numeric_value を回数として丸めて使う",
+  computeMeetingFee([mRec("会議1", "km", 2.6)], 1000), 3000);
+eq("会議費: 複数レコード合算 (1回+1回)×単価1000円",
+  computeMeetingFee([mRec("会議1"), mRec("会議1")], 1000), 2000);
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }

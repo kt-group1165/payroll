@@ -389,3 +389,99 @@ export function adjustedCommuteDistanceM(totalCommuteM: number, distanceAdjustme
 export function businessTripFeeAmount(adjustedDistanceM: number, travelUnitPrice: number): number {
   return Math.round((adjustedDistanceM / 1000) * travelUnitPrice);
 }
+
+// ─── 保育手当・会議費 (事業所書式入力レコード由来) ────────────────────────
+// page.tsx から一言一句転記 (2026-09-05 切り出し)。
+
+export type OfficeFormRecord = {
+  employee_number: string;
+  record_type: string;
+  item_name: string;
+  item_date: string | null;
+  numeric_value: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  year_month: string | null; // childcare: 何月分か (YYYYMM)
+  child_name: string | null; // childcare: 子供の名前
+  amount: number | null;     // childcare: 支払い金額
+};
+
+const MONTH_ABBR: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+
+/** "YYYY/M" "YYYY/MM" "MMM-YY" "YY-MMM" 等 表記ゆれのある年月文字列を YYYYMM に正規化する */
+export function normalizeYM(ym: string): string {
+  if (!ym) return ym;
+  // "YYYY/M" or "YYYY/MM"
+  const slashIdx = ym.indexOf("/");
+  if (slashIdx !== -1) {
+    const y = ym.slice(0, slashIdx);
+    const m = ym.slice(slashIdx + 1).padStart(2, "0");
+    return y + m;
+  }
+  // "MMM-YY" or "YY-MMM" (e.g. "Dec-25" or "25-Dec" → "202512")
+  const dashIdx = ym.indexOf("-");
+  if (dashIdx !== -1) {
+    const left = ym.slice(0, dashIdx);
+    const right = ym.slice(dashIdx + 1);
+    // Dec-25 形式
+    if (MONTH_ABBR[left]) {
+      const fullYear = "20" + right.padStart(2, "0");
+      return fullYear + MONTH_ABBR[left];
+    }
+    // 25-Dec 形式
+    if (MONTH_ABBR[right]) {
+      const fullYear = "20" + left.padStart(2, "0");
+      return fullYear + MONTH_ABBR[right];
+    }
+  }
+  return ym;
+}
+
+/**
+ * 保育手当を計算する。
+ * @param recs 対象職員の childcare レコード (呼出元で employee_number フィルタ済み)
+ * @param salaryType "月給" | "時給" (時給者は実働按分)
+ * @param visitMinutesByEmpMonth `${empNum}:${ym}` → その月の visitMinutes (時給者の按分に使う)
+ * @param empNum 対象職員番号 (visitMinutesByEmpMonth のキー組み立てに使う)
+ * @param selectedMonth year_month が空のレコードのフォールバック月
+ */
+export function computeChildcareAllowance(
+  recs: OfficeFormRecord[],
+  salaryType: string,
+  visitMinutesByEmpMonth: Map<string, number>,
+  empNum: string,
+  selectedMonth: string,
+): number {
+  if (recs.length === 0) return 0;
+  const uniqueChildren = new Set(recs.map((r) => r.child_name ?? "不明")).size;
+  const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
+  let total = 0;
+  for (const rec of recs) {
+    const amount = rec.amount ?? 0;
+    if (amount <= 0) continue;
+    const isKindergarten = rec.item_name.includes("幼稚園");
+    const baseRate = isKindergarten ? 0.2 : 0.4;
+    if (salaryType === "月給") {
+      total += Math.round(amount * baseRate);
+    } else {
+      // year_month を YYYYMM に正規化してからルックアップ
+      const rawYm = rec.year_month ?? selectedMonth;
+      const ym = normalizeYM(rawYm);
+      const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
+      const ratio = Math.min(visitMin / (120 * 60), 1.0);
+      total += Math.round(amount * baseRate * ratio);
+    }
+  }
+  return Math.min(total, ceiling);
+}
+
+/** 会議費を計算する (月給・時給共通) */
+export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number): number {
+  const meetingCount = ofRecs
+    .filter((r) => r.item_name.includes("会議1"))
+    .reduce((s, r) => s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+  return Math.round(meetingCount * meetingUnitPrice);
+}
