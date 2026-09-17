@@ -22,6 +22,7 @@ import {
   hasTenureQualification,
   computeTenureAllowance,
   computeTenureRate,
+  listedDateCount,
   resolveTenureAllowance,
   fixedTotal,
   careOvertimePay,
@@ -101,12 +102,15 @@ eq("月給 勤続1年11ヶ月 (23ヶ月) はまだ1年目 = 1,000円",
 
 eq("時給 訪問介護 勤続1年・実働10h = 10円/h×10h=100円",
   computeTenureAllowance(true, 12, "時給", "訪問介護", 600, 0, 0), 100);
-eq("時給 訪問介護 勤続5年ちょうど (境界) = 20円/h",
-  computeTenureRate(true, 60, "訪問介護"), 20);
+eq("★ 時給 訪問介護 勤続5年ちょうど (境界) = 30円/h (総括表 2026-07 全事業所)",
+  computeTenureRate(true, 60, "訪問介護"), 30);
+eq("★ 時給 訪問介護 勤続10/15/20年 = 50/70/90円/h (高品 鈴木香織 21年 90円)",
+  [120, 180, 240, 263].map((m) => computeTenureRate(true, m, "訪問介護")), [50, 70, 90, 90]);
+eq("★ 時給 訪問介護 勤続9年11ヶ月 = 30円/h", computeTenureRate(true, 119, "訪問介護"), 30);
 eq("時給 訪問介護 勤続4年11ヶ月 (59ヶ月) はまだ10円/h",
   computeTenureRate(true, 59, "訪問介護"), 10);
 eq("時給 訪問看護も訪問介護と同じ単価体系",
-  computeTenureRate(true, 60, "訪問看護"), 20);
+  computeTenureRate(true, 60, "訪問看護"), 30);
 eq("時給 訪問入浴 勤続1年・実績3件 = 10円×3件=30円",
   computeTenureAllowance(true, 12, "時給", "訪問入浴", 0, 3, 0), 30);
 eq("時給 居宅介護支援 勤続1年・プラン2件 = 50円×2件=100円",
@@ -497,6 +501,16 @@ eq("★ 「半有給」は有給(paidLeave)には含めない (半排除フィ�
   computeSummary([], [], [oRec({ item_name: "半有給" })]).paidLeave, 0);
 eq("「半有給」はhalfLeaveとして数える", computeSummary([], [], [oRec({ item_name: "半有給" })]).halfLeave, 1);
 eq("特休(date型): 1件", computeSummary([], [], [oRec({ item_name: "特休" })]).specialLeave, 1);
+eq("★ 有給: 1行に日付が複数 \"7/3,7/6,7/11,7/16,7/25,7/27\" → 6日 (高品 菊池 2026-07)",
+  computeSummary([], [], [oRec({ item_name: "有給", item_date: "7/3,7/6,7/11,7/16,7/25,7/27" })]).paidLeave, 6);
+eq("★ 半有給: \"7/22,7/24,7/27\" → 3回 (高品 福田 2026-07 = 1.5日)",
+  computeSummary([], [], [oRec({ item_name: "半有給", item_date: "7/22,7/24,7/27" })]).halfLeave, 3);
+eq("有給: \"7月22日\" は1日 / 読点区切り \"7/1、7/2\" は2日",
+  [listedDateCount("7月22日"), listedDateCount("7/1、7/2"), listedDateCount(null)], [1, 2, 1]);
+eq("★ 通勤km: 出勤簿に無ければ事業所書式の通勤km (高品 福田 69km)",
+  computeSummary([], [], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 69 })]).commuteKmTotal, 69);
+eq("通勤km: 出勤簿にあれば出勤簿を優先 (書式は足さない)",
+  computeSummary([], [aRec({ commute_km: 10 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 69 })]).commuteKmTotal, 10);
 
 eq("★ HRD時間: start/end timeがあれば差分(9:00-11:30=150分)",
   computeSummary([], [], [oRec({ item_name: "HRD研修", start_time: "09:00", end_time: "11:30" })]).hrdMinutes, 150);

@@ -11,6 +11,9 @@
  *  4. パートの 社会保険=1 と 有給単価 を総括表から入れる
  *  5. MEISAI・稼働表・総括表のどれにも居ない在職/休職者は 退職者 (user 方針 2026-09-17)
  *  6. 高品 身体生活の時給 1,950 → 1,900 (総括表 単価確認用: 1,900円 108分)
+ *  8. 【2回目 2026-09-17 計算後】 時給者で総括表に勤続手当がある7名は 資格 "不明（要件は満たす）" (勤続手当は資格者のみ)
+ *  9. 月給者の勤続手当は 総括表の額を手入力 (自動計算は資格・通算年数が DB に無く 0 円になる)
+ * 10. 根本高光 休職者 → 在職者 (7月に稼働・総括表に在籍)
  *  7. 未対応コード: 010288 移動5.5 / 010147〜010153 有料身有 → 身体介護 (総括表テーブル1: 移動身あり・有料身あり。おゆみ野で 2,100円)
  *
  * 前提: 岡林真美は migrations/register_payroll_employees.mjs employee_lists/202607_takashina.json で登録済みであること。
@@ -57,9 +60,12 @@ const PAID_LEAVE_UNIT = { "2010": 10991, "4004": 9186, "4012": 6103, "4053": 111
 const RETIRE = ["2036", "220503", "221103", "230903", "240303", "240802", "250804", "250911", "4119"];
 const SHINTAI_SEIKATSU_RATE = 1900;
 const MAP_TO_SHINTAI = ["010288", "010147", "010149", "010151", "010153"];
+const QUALIFIED_UNKNOWN = ["2010", "4004", "4012", "4081", "4089", "4095", "250705"];
+const MONTHLY_TENURE = { "2025": 9000, "3021": 11500, "4037": 6500, "4096": 4500, "4070": 5000, "250401": 1000 };
+const REINSTATE = ["4097"];
 
 const [office] = await get(`payroll_offices?select=id&office_number=eq.${OFFICE_NUMBER}`);
-const emps = await get(`payroll_employees?select=id,employee_number,name,role_type,social_insurance,paid_leave_unit_price,employment_status&office_id=eq.${office.id}`);
+const emps = await get(`payroll_employees?select=id,employee_number,name,role_type,social_insurance,paid_leave_unit_price,employment_status,has_care_qualification,care_qualification_kind&office_id=eq.${office.id}`);
 const byNo = new Map(emps.map((e) => [e.employee_number, e]));
 const ops = [];
 
@@ -79,6 +85,20 @@ for (const [no, price] of Object.entries(PAID_LEAVE_UNIT)) {
 for (const no of RETIRE) {
   const e = byNo.get(no);
   if (e && e.employment_status !== "退職者") ops.push({ label: `退職者に ${no} ${e.name} (${e.employment_status})`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { employment_status: "退職者" }) });
+}
+for (const no of QUALIFIED_UNKNOWN) {
+  const e = byNo.get(no);
+  if (e && (!e.has_care_qualification || !e.care_qualification_kind)) ops.push({ label: `資格 ${no} ${e.name} → 不明（要件は満たす）`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { has_care_qualification: true, care_qualification_kind: e.care_qualification_kind ?? "不明（要件は満たす）" }) });
+}
+for (const no of REINSTATE) {
+  const e = byNo.get(no);
+  if (e && e.employment_status !== "在職者") ops.push({ label: `在職者に ${no} ${e.name} (${e.employment_status})`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { employment_status: "在職者" }) });
+}
+for (const [no, amount] of Object.entries(MONTHLY_TENURE)) {
+  const e = byNo.get(no);
+  const [s] = await get(`payroll_salary_settings?select=id,effective_from,tenure_allowance,tenure_allowance_auto&employee_id=eq.${e.id}&order=effective_from.desc&limit=1`);
+  if (!s) { console.error(`★ ${no} の給与設定がありません`); process.exit(2); }
+  if (s.tenure_allowance !== amount || s.tenure_allowance_auto !== false) ops.push({ label: `勤続手当(手入力) ${no} ${e.name} ${s.tenure_allowance}${s.tenure_allowance_auto === false ? "" : "(自動)"} → ${amount}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${s.id}`, { tenure_allowance: amount, tenure_allowance_auto: false }) });
 }
 for (const no of ["4070", "250401"]) {
   const e = byNo.get(no);

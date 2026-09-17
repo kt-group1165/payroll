@@ -162,11 +162,17 @@ export function hasTenureQualification(
   return hasCareQualification || jobType === "居宅介護支援";
 }
 
+/** パートヘルパー (訪問介護・訪問看護) の勤続手当単価 円/時。years は 1 以上 */
+function visitCareTenureRate(years: number): number {
+  return 10 + Math.floor(years / 5) * 20;
+}
+
 /**
  * 勤続手当計算（資格・経験による定期昇給）
  * 対象: 介護福祉士 / 実務者研修修了者 / 介護支援専門員 (= 居宅介護支援職員は全員所持)
  *   社員(月給)    : 1年=1,000円、以降1年ごと+500円
- *   パートヘルパー: 1年=10円/h、5年=20円/h、以降5年ごと+10円/h
+ *   パートヘルパー: 1年=10円/h、5年=30円/h、以降5年ごと+20円/h (10/30/50/70/90)
+ *     ★ 2026-09-17 総括表 2026-07 全事業所のパート 127名で確認 (124名一致)。旧式 5年ごと+10円 は 5年以上で過少だった
  *   パート訪問入浴: 1年=10円/件、5年=20円/件、以降5年ごと+10円/件
  *   非常勤居宅介護支援: 1年=50円/件、5年=100円/件、以降5年ごと+50円/件
  */
@@ -189,7 +195,7 @@ export function computeTenureAllowance(
 
   if (salaryType === "時給") {
     if (jobType === "訪問介護" || jobType === "訪問看護") {
-      const rate = (Math.floor(years / 5) + 1) * 10;
+      const rate = visitCareTenureRate(years);
       return Math.round((workHoursMin / 60) * rate);
     }
     if (jobType === "訪問入浴") {
@@ -214,7 +220,7 @@ export function computeTenureRate(
   if (!hasTenureQualification(hasQualification, jobType)) return 0;
   const years = Math.floor(effectiveServiceMonths / 12);
   if (years < 1) return 0;
-  if (jobType === "訪問介護" || jobType === "訪問看護") return (Math.floor(years / 5) + 1) * 10;
+  if (jobType === "訪問介護" || jobType === "訪問看護") return visitCareTenureRate(years);
   if (jobType === "訪問入浴") return (Math.floor(years / 5) + 1) * 10;
   if (jobType === "居宅介護支援") return (Math.floor(years / 5) + 1) * 50;
   return 0;
@@ -856,6 +862,12 @@ export type OfficeAttendanceRecord = {
  *   なっていない (grep確認済み) ので金銭的な影響は無い。日付形式の統一は
  *   別途 user 判断が必要なため、ここでは修正せず現状維持 (verbatim移植の対象外の発見)。
  */
+/** 事業所書式の日付欄に入っている日付の数 ("7/3,7/6" → 2、"7月22日" → 1、空 → 1) */
+export function listedDateCount(itemDate: string | null | undefined): number {
+  const n = String(itemDate ?? "").split(/[,、，\s]+/).filter((x) => x.trim() !== "").length;
+  return Math.max(1, n);
+}
+
 export function computeSummary(
   empRecs: VisitServiceRecord[],
   attDays: OfficeAttendanceRecord[],
@@ -881,16 +893,18 @@ export function computeSummary(
   const workDays = [...allWorkedDays].reduce((s, d) => s + (halfDayNums.has(d) ? 0.5 : 1.0), 0);
 
   // 有給・半有給・特休・HRDは事業所書式から取得
+  // 日付スロットは 1 行に複数日が入ることがある (高品 2026-07: "7/3,7/6,7/11")。日付の数を日数とする
+  //   (総括表: 菊池 6日×8,759=52,554 / 福田 半有給 "7/22,7/24,7/27" = 1.5日)
   // record_type を問わず item_name で判定（数値スロット＝"km"で保存されるケースを吸収）
   // 数値スロットの場合は numeric_value が件数、日付スロットの場合は1件として計算
   const paidLeaveRecs = ofRecs.filter((r) => r.item_name.includes("有給") && !r.item_name.includes("半"));
   const paidLeaveFromOf = paidLeaveRecs.reduce((s, r) =>
-    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : listedDateCount(r.item_date)), 0);
   const paidLeave = paidLeaveFromOf;
   const halfLeave = ofRecs.filter((r) => r.item_name.includes("半有給")).reduce((s, r) =>
-    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : listedDateCount(r.item_date)), 0);
   const specialLeave = ofRecs.filter((r) => r.item_name.includes("特休")).reduce((s, r) =>
-    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
+    s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : listedDateCount(r.item_date)), 0);
   const hrdCount = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) =>
     s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
   const hrdMinutes = ofRecs.filter((r) => r.item_name.includes("HRD")).reduce((s, r) => {
@@ -924,7 +938,10 @@ export function computeSummary(
   const visitMinutesExcludingAccompanied = empRecs
     .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-  const commuteKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
+  // 出勤簿に通勤km が無ければ 事業所書式の 通勤km (高品 福田 2026-07: 69km × 12.3 = 849円 が総括表と一致)
+  const commuteKmFromAtt = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
+  const commuteKmTotal = commuteKmFromAtt > 0 ? commuteKmFromAtt
+    : ofRecs.filter((r) => r.item_name === "通勤km").reduce((s, r) => s + (Number(r.numeric_value) || 0), 0);
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
   const weekendHolidayMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
