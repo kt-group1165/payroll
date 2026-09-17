@@ -15,6 +15,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileDropzone } from "./file-dropzone";
 import { parseMeisaiFile, parseMeisaiFiles } from "@/lib/csv/meisai-parser";
+import { meisaiRowToRecord } from "@/lib/csv/meisai-record";
 import type { MeisaiRow, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -87,41 +88,9 @@ export async function processMeisaiCsvFromFile(
 
   for (let i = 0; i < parsed.data.length; i += chunkSize) {
     const chunk = parsed.data.slice(i, i + chunkSize);
-    const records = chunk.map((row) => ({
-      import_batch_id: batch.id,
-      office_number: opts.officeNumber,
-      office_name: row.事業者名,
-      processing_month: opts.processingMonth,
-      employee_number: row.職員番号,
-      employee_name: row.職員名.replace(/　様$/, "").replace(/　$/, ""),
-      period_start: row.開始日,
-      period_end: row.終了日,
-      service_date: row.日付,
-      dispatch_start_time: row.派遣開始時間,
-      dispatch_end_time: row.派遣終了時間,
-      client_name: row.利用者名,
-      service_type: row.サービス,
-      actual_start_time: row.実時刻開始時間,
-      actual_end_time: row.実時刻終了時間,
-      actual_duration: row.実時間,
-      calc_start_time: row.算定開始時刻,
-      calc_end_time: row.算定終了時刻,
-      calc_duration: row.算定時間,
-      holiday_type: row.休日区分,
-      time_period: row.時間帯,
-      service_category: row.サービス型,
-      amount: row.金額 ? parseInt(row.金額, 10) || null : null,
-      transport_fee: row.交通費 ? parseInt(row.交通費, 10) || null : null,
-      phone_fee: row.電話代 ? parseInt(row.電話代, 10) || null : null,
-      adjustment_fee: row.調整費 ? parseInt(row.調整費, 10) || null : null,
-      meeting_fee: row.会議費 ? parseInt(row.会議費, 10) || null : null,
-      training_fee: row.研修 ? parseInt(row.研修, 10) || null : null,
-      other_allowance: row.その他手当 ? parseInt(row.その他手当, 10) || null : null,
-      total: row.合計 ? parseInt(row.合計, 10) || null : null,
-      accompanied_visit: row.同行訪問 ?? "",
-      client_number: row.利用者番号,
-      service_code: row.サービスコード,
-    }));
+    const records = chunk.map((row) =>
+      meisaiRowToRecord(row, { batchId: batch.id, officeNumber: opts.officeNumber, processingMonth: opts.processingMonth }),
+    );
 
     const { error: insertError } = await opts.supabase
       .from("payroll_service_records")
@@ -260,53 +229,9 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
       const chunkSize = 500;
       for (let i = 0; i < allData.length; i += chunkSize) {
         const chunk = allData.slice(i, i + chunkSize);
-        const records = chunk.map((row) => ({
-          import_batch_id: batch.id,
-          office_number: officeNumber,
-          office_name: row.事業者名,
-          processing_month: processingMonth,
-          employee_number: row.職員番号,
-          employee_name: row.職員名.replace(/　様$/, "").replace(/　$/, ""),
-          period_start: row.開始日,
-          period_end: row.終了日,
-          service_date: row.日付,
-          dispatch_start_time: row.派遣開始時間,
-          dispatch_end_time: row.派遣終了時間,
-          client_name: row.利用者名,
-          service_type: row.サービス,
-          actual_start_time: row.実時刻開始時間,
-          actual_end_time: row.実時刻終了時間,
-          actual_duration: row.実時間,
-          calc_start_time: row.算定開始時刻,
-          calc_end_time: row.算定終了時刻,
-          calc_duration: row.算定時間,
-          holiday_type: row.休日区分,
-          time_period: row.時間帯,
-          service_category: row.サービス型,
-          amount: row.金額 ? parseInt(row.金額, 10) || null : null,
-          transport_fee: row.交通費
-            ? parseInt(row.交通費, 10) || null
-            : null,
-          phone_fee: row.電話代
-            ? parseInt(row.電話代, 10) || null
-            : null,
-          adjustment_fee: row.調整費
-            ? parseInt(row.調整費, 10) || null
-            : null,
-          meeting_fee: row.会議費
-            ? parseInt(row.会議費, 10) || null
-            : null,
-          training_fee: row.研修
-            ? parseInt(row.研修, 10) || null
-            : null,
-          other_allowance: row.その他手当
-            ? parseInt(row.その他手当, 10) || null
-            : null,
-          total: row.合計 ? parseInt(row.合計, 10) || null : null,
-          accompanied_visit: row.同行訪問 ?? "",
-          client_number: row.利用者番号,
-          service_code: row.サービスコード,
-        }));
+        const records = chunk.map((row) =>
+          meisaiRowToRecord(row, { batchId: batch.id, officeNumber: officeNumber, processingMonth: processingMonth }),
+        );
 
         const { error: insertError } = await supabase
           .from("payroll_service_records")
