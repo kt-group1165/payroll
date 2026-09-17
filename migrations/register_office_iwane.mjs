@@ -7,7 +7,7 @@
  * - 法人: 株式会社 至誠堂 (総括表の 10_至誠堂 配下)
  * - 地域区分: 事業所番号の先頭 12711 が木更津ムツミ (1271101295) と同じなので 6級地 / 10.42
  * - payroll 側の単価系は 同法人の ＫＴやわたヘルパーステーション (1272404508) を写す。
- *   ただし 移動単価 (travel_unit_price) だけは 木更津ムツミ (1271101295) に合わせる (2026-09-17 user 判断)
+ *   ただし 移動単価 (travel_unit_price)・通勤単価 (commute_unit_price) は 木更津ムツミ (1271101295) に合わせる (2026-09-17 user 判断)
  * - offices を INSERT すると DB trigger (payroll_office_auto_create_trigger) が payroll_offices を
  *   単価 0 で自動作成する。なので payroll 側は「無ければ INSERT / あれば単価を PATCH」にする
  */
@@ -46,7 +46,7 @@ const [existingMaster] = await rest("GET", `offices?select=id,name&business_numb
 const [existingPayroll] = await rest("GET", `payroll_offices?select=id&office_number=eq.${BN}`);
 const [yawata] = await rest("GET", `payroll_offices?select=*&office_number=eq.${YAWATA_BN}`);
 const [maxSort] = await rest("GET", "offices?select=sort_order&order=sort_order.desc&limit=1");
-const [kisarazu] = await rest("GET", `payroll_offices?select=travel_unit_price&office_number=eq.${KISARAZU_BN}`);
+const [kisarazu] = await rest("GET", `payroll_offices?select=travel_unit_price,commute_unit_price&office_number=eq.${KISARAZU_BN}`);
 if (!kisarazu) { console.error("木更津ムツミの payroll_offices が見つからない"); process.exit(1); }
 if (!yawata) { console.error("やわたの payroll_offices が見つからない"); process.exit(1); }
 
@@ -71,7 +71,7 @@ const payrollPayload = (officeId) => ({
   company_id: yawata.company_id,
   work_week_start: yawata.work_week_start,
   travel_unit_price: kisarazu.travel_unit_price,
-  commute_unit_price: yawata.commute_unit_price,
+  commute_unit_price: kisarazu.commute_unit_price,
   treatment_subsidy_amount: yawata.treatment_subsidy_amount,
   cancel_unit_price: yawata.cancel_unit_price,
   travel_allowance_rate: yawata.travel_allowance_rate,
