@@ -7,6 +7,8 @@
  * 根拠: 総括表 2026-07 の時給者「土日祝」と、当方の 50円/時 の計算の比。
  *   Hana系 (花見川・船橋・おゆみ野・高品・中央・さつき・八千代・四街道) は差なし = 50円 (設定しない)。
  *   下の 14 事業所はほとんどの職員でちょうど 2 倍 = 100円。
+ *   そのうち 姉崎ムツミ・五井・木更津・君津・やわた は 土曜を含まず 実績の休日区分 日祭・休日 だけが対象
+ *   (同行コードを除いて 姉崎ムツミ 23/23・五井 15/15・木更津 22/22・君津 12/12 が一致。土日祝方式だと 16/8/13/8)。
  */
 import { readFileSync } from "node:fs";
 
@@ -42,11 +44,12 @@ const RATES = Object.fromEntries([
   "1273001626", // 君津ムツミ
   "1272404508", // KTやわた
 ].map((no) => [no, 100]));
+const SUNDAY_HOLIDAY_ONLY = ["1272400829", "1272401967", "1271101295", "1273001626", "1272404508"];
 
 const r = await fetch(`${SB_URL}/rest/v1/payroll_app_settings?select=key,value&key=eq.${KEY_NAME}`, { headers: H });
 if (!r.ok) { console.error(await r.text()); process.exit(1); }
 const [cur] = await r.json();
-const want = { rates: RATES };
+const want = { rates: RATES, sunday_holiday_only: SUNDAY_HOLIDAY_ONLY };
 console.log(`=== 土日祝手当の時給 ${EXECUTE ? "【本番】" : "(DRY RUN)"} ===`);
 console.log(`  現在: ${JSON.stringify(cur?.value ?? null)}`);
 console.log(`  設定: ${JSON.stringify(want)}`);

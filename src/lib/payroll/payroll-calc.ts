@@ -74,6 +74,8 @@ export type AttendanceSummary = {
   businessKmTotal: number;
   weekendHolidayMinutes: number;
   weekendHolidayAccompaniedMinutes: number;
+  /** 実績の休日区分が 日祭・休日 の訪問時間 (同行除く)。土曜を含まない。土日祝手当を 日祝だけで払う事業所用 */
+  sundayHolidayMinutes: number;
   visitMinutesExcludingAccompanied: number;
 };
 
@@ -109,6 +111,8 @@ export type HourlyPayroll = {
   training_pay: number;
   /** 土日祝手当の時給 (事業所ごと。未設定は 50円) */
   weekend_holiday_rate?: number;
+  /** true なら土日祝手当を 日祭・休日 (実績の休日区分) の時間だけで払う (土曜を含まない) */
+  weekend_holiday_sunday_only?: boolean;
   /** 時給者の残業 (日8h超 + 週40h超) の分と金額。hourlyOvertimeMinutes / hourlyOvertimePayAmount */
   overtime_minutes?: number;
   overtime_pay?: number;
@@ -442,7 +446,7 @@ export function hourlyTenure(e: HourlyPayroll): number {
 export function hourlyTotalPay(e: HourlyPayroll): number {
   return (
     e.totalPay +
-    weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes, e.weekend_holiday_rate) +
+    weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate) +
     e.office_work_pay +
     hourlyTenure(e) +
     e.treatment_subsidy +
@@ -466,6 +470,15 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
  *   森幸代 2026-04 1,095分 → 912.5 → 913円)。ずれる数件は祝日カレンダーの違い (振替休日・海の日など、未調査)。
  *   それまでは 100円/時 の表示専用で総支給に入れていなかった。
  */
+/**
+ * 土日祝手当の対象時間。
+ * Hana系 (さつき・高品 等) は 土日祝 (カレンダー) × 50円。KT姉崎・ムツミ系・リンクス 等は 実績の休日区分 日祭・休日 だけ × 100円
+ * (総括表 姉崎ムツミ 2026-07: 栗原 日祭13.0h+休日0.75h = 13.75h → 1,375円 / 土曜 22h の 加藤 は 日祭8h+休日1h = 900円)。
+ */
+export function weekendAllowanceMinutes(e: { summary: AttendanceSummary; weekend_holiday_sunday_only?: boolean }): number {
+  return e.weekend_holiday_sunday_only ? e.summary.sundayHolidayMinutes : e.summary.weekendHolidayMinutes;
+}
+
 /** 土日祝手当の時給の既定値。事業所ごとの値は payroll_app_settings の weekend_holiday_allowance_rates */
 export const DEFAULT_WEEKEND_HOLIDAY_RATE = 50;
 
@@ -899,6 +912,8 @@ export type VisitServiceRecord = {
   dispatch_end_time: string;
   /** 時間帯 (通常/日中/早朝夜間/深夜 など)。訪問の支給額の割増に使う */
   time_period?: string | null;
+  /** MEISAI の休日区分 (平日/日祭/休日 …) */
+  holiday_type?: string | null;
 };
 
 /**
@@ -1031,6 +1046,9 @@ export function computeSummary(
   const weekendHolidayAccompaniedMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  const sundayHolidayMinutes = empRecs
+    .filter((r) => /日祭|休日/.test(r.holiday_type ?? "") && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes };
+  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes };
 }

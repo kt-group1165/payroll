@@ -40,6 +40,7 @@ import {
   hourlyTenure,
   hourlyTotalPay,
   weekendHolidayAllowanceAmount,
+  weekendAllowanceMinutes,
   travelAllowanceAmount,
   adjustedCommuteDistanceM,
   businessTripFeeAmount,
@@ -151,7 +152,7 @@ const summary = (over: Partial<AttendanceSummary> = {}): AttendanceSummary => ({
   workHoursMin: 0, overtimeMinutes: 0, recordCount: 0, accompaniedCount: 0,
   visitMinutes: 0, hrdCount: 0, hrdMinutes: 0, meetingCount: 0,
   commuteKmTotal: 0, businessKmTotal: 0, weekendHolidayMinutes: 0,
-  weekendHolidayAccompaniedMinutes: 0, visitMinutesExcludingAccompanied: 0,
+  weekendHolidayAccompaniedMinutes: 0, sundayHolidayMinutes: 0, visitMinutesExcludingAccompanied: 0,
   ...over,
 });
 const monthly = (over: Partial<MonthlyPayroll> = {}): MonthlyPayroll => ({
@@ -310,7 +311,7 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
     business_trip_fee: 700, error_adjustment: -50, office_work_pay: 800, training_pay: 900,
   });
   eq("hourlyTotalPay = 各要素の合算 (恒等式)", hourlyTotalPay(e),
-    e.totalPay + weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes, e.weekend_holiday_rate) + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
+    e.totalPay + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate) + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
     e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.training_pay +
     e.childcare_allowance + e.commute_fee + e.business_trip_fee + e.error_adjustment);
 }
@@ -513,7 +514,7 @@ eq("空のrecsは全部0", empty, {
   workDays: 0, helperDays: 0, paidLeave: 0, halfLeave: 0, specialLeave: 0, workHoursMin: 0,
   overtimeMinutes: 0, recordCount: 0, accompaniedCount: 0, visitMinutes: 0,
   visitMinutesExcludingAccompanied: 0, hrdCount: 0, hrdMinutes: 0, meetingCount: 0,
-  commuteKmTotal: 0, businessKmTotal: 0, weekendHolidayMinutes: 0, weekendHolidayAccompaniedMinutes: 0,
+  commuteKmTotal: 0, businessKmTotal: 0, weekendHolidayMinutes: 0, weekendHolidayAccompaniedMinutes: 0, sundayHolidayMinutes: 0,
 });
 eq("helperDays: 同じ日付の複数訪問は1日として数える",
   computeSummary([vRec({ service_date: "20260601" }), vRec({ id: "2", service_date: "20260601" }), vRec({ id: "3", service_date: "20260602" })], [], []).helperDays, 2);
@@ -575,6 +576,10 @@ eq("visitMinutesExcludingAccompanied: 同伴ありは除外", computeSummary(
 eq("accompaniedCount: 同伴ありの件数", computeSummary(
   [vRec({ accompanied_visit: "" }), vRec({ id: "2", accompanied_visit: "同伴A" })], [], [],
 ).accompaniedCount, 1);
+eq("★ sundayHolidayMinutes: 休日区分 日祭・休日 だけ (土曜の 平日区分 は数えない、同行除く)",
+  computeSummary([vRec({ service_date: "20260606", calc_duration: "2:00", holiday_type: "平日" }), vRec({ id: "2", service_date: "20260607", calc_duration: "1:00", holiday_type: "日祭" }), vRec({ id: "3", service_date: "20260720", calc_duration: "0:45", holiday_type: "休日" }), vRec({ id: "4", service_date: "20260607", calc_duration: "1:00", holiday_type: "日祭", accompanied_visit: "同行" })], [], []).sundayHolidayMinutes, 105);
+eq("★ 土日祝手当の対象時間: sunday_only なら日祭・休日、そうでなければ土日祝",
+  [weekendAllowanceMinutes({ summary: summary({ weekendHolidayMinutes: 600, sundayHolidayMinutes: 120 }), weekend_holiday_sunday_only: true }), weekendAllowanceMinutes({ summary: summary({ weekendHolidayMinutes: 600, sundayHolidayMinutes: 120 }) })], [120, 600]);
 eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (2026-06-06は土曜)",
   computeSummary([vRec({ service_date: "20260606", calc_duration: "1:00", accompanied_visit: "" })], [], []).weekendHolidayMinutes, 60);
 eq("weekendHolidayMinutes: 平日は集計しない (2026-06-01は月曜)",

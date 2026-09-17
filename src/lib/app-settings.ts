@@ -27,10 +27,12 @@ export async function getCareOvertimeLowerTiers(supabase: SupabaseClient): Promi
   return { tiers: ((data?.value as { tiers?: Record<string, CareOvertimeLowerTier> } | null)?.tiers) ?? {}, error: null };
 }
 
-export async function getWeekendHolidayRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; error: string | null }> {
+/** sunday_holiday_only = 土曜を含まず 実績の休日区分 日祭・休日 だけを対象にする事業所番号 */
+export async function getWeekendHolidayRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; sundayHolidayOnly: Set<string>; error: string | null }> {
   const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", WEEKEND_HOLIDAY_RATES_KEY).maybeSingle();
-  if (error) return { rates: {}, error: error.message };
-  return { rates: ((data?.value as { rates?: Record<string, number> } | null)?.rates) ?? {}, error: null };
+  if (error) return { rates: {}, sundayHolidayOnly: new Set(), error: error.message };
+  const v = data?.value as { rates?: Record<string, number>; sunday_holiday_only?: string[] } | null;
+  return { rates: v?.rates ?? {}, sundayHolidayOnly: new Set(v?.sunday_holiday_only ?? []), error: null };
 }
 
 export const JISSEKI_SOURCE_MODE_KEY = "jisseki_source_mode";
