@@ -12,6 +12,8 @@ export type DayRouteResult = {
   commute_distance_m: number;  // 自宅→A→...→自宅 全区間
   travel_distance_m: number;   // A→B→C（2時間以上空く区間を除く）
   travel_time_sec: number;     // 15分超の移動時間の合計（2時間空除外）
+  /** 訪問間の移動時間の全量（2時間空除外・15分控除なし）。社員(月給・出勤簿なし)の労働時間に使う */
+  travel_time_full_sec: number;
   legs: LegResult[];
 };
 
@@ -70,6 +72,7 @@ export function calcDayRoute(
   let commute_distance_m = 0;
   let travel_distance_m = 0;
   let travel_time_sec = 0;
+  let travel_time_full_sec = 0;
   const legs: LegResult[] = [];
 
   for (let i = 0; i < points.length - 1; i++) {
@@ -98,6 +101,7 @@ export function calcDayRoute(
     // 移動距離・移動時間: 自宅区間除外 + 2時間空除外
     if (!isHomeLeg && !gapExcluded) {
       travel_distance_m += dist.distance_meters;
+      travel_time_full_sec += dist.duration_seconds;
       if (dist.duration_seconds > TRAVEL_TIME_THRESHOLD_SEC) {
         travel_time_sec += dist.duration_seconds - TRAVEL_TIME_THRESHOLD_SEC;
       }
@@ -113,7 +117,7 @@ export function calcDayRoute(
     });
   }
 
-  return { date, commute_distance_m, travel_distance_m, travel_time_sec, legs };
+  return { date, commute_distance_m, travel_distance_m, travel_time_sec, travel_time_full_sec, legs };
 }
 
 /** 全ペアのアドレスセットを収集する（APIへのリクエスト用） */

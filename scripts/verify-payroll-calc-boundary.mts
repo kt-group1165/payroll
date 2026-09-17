@@ -50,6 +50,7 @@ import {
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
   officeWorkPayAmount,
+  employeeWorkMinutes,
   computeSummary,
   isWeekendOrHoliday,
   parseWorkHoursMinutes,
@@ -270,6 +271,11 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
 // ── 事務の本人給 (officeWorkPayAmount) (2026-09-17 追加) ──
 // 期待値は総括表 (さつきが丘 2026-07 福島可奈) の実額: 出勤時間 126:30 (7,590分) × 事務時給 1,150円 = 本人給 145,475円
 eq("事務本人給: 福島可奈 2026-07 実額 7,590分×1,150円 = 145,475円", officeWorkPayAmount(true, 7590, 1150), 145475);
+// ── 社員の出勤時間 (employeeWorkMinutes) (2026-09-17 追加) ──
+eq("出勤時間: 出勤簿があれば出勤簿の合計 (訪問・移動は見ない)", employeeWorkMinutes(22, 10970, 4065, 999999), 10970);
+eq("出勤時間: 出勤簿が無ければ 訪問 + 移動全量 (米倉靖子 2026-07: 7,345 + 1,093分)", employeeWorkMinutes(0, 0, 7345, 1093 * 60), 8438);
+eq("出勤時間: 移動秒は四捨五入で分に (89秒→1分 / 90秒→2分)", [employeeWorkMinutes(0, 0, 0, 89), employeeWorkMinutes(0, 0, 0, 90)], [1, 2]);
+eq("出勤時間: 出勤簿も訪問も無ければ0", employeeWorkMinutes(0, 0, 0, 0), 0);
 eq("事務本人給: 事務員でなければ時間・時給があっても0円", officeWorkPayAmount(false, 7590, 1150), 0);
 eq("事務本人給: 事務時給0円なら0円", officeWorkPayAmount(true, 7590, 0), 0);
 eq("事務本人給: 端数は四捨五入 (10分×1,000円 = 166.67 → 167)", officeWorkPayAmount(true, 10, 1000), 167);

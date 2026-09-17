@@ -49,6 +49,7 @@ console.log("══ 基本経路: 自宅→A→B→自宅 (3 leg) ══");
   eq("commute_distance_m = 全区間合計 (5000+3000+6000)", r.commute_distance_m, 14000);
   eq("travel_distance_m = 自宅区間を除いた A→B のみ", r.travel_distance_m, 3000);
   eq("travel_time_sec = 20分(1200秒) − 15分(900秒) = 300秒", r.travel_time_sec, 300);
+  eq("travel_time_full_sec = A→B の全量 1200秒 (自宅区間は含めない・15分控除なし)", r.travel_time_full_sec, 1200);
   eq("legs は 3件、home leg フラグが両端だけ true", r.legs.map((l) => l.is_home_leg), [true, false, true]);
   eq("A→B leg は gap_excluded=false (60分)", r.legs[1].gap_excluded, false);
 }
@@ -65,6 +66,7 @@ console.log("\n══ 2時間ギャップ除外 ══");
   const r = calcDayRoute("2026-06-15", HOME, visits, dist)!;
   eq("★ 150分ギャップは travel_distance_m から除外される", r.travel_distance_m, 0);
   eq("★ 150分ギャップは travel_time_sec からも除外される", r.travel_time_sec, 0);
+  eq("★ 150分ギャップは travel_time_full_sec からも除外される", r.travel_time_full_sec, 0);
   eq("★ ただし commute_distance_m には含まれる (全区間合計 14000)", r.commute_distance_m, 14000);
   eq("★ gap_excluded=true になる", r.legs[1].gap_excluded, true);
 }

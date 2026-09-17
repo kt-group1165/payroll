@@ -39,6 +39,7 @@ import {
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
   officeWorkPayAmount,
+  employeeWorkMinutes,
   parseDurationMinutes,
   computeSummary,
   type OvertimeSetting,
@@ -491,10 +492,13 @@ export default function PayrollPage() {
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
       }
 
-      // ── 移動手当計算（訪問介護・時給者） ──
+      // ── 移動手当計算（訪問介護・時給者） + 社員の移動時間（月給・出勤簿なし） ──
+      // 社員の出勤時間 = サービス時間 + 訪問間の移動時間の全量 (employeeWorkMinutes)。月給者のループで使う
+      const monthlyTravelFullSec = new Map<string, number>();
       {
         const visitCareEmps = employees.filter(
-          (e) => e.salary_type === "時給" && e.job_type === "訪問介護" && e.address?.trim()
+          (e) => e.job_type === "訪問介護" && e.address?.trim() &&
+            (e.salary_type === "時給" || (e.salary_type === "月給" && (attByEmp.get(normEmp(e.employee_number)) ?? []).length === 0))
         );
         if (visitCareEmps.length > 0) {
           // payroll_clients は 1 事業所で 1000 行を超え得るため paginate
@@ -584,7 +588,13 @@ export default function PayrollPage() {
 
             for (const [normNum, { address, dayMap }] of byEmpNum) {
               const entry = hourlyEmpMap.get(normNum);
-              if (!entry) continue;
+              if (!entry) {
+                // 月給・出勤簿なしの社員: 移動時間の全量だけ控える
+                let fullSec = 0;
+                for (const [date, visits] of dayMap) fullSec += calcDayRoute(date, address, visits, distMap)?.travel_time_full_sec ?? 0;
+                monthlyTravelFullSec.set(normNum, fullSec);
+                continue;
+              }
               const empObj = employees.find((e) => normEmp(e.employee_number) === normNum);
               const empOffice = officeByIdMap.get(empObj?.office_id ?? "");
               const rate = empOffice?.travel_allowance_rate ?? 0;
@@ -630,7 +640,16 @@ export default function PayrollPage() {
           //   ここだけ生の employee_number でlookupしていた (直下のofByEmp.get は
           //   正しくnormEmp済み)。実データ(月給者355名)では先頭ゼロ付きemployee_numberが
           //   0件のため現状の影響は無いが、揃えておく。
-          const summary = computeSummaryOf(String(e.employee_number), recsByEmp.get(normEmp(e.employee_number)) ?? []);
+          const baseSummary = computeSummaryOf(String(e.employee_number), recsByEmp.get(normEmp(e.employee_number)) ?? []);
+          const summary = {
+            ...baseSummary,
+            workHoursMin: employeeWorkMinutes(
+              (attByEmp.get(normEmp(e.employee_number)) ?? []).length,
+              baseSummary.workHoursMin,
+              baseSummary.visitMinutes,
+              monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
+            ),
+          };
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
           const ofTravelKm = empOfRecs

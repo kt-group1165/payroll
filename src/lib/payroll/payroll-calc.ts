@@ -543,6 +543,21 @@ export function hourlyBusinessTripFeeAmount(businessKmTotal: number, travelUnitP
 }
 
 /**
+ * 出勤時間 (分)。出勤簿があればその合計。出勤簿が無い社員 (提責・事務員以外の月給者) は
+ * サービス時間 + 訪問間の移動時間 (2時間以上の空きは除く・15分控除なし) とする (2026-09-17 user 方針)。
+ * 実データ: さつきが丘 2026-07 米倉靖子 訪問 7,345分 + 移動 1,093分 ≒ 総括表 8,436分 (差 +2分)。
+ */
+export function employeeWorkMinutes(
+  attendanceDays: number,
+  attendanceWorkMin: number,
+  visitMinutes: number,
+  travelTimeFullSec: number,
+): number {
+  if (attendanceDays > 0) return attendanceWorkMin;
+  return visitMinutes + Math.round(travelTimeFullSec / 60);
+}
+
+/**
  * 事務員の本人給 = 事務時間 × 事務時給。
  * 事務時間は出勤簿の出勤時間 (AttendanceSummary.workHoursMin) をそのまま使う
  * (総括表の「内事務入浴」= 出勤時間。例: さつきが丘 福島可奈 2026-07 126:30 × 1,150円 = 145,475円)。
