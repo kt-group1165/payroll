@@ -10,6 +10,7 @@ import { useLocalStorage } from "@/lib/use-local-storage";
 import { KyotakuSummarySection } from "@/components/payroll/kyotaku-summary-section";
 import { MonthInputButton } from "@/components/ui/month-input-button";
 import { usePayrollOffices } from "@/lib/swr/use-payroll-offices";
+import { supabase } from "@/lib/supabase";
 
 // ─── 型 ──────────────────────────────────────────────
 
@@ -125,7 +126,10 @@ function num(n: number) {
   return n > 0 ? n.toLocaleString("ja-JP") : "—";
 }
 
+/** 保存時に給与計算画面と同じ関数で出した grand_total があればそれを使う。古い保存データだけ下の概算 */
 function sumHourlyPay(h: HourlyRow): number {
+  const saved = (h as HourlyRow & { grand_total?: number }).grand_total;
+  if (typeof saved === "number") return saved;
   return (
     h.totalPay + h.treatment_subsidy + h.paid_leave_allowance + h.cancel_allowance +
     h.travel_allowance + h.communication_fee + h.meeting_fee + h.childcare_allowance +
@@ -142,6 +146,8 @@ function fixedMonthlyTotal(s: SalarySettings | null): number {
 }
 
 function sumMonthlyPay(m: MonthlyRow): number {
+  const saved = (m as MonthlyRow & { grand_total?: number }).grand_total;
+  if (typeof saved === "number") return saved;
   const fixed = fixedMonthlyTotal(m.settings);
   const bonus = m.bonus_paid ? (m.settings?.bonus_amount ?? 0) : 0;
   const travelKm = m.travel_km > 0 ? m.travel_km : m.travel_km_auto;
@@ -340,8 +346,31 @@ export default function PayrollSummaryPage() {
   );
   const [colDialogOpen, setColDialogOpen] = useState(false);
 
+  // DB の計算結果 (2026-09-17〜)。あればこちらを優先し、無ければブラウザ保存分
+  const [dbSummary, setDbSummary] = useState<{ key: string; summary: Summary | null; error: string | null } | null>(null);
+  const dbKey = businessType === "houmon_kaigo" && selectedOffice ? `${selectedOffice.office_number}:${ymToCompact(month)}` : "";
+  useEffect(() => {
+    if (!dbKey) return;
+    const [officeNumber, ym] = dbKey.split(":");
+    let cancelled = false;
+    supabase
+      .from("payroll_calc_results")
+      .select("payload, calculated_at")
+      .eq("office_number", officeNumber)
+      .eq("processing_month", ym)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) console.warn("[payroll-summary] DB の計算結果取得に失敗:", error.message);
+        const s = data ? ({ ...(data.payload as Summary), calculated_at: data.calculated_at as string }) : null;
+        setDbSummary({ key: dbKey, summary: s, error: error?.message ?? null });
+      });
+    return () => { cancelled = true; };
+  }, [dbKey]);
+  const dbResult = dbSummary && dbSummary.key === dbKey ? dbSummary : null;
+
   // selectedKey から summary を導出 (useEffect+setState ではなく純粋な derived)
-  const summary = useMemo<Summary | null>(() => {
+  const localSummary = useMemo<Summary | null>(() => {
     if (!selectedKey || typeof window === "undefined") return null;
     try {
       const raw = localStorage.getItem(selectedKey);
@@ -351,6 +380,8 @@ export default function PayrollSummaryPage() {
     }
     return null;
   }, [selectedKey]);
+  const summary: Summary | null = dbResult?.summary ?? localSummary;
+  const calculatedAt = dbResult?.summary?.calculated_at ?? matchingIndexEntry?.calculated_at ?? null;
 
   // 列選択 (useLocalStorage の setter が localStorage 書込まで担当)
   const toggleHourly = (key: string, on: boolean) => {
@@ -506,7 +537,7 @@ export default function PayrollSummaryPage() {
             <div className="border rounded-md p-6 text-center text-muted-foreground">
               事業所を選択してください
             </div>
-          ) : !matchingIndexEntry ? (
+          ) : !summary ? (
             <div className="border rounded-md p-6 text-center text-muted-foreground">
               {selectedOffice?.short_name ?? ""} の {fmtMonth(month)} の計算結果はありません。
               <Link href="/payroll" className="underline ml-1">給与計算</Link> を実行してください。
@@ -515,7 +546,7 @@ export default function PayrollSummaryPage() {
             summary && (
               <>
                 <div className="text-xs text-muted-foreground mb-3">
-                  {new Date(matchingIndexEntry.calculated_at).toLocaleString("ja-JP")} 計算
+                  {calculatedAt ? new Date(calculatedAt).toLocaleString("ja-JP") : ""} 計算{dbResult?.summary ? "" : "（このブラウザに保存された結果）"}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                   <div className="border rounded-md p-4">

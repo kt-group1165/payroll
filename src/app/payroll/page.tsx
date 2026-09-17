@@ -687,19 +687,36 @@ export default function PayrollPage() {
         });
       setMonthlyResults(monthlySorted);
 
-      // 総括表用に計算結果を localStorage へ保存（直近の結果を読み返せるように）
-      try {
-        const key = `payroll-summary:${selectedOffice.office_number}:${selectedMonth}`;
-        const payload = {
+      // 総括表用に計算結果を保存。支給合計 (grand_total) は この画面と同じ関数で計算して持たせる
+      // (総括表画面が別の式で合計していて、勤続手当・残業などが漏れていたため)
+      const payload = {
+        office_id: selectedOfficeId,
+        office_number: selectedOffice.office_number,
+        office_name: selectedOffice.short_name || selectedOffice.name,
+        processing_month: selectedMonth,
+        calculated_at: new Date().toISOString(),
+        hourly: hourlySorted.map((e) => ({ ...e, grand_total: hourlyTotalPay(e) })),
+        monthly: monthlySorted.map((p) => ({ ...p, grand_total: monthlyGrandTotal(p, otMap) })),
+        overtime_settings: [...otMap.values()],
+      };
+      // DB に保存 (2026-09-17)。別 PC からも総括表が見え、Excel との突合にも使う
+      setProgress({ pct: 97, label: "計算結果を保存中" });
+      {
+        const { error: saveErr } = await supabase.from("payroll_calc_results").upsert({
           office_id: selectedOfficeId,
           office_number: selectedOffice.office_number,
-          office_name: selectedOffice.short_name || selectedOffice.name,
           processing_month: selectedMonth,
-          calculated_at: new Date().toISOString(),
-          hourly: hourlySorted,
-          monthly: monthlySorted,
-          overtime_settings: [...otMap.values()],
-        };
+          calculated_at: payload.calculated_at,
+          payload,
+        }, { onConflict: "office_number,processing_month" });
+        if (saveErr) {
+          console.error("[payroll] 計算結果の DB 保存に失敗:", saveErr.message);
+          setError(`計算は完了しましたが、結果をDBに保存できませんでした (${saveErr.message})。総括表はこのブラウザでのみ見られます。`);
+        }
+      }
+      // ブラウザにも残す (DB 未適用環境・オフライン閲覧用)
+      try {
+        const key = `payroll-summary:${selectedOffice.office_number}:${selectedMonth}`;
         localStorage.setItem(key, JSON.stringify(payload));
         // インデックス（どの組み合わせが保存されているか）
         const indexKey = "payroll-summary:index";
