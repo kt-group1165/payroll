@@ -84,7 +84,7 @@ for (const m of MONTHS) {
   const ex = JSON.parse(readFileSync(path.join(DIR, `soukatsu${m}`, "extract.json"), "utf8")) as { office: string; kind: string; rows: SRow[] }[];
   const mine = ex.filter((f) => f.office === FOLDER);
   if (mine.length === 0) { console.error(`★ ${m} の extract.json に ${FOLDER} がありません`); process.exit(2); }
-  const valid = (r: SRow) => !String(r["氏名"] ?? "").includes("_");
+  const valid = (r: SRow) => { const nm = String(r["氏名"] ?? "").trim(); return nm !== "" && !nm.includes("_") && !/^(合計|小計|計)$/.test(nm); };
   byMonth.set(m, {
     part: mine.filter((f) => f.kind === "part").flatMap((f) => f.rows).filter(valid),
     shaseki: mine.filter((f) => f.kind === "shaseki").flatMap((f) => f.rows).filter(valid),
