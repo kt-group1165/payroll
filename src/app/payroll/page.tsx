@@ -32,7 +32,7 @@ import {
   computeChildcareAllowance,
   computeMeetingFee,
   treatmentSubsidyAmount,
-  cancelAllowanceAmount,
+  cancelAllowanceFromCodes,
   paidLeaveAllowanceAmount,
   communicationFeeAmount,
   hourlyCommuteFeeAmount,
@@ -473,11 +473,12 @@ export default function PayrollPage() {
           isVisitCare, hasSocialInsurance, empSummary.visitMinutes,
           empOffice?.treatment_subsidy_amount ?? 0, sal?.treatment_subsidy ?? 0,
         );
-        const cancelCount = empRecs.filter((r) => {
+        const cancelRecs = empRecs.filter((r) => {
           const catId = mappingMap.get(r.service_code) ?? null;
           return catId ? categoryMap.get(catId) === "キャンセル" : false;
-        }).length;
-        const cancelAllowance = cancelAllowanceAmount(cancelCount, empOffice?.cancel_unit_price ?? 0);
+        });
+        const cancelCount = cancelRecs.length;
+        const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0);
         const paidLeaveAllowance = paidLeaveAllowanceAmount(paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
         const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);

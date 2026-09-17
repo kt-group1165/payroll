@@ -592,6 +592,18 @@ export function treatmentSubsidyAmount(
   return isVisitCare && hasSocialInsurance && visitMinutes > 0 ? officeSubsidyAmount : salaryTreatmentSubsidy;
 }
 
+/**
+ * 同行ドタキャン (010999) は 600円。ドタキャン・キャンセル (010386/013052/010008/019007) は全事業所共通の 800円 (事業所のキャンセル単価)。
+ * 総括表 2026-03〜07 全事業所: 010999 の 5 件がすべて 600円、010386/013052/010008/019007 は 800円
+ *   (ちはら台 鈴木恵子 010999+013052 = 1,400円)。
+ */
+export const CANCEL_600_CODES = new Set(["010999"]);
+
+/** キャンセル手当 (時給者): キャンセル明細のサービスコードごとに 600円 / 事業所単価 */
+export function cancelAllowanceFromCodes(cancelCodes: string[], officeCancelUnitPrice: number): number {
+  return cancelCodes.reduce((s, code) => s + (CANCEL_600_CODES.has(code) ? 600 : officeCancelUnitPrice), 0);
+}
+
 /** キャンセル手当 (時給者) */
 export function cancelAllowanceAmount(cancelCount: number, cancelUnitPrice: number): number {
   return Math.round(cancelCount * cancelUnitPrice);
