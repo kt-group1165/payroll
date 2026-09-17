@@ -38,7 +38,8 @@ if (offices.length !== 1) { console.error(`事業所番号が 1 つに決まら�
 const officeNumber = offices[0];
 
 // 稼働月の確かめ: 日付項目 (M/D または M月D日。高品は後者) の月が --month と合うか。月の読めない値 ("7" だけ等) は数えない
-const monthsInFile = new Set(parsed.data.map((r) => /^(\d{1,2})[/月]/.exec(String(r.item_date ?? "").trim())?.[1]).filter((m): m is string => !!m));
+// 日が 1〜31 でない値 ("1/0" などの入力ミス) は数えない (五井 2026-04)
+const monthsInFile = new Set(parsed.data.map((r) => /^(\d{1,2})[/月](\d{1,2})/.exec(String(r.item_date ?? "").trim())).filter((m): m is RegExpExecArray => !!m && Number(m[2]) >= 1 && Number(m[2]) <= 31).map((m) => m[1]));
 const mm = String(parseInt(MONTH.slice(4, 6), 10));
 if (monthsInFile.size > 0 && (monthsInFile.size !== 1 || !monthsInFile.has(mm))) {
   console.error(`★ ファイル内の日付の月 (${[...monthsInFile].join(",")}) が --month ${MONTH} と合いません`);
