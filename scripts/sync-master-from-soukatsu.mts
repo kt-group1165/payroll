@@ -147,11 +147,14 @@ for (const e of emps) {
 }
 
 // ── 月給 ──────────────────────────────────────────────────────
-const FIXED: [string, string][] = [
-  ["本人給", "base_personal_salary"], ["職能給", "skill_salary"], ["役職手当", "position_allowance"], ["資格手当", "qualification_allowance"],
-  ["勤続手当", "tenure_allowance"], ["処遇改善手当", "treatment_improvement"], ["特別処遇改善手当", "specific_treatment_improvement"],
-  ["処遇改善補助金手当", "treatment_subsidy"], ["固定残業代", "fixed_overtime_pay"],
+// 列名は事業所で揺れる (特別処遇改善手当 / 特別処遇改善 / 特定処遇改善手当 / 特定処遇改善)。報奨金 + 特別報奨金 は special_bonus (固定給に含まれる)
+const FIXED: [string[], string][] = [
+  [["本人給"], "base_personal_salary"], [["職能給"], "skill_salary"], [["役職手当"], "position_allowance"], [["資格手当"], "qualification_allowance"],
+  [["勤続手当"], "tenure_allowance"], [["処遇改善手当"], "treatment_improvement"],
+  [["特別処遇改善手当", "特別処遇改善", "特定処遇改善手当", "特定処遇改善"], "specific_treatment_improvement"],
+  [["処遇改善補助金手当"], "treatment_subsidy"], [["固定残業代"], "fixed_overtime_pay"], [["報奨金", "特別報奨金"], "special_bonus"],
 ];
+const fixedValue = (r: SRow, keys: string[], col: string) => col === "special_bonus" ? keys.reduce((s, k) => s + num(r[k]), 0) : num(r[keys.find((k) => r[k] != null) ?? keys[0]]);
 const shaCodes = new Set(MONTHS.flatMap((m) => byMonth.get(m)!.shaseki.map((r) => r._code)));
 for (const code of shaCodes) {
   if (lastSeen.get(code)?.kind === "part") {
@@ -171,7 +174,7 @@ for (const code of shaCodes) {
 
   // 固定給の区間 (値が同じ月をまとめる)
   const care = role === "社員" ? { care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500, yocho_unit_price: 200 } : { care_overtime_threshold_hours: 0, care_overtime_unit_price: 0, yocho_unit_price: 0 };
-  const target = (r: SRow) => ({ ...Object.fromEntries(FIXED.map(([k, c]) => [c, num(r[k])])), ...care, tenure_allowance_auto: false });
+  const target = (r: SRow) => ({ ...Object.fromEntries(FIXED.map(([k, c]) => [c, fixedValue(r, k, c)])), ...care, tenure_allowance_auto: false });
   const segs: { start: string; values: Record<string, unknown> }[] = [];
   for (const { m, r } of monthsRows) {
     const v = target(r);
@@ -188,7 +191,7 @@ for (const code of shaCodes) {
     if (!row) {
       const base = [...settings].reverse().find((s) => String(s.effective_from) < eff);
       const copy: Row = base ? Object.fromEntries(Object.entries(base).filter(([k]) => !["id", "created_at", "updated_at", "employee_id", "effective_from"].includes(k))) : {};
-      ops.push({ label: `給与設定を作る ${code} ${name} ${eff}〜 ${FIXED.map(([k, c]) => `${k.slice(0, 2)}${seg.values[c]}`).join(" ")}${role === "社員" ? " 介護超過120h×2500/夜朝200" : ""}`, run: () => write("POST", "payroll_salary_settings", { ...copy, ...seg.values, employee_id: byNo.get(code)!.id, effective_from: eff }) });
+      ops.push({ label: `給与設定を作る ${code} ${name} ${eff}〜 ${FIXED.map(([k, c]) => `${k[0].slice(0, 2)}${seg.values[c]}`).join(" ")}${role === "社員" ? " 介護超過120h×2500/夜朝200" : ""}`, run: () => write("POST", "payroll_salary_settings", { ...copy, ...seg.values, employee_id: byNo.get(code)!.id, effective_from: eff }) });
     }
   });
   // 範囲の月より後に始まる、総括表と食い違う行は触らず知らせる
