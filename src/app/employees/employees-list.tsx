@@ -59,6 +59,9 @@ const CSV_HEADERS = [
 
 // ─── フォーム初期値 ───────────────────────────────────────────
 
+/** 勤続手当の資格の種類 (payroll_employees.care_qualification_kind の CHECK と同じ) */
+const CARE_QUALIFICATION_KINDS = ["介護福祉士", "実務者研修修了", "介護支援専門員", "不明（要件は満たす）"] as const;
+
 const defaultForm = {
   employee_number: "",
   name: "",
@@ -73,6 +76,7 @@ const defaultForm = {
   salary_type: "時給" as SalaryType,
   transport_type: "車",
   has_care_qualification: false,
+  care_qualification_kind: "",
   social_insurance: false,
   paid_leave_unit_price: "",
   communication_fee_type: "none",
@@ -145,6 +149,7 @@ type ImportRow = {
   salary_type: string;
   transport_type: string;
   has_care_qualification: boolean;
+  care_qualification_kind?: string | null;
   social_insurance: boolean;
   paid_leave_unit_price: number;
   communication_fee_type: string;
@@ -331,6 +336,7 @@ export function EmployeesList({
       salary_type: form.salary_type,
       transport_type: form.transport_type,
       has_care_qualification: form.has_care_qualification,
+      care_qualification_kind: form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : null,
       social_insurance: form.social_insurance,
       paid_leave_unit_price: form.paid_leave_unit_price ? parseFloat(form.paid_leave_unit_price) : 0,
       communication_fee_type: form.communication_fee_type,
@@ -365,6 +371,7 @@ export function EmployeesList({
       salary_type: emp.salary_type,
       transport_type: emp.transport_type,
       has_care_qualification: emp.has_care_qualification ?? false,
+      care_qualification_kind: emp.has_care_qualification ? (emp.care_qualification_kind ?? "不明（要件は満たす）") : "",
       social_insurance: emp.social_insurance ?? false,
       paid_leave_unit_price: emp.paid_leave_unit_price?.toString() ?? "",
       communication_fee_type: emp.communication_fee_type ?? "none",
@@ -822,14 +829,16 @@ export function EmployeesList({
                    旧 base_salary / fixed_overtime_* 列は 2026-05-08 削除済 */}
 
                 <div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.has_care_qualification}
-                      onChange={(e) => setForm({ ...form, has_care_qualification: e.target.checked })}
-                    />
-                    <span className="text-sm">介護福祉士または実務者研修修了（勤続手当対象）</span>
-                  </label>
+                  <Label>勤続手当の資格</Label>
+                  <select
+                    className="mt-1 w-full border rounded px-2 py-1.5 text-sm bg-background"
+                    value={form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : ""}
+                    onChange={(e) => setForm({ ...form, has_care_qualification: e.target.value !== "", care_qualification_kind: e.target.value })}
+                  >
+                    <option value="">なし（勤続手当の対象外）</option>
+                    {CARE_QUALIFICATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-1">「なし」以外は勤続手当の対象。資格名が分からなければ「不明（要件は満たす）」</p>
                 </div>
                 <div>
                   <label className="flex items-center gap-2 cursor-pointer">
