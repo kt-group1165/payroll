@@ -11,6 +11,7 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
+import { getWeekendHolidayRates } from "@/lib/app-settings";
 import {
   computeTenureAllowance,
   computeTenureRate,
@@ -26,6 +27,7 @@ import {
   hourlyTenure,
   hourlyTotalPay,
   weekendHolidayAllowanceAmount,
+  DEFAULT_WEEKEND_HOLIDAY_RATE,
   travelAllowanceAmount,
   adjustedCommuteDistanceM,
   normalizeYM,
@@ -284,7 +286,7 @@ export default function PayrollPage() {
       };
 
       setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
-      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
+      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
@@ -295,7 +297,10 @@ export default function PayrollPage() {
         fetchAllSalarySettings(),
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
+        getWeekendHolidayRates(supabase),
       ]);
+      if (weekendRatesRes.error) throw new Error(`土日祝手当の時給設定の読み込みに失敗: ${weekendRatesRes.error}`);
+      const weekendRates = weekendRatesRes.rates;
 
       // office_form_records は1000件上限を回避するためページネーション
       const allOfRecords: OfficeFormRecord[] = [];
@@ -504,6 +509,7 @@ export default function PayrollPage() {
           treatment_subsidy: treatmentSubsidy,
           paid_leave_allowance: paidLeaveAllowance,
           cancel_count: cancelCount,
+          weekend_holiday_rate: weekendRates[empOffice?.office_number ?? ""] ?? DEFAULT_WEEKEND_HOLIDAY_RATE,
           cancel_allowance: cancelAllowance,
           travel_time_sec: 0,
           travel_allowance: 0,
@@ -831,7 +837,7 @@ export default function PayrollPage() {
         e.travel_time_sec > 0 ? secToHm(e.travel_time_sec) : "0:00", String(e.travel_allowance),
         String(e.paid_leave_allowance), "0", "0", String(e.training_pay), String(e.meeting_fee), String(e.childcare_allowance), "0",
         String(e.communication_fee),
-        String(weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes)),
+        String(weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes, e.weekend_holiday_rate)),
         String(e.cancel_allowance), "0", "0", "0",
         String(e.commute_fee), `${(e.commute_distance_m / 1000).toFixed(1)}`, String(e.business_trip_fee), String(total),
       ]);
@@ -1398,7 +1404,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{emp.totalPay > 0 ? yen(emp.totalPay) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
-                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(weekendHolidayAllowanceAmount(sm.weekendHolidayMinutes)) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{sm.weekendHolidayMinutes > 0 ? yen(weekendHolidayAllowanceAmount(sm.weekendHolidayMinutes, emp.weekend_holiday_rate)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                                 <Input
@@ -1541,7 +1547,7 @@ export default function PayrollPage() {
                         {/* 特日 */}
                         <td></td>
                         {/* 土日祝 */}
-                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes), 0))}</td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes, e.weekend_holiday_rate), 0))}</td>
                         {/* 初任者研修調整費 */}
                         <td></td>
                         {/* 過誤 */}

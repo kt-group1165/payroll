@@ -107,6 +107,8 @@ export type HourlyPayroll = {
   meeting_fee: number;
   /** 研修・HRD研修の手当 = 研修時間 × 同行の時給 (trainingPayAmount) */
   training_pay: number;
+  /** 土日祝手当の時給 (事業所ごと。未設定は 50円) */
+  weekend_holiday_rate?: number;
   /** 時給者の残業 (日8h超 + 週40h超) の分と金額。hourlyOvertimeMinutes / hourlyOvertimePayAmount */
   overtime_minutes?: number;
   overtime_pay?: number;
@@ -433,7 +435,7 @@ export function hourlyTenure(e: HourlyPayroll): number {
 export function hourlyTotalPay(e: HourlyPayroll): number {
   return (
     e.totalPay +
-    weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes) +
+    weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes, e.weekend_holiday_rate) +
     e.office_work_pay +
     hourlyTenure(e) +
     e.treatment_subsidy +
@@ -457,8 +459,11 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
  *   森幸代 2026-04 1,095分 → 912.5 → 913円)。ずれる数件は祝日カレンダーの違い (振替休日・海の日など、未調査)。
  *   それまでは 100円/時 の表示専用で総支給に入れていなかった。
  */
-export function weekendHolidayAllowanceAmount(weekendHolidayMinutes: number): number {
-  return Math.round((weekendHolidayMinutes / 60) * 50);
+/** 土日祝手当の時給の既定値。事業所ごとの値は payroll_app_settings の weekend_holiday_allowance_rates */
+export const DEFAULT_WEEKEND_HOLIDAY_RATE = 50;
+
+export function weekendHolidayAllowanceAmount(weekendHolidayMinutes: number, ratePerHour: number = DEFAULT_WEEKEND_HOLIDAY_RATE): number {
+  return Math.round((weekendHolidayMinutes / 60) * ratePerHour);
 }
 
 // ─── 移動手当 (訪問介護・時給者) ─────────────────────────────────────────

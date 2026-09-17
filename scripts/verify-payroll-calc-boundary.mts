@@ -304,7 +304,7 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
     business_trip_fee: 700, error_adjustment: -50, office_work_pay: 800, training_pay: 900,
   });
   eq("hourlyTotalPay = 各要素の合算 (恒等式)", hourlyTotalPay(e),
-    e.totalPay + weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes) + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
+    e.totalPay + weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes, e.weekend_holiday_rate) + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
     e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.training_pay +
     e.childcare_allowance + e.commute_fee + e.business_trip_fee + e.error_adjustment);
 }
@@ -331,6 +331,7 @@ eq("★ 時給者残業代: hourlyTotalPay に入る (本人給93,400 + 残業30
   const withWeekend = hourly({ totalPay: 10000, effective_service_months: 0, summary: summary({ weekendHolidayMinutes: 600 }) });
   eq("★ 土日祝手当 600分 × 50円/時 = 500円 が hourlyTotalPay に入る", hourlyTotalPay(withWeekend) - hourlyTotalPay(base), 500);
   eq("土日祝手当 四捨五入: 1,095分 → 912.5 → 913 (森幸代 2026-04 総括表)", weekendHolidayAllowanceAmount(1095), 913);
+  eq("★ 土日祝手当 事業所の時給 100円: 1,095分 → 1,825 (茂原・やわた等)", weekendHolidayAllowanceAmount(1095, 100), 1825);
   eq("土日祝手当: 1,885分 → 1,570.8 → 1,571 (滝下 2026-05 総括表)", weekendHolidayAllowanceAmount(1885), 1571);
 }
 {
