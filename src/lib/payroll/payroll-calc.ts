@@ -52,6 +52,8 @@ export type SalarySettings = {
   care_overtime_threshold_hours: number;
   care_overtime_unit_price: number;
   yocho_unit_price: number;
+  /** 事務時給 (円/時間)。事務員 (payroll_employees.is_office_worker) のみ使用。0 = 計算しない */
+  office_work_hourly_rate: number;
 };
 
 export type AttendanceSummary = {
@@ -107,6 +109,11 @@ export type HourlyPayroll = {
   commute_fee: number;
   commute_distance_m: number;
   business_trip_fee: number;
+  /** 事務時間 (分)。事務員のみ = 出勤簿の出勤時間。それ以外は 0 */
+  office_work_minutes: number;
+  office_work_hourly_rate: number;
+  /** 事務の本人給 = 事務時間 × 事務時給 (officeWorkPayAmount) */
+  office_work_pay: number;
   records: HourlyDetailRow[];
   totalMinutes: number;
   totalPay: number;
@@ -348,6 +355,7 @@ export function hourlyTenure(e: HourlyPayroll): number {
 export function hourlyTotalPay(e: HourlyPayroll): number {
   return (
     e.totalPay +
+    e.office_work_pay +
     hourlyTenure(e) +
     e.treatment_subsidy +
     e.paid_leave_allowance +
@@ -532,6 +540,17 @@ export function hourlyCommuteFeeAmount(commuteKmTotal: number, commuteUnitPrice:
 /** 出張費 (時給者) */
 export function hourlyBusinessTripFeeAmount(businessKmTotal: number, travelUnitPrice: number): number {
   return Math.round(businessKmTotal * travelUnitPrice);
+}
+
+/**
+ * 事務員の本人給 = 事務時間 × 事務時給。
+ * 事務時間は出勤簿の出勤時間 (AttendanceSummary.workHoursMin) をそのまま使う
+ * (総括表の「内事務入浴」= 出勤時間。例: さつきが丘 福島可奈 2026-07 126:30 × 1,150円 = 145,475円)。
+ * 事務員でない / 事務時給が 0 のときは 0。
+ */
+export function officeWorkPayAmount(isOfficeWorker: boolean, workHoursMin: number, hourlyRate: number): number {
+  if (!isOfficeWorker || !(hourlyRate > 0)) return 0;
+  return Math.round((workHoursMin / 60) * hourlyRate);
 }
 
 /** 実績1件ぶんの支給額 (時給 × 時間)。単価が引けない (hourlyRate=null) 明細は null (未マッピング扱い) */

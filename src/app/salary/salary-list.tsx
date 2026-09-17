@@ -45,6 +45,8 @@ type SalarySettings = {
   care_overtime_threshold_hours: number;
   care_overtime_unit_price: number;
   yocho_unit_price: number;
+  /** 事務時給 (円/時間)。事務員のみ、出勤簿の出勤時間 × この単価を本人給に足す */
+  office_work_hourly_rate: number;
   note: string;
 };
 
@@ -106,6 +108,7 @@ const CSV_HEADERS = [
   "報奨金（条件付き）", "移動費単価(円/km)",
   "介護超過閾値(時間)", "介護超過単価(円/時間)",
   "夜朝手当単価(円/時間)",
+  "事務時給(円/時間)",
   "備考",
 ] as const;
 
@@ -128,6 +131,7 @@ const emptySettings = (employeeId: string, effectiveFrom?: string): SalarySettin
   care_overtime_threshold_hours: 0,
   care_overtime_unit_price: 0,
   yocho_unit_price: 0,
+  office_work_hourly_rate: 0,
   note: "",
 });
 
@@ -518,6 +522,7 @@ export function SalaryList({
         String(s.care_overtime_threshold_hours),
         String(s.care_overtime_unit_price),
         String(s.yocho_unit_price),
+        String(s.office_work_hourly_rate ?? 0),
         s.note,
       ]);
     }
@@ -608,6 +613,7 @@ export function SalaryList({
             care_overtime_threshold_hours: toInt(get("介護超過閾値(時間)")),
             care_overtime_unit_price: toInt(get("介護超過単価(円/時間)")),
             yocho_unit_price: toInt(get("夜朝手当単価(円/時間)")),
+            office_work_hourly_rate: toInt(get("事務時給(円/時間)")),
             note: get("備考"),
           },
           error: err,
@@ -1220,6 +1226,30 @@ export function SalaryList({
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground">※ 夜朝時間の自動計算方法は後日実装予定。現在は給与計算画面で月次手動入力。</p>
+                  </CardContent>
+                </Card>
+
+                {/* 事務時給 */}
+                <Card className="border-dashed">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">事務時給（事務員のみ）</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
+                      <div>
+                        <p className="text-sm font-medium">事務時給</p>
+                        <p className="text-xs text-muted-foreground">出勤簿の出勤時間 × 単価 = 本人給（職員マスタで「事務員」の人だけ）</p>
+                      </div>
+                      <div className="relative">
+                        <Input
+                          type="number" min={0} step={1}
+                          value={settings.office_work_hourly_rate || ""} placeholder="0"
+                          onChange={(e) => upd("office_work_hourly_rate", parseInt(e.target.value, 10) || 0)}
+                          className="pr-16 text-right"
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/時間</span>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
 

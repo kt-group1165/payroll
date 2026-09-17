@@ -49,6 +49,7 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
+  officeWorkPayAmount,
   computeSummary,
   isWeekendOrHoliday,
   parseWorkHoursMinutes,
@@ -119,6 +120,7 @@ const salary = (over: Partial<SalarySettings> = {}): SalarySettings => ({
   specific_treatment_improvement: 2000, treatment_subsidy: 1000, fixed_overtime_pay: 20000,
   special_bonus: 0, bonus_amount: 0, travel_unit_price: 0,
   care_overtime_threshold_hours: 0, care_overtime_unit_price: 0, yocho_unit_price: 0,
+  office_work_hourly_rate: 0,
   ...over,
 });
 eq("fixedTotal = 各手当の単純合計",
@@ -239,7 +241,8 @@ const hourly = (over: Partial<HourlyPayroll> = {}): HourlyPayroll => ({
   paid_leave_allowance: 0, cancel_count: 0, cancel_allowance: 0,
   travel_time_sec: 0, travel_allowance: 0, communication_fee: 0,
   meeting_fee: 0, childcare_allowance: 0, commute_fee: 0, commute_distance_m: 0,
-  business_trip_fee: 0, records: [], totalMinutes: 0, totalPay: 0, unmappedCount: 0,
+  business_trip_fee: 0, office_work_minutes: 0, office_work_hourly_rate: 0, office_work_pay: 0,
+  records: [], totalMinutes: 0, totalPay: 0, unmappedCount: 0,
   summary: summary(),
   ...over,
 });
@@ -256,13 +259,22 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
     totalPay: 50000, treatment_subsidy: 1000, paid_leave_allowance: 2000,
     cancel_allowance: 500, travel_allowance: 300, communication_fee: 100,
     meeting_fee: 200, childcare_allowance: 400, commute_fee: 600,
-    business_trip_fee: 700, error_adjustment: -50,
+    business_trip_fee: 700, error_adjustment: -50, office_work_pay: 800,
   });
   eq("hourlyTotalPay = 各要素の合算 (恒等式)", hourlyTotalPay(e),
-    e.totalPay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
+    e.totalPay + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
     e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee +
     e.childcare_allowance + e.commute_fee + e.business_trip_fee + e.error_adjustment);
 }
+
+// ── 事務の本人給 (officeWorkPayAmount) (2026-09-17 追加) ──
+// 期待値は総括表 (さつきが丘 2026-07 福島可奈) の実額: 出勤時間 126:30 (7,590分) × 事務時給 1,150円 = 本人給 145,475円
+eq("事務本人給: 福島可奈 2026-07 実額 7,590分×1,150円 = 145,475円", officeWorkPayAmount(true, 7590, 1150), 145475);
+eq("事務本人給: 事務員でなければ時間・時給があっても0円", officeWorkPayAmount(false, 7590, 1150), 0);
+eq("事務本人給: 事務時給0円なら0円", officeWorkPayAmount(true, 7590, 0), 0);
+eq("事務本人給: 端数は四捨五入 (10分×1,000円 = 166.67 → 167)", officeWorkPayAmount(true, 10, 1000), 167);
+eq("事務本人給: hourlyTotalPay に入る (本人給10,000 + 事務5,000)",
+  hourlyTotalPay(hourly({ totalPay: 10000, office_work_pay: 5000, effective_service_months: 0 })), 15000);
 
 // ★ 土日祝手当は hourlyTotalPay に含まれない (意図的な仕様。業務判断待ち)。
 //   ここで「入っていない」ことを固定する。含めるようになったらこのテストが落ちる。

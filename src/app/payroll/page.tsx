@@ -38,6 +38,7 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
+  officeWorkPayAmount,
   parseDurationMinutes,
   computeSummary,
   type OvertimeSetting,
@@ -86,6 +87,8 @@ type Employee = {
   social_insurance: boolean;
   paid_leave_unit_price: number;
   communication_fee_type: string;
+  /** 事務員。事務時間 (= 出勤簿の出勤時間) × 事務時給 を本人給に足す */
+  is_office_worker: boolean;
   /** Supabase Auth ユーザーID。兼務職員は同じ auth_user_id の複数行が存在し得る */
   auth_user_id: string | null;
 };
@@ -265,7 +268,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id,is_office_worker").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
         fetchAllSalarySettings(),
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
@@ -408,6 +411,7 @@ export default function PayrollPage() {
         socialInsurance: e.social_insurance ?? false,
         paidLeaveUnitPrice: e.paid_leave_unit_price ?? 0,
         communicationFeeType: e.communication_fee_type ?? "none",
+        isOfficeWorker: e.is_office_worker ?? false,
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
@@ -437,6 +441,8 @@ export default function PayrollPage() {
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
         const businessTripFee = hourlyBusinessTripFeeAmount(empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
         const meetingFee = computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""));
+        const officeWorkMinutes = info.isOfficeWorker ? empSummary.workHoursMin : 0;
+        const officeWorkRate = sal?.office_work_hourly_rate ?? 0;
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
           employee_name: firstRec?.employee_name || (attByEmp.get(empNum)?.[0] as {employee_name?: string})?.employee_name || empNum,
@@ -458,6 +464,9 @@ export default function PayrollPage() {
           commute_fee: commuteFee,
           commute_distance_m: 0,
           business_trip_fee: businessTripFee,
+          office_work_minutes: officeWorkMinutes,
+          office_work_hourly_rate: officeWorkRate,
+          office_work_pay: officeWorkPayAmount(info.isOfficeWorker, empSummary.workHoursMin, officeWorkRate),
           records: [],
           totalMinutes: 0,
           totalPay: 0,
@@ -691,7 +700,7 @@ export default function PayrollPage() {
         String(s.workDays), String(s.helperDays), String(s.paidLeave), String(s.halfLeave), String(s.specialLeave),
         formatWorkHours(s.workHoursMin),
         formatMinutes(s.visitMinutesExcludingAccompanied), formatMinutes(s.visitMinutes - s.visitMinutesExcludingAccompanied), formatMinutes(s.visitMinutes), formatMinutes(s.hrdMinutes),
-        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay),
+        String(e.totalMinutes), formatMinutes(e.totalMinutes), String(e.totalPay + e.office_work_pay),
         String(computeTenureRate(e.has_care_qualification, e.effective_service_months, e.job_type)),
         String(tenure), "0", String(e.treatment_subsidy), "0",
         e.travel_time_sec > 0 ? secToHm(e.travel_time_sec) : "0:00", String(e.travel_allowance),
@@ -1229,7 +1238,11 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.specialLeave || "—"}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{formatWorkHours(sm.workHoursMin)}</td>
-                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">
+                                {emp.office_work_minutes > 0
+                                  ? <span title={`事務時給 ${emp.office_work_hourly_rate.toLocaleString()}円`}>{formatWorkHours(emp.office_work_minutes)}{emp.office_work_pay > 0 ? <span className="ml-1 text-xs text-muted-foreground">({yen(emp.office_work_pay)})</span> : <span className="ml-1 text-xs text-yellow-700">(事務時給未設定)</span>}</span>
+                                  : <span className="text-muted-foreground text-xs">—</span>}
+                              </td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{sm.visitMinutesExcludingAccompanied ? formatMinutes(sm.visitMinutesExcludingAccompanied) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -1338,7 +1351,7 @@ export default function PayrollPage() {
                                         <td colSpan={3} className="py-2">合計</td>
                                         <td className="py-2 text-right">{formatMinutes(emp.totalMinutes)}</td>
                                         <td></td>
-                                        <td className="py-2 text-right">{yen(emp.totalPay)}{tenure > 0 ? ` + 勤続 ${yen(tenure)} = ${yen(grandTotal)}` : ""}</td>
+                                        <td className="py-2 text-right">{yen(emp.totalPay)}{emp.office_work_pay > 0 ? ` + 事務 ${yen(emp.office_work_pay)}` : ""}{tenure > 0 ? ` + 勤続 ${yen(tenure)}` : ""}{emp.office_work_pay > 0 || tenure > 0 ? ` (総支給 ${yen(grandTotal)})` : ""}</td>
                                       </tr>
                                     </tfoot>
                                   </table>
@@ -1368,7 +1381,7 @@ export default function PayrollPage() {
                         {/* 出勤時間 */}
                         <td className="px-3 py-2 text-right">{formatWorkHours(hourlyResults.reduce((s, e) => s + e.summary.workHoursMin, 0))}</td>
                         {/* 内事務入浴・内初任者研修時間・内研修時間 */}
-                        <td></td><td></td><td></td>
+                        <td className="px-3 py-2 text-right">{hourlyResults.some((e) => e.office_work_minutes > 0) ? formatWorkHours(hourlyResults.reduce((s, e) => s + e.office_work_minutes, 0)) : ""}</td><td></td><td></td>
                         {/* 実績時間 */}
                         <td className="px-3 py-2 text-right">{formatMinutes(hourlyResults.reduce((s, e) => s + e.summary.visitMinutesExcludingAccompanied, 0))}</td>
                         {/* 同行時間 */}

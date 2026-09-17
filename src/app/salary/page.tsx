@@ -29,6 +29,7 @@ type SalarySettings = {
   care_overtime_threshold_hours: number;
   care_overtime_unit_price: number;
   yocho_unit_price: number;
+  office_work_hourly_rate: number;
   note: string;
 };
 
