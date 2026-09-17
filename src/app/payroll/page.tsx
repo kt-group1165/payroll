@@ -156,6 +156,8 @@ export default function PayrollPage() {
   const [selectedOfficeType, setSelectedOfficeType] = useState<string>("訪問介護");
   const [tab, setTab] = useState<"hourly" | "monthly">("monthly");
   const [loading, setLoading] = useState(false);
+  /** 計算中の進捗 (0〜100)。移動距離の取得が一番長いので 40〜90% をそこに割り当てる */
+  const [progress, setProgress] = useState<{ pct: number; label: string } | null>(null);
   const [error, setError] = useState("");
   /** 移動距離・時間が取れなかったとき (Google の月間上限・エラー) の警告。移動手当・出張費が少なく出ている */
   const [distanceWarning, setDistanceWarning] = useState("");
@@ -200,6 +202,7 @@ export default function PayrollPage() {
   async function calculate() {
     if (!selectedMonth || !selectedOfficeId) return;
     setLoading(true); setError(""); setDistanceWarning("");
+    setProgress({ pct: 0, label: "実績データを読み込み中" });
     setHourlyResults([]); setMonthlyResults([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
@@ -228,6 +231,7 @@ export default function PayrollPage() {
             .range(from, from + pageSize - 1);
           if (!data || data.length === 0) break;
           allServiceRecords.push(...(data as ServiceRecord[]));
+          setProgress({ pct: Math.min(14, 2 + Math.floor(allServiceRecords.length / 1000) * 2), label: `実績データを読み込み中 (${allServiceRecords.length.toLocaleString()}件)` });
           if (data.length < pageSize) break;
           from += pageSize;
         }
@@ -266,6 +270,7 @@ export default function PayrollPage() {
         return { data: all };
       };
 
+      setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
@@ -297,6 +302,7 @@ export default function PayrollPage() {
         }
       }
 
+      setProgress({ pct: 30, label: "時給者を計算中" });
       const records    = allServiceRecords;
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
       const categoryMap= new Map((catRes.data ?? []).map((c: ServiceCategory) => [c.id, c.name]));
@@ -561,6 +567,7 @@ export default function PayrollPage() {
             let usageInfo: { month: string; used: number; limit: number } | null = null;
             for (let i = 0; i < allPairs.length; i += BATCH_SIZE) {
               const batch = allPairs.slice(i, i + BATCH_SIZE);
+              setProgress({ pct: 40 + Math.floor((50 * i) / allPairs.length), label: `移動距離を取得中 (${i.toLocaleString()} / ${allPairs.length.toLocaleString()} 区間)` });
               const res = await fetch("/api/distance", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -620,6 +627,7 @@ export default function PayrollPage() {
       const hourlySorted = [...hourlyEmpMap.values()].sort((a, b) => a.employee_name.localeCompare(b.employee_name, "ja"));
       setHourlyResults(hourlySorted);
 
+      setProgress({ pct: 92, label: "月給者を計算中" });
       // 月給者
       const monthlyEmps = employees.filter(
         (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者")
@@ -706,6 +714,7 @@ export default function PayrollPage() {
       setError(`計算エラー: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
@@ -1019,9 +1028,20 @@ export default function PayrollPage() {
               </select>
             </div>
             <Button onClick={calculate} disabled={!selectedMonth || !selectedOfficeId || loading}>
-              {loading ? "計算中…" : "給与計算を実行"}
+              {loading ? `計算中… ${progress?.pct ?? 0}%` : "給与計算を実行"}
             </Button>
           </div>
+          {loading && progress && (
+            <div className="mt-4" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.pct}>
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>{progress.label}</span>
+                <span className="font-mono">{progress.pct}%</span>
+              </div>
+              <div className="h-2 w-full rounded bg-muted overflow-hidden">
+                <div className="h-full bg-primary transition-all duration-300" style={{ width: `${progress.pct}%` }} />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
