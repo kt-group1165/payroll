@@ -11,7 +11,7 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices } from "@/lib/app-settings";
 import {
   computeTenureAllowance,
   computeTenureRate,
@@ -34,6 +34,7 @@ import {
   normalizeYM,
   computeChildcareAllowance,
   computeMeetingFee,
+  meetingMinutes,
   treatmentSubsidyAmount,
   cancelAllowanceFromCodes,
   paidLeaveAllowanceAmount,
@@ -287,7 +288,7 @@ export default function PayrollPage() {
       };
 
       setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
-      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes] = await Promise.all([
+      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
@@ -300,9 +301,11 @@ export default function PayrollPage() {
         supabase.from("payroll_overtime_settings").select("*"),
         getWeekendHolidayRates(supabase),
         getCareOvertimeLowerTiers(supabase),
+        getMeetingFeeUnpaidOffices(supabase),
       ]);
       if (careTiersRes.error) throw new Error(`介護超過の段の設定の読み込みに失敗: ${careTiersRes.error}`);
       if (weekendRatesRes.error) throw new Error(`土日祝手当の時給設定の読み込みに失敗: ${weekendRatesRes.error}`);
+      if (meetingUnpaidRes.error) throw new Error(`会議費を払わない事業所の設定の読み込みに失敗: ${meetingUnpaidRes.error}`);
       const weekendRates = weekendRatesRes.rates;
 
       // office_form_records は1000件上限を回避するためページネーション
@@ -497,7 +500,11 @@ export default function PayrollPage() {
           .filter((r) => r.record_type === "km" && r.item_name === "出張km")
           .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
         const businessTripFee = hourlyBusinessTripFeeAmount(ofTripKm > 0 ? ofTripKm : empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
-        const meetingFee = computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""));
+        // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
+        const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
+          ? 0
+          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""))
+            + (trainingPayAmount(meetingMinutes(ofByEmp.get(empNum) ?? []), trainingRate) ?? 0);
         const officeWorkMinutes = info.isOfficeWorker ? empSummary.workHoursMin : 0;
         const officeWorkRate = sal?.office_work_hourly_rate ?? 0;
         hourlyEmpMap.set(empNum, {

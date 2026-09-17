@@ -47,6 +47,7 @@ import {
   normalizeYM,
   computeChildcareAllowance,
   computeMeetingFee,
+  meetingMinutes,
   treatmentSubsidyAmount,
   cancelAllowanceAmount,
   cancelAllowanceFromCodes,
@@ -615,6 +616,29 @@ eq("isWeekendOrHoliday: 平日(2026-06-01・月曜)はfalse", isWeekendOrHoliday
 eq("★ isWeekendOrHoliday: 祝日(2026-06-... 該当なしのため2026-07-20海の日)はtrue", isWeekendOrHoliday("20260720"), true);
 eq("extractDay: YYYYMMDDから日を抽出", extractDay("20260615"), 15);
 eq("extractDay: 8桁未満は0", extractDay("2026"), 0);
+
+// ── meetingMinutes (会議の時間。会議費 = 件数×単価 + 時間×同行時給 の後ろ半分) ──
+{
+  const ofr = (o: Partial<OfficeFormRecord>): OfficeFormRecord => ({
+    employee_number: "1", record_type: "training", item_name: "会議", item_date: null,
+    start_time: null, end_time: null, break_time: null, numeric_value: null,
+    year_month: null, child_name: null, amount: null, ...o,
+  } as OfficeFormRecord);
+  eq("会議 60分", meetingMinutes([ofr({ start_time: "13:30", end_time: "14:30" })]), 60);
+  eq("休憩を引く", meetingMinutes([ofr({ start_time: "13:00", end_time: "15:00", break_time: "0:30" })]), 90);
+  eq("複数の会議を足す", meetingMinutes([ofr({ start_time: "9:00", end_time: "10:00" }), ofr({ start_time: "13:00", end_time: "13:30" })]), 90);
+  eq("★ 件数型 (会議1件数) は時間に数えない", meetingMinutes([ofr({ record_type: "km", item_name: "会議1件数", numeric_value: 1 })]), 0);
+  eq("★ 会議2件数・会議3件数 も数えない", meetingMinutes([ofr({ record_type: "km", item_name: "会議2件数", numeric_value: 1 })]), 0);
+  eq("研修は数えない (研修手当で別に払う)", meetingMinutes([ofr({ item_name: "研修", start_time: "9:00", end_time: "10:00" })]), 0);
+  eq("開始・終了が無ければ 0", meetingMinutes([ofr({})]), 0);
+  eq("終了 <= 開始 は 0", meetingMinutes([ofr({ start_time: "10:00", end_time: "9:00" })]), 0);
+  // ★ 負のコントロール: 直す前 (会議を一切数えない) と違う値になる
+  eq("★★ 直す前は 0 / 直した後は 60 (=この検査は差を検出できる)",
+    meetingMinutes([ofr({ start_time: "13:30", end_time: "14:30" })]) !== 0, true);
+  // 実例: 四街道 2026-07 は 60分 × 同行時給 1,150円 = 1,150円
+  eq("四街道 2026-07 の実例 60分 × 1,150円/時 = 1,150円",
+    trainingPayAmount(meetingMinutes([ofr({ start_time: "18:00", end_time: "19:00" })]), 1150), 1150);
+}
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }

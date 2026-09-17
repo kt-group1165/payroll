@@ -601,6 +601,21 @@ export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: 
   return Math.round(meetingCount * meetingUnitPrice);
 }
 
+/**
+ * 会議の時間 (分)。事業所書式の 研修 の「会議」(開始・終了あり) を足す。
+ * 総括表では 会議費 = 会議件数 × 会議単価 (1,500円) ＋ 会議時間 × 同行の時給 の合計。
+ *   四街道 2026-05 米倉有香 2,650円 = 60分×1,150 + 1件×1,500 / やわた 2026-06 石本美幸 3,800円 = 120分×1,150 + 1,500
+ * ⚠ おゆみ野だけは 会議の記録があっても総括表が 0 円 (2026-07 の 3 名で確認)。
+ *   事業所ごとの除外は payroll_app_settings の meeting_fee_unpaid_offices で持つ。
+ */
+export function meetingMinutes(ofRecs: OfficeFormRecord[]): number {
+  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  return ofRecs
+    .filter((r) => r.record_type === "training" && r.item_name === "会議" && r.start_time && r.end_time)
+    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+}
+
+
 // ─── 時給者の各種手当 (page.tsx から一言一句転記。2026-09-05 切り出し) ────
 
 /**

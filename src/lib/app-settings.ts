@@ -35,6 +35,18 @@ export async function getWeekendHolidayRates(supabase: SupabaseClient): Promise<
   return { rates: v?.rates ?? {}, sundayHolidayOnly: new Set(v?.sunday_holiday_only ?? []), error: null };
 }
 
+/**
+ * 会議費を払わない事業所 (事業所番号)。
+ * 総括表 2026-07 で おゆみ野 は 会議1件数・会議(時間) の記録がある 3 名とも 会議費 0 円だった。
+ */
+export const MEETING_FEE_UNPAID_OFFICES_KEY = "meeting_fee_unpaid_offices";
+
+export async function getMeetingFeeUnpaidOffices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MEETING_FEE_UNPAID_OFFICES_KEY).maybeSingle();
+  if (error) return { offices: new Set(), error: error.message };
+  return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
+}
+
 export const JISSEKI_SOURCE_MODE_KEY = "jisseki_source_mode";
 
 export async function getJissekiSourceMode(
