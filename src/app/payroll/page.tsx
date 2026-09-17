@@ -432,7 +432,12 @@ export default function PayrollPage() {
         const empRecs = recsByEmp.get(empNum) ?? [];
         const firstRec = empRecs[0];
         const sal = info ? salMap.get(info.empId) : null;
-        const empSummary = computeSummaryOf(empNum, empRecs);
+        const baseEmpSummary = computeSummaryOf(empNum, empRecs);
+        // 出勤簿の無い時給者の出勤時間 = 訪問時間 (+ 移動時間は経路計算の後で足す)。2026-09-17
+        const empSummary = {
+          ...baseEmpSummary,
+          workHoursMin: employeeWorkMinutes((attByEmp.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0),
+        };
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
         const hasSocialInsurance = info?.socialInsurance ?? false;
@@ -606,14 +611,21 @@ export default function PayrollPage() {
               const empOffice = officeByIdMap.get(empObj?.office_id ?? "");
               const rate = empOffice?.travel_allowance_rate ?? 0;
               let totalSec = 0;
+              let totalFullSec = 0;
               let totalCommuteM = 0;
               for (const [date, visits] of dayMap) {
                 const day = calcDayRoute(date, address, visits, distMap);
                 if (day) {
                   totalSec += day.travel_time_sec;
+                  totalFullSec += day.travel_time_full_sec;
                   totalCommuteM += day.commute_distance_m;
                 }
               }
+              // 出勤簿の無い時給者は 出勤時間 = 訪問 + 移動の全量 (社員と同じ。さつきが丘 2026-07 で総括表と照合)
+              entry.summary = {
+                ...entry.summary,
+                workHoursMin: employeeWorkMinutes((attByEmp.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec),
+              };
               const adjustedDistanceM = adjustedCommuteDistanceM(totalCommuteM, empOffice?.distance_adjustment_rate ?? 100);
               entry.travel_time_sec = totalSec;
               entry.travel_allowance = travelAllowanceAmount(totalSec, rate);
