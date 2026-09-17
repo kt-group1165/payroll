@@ -11,7 +11,7 @@ export type DayRouteResult = {
   date: string;
   commute_distance_m: number;  // 自宅→A→...→自宅 全区間
   travel_distance_m: number;   // A→B→C（2時間以上空く区間を除く）
-  travel_time_sec: number;     // 15分超の移動時間の合計（2時間空除外）
+  travel_time_sec: number;     // 15分超の移動時間の合計（2時間を超える空きは除外。区間ごと分単位切り捨て）
   /** 訪問間の移動時間の全量（2時間空除外・15分控除なし）。社員(月給・出勤簿なし)の労働時間に使う */
   travel_time_full_sec: number;
   legs: LegResult[];
@@ -42,7 +42,9 @@ function toMinutes(t: string): number {
   return parseInt(parts[0] ?? "0") * 60 + parseInt(parts[1] ?? "0");
 }
 
-const GAP_THRESHOLD_MIN = 120;  // 2時間
+// 総括表 (Gmap結果確認用 2026-06 さつきが丘) で確定: 空きがちょうど120分の区間は含み、120分を超えると除外。
+// 区間の所要時間は分単位に切り捨ててから足す (社員の 出勤時間−訪問時間 が区間の分の合計と一致: 米倉1264/大治1013)
+const GAP_THRESHOLD_MIN = 120;  // 2時間 (超えたら除外)
 const TRAVEL_TIME_THRESHOLD_SEC = 15 * 60; // 15分
 
 type DistMap = Map<string, { distance_meters: number; duration_seconds: number }>;
@@ -92,7 +94,7 @@ export function calcDayRoute(
       const endMin = toMinutes(visitFrom.dispatch_end_time);
       const startMin = toMinutes(visitTo.dispatch_start_time);
       const gap = startMin - endMin;
-      if (gap >= GAP_THRESHOLD_MIN) gapExcluded = true;
+      if (gap > GAP_THRESHOLD_MIN) gapExcluded = true;
     }
 
     // 通勤距離: 全区間
@@ -101,9 +103,10 @@ export function calcDayRoute(
     // 移動距離・移動時間: 自宅区間除外 + 2時間空除外
     if (!isHomeLeg && !gapExcluded) {
       travel_distance_m += dist.distance_meters;
-      travel_time_full_sec += dist.duration_seconds;
-      if (dist.duration_seconds > TRAVEL_TIME_THRESHOLD_SEC) {
-        travel_time_sec += dist.duration_seconds - TRAVEL_TIME_THRESHOLD_SEC;
+      const legSec = Math.floor(dist.duration_seconds / 60) * 60;
+      travel_time_full_sec += legSec;
+      if (legSec > TRAVEL_TIME_THRESHOLD_SEC) {
+        travel_time_sec += legSec - TRAVEL_TIME_THRESHOLD_SEC;
       }
     }
 

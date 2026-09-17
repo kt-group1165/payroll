@@ -73,21 +73,29 @@ console.log("\n══ 2時間ギャップ除外 ══");
 
 console.log("\n══ ちょうど120分・ちょうど15分の境界 ══");
 {
-  // ちょうど120分ギャップ → 除外 (>= なので境界含む)
+  // ちょうど120分ギャップ → 含む (総括表 2026-06 で ちょうど120分の区間 21 件が全部計上されていた)
   const visits120 = [visit("A", "A宅", "09:00", "10:00"), visit("B", "B宅", "12:00", "13:00")];
   const dist120 = map([[HOME, "A宅", 1, 1], ["A宅", "B宅", 1000, 1000], ["B宅", HOME, 1, 1]]);
-  eq("★ ちょうど120分ギャップも除外される (>= 境界)",
-    calcDayRoute("2026-06-15", HOME, visits120, dist120)!.travel_distance_m, 0);
+  eq("★ ちょうど120分ギャップは含む (> 境界)",
+    calcDayRoute("2026-06-15", HOME, visits120, dist120)!.travel_distance_m, 1000);
+  const visits121 = [visit("A", "A宅", "09:00", "10:00"), visit("B", "B宅", "12:01", "13:00")];
+  eq("★ 121分ギャップは除外",
+    calcDayRoute("2026-06-15", HOME, visits121, dist120)!.travel_distance_m, 0);
 
   // ちょうど15分(900秒)の移動時間 → 控除後0 (境界は超過分のみ計上、ちょうどは0)
   const dist15 = map([[HOME, "A宅", 1, 1], ["A宅", "B宅", 1000, 900], ["B宅", HOME, 1, 1]]);
   const visitsAB = [visit("A", "A宅", "09:00", "10:00"), visit("B", "B宅", "10:30", "11:00")];
   eq("★ ちょうど15分(900秒)の移動は travel_time_sec=0",
     calcDayRoute("2026-06-15", HOME, visitsAB, dist15)!.travel_time_sec, 0);
-  // 15分+1秒 → 1秒だけ計上
-  const dist15p1 = map([[HOME, "A宅", 1, 1], ["A宅", "B宅", 1000, 901], ["B宅", HOME, 1, 1]]);
-  eq("★ 15分+1秒の移動は travel_time_sec=1",
-    calcDayRoute("2026-06-15", HOME, visitsAB, dist15p1)!.travel_time_sec, 1);
+  // 区間は分単位切り捨て: 15分59秒 → 15分 → 0 / 16分 → 60秒
+  const dist15p59 = map([[HOME, "A宅", 1, 1], ["A宅", "B宅", 1000, 959], ["B宅", HOME, 1, 1]]);
+  eq("★ 15分59秒の移動は切り捨てて15分 → travel_time_sec=0",
+    calcDayRoute("2026-06-15", HOME, visitsAB, dist15p59)!.travel_time_sec, 0);
+  eq("★ 15分59秒の移動の全量は 900秒",
+    calcDayRoute("2026-06-15", HOME, visitsAB, dist15p59)!.travel_time_full_sec, 900);
+  const dist16 = map([[HOME, "A宅", 1, 1], ["A宅", "B宅", 1000, 960], ["B宅", HOME, 1, 1]]);
+  eq("★ 16分の移動は travel_time_sec=60",
+    calcDayRoute("2026-06-15", HOME, visitsAB, dist16)!.travel_time_sec, 60);
 }
 
 console.log("\n══ 訪問の並び替え (dispatch_start_time順に組み直す) ══");

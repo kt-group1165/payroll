@@ -41,6 +41,9 @@ import {
   yochoHoursFromRecords,
   paidLeaveDays,
   trainingMinutes,
+  hourlyOvertimeMinutes,
+  hourlyOvertimePayAmount,
+  shoninshaTrainingMinutes,
   trainingPayAmount,
   careMinutesFromRecords,
   officeWorkPayAmount,
@@ -420,6 +423,7 @@ export default function PayrollPage() {
 
       // 時給者
       const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
+        name: e.name,
         role: e.role_type,
         salary: e.salary_type,
         hasQual: e.has_care_qualification ?? false,
@@ -465,7 +469,7 @@ export default function PayrollPage() {
         const cancelAllowance = cancelAllowanceAmount(cancelCount, empOffice?.cancel_unit_price ?? 0);
         const paidLeaveAllowance = paidLeaveAllowanceAmount(paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
-        const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
+        const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes);
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
         // 出張距離: 事業所書式の「出張km」を優先 (無ければ出勤簿の出張km)。2026-09-17 user 方針: 地図の距離は使わない
@@ -478,7 +482,7 @@ export default function PayrollPage() {
         const officeWorkRate = sal?.office_work_hourly_rate ?? 0;
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
-          employee_name: firstRec?.employee_name || (attByEmp.get(empNum)?.[0] as {employee_name?: string})?.employee_name || empNum,
+          employee_name: firstRec?.employee_name || (attByEmp.get(empNum)?.[0] as {employee_name?: string})?.employee_name || info.name || empNum,
           role_type: info?.role ?? "",
           has_care_qualification: info?.hasQual ?? false,
           job_type: info?.jobType ?? "",
@@ -494,6 +498,7 @@ export default function PayrollPage() {
           communication_fee: communicationFee,
           meeting_fee: meetingFee,
           training_pay: trainingPay,
+          ...(() => { const m = (attByEmp.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
           childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth),
           commute_fee: commuteFee,
           commute_distance_m: 0,

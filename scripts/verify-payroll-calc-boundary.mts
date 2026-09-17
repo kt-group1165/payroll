@@ -51,6 +51,9 @@ import {
   hourlyRecordPay,
   paidLeaveDays,
   trainingMinutes,
+  shoninshaTrainingMinutes,
+  hourlyOvertimeMinutes,
+  hourlyOvertimePayAmount,
   trainingPayAmount,
   visitPayAmount,
   timePeriodMultiplier,
@@ -293,6 +296,8 @@ eq("事務本人給: 事務時給0円なら0円", officeWorkPayAmount(true, 7590
 eq("事務本人給: 端数は四捨五入 (10分×1,000円 = 166.67 → 167)", officeWorkPayAmount(true, 10, 1000), 167);
 eq("事務本人給: hourlyTotalPay に入る (本人給10,000 + 事務5,000)",
   hourlyTotalPay(hourly({ totalPay: 10000, office_work_pay: 5000, effective_service_months: 0 })), 15000);
+eq("★ 時給者残業代: hourlyTotalPay に入る (本人給93,400 + 残業300)",
+  hourlyTotalPay(hourly({ totalPay: 93400, overtime_pay: 300, effective_service_months: 0 })), 93700);
 
 // ★ 土日祝手当は hourlyTotalPay に含まれる (2026-09-17 総括表で確認。50円/時)
 {
@@ -416,6 +421,20 @@ eq("★ 半有給1回 × 8,635円 = 4,318円 (森幸代 2026-06 総括表)", pai
   eq("研修手当: 180分 × 1,150円 = 3,450円 (岩田 2026-07 総括表 HRD2,300+会議費1,150)", trainingPayAmount(180, 1150), 3450);
   eq("研修手当: 休憩を引く 9:30-16:40 休憩0:50 = 380分", trainingMinutes([tr("研修", "9:30", "16:40", "0:50")]), 380);
   eq("研修手当: 同行の時給が無ければ0円", trainingPayAmount(120, null), 0);
+  {
+    const r = (service_date: string, calc_duration: string) => ({ service_date, calc_duration });
+    eq("★ 時給者残業: 1日 8:30 → 30分 (石毛 2026-05)", hourlyOvertimeMinutes([r("2026/05/08", "008:30"), r("2026/05/11", "001:45")]), 30);
+    eq("時給者残業: ちょうど8時間は0", hourlyOvertimeMinutes([r("2026/05/08", "005:00"), r("2026/05/08", "003:00")]), 0);
+    eq("時給者残業: 同日の複数訪問を合算 5h+3h+1分 → 1分", hourlyOvertimeMinutes([r("2026/05/08", "005:00"), r("2026/05/08", "003:01")]), 1);
+    const wk = ["2026/07/05","2026/07/06","2026/07/07","2026/07/08","2026/07/09"].map((d) => r(d, "008:00"));
+    eq("時給者残業: 日曜始まりの週 8h×5日=40h ちょうどは0", hourlyOvertimeMinutes(wk), 0);
+    eq("★ 時給者残業: 同じ週に6日目 2h → 週40h超 120分", hourlyOvertimeMinutes([...wk, r("2026-07-10", "002:00")]), 120);
+    eq("時給者残業: 翌週 (日曜) に回れば0", hourlyOvertimeMinutes([...wk, r("2026/07/12", "002:00")]), 0);
+    eq("時給者残業: 日8h超分は週の40hに数えない 9h×5日 → 日300分のみ", hourlyOvertimeMinutes(wk.map((x) => ({ ...x, calc_duration: "009:00" }))), 300);
+    eq("★ 時給者残業代: 30分 × 10円 = 300円", hourlyOvertimePayAmount(30), 300);
+  }
+  eq("初任者研修の時間: 初任者研修だけ (休憩を引く) = 380分", shoninshaTrainingMinutes(recs), 380);
+  eq("★ 初任者研修費: 2670分 × 1,150円 = 51,175円 (福井 2026-05 総括表)", trainingPayAmount(2670, 1150), 51175);
 }
 eq("夜朝の時間: 早朝夜間だけ合計 (大治 2026-06: 30分×5 + 90分×4 = 510分 = 8.5h)",
   yochoHoursFromRecords([...Array(5)].map(() => ({ calc_duration: "000:30", time_period: "早朝夜間" })).concat([...Array(4)].map(() => ({ calc_duration: "001:30", time_period: "早朝夜間" })), [{ calc_duration: "002:00", time_period: "通常" }])), 8.5);

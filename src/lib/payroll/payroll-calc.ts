@@ -107,6 +107,9 @@ export type HourlyPayroll = {
   meeting_fee: number;
   /** 研修・HRD研修の手当 = 研修時間 × 同行の時給 (trainingPayAmount) */
   training_pay: number;
+  /** 時給者の残業 (日8h超 + 週40h超) の分と金額。hourlyOvertimeMinutes / hourlyOvertimePayAmount */
+  overtime_minutes?: number;
+  overtime_pay?: number;
   childcare_allowance: number;
   commute_fee: number;
   commute_distance_m: number;
@@ -389,6 +392,7 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
     e.communication_fee +
     e.meeting_fee +
     e.training_pay +
+    (e.overtime_pay ?? 0) +
     e.childcare_allowance +
     e.commute_fee +
     e.business_trip_fee +
@@ -559,6 +563,19 @@ export function trainingMinutes(ofRecs: OfficeFormRecord[]): number {
     .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
 }
 
+/**
+ * 初任者研修の時間 (事業所書式 研修 の 初任者研修: 終了−開始−休憩)。
+ * 総括表では 初任者研修費 = 時間 × 同行の時給 (さつきが丘 福井知佳子 2026-05 2670分 51,175円 / 2026-06 2820分 54,050円 = 1,150円/時)。
+ * ⚠ 事業所書式から出す時間は 2840分 / 2990分 で、総括表より両月とも 170分 多い (原因未特定)。
+ * 介護時間 (社員の介護超過) には足さない。
+ */
+export function shoninshaTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
+  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  return ofRecs
+    .filter((r) => r.record_type === "training" && r.item_name === "初任者研修" && r.start_time && r.end_time)
+    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+}
+
 /** 研修手当 = 研修時間 × 同行の時給 (さつきが丘 1,150円: 岩田ゆきよ 2026-05 研修2h 2,300円 / 2026-07 HRD2h 2,300円+研修1h 1,150円) */
 export function trainingPayAmount(minutes: number, hourlyRate: number | null): number {
   if (!hourlyRate || minutes <= 0) return 0;
@@ -641,6 +658,35 @@ export const VISIT_PAY_TIER_HOURS = 1.5;
  * 実データ (さつきが丘 × 200円/時): 大治浅美 2026-06 510分→1,700円 / 2026-07 480分→1,600円、米倉靖子 90分→300円 / 120分→400円 が総括表と一致。
  * ⚠ 深夜を含めるかは未確認 (深夜の実績が無かった) → 含めていない
  */
+/**
+ * 時給者 (出勤簿なし) の残業時間 = 日ごとの訪問時間の 8時間超 + 週 (日曜始まり・月内) の 8時間以内分の 40時間超。
+ * 総括表の「内残業」と一致: さつきが丘 石毛 2026-05 30分 (5/8 8:30) / 滝下 2026-05 60分・2026-07 30分、
+ *   おゆみ野 金城 2026-07 2190分 (日1230+週960) / 加藤 570 / 花見川 朝比奈 150 / 袖ケ浦 藤田 90。
+ * ⚠ 合わない例あり (五井 森朱希 2339 vs 1945 / やわた 石本 3153 vs 3015 / 高品 鈴木一生 230 vs 150)。移動時間を含むか等は未特定。
+ */
+export function hourlyOvertimeMinutes(records: { service_date: string; calc_duration: string }[]): number {
+  const day = new Map<string, number>();
+  for (const r of records) day.set(r.service_date, (day.get(r.service_date) ?? 0) + parseDurationMinutes(r.calc_duration));
+  let daily = 0;
+  const week = new Map<string, number>();
+  for (const [date, min] of day) {
+    daily += Math.max(0, min - 480);
+    const [y, m, d] = date.split(/[-/]/).map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
+    const key = dt.toISOString().slice(0, 10);
+    week.set(key, (week.get(key) ?? 0) + Math.min(min, 480));
+  }
+  let weekly = 0;
+  for (const w of week.values()) weekly += Math.max(0, w - 2400);
+  return daily + weekly;
+}
+
+/** 時給者の残業代 = 残業分 × 10円 (総括表 全事業所 2026-05〜07 の 35 件すべてで 残業 = 内残業 × 10) */
+export function hourlyOvertimePayAmount(minutes: number): number {
+  return Math.max(0, minutes) * 10;
+}
+
 export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
   const min = records
     .filter((r) => { const t = (r.time_period ?? "").trim(); return !t.includes("深夜") && /夜朝|夜間|早朝/.test(t); })
