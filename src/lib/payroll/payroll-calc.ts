@@ -145,6 +145,8 @@ export type MonthlyPayroll = {
   yocho_hours: number;
   /** 介護超過の判定に使う介護時間 (分)。無ければ訪問時間 (careMinutesFromRecords) */
   care_minutes?: number;
+  /** 有給1日あたりの単価 (職員マスタ 有給単価)。monthlyPaidLeaveAllowance */
+  paid_leave_unit_price?: number;
   /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
   legal_within_minutes?: number;
   summary: AttendanceSummary;
@@ -392,8 +394,18 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     p.childcare_allowance +
     careOvertimePay(p) +
     yochoAllowance(p) +
+    monthlyPaidLeaveAllowance(p) +
     overtimeExcessPay(p, otSettings)
   );
+}
+
+/**
+ * 月給者の有給休暇手当 = (有給 + 半有給×0.5) × 人ごとの有給単価 (円/日)。
+ * 総括表: 同じ人は月が違っても日額が同じ (高品 根本 82円 3〜7月 / さつき 大治 252円 4〜7月 / 高品 櫻井 3月半日643・7月1日1,286)。
+ * 提責・事務員は有給単価 0 のまま (総括表で有給休暇手当が出ていない)。
+ */
+export function monthlyPaidLeaveAllowance(p: MonthlyPayroll): number {
+  return paidLeaveAllowanceAmount(paidLeaveDays(p.summary.paidLeave, p.summary.halfLeave), p.paid_leave_unit_price ?? 0);
 }
 
 // ─── 時給者 ──────────────────────────────────────────────────────────────

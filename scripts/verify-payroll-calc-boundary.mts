@@ -33,6 +33,7 @@ import {
   travelFeeAmount,
   commuteFeeAmount,
   overtimeExcessPay,
+  monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
   OFFICE_WORKER_SCHEDULED_HOURS,
   monthlyGrandTotal,
@@ -255,14 +256,17 @@ eq("固定残業超過額: 実残業代が固定残業代を超えない場合�
     travel_km: 10, office_travel_unit_price: 100,
     summary: summary({ commuteKmTotal: 20, visitMinutes: 660, overtimeMinutes: 100 }),
     office_commute_unit_price: 50,
-    business_trip_fee: 500, childcare_allowance: 300, yocho_hours: 2,
+    business_trip_fee: 500, childcare_allowance: 300, yocho_hours: 2, paid_leave_unit_price: 82,
   });
+  eq("★ 月給者の有給休暇手当: 有給2日 × 82円 = 164 (高品 根本 2026-07)", monthlyPaidLeaveAllowance(monthly({ paid_leave_unit_price: 82, summary: summary({ paidLeave: 2 }) })), 164);
+  eq("★ 月給者の有給休暇手当: 半有給1回 × 1,286円 = 643 (高品 櫻井 2026-03)", monthlyPaidLeaveAllowance(monthly({ paid_leave_unit_price: 1286, summary: summary({ halfLeave: 1 }) })), 643);
+  eq("月給者の有給休暇手当: 単価未設定なら0", monthlyPaidLeaveAllowance(monthly({ summary: summary({ paidLeave: 3 }) })), 0);
   const expect =
     fixedTotal(p.settings!) +
     (p.bonus_paid ? p.settings!.bonus_amount : 0) +
     travelFeeAmount(p) + commuteFeeAmount(p) +
     p.business_trip_fee + p.childcare_allowance +
-    careOvertimePay(p) + yochoAllowance(p) +
+    careOvertimePay(p) + yochoAllowance(p) + monthlyPaidLeaveAllowance(p) +
     overtimeExcessPay(p, otMap(ot()));
   eq("monthlyGrandTotal = 各要素の合算 (恒等式)", monthlyGrandTotal(p, otMap(ot())), expect);
 }

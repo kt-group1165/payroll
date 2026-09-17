@@ -43,6 +43,7 @@ import {
   trainingMinutes,
   hourlyOvertimeMinutes,
   legalWithinOvertimeMinutes,
+  monthlyPaidLeaveAllowance,
   hourlyOvertimePayAmount,
   shoninshaTrainingMinutes,
   trainingPayAmount,
@@ -727,6 +728,7 @@ export default function PayrollPage() {
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075) + trainingMinutes(empOfRecs),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmp.get(normEmp(e.employee_number)) ?? [], empOfRecs),
+            paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             summary,
           };
         });
@@ -1773,6 +1775,7 @@ export default function PayrollPage() {
                                           <DetailLine label="処遇改善補助金手当" v={s.treatment_subsidy} />
                                           <DetailLine label="固定残業代" v={s.fixed_overtime_pay} />
                                           <DetailLine label="残業代" v={computeOvertimePay(p, otSettings)} />
+                                          {monthlyPaidLeaveAllowance(p) > 0 && <DetailLine label="有給休暇手当" v={monthlyPaidLeaveAllowance(p)} />}
                                           <DetailLine label="特別報奨金" v={s.special_bonus} />
                                           {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
                                           {travelFeeAmount(p) > 0 && <DetailLine label={`移動費(${effectiveTravelKm(p)}km)`} v={travelFeeAmount(p)} />}
