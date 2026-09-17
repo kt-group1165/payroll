@@ -154,6 +154,7 @@ export async function parseAttendanceFile(
       if (headerMap.has("控除")) attendanceRow.控除 = get("控除");
       if (headerMap.has("備考")) attendanceRow.備考 = get("備考");
 
+      fillMissingWorkHours(attendanceRow);
       attendanceRows.push(attendanceRow);
     }
 
@@ -200,6 +201,42 @@ export async function parseAttendanceFile(
       fileName: file.name,
     };
   }
+}
+
+/** "H:MM" → 分。読めなければ null */
+function hhmmToMinutes(v: string | undefined): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((v ?? "").trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+function minutesToHhmm(min: number): string {
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}`;
+}
+
+/**
+ * 出勤簿の 1 日目だけ 勤務時間 が 0:00 のまま出てくる (出勤簿 xlsm の式の不具合。実測 63 ファイル)。
+ * 開始・終了 があるのに 勤務時間 が 0 の日は 終了 − 開始 − 休憩 で埋める。
+ * 休憩 も 0 のことがあるので、6 時間超のときは 1 時間を引く (事業所の出勤簿と同じ扱い)。
+ *
+ * 根拠: 総括表 2026-03〜07 の「出勤時間」と突合すると 494 人月中 411 → 459 一致に増える
+ * (例 市原ムツミ 中村素子 2026-07: 130:30 → 138:30 = 総括表)。
+ */
+export function fillMissingWorkHours(row: AttendanceRow): void {
+  if ((hhmmToMinutes(row.勤務時間) ?? 0) > 0) return;
+  const pairs: [string | undefined, string | undefined][] = [
+    [row.開始, row.終了], [row.開始2, row.終了2], [row.開始3, row.終了3],
+    [row.開始4, row.終了4], [row.開始5, row.終了5],
+  ];
+  let gross = 0;
+  for (const [st, en] of pairs) {
+    const a = hhmmToMinutes(st), b = hhmmToMinutes(en);
+    if (a === null || b === null || b <= a) continue;
+    gross += b - a;
+  }
+  if (gross <= 0) return;
+  const brk = hhmmToMinutes(row.休憩) ?? 0;
+  const work = gross - (brk > 0 ? brk : gross > 360 ? 60 : 0);
+  if (work > 0) row.勤務時間 = minutesToHhmm(work);
 }
 
 /**

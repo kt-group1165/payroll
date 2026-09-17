@@ -18,6 +18,8 @@
  *     - 社保 (= 処遇改善補助金の対象) は 最新月に 処遇改善補助金手当 が出ているか で決める。
  *       総括表の「社会保険」列は補助金と一致しない (さつき 滝下: 列は空で補助金あり / 高品 菊池: 列は1で補助金なし)
  *     - 有給単価 = 最新月の値 / 勤続手当単価がある → 資格「不明（要件は満たす）」
+ *     - 事務時給がある人は事務員 (is_office_worker) にして 給与設定の事務時給に入れる。
+ *       本人給 = 出勤時間 × 事務時給 が 5 人 × 5 か月すべてで一致する (市原 中村/片岡・木更津 藤元・五井 根本・さつき 福島)
  *     - 最新月が月給の人には時給側の設定を当てない
  *   --skip-part: パートを扱わない (いわね: パートは やわた の職員と同じ一覧で、やわたで稼働 = user 判断)
  *   在籍
@@ -25,7 +27,7 @@
  *     - DB の在職/休職者で、総括表 (指定月) と MEISAI 実績 (全月) のどちらにも居ない → 退職者
  *     - 退職者が総括表の月に載っている → 退職日 = 最後に載っている月の末日 (退職日が無いか、それより前のとき)
  *
- * 触らないもの (人の確認が要る): 通信費タイプ・事務時給・兼務者・単価マスタ・サービスコード対応。候補として表示だけする。
+ * 触らないもの (人の確認が要る): 通信費タイプ・兼務者・単価マスタ・サービスコード対応。候補として表示だけする。
  * 冪等: もう一度 DRY RUN すると 0 件になる。
  */
 import { readFileSync } from "node:fs";
@@ -231,7 +233,21 @@ for (const code of partCodes) {
   }
   if (rows.some((x) => num(x.r["勤続手当単価"]) > 0) && (!e || !e.has_care_qualification)) ops.push({ label: `資格 ${code} ${name} → 不明（要件は満たす） (勤続手当単価 ${rows.map((x) => x.r["勤続手当単価"]).filter(Boolean).join("/")})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { has_care_qualification: true, care_qualification_kind: "不明（要件は満たす）" }) });
   if (num(last["通信手当"]) < 0) notes.push(`${code} ${name}: 通信手当 ${last["通信手当"]} (貸与負担なら 通信費タイプ lend_fee。現在 ${e?.communication_fee_type ?? "-"})`);
-  if (last["事務時給"]) notes.push(`${code} ${name}: 事務時給 ${last["事務時給"]} (事務員。現在 is_office_worker=${e?.is_office_worker ?? "-"})`);
+  // 事務時給 (総括表にこの列がある人は事務員。本人給 = 出勤時間 × 事務時給 が 5 か月 5 人すべてで一致)
+  const jimu = num(last["事務時給"]);
+  if (jimu > 0) {
+    if (!e || !e.is_office_worker) ops.push({ label: `事務員に ${code} ${name} (事務時給 ${jimu})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { is_office_worker: true }) });
+    const others = new Set(rows.map((x) => num(x.r["事務時給"])).filter((v) => v > 0));
+    if (others.size > 1) notes.push(`${code} ${name}: 事務時給が月で違う ${rows.filter((x) => num(x.r["事務時給"]) > 0).map((x) => `${x.m}=${x.r["事務時給"]}`).join(", ")} (最新月の値を入れる)`);
+    if (e) {
+      const ss = await getAll(`payroll_salary_settings?select=id,effective_from,office_work_hourly_rate&employee_id=eq.${e.id}`);
+      for (const row of ss) {
+        if (row.office_work_hourly_rate === jimu) continue;
+        ops.push({ label: `事務時給 ${code} ${name} ${row.effective_from}〜 ${row.office_work_hourly_rate ?? 0} → ${jimu}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, { office_work_hourly_rate: jimu }) });
+      }
+      if (ss.length === 0) ops.push({ label: `給与設定を作る (事務時給のみ) ${code} ${name} ${jimu}`, run: () => write("POST", "payroll_salary_settings", { employee_id: e.id, effective_from: "1970-01-01", office_work_hourly_rate: jimu }) });
+    }
+  }
 }
 
 console.log(`=== 総括表 → 給与マスタ ${FOLDER} (${OFFICE}) ${MONTHS.join(",")} ${EXECUTE ? "【本番】" : "(DRY RUN)"} ${ops.length} 件 ===`);

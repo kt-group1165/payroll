@@ -12,6 +12,8 @@ import {
   extendedMonthRange,
 } from "../src/lib/payroll/attendance-calc";
 import { calcOvertimePayBreakdown } from "../src/lib/payroll/overtime-pay-calc";
+import { fillMissingWorkHours } from "../src/lib/csv/attendance-parser";
+import type { AttendanceRow } from "../src/types/csv";
 
 let pass = 0;
 const fail: string[] = [];
@@ -234,6 +236,30 @@ eq("★ total_paid_leave_days = full(1) + half(0.5) + 通常(0) = 1.5",
 const noFilterSum = calcMonthlySummary(extendedRecords, 0);
 eq("★ monthFilter 省略時は 6日分すべて total_work に入る (480*6)",
   noFilterSum.total_work, 480 * 6);
+
+// ── fillMissingWorkHours (出勤簿 1 日目の勤務時間が 0:00 で出てくる xlsm の不具合を埋める) ──
+{
+  const row = (o: Partial<AttendanceRow>): AttendanceRow => ({
+    日付: "1", 曜日: "水", 振替日: "", 勤務摘要: "", 勤務摘要2: "", 勤務摘要3: "", 勤務摘要4: "", 勤務摘要5: "",
+    開始: "", 終了: "", 開始2: "", 終了2: "", 開始3: "", 終了3: "", 開始4: "", 終了4: "", 開始5: "", 終了5: "",
+    休憩: "", 勤務時間: "0:00", 通勤km: "", 出張km: "", ...o,
+  });
+  const filled = (o: Partial<AttendanceRow>) => { const r = row(o); fillMissingWorkHours(r); return r.勤務時間; };
+  eq("勤務時間が入っている日は触らない", filled({ 開始: "9:00", 終了: "18:00", 勤務時間: "7:30" }), "7:30");
+  eq("開始・終了が無い日は触らない", filled({}), "0:00");
+  eq("休憩があればそれを引く", filled({ 開始: "9:00", 終了: "17:30", 休憩: "1:00" }), "7:30");
+  eq("★ 境界: ちょうど6時間は休憩を引かない", filled({ 開始: "9:00", 終了: "15:00" }), "6:00");
+  eq("★ 境界: 6時間1分は1時間引く", filled({ 開始: "9:00", 終了: "15:01" }), "5:01");
+  eq("休憩0:00・9時間 → 8:00 (市原ムツミ 中村素子 2026-07-01 の実例)", filled({ 開始: "9:00", 終了: "18:00", 休憩: "0:00" }), "8:00");
+  eq("休憩0:00・3時間 → 3:00 (木更津 藤元恵 の実例)", filled({ 開始: "10:00", 終了: "13:00", 休憩: "0:00" }), "3:00");
+  eq("複数の時間帯を足す", filled({ 開始: "9:00", 終了: "12:00", 開始2: "13:00", 終了2: "15:00" }), "5:00");
+  eq("終了 <= 開始 の区間は数えない", filled({ 開始: "9:00", 終了: "9:00" }), "0:00");
+  eq("有給の日 (0:00-0:00) は触らない", filled({ 開始: "0:00", 終了: "0:00", 勤務摘要: "有給" }), "0:00");
+
+  // ★ 負のコントロール: 直す前の実装 (何もしない) と違う値になることを示す
+  const before = row({ 開始: "9:00", 終了: "18:00", 休憩: "0:00" }).勤務時間;
+  eq("★★ 直す前 (0:00) と直した後 (8:00) は違う (=この検査は差を検出できる)", before !== filled({ 開始: "9:00", 終了: "18:00", 休憩: "0:00" }), true);
+}
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
