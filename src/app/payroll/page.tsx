@@ -42,6 +42,7 @@ import {
   paidLeaveDays,
   trainingMinutes,
   hourlyOvertimeMinutes,
+  legalWithinOvertimeMinutes,
   hourlyOvertimePayAmount,
   shoninshaTrainingMinutes,
   trainingPayAmount,
@@ -725,6 +726,7 @@ export default function PayrollPage() {
             yocho_hours: yochoHoursFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? []),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075) + trainingMinutes(empOfRecs),
+            legal_within_minutes: legalWithinOvertimeMinutes(attByEmp.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             summary,
           };
         });

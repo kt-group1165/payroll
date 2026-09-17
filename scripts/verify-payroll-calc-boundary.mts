@@ -33,6 +33,8 @@ import {
   travelFeeAmount,
   commuteFeeAmount,
   overtimeExcessPay,
+  legalWithinOvertimeMinutes,
+  OFFICE_WORKER_SCHEDULED_HOURS,
   monthlyGrandTotal,
   hourlyTenure,
   hourlyTotalPay,
@@ -219,6 +221,21 @@ eq("時間外手当: 60h+1分は超過1分だけ1.5倍",
     otMap(ot()),
   ),
   Math.round((3600 / 60) * (320000 / 160) * 1.25 + (1 / 60) * (320000 / 160) * 1.5));
+{
+  const kt = ot({ scheduled_hours_per_month: 168, include_skill_salary: true, include_treatment_subsidy: true });
+  const fukuda = monthly({ role_type: "事務員", settings: salary({ base_personal_salary: 100000, skill_salary: 110000, treatment_subsidy: 14000 }), summary: summary({ overtimeMinutes: 1590 }), legal_within_minutes: 390 });
+  eq("★ 事務員の所定は159h: 単価 round(224,000/159)=1,409 → 残業単価 1,761 × 1590分 = 46,667 + 法内 390分×1,409 = 9,159 (高品 福田 2026-07 総括表)",
+    computeOvertimePay(fukuda, otMap(kt)), 46667 + 9159);
+  eq("事務員の所定時間定数 = 159", OFFICE_WORKER_SCHEDULED_HOURS, 159);
+  eq("★ 法内残業は事務員だけ (社員に legal_within_minutes があっても足さない)",
+    computeOvertimePay({ ...fukuda, role_type: "社員", summary: summary({ overtimeMinutes: 0 }) }, otMap(kt)), 0);
+  eq("★ 残業単価は単価を丸めてから×1.25: 根本 2026-07 298,000/168=1,774 → 2,218 × 474分 = 17,522",
+    computeOvertimePay(monthly({ role_type: "社員", settings: salary({ base_personal_salary: 298000 }), summary: summary({ overtimeMinutes: 474 }) }), otMap(ot({ scheduled_hours_per_month: 168 }))), 17522);
+  const att = (day: number, work_hours: string) => ({ day, work_hours });
+  eq("★ 法内残業: 半有給の日は所定4h (7h→180 / 7:30→210 / 3h→0)、通常日は8h超でも0 (福田 390分)",
+    legalWithinOvertimeMinutes([att(1, "10:00"), att(22, "7:00"), att(24, "7:30"), att(27, "3:00"), att(28, "0:00")], [{ item_name: "半有給", item_date: "7/22,7/24,7/27" }]), 390);
+  eq("法内残業: 半有給が「7月10日」形式でも日を読む", legalWithinOvertimeMinutes([att(10, "6:00")], [{ item_name: "半有給", item_date: "7月10日" }]), 120);
+}
 eq("時間外手当: 設定に無い job_type は0円",
   computeOvertimePay(monthly({ job_type: "訪問看護" }), otMap(ot())), 0);
 eq("時間外手当: 残業0分は0円",

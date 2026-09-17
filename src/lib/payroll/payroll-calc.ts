@@ -145,6 +145,8 @@ export type MonthlyPayroll = {
   yocho_hours: number;
   /** 介護超過の判定に使う介護時間 (分)。無ければ訪問時間 (careMinutesFromRecords) */
   care_minutes?: number;
+  /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
+  legal_within_minutes?: number;
   summary: AttendanceSummary;
 };
 
@@ -281,6 +283,33 @@ export function yochoAllowance(p: MonthlyPayroll): number {
 
 /** 月間時間外 60 時間 (分)。これを超えた分は 50% 割増 (労基法37条1項但書) */
 export const MONTHLY_OT_THRESHOLD_MIN = 60 * 60;
+/** 月給の事務員の所定時間 (総括表 提責・事務=2 の単価: 224,000円 → 1,409円 = 159h。5事業所で確認) */
+export const OFFICE_WORKER_SCHEDULED_HOURS = 159;
+
+/**
+ * 事務員の法内残業 (分) = 出勤簿の日ごとに min(勤務, 8h) − 所定 の正の部分。所定は 8h、事業所書式の半有給の日は 4h。
+ * 総括表: 高品 福田 2026-07 半有給 7/22(7h)・7/24(7:30)・7/27(3h) → 180+210+0 = 390分 × 1,409円 = 9,159円。
+ *   木更津ムツミ・船橋・四街道・茂原 の事務員も 法内残業手当 = 法内残業 × 単価。
+ */
+export function legalWithinOvertimeMinutes(
+  attDays: { day: number; work_hours: string }[],
+  ofRecs: { item_name: string; item_date?: string | null }[],
+): number {
+  const halfDays = new Set<number>();
+  for (const r of ofRecs) {
+    if (!r.item_name.includes("半")) continue;
+    for (const part of String(r.item_date ?? "").split(/[,、，\s]+/)) {
+      const m = /(\d{1,2})[/月](\d{1,2})/.exec(part);
+      if (m) halfDays.add(Number(m[2]));
+    }
+  }
+  return attDays.reduce((s, r) => {
+    const work = parseWorkHoursMinutes(r.work_hours);
+    if (work <= 0) return s;
+    const scheduled = halfDays.has(r.day) ? 240 : 480;
+    return s + Math.max(0, Math.min(work, 480) - scheduled);
+  }, 0);
+}
 
 export function computeOvertimePay(
   p: MonthlyPayroll,
@@ -289,7 +318,7 @@ export function computeOvertimePay(
   const ot = otSettings.get(p.job_type);
   if (!ot || ot.scheduled_hours_per_month <= 0) return 0;
   const overtimeMin = p.summary.overtimeMinutes;
-  if (overtimeMin <= 0) return 0;
+  if (overtimeMin <= 0 && !(p.role_type === "事務員" && (p.legal_within_minutes ?? 0) > 0)) return 0;
   const s = p.settings;
   if (!s) return 0;
 
@@ -305,14 +334,18 @@ export function computeOvertimePay(
   if (ot.include_fixed_overtime_pay)      base += s.fixed_overtime_pay;
   if (ot.include_special_bonus)           base += s.special_bonus;
 
-  const hourlyRate = base / ot.scheduled_hours_per_month;
+  // 総括表 (ケイティ系 11 事業所 2026-07 月給者 118名が1円一致): 単価 = round(基礎 / 所定時間)、
+  //   残業単価 = round(単価 × 1.25)。所定時間は 事務員 159h / それ以外 は設定値 (訪問介護 168h)
+  const hours = p.role_type === "事務員" ? OFFICE_WORKER_SCHEDULED_HOURS : ot.scheduled_hours_per_month;
+  const hourlyRate = Math.round(base / hours);
   // 労基法37条1項但書: 月 60 時間を超える時間外は 50% 割増。
   //   2026-08-31 監査まで一律 1.25 だった (実データで OT 64.0h の職員が居る)。
   const within60 = Math.min(overtimeMin, MONTHLY_OT_THRESHOLD_MIN);
   const over60 = Math.max(0, overtimeMin - MONTHLY_OT_THRESHOLD_MIN);
+  const legalWithin = p.role_type === "事務員" ? (p.legal_within_minutes ?? 0) : 0;
   return Math.round(
-    (within60 / 60) * hourlyRate * 1.25 + (over60 / 60) * hourlyRate * 1.5,
-  );
+    (within60 / 60) * Math.round(hourlyRate * 1.25) + (over60 / 60) * Math.round(hourlyRate * 1.5),
+  ) + Math.round((legalWithin / 60) * hourlyRate);
 }
 
 export function effectiveTravelKm(p: MonthlyPayroll): number {
