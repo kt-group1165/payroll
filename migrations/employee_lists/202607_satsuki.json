@@ -1,0 +1,7 @@
+{
+  "office_number": "1270203191",
+  "employees": [
+    { "employee_number": "260409", "name": "岩田 ゆきよ", "salary_type": "時給", "employment_status": "在職者", "social_insurance": false, "source": "稼働表7月 + 総括表パート (訪問1,350分)" },
+    { "employee_number": "260502", "name": "福井 知佳子", "salary_type": "時給", "employment_status": "在職者", "social_insurance": false, "source": "総括表パートのみ (7月稼働なし)" }
+  ]
+}
