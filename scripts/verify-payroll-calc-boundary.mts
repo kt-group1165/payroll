@@ -51,6 +51,7 @@ import {
   hourlyRecordPay,
   visitPayAmount,
   timePeriodMultiplier,
+  yochoHoursFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
   computeSummary,
@@ -396,6 +397,11 @@ eq("★ 同行 1:20 × 1,150 = 1,533 (切り捨て)", visitPayAmount(80, 1150, "
 eq("早朝夜間 25%増し: 身3夜 1:30 = 3,150 + round(787.5) = 3,938 (田村 2026-07 9件で総括表 35,442 と一致)", visitPayAmount(90, 2100, "身体介護", "早朝夜間", 1800), 3938);
 eq("時間帯の表記ゆれ: 夜朝/夜間/早朝/早朝・夜間 はすべて 1.25、日中/通常 は 1", ["夜朝","夜間","早朝","早朝・夜間","日中","通常",""].map(timePeriodMultiplier), [1.25,1.25,1.25,1.25,1,1,1]);
 eq("単価が引けなければ null", visitPayAmount(60, null, "身体介護", "通常", 1800), null);
+eq("夜朝の時間: 早朝夜間だけ合計 (大治 2026-06: 30分×5 + 90分×4 = 510分 = 8.5h)",
+  yochoHoursFromRecords([...Array(5)].map(() => ({ calc_duration: "000:30", time_period: "早朝夜間" })).concat([...Array(4)].map(() => ({ calc_duration: "001:30", time_period: "早朝夜間" })), [{ calc_duration: "002:00", time_period: "通常" }])), 8.5);
+eq("夜朝の時間: 表記ゆれ 夜朝/夜間/早朝/早朝・夜間 を含め、深夜・日中は含めない",
+  yochoHoursFromRecords(["夜朝","夜間","早朝","早朝・夜間","深夜","日中"].map((t) => ({ calc_duration: "001:00", time_period: t }))), 4);
+eq("夜朝手当: 8.5h × 200円 = 1,700 (大治 2026-06 総括表)", yochoAllowance(monthly({ settings: salary({ yocho_unit_price: 200 }), yocho_hours: 8.5 })), 1700);
 eq("生活援助の単価が無い事業所は段階なし (2h×2,100)", visitPayAmount(120, 2100, "身体介護", "通常", null), 4200);
 eq("実績1件の支給額: 30分×時給2000円 = 1000円 (端数切り上げ丸め)", hourlyRecordPay(30, 2000), 1000);
 eq("★ 実績1件の支給額: 単価が引けない(null)場合は null (未マッピング扱い)", hourlyRecordPay(60, null), null);

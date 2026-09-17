@@ -37,6 +37,7 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   visitPayAmount,
+  yochoHoursFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
   parseDurationMinutes,
@@ -704,7 +705,8 @@ export default function PayrollPage() {
             office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
-            yocho_hours: 0,
+            // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
+            yocho_hours: yochoHoursFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? []),
             summary,
           };
         });

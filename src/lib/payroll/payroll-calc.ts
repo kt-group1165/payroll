@@ -592,6 +592,18 @@ export function officeWorkPayAmount(isOfficeWorker: boolean, workHoursMin: numbe
  */
 export const VISIT_PAY_TIERED_CATEGORIES = new Set(["身体介護", "同行援護"]);
 export const VISIT_PAY_TIER_HOURS = 1.5;
+/**
+ * 夜朝の時間 (時間単位) = 時間帯が早朝・夜間の訪問の算定時間の合計。月給者の夜朝手当 (yochoAllowance) に使う。
+ * 実データ (さつきが丘 × 200円/時): 大治浅美 2026-06 510分→1,700円 / 2026-07 480分→1,600円、米倉靖子 90分→300円 / 120分→400円 が総括表と一致。
+ * ⚠ 深夜を含めるかは未確認 (深夜の実績が無かった) → 含めていない
+ */
+export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
+  const min = records
+    .filter((r) => { const t = (r.time_period ?? "").trim(); return !t.includes("深夜") && /夜朝|夜間|早朝/.test(t); })
+    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  return min / 60;
+}
+
 export function timePeriodMultiplier(timePeriod: string | null | undefined): number {
   const t = (timePeriod ?? "").trim();
   if (t.includes("深夜")) return 1.5;
