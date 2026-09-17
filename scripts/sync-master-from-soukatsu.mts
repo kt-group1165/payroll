@@ -148,6 +148,11 @@ const FIXED: [string, string][] = [
 ];
 const shaCodes = new Set(MONTHS.flatMap((m) => byMonth.get(m)!.shaseki.map((r) => r._code)));
 for (const code of shaCodes) {
+  if (lastSeen.get(code)?.kind === "part") {
+    const ms = MONTHS.filter((m) => byMonth.get(m)!.shaseki.some((x) => x._code === code));
+    notes.push(`${code}: ${ms.join(",")} は月給、最新月は時給 (給与形態の月次履歴が無いので、月給だった月は計算が合わない)`);
+    continue;
+  }
   const monthsRows = MONTHS.map((m) => ({ m, r: byMonth.get(m)!.shaseki.find((x) => x._code === code) })).filter((x) => x.r) as { m: string; r: SRow }[];
   const last = monthsRows[monthsRows.length - 1].r;
   const kubun = last["提責・事務"];
