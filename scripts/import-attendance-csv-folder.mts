@@ -3,6 +3,7 @@
  *
  *   npx tsx scripts/import-attendance-csv-folder.mts "<CSVフォルダ>"             # DRY RUN
  *   npx tsx scripts/import-attendance-csv-folder.mts "<CSVフォルダ>" --execute   # 本番
+ *   --default-office <事業所番号>  シートに事業所番号が無いファイルに使う
  *
  * 画面 (/csv-import の「出勤簿」) と同じパーサ (attendance-parser) と同じ行変換 (attendance-record) を使う。
  * CSV は事業所の出勤簿 xlsm の月シートを書き出したもの (Box の元ファイルは読むだけで、書き出しは作業フォルダに置く)。
@@ -19,7 +20,9 @@ import { attendanceRowToRecord } from "@/lib/csv/attendance-record";
 
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
-const DIR = args.find((a) => !a.startsWith("--"));
+const DIR = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--default-office");
+// シートに事業所番号が無い出勤簿 (四街道の一部 2026-04〜07) に使う事業所番号。シートに番号があればそちらを使う
+const DEFAULT_OFFICE = args.includes("--default-office") ? args[args.indexOf("--default-office") + 1] : undefined;
 if (!DIR) { console.error("CSV フォルダを指定してください"); process.exit(1); }
 
 const env: Record<string, string> = {};
@@ -41,6 +44,7 @@ for (const f of readdirSync(DIR).filter((x) => x.toLowerCase().endsWith(".csv"))
   const parsed = await parseAttendanceFile(new File([readFileSync(path.join(DIR, f))], f));
   if (!parsed.success || parsed.data.length === 0) { console.log(`  ✗ ${f}: ${parsed.errors.join(" / ")}`); failed++; continue; }
   const { meta, rows } = parsed.data[0];
+  if (!meta.officeNumber?.trim() && DEFAULT_OFFICE) meta.officeNumber = DEFAULT_OFFICE;
   const worked = rows.filter((r) => r.開始 && r.開始.trim() !== "").length;
   if (worked === 0) { console.log(`  - ${f}: ${meta.year}年${meta.month}月 勤務日 0 日のため取り込まない`); continue; }
 
