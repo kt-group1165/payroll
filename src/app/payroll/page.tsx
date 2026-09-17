@@ -158,6 +158,8 @@ export default function PayrollPage() {
   const [loading, setLoading] = useState(false);
   /** 計算中の進捗 (0〜100)。移動距離の取得が一番長いので 40〜90% をそこに割り当てる */
   const [progress, setProgress] = useState<{ pct: number; label: string } | null>(null);
+  /** 直近の計算結果を DB に保存した時刻 (次の計算を始めるまで表示しておく) */
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState("");
   /** 移動距離・時間が取れなかったとき (Google の月間上限・エラー) の警告。移動手当・出張費が少なく出ている */
   const [distanceWarning, setDistanceWarning] = useState("");
@@ -203,6 +205,7 @@ export default function PayrollPage() {
     if (!selectedMonth || !selectedOfficeId) return;
     setLoading(true); setError(""); setDistanceWarning("");
     setProgress({ pct: 0, label: "実績データを読み込み中" });
+    setSavedAt(null);
     setHourlyResults([]); setMonthlyResults([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
@@ -726,6 +729,7 @@ export default function PayrollPage() {
           calculated_at: payload.calculated_at,
           payload,
         }, { onConflict: "office_number,processing_month" });
+        if (!saveErr) setSavedAt(payload.calculated_at);
         if (saveErr) {
           console.error("[payroll] 計算結果の DB 保存に失敗:", saveErr.message);
           setError(`計算は完了しましたが、結果をDBに保存できませんでした (${saveErr.message})。総括表はこのブラウザでのみ見られます。`);
@@ -1065,6 +1069,11 @@ export default function PayrollPage() {
               {loading ? `計算中… ${progress?.pct ?? 0}%` : "給与計算を実行"}
             </Button>
           </div>
+          {!loading && savedAt && (
+            <div className="mt-4 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">
+              ✓ 計算が完了し、結果をDBに保存しました（{new Date(savedAt).toLocaleString("ja-JP")}）。総括表の画面でも見られます。
+            </div>
+          )}
           {loading && progress && (
             <div className="mt-4" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.pct}>
               <div className="flex justify-between text-xs text-muted-foreground mb-1">
