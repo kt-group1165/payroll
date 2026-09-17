@@ -543,8 +543,12 @@ export function hourlyCommuteFeeAmount(commuteKmTotal: number, commuteUnitPrice:
 }
 
 /** 出張費 (時給者) */
+/**
+ * 時給者の出張費 = 事業所書式の出張km × 事業所の出張単価、円未満切り上げ (総括表と同じ)。
+ * さつきが丘 2026-06 12.3円/km で 15/15 名一致 (石毛 64km → 787.2 → 788円)。
+ */
 export function hourlyBusinessTripFeeAmount(businessKmTotal: number, travelUnitPrice: number): number {
-  return Math.round(businessKmTotal * travelUnitPrice);
+  return Math.ceil(businessKmTotal * travelUnitPrice - 1e-6);
 }
 
 /**

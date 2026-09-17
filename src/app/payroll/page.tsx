@@ -27,7 +27,6 @@ import {
   weekendHolidayAllowanceAmount,
   travelAllowanceAmount,
   adjustedCommuteDistanceM,
-  businessTripFeeAmount,
   normalizeYM,
   computeChildcareAllowance,
   computeMeetingFee,
@@ -458,7 +457,11 @@ export default function PayrollPage() {
         const paidLeaveAllowance = paidLeaveAllowanceAmount(empSummary.paidLeave, info?.paidLeaveUnitPrice ?? 0);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes);
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
-        const businessTripFee = hourlyBusinessTripFeeAmount(empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
+        // 出張距離: 事業所書式の「出張km」を優先 (無ければ出勤簿の出張km)。2026-09-17 user 方針: 地図の距離は使わない
+        const ofTripKm = (ofByEmp.get(empNum) ?? [])
+          .filter((r) => r.record_type === "km" && r.item_name === "出張km")
+          .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
+        const businessTripFee = hourlyBusinessTripFeeAmount(ofTripKm > 0 ? ofTripKm : empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
         const meetingFee = computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""));
         const officeWorkMinutes = info.isOfficeWorker ? empSummary.workHoursMin : 0;
         const officeWorkRate = sal?.office_work_hourly_rate ?? 0;
@@ -638,7 +641,7 @@ export default function PayrollPage() {
               entry.travel_time_sec = totalSec;
               entry.travel_allowance = travelAllowanceAmount(totalSec, rate);
               entry.commute_distance_m = adjustedDistanceM;
-              entry.business_trip_fee = businessTripFeeAmount(adjustedDistanceM, empOffice?.travel_unit_price ?? 0);
+              // 出張費は事業所書式の出張km で計算済み (地図の距離では上書きしない)
             }
           }
         }

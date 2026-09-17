@@ -379,6 +379,8 @@ eq("通信手当: 未加入・1分でも勤務あれば500円", communicationFee
 
 eq("通勤費(時給): 10km×100円/km", hourlyCommuteFeeAmount(10, 100), 1000);
 eq("出張費(時給): 5km×200円/km", hourlyBusinessTripFeeAmount(5, 200), 1000);
+eq("★ 出張費(時給) 円未満切り上げ: 64km × 12.3 = 787.2 → 788 (石毛 2026-06 総括表)", hourlyBusinessTripFeeAmount(64, 12.3), 788);
+eq("出張費(時給) ちょうど整数は上がらない: 113.8km × 12.3 = 1399.74→1400 / 100km×12 = 1200", [hourlyBusinessTripFeeAmount(113.8, 12.3), hourlyBusinessTripFeeAmount(100, 12)], [1400, 1200]);
 
 eq("実績1件の支給額: 60分×時給2000円 = 2000円", hourlyRecordPay(60, 2000), 2000);
 
