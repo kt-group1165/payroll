@@ -49,6 +49,8 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
+  visitPayAmount,
+  timePeriodMultiplier,
   officeWorkPayAmount,
   employeeWorkMinutes,
   computeSummary,
@@ -375,6 +377,20 @@ eq("通勤費(時給): 10km×100円/km", hourlyCommuteFeeAmount(10, 100), 1000);
 eq("出張費(時給): 5km×200円/km", hourlyBusinessTripFeeAmount(5, 200), 1000);
 
 eq("実績1件の支給額: 60分×時給2000円 = 2000円", hourlyRecordPay(60, 2000), 2000);
+
+// ── 訪問1件の支給額 (visitPayAmount) 2026-09-17。期待値は給与管理システム (総括表の元) の画面の実額 ──
+eq("同行援護 3:00 = 1.5h×2,100 + 1.5h×1,800 = 5,850 (石毛 8/19)", visitPayAmount(180, 2100, "同行援護", "通常", 1800), 5850);
+eq("同行援護 2:00 = 4,050 (滝下 8/2)", visitPayAmount(120, 2100, "同行援護", "通常", 1800), 4050);
+eq("同行援護 8:30 = 15,750 (滝下 7/26)", visitPayAmount(510, 2100, "同行援護", "通常", 1800), 15750);
+eq("移身有7 (身体介護に仕分け) 7:00 = 13,050 (滝下 7/27)", visitPayAmount(420, 2100, "身体介護", "通常", 1800), 13050);
+eq("★ ちょうど1.5h は段階なし: 身3 1:30 = 3,150", visitPayAmount(90, 2100, "身体介護", "通常", 1800), 3150);
+eq("身体生活は段階なし: 身2生2 1:45 × 1,900 = 3,325", visitPayAmount(105, 1900, "身体生活", "通常", 1800), 3325);
+eq("★ 円未満は切り捨て: 身1生1 0:40 × 1,900 = 1,266", visitPayAmount(40, 1900, "身体生活", "通常", 1800), 1266);
+eq("★ 同行 1:20 × 1,150 = 1,533 (切り捨て)", visitPayAmount(80, 1150, "同行", "通常", 1800), 1533);
+eq("早朝夜間 25%増し: 身3夜 1:30 = 3,150 + round(787.5) = 3,938 (田村 2026-07 9件で総括表 35,442 と一致)", visitPayAmount(90, 2100, "身体介護", "早朝夜間", 1800), 3938);
+eq("時間帯の表記ゆれ: 夜朝/夜間/早朝/早朝・夜間 はすべて 1.25、日中/通常 は 1", ["夜朝","夜間","早朝","早朝・夜間","日中","通常",""].map(timePeriodMultiplier), [1.25,1.25,1.25,1.25,1,1,1]);
+eq("単価が引けなければ null", visitPayAmount(60, null, "身体介護", "通常", 1800), null);
+eq("生活援助の単価が無い事業所は段階なし (2h×2,100)", visitPayAmount(120, 2100, "身体介護", "通常", null), 4200);
 eq("実績1件の支給額: 30分×時給2000円 = 1000円 (端数切り上げ丸め)", hourlyRecordPay(30, 2000), 1000);
 eq("★ 実績1件の支給額: 単価が引けない(null)場合は null (未マッピング扱い)", hourlyRecordPay(60, null), null);
 

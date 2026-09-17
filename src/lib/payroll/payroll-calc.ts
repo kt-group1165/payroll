@@ -568,7 +568,47 @@ export function officeWorkPayAmount(isOfficeWorker: boolean, workHoursMin: numbe
   return Math.round((workHoursMin / 60) * hourlyRate);
 }
 
-/** 実績1件ぶんの支給額 (時給 × 時間)。単価が引けない (hourlyRate=null) 明細は null (未マッピング扱い) */
+/**
+ * 訪問 1 件の支給額 (総括表を作っている給与管理システムと同じ式。2026-09-17 さつきが丘で確認)。
+ *
+ *   - 身体介護・同行援護 (移動支援の身体ありも身体介護に仕分け) は 最初の 1.5 時間まで その区分の時給、
+ *     1.5 時間を超えた分は overflowRate (その事業所の生活援助の時給)。
+ *       例) 同行援護 3:00 = 1.5h×2,100 + 1.5h×1,800 = 5,850円 / 移身有7 7:00 = 13,050円
+ *   - 早朝・夜間 (時間帯 夜朝/夜間/早朝/早朝夜間/早朝・夜間) は 25%増し (身3夜 1:30 → 3,150 + 788 = 3,938円)。
+ *     深夜は ×1.5 (★ 実データ未確認)
+ *   - 円未満は 1 件ごとに切り捨て (身1生1 0:40 × 1,900円 = 1,266円)
+ *   - 土日祝・特日の割増は ここでは付けない (別の手当)
+ * 実データ: 滝下恵子 2026-08 104,682円 / 柏熊ルミ子 2026-08 55,116円 が給与管理システムの総合計と一致。
+ * 単価が引けない (hourlyRate=null) 明細は null (未マッピング扱い)。
+ */
+export const VISIT_PAY_TIERED_CATEGORIES = new Set(["身体介護", "同行援護"]);
+export const VISIT_PAY_TIER_HOURS = 1.5;
+export function timePeriodMultiplier(timePeriod: string | null | undefined): number {
+  const t = (timePeriod ?? "").trim();
+  if (t.includes("深夜")) return 1.5;
+  if (/夜朝|夜間|早朝/.test(t)) return 1.25;
+  return 1;
+}
+export function visitPayAmount(
+  minutes: number,
+  hourlyRate: number | null,
+  categoryName: string,
+  timePeriod: string | null | undefined,
+  overflowRate: number | null,
+): number | null {
+  if (hourlyRate === null) return null;
+  const hours = minutes / 60;
+  let base = hours * hourlyRate;
+  if (VISIT_PAY_TIERED_CATEGORIES.has(categoryName) && overflowRate !== null && hours > VISIT_PAY_TIER_HOURS) {
+    base = VISIT_PAY_TIER_HOURS * hourlyRate + (hours - VISIT_PAY_TIER_HOURS) * overflowRate;
+  }
+  // 基本額は円未満切り捨て (浮動小数の誤差で 1 円落ちないよう 1e-6 を足す)、割増分は四捨五入して足す
+  // (身3夜 1:30: 3,150 + round(787.5)=788 → 3,938。田村佳子 2026-07 9件 35,442円 と一致)
+  const baseYen = Math.floor(base + 1e-6);
+  return baseYen + Math.round(baseYen * (timePeriodMultiplier(timePeriod) - 1));
+}
+
+/** 実績1件ぶんの支給額 (時給 × 時間)。⚠ 旧式 (四捨五入・段階なし)。給与計算画面は visitPayAmount を使う単価が引けない (hourlyRate=null) 明細は null (未マッピング扱い) */
 export function hourlyRecordPay(minutes: number, hourlyRate: number | null): number | null {
   return hourlyRate !== null ? Math.round((minutes / 60) * hourlyRate) : null;
 }
@@ -658,6 +698,8 @@ export type VisitServiceRecord = {
   client_number: string;
   dispatch_start_time: string;
   dispatch_end_time: string;
+  /** 時間帯 (通常/日中/早朝夜間/深夜 など)。訪問の支給額の割増に使う */
+  time_period?: string | null;
 };
 
 /**

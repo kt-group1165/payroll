@@ -37,7 +37,7 @@ import {
   communicationFeeAmount,
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
-  hourlyRecordPay,
+  visitPayAmount,
   officeWorkPayAmount,
   employeeWorkMinutes,
   parseDurationMinutes,
@@ -224,7 +224,7 @@ export default function PayrollPage() {
         while (true) {
           const { data } = await supabase
             .from("payroll_service_records")
-            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time")
+            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time,time_period")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
@@ -489,6 +489,8 @@ export default function PayrollPage() {
         });
       }
 
+      // 1.5時間を超えた分の時給 = その事業所の 生活援助 の時給 (visitPayAmount)
+      const lifeSupportCategoryId = [...categoryMap.entries()].find(([, name]) => name === "生活援助")?.[0] ?? null;
       for (const rec of records) {
         const emp = hourlyEmpMap.get(rec.employee_number);
         if (!emp) continue;
@@ -497,7 +499,8 @@ export default function PayrollPage() {
         const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
         const officeId   = officeMap.get(rec.office_number) ?? null;
         const hourlyRate = categoryId && officeId ? (rateMap.get(`${officeId}:${categoryId}`) ?? null) : null;
-        const pay        = hourlyRecordPay(minutes, hourlyRate);
+        const overflowRate = officeId && lifeSupportCategoryId ? (rateMap.get(`${officeId}:${lifeSupportCategoryId}`) ?? null) : null;
+        const pay        = visitPayAmount(minutes, hourlyRate, catName, rec.time_period, overflowRate);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
