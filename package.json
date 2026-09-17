@@ -13,6 +13,7 @@
     "check:payroll-sample": "tsx scripts/payroll-sample-check.mts",
     "check:billing-issue": "tsx scripts/billing-issue-check.mts",
     "check:distance-calc": "tsx scripts/verify-distance-calculator.mts",
+    "check:distance-usage": "tsx scripts/verify-distance-usage.mts",
     "check:all": "tsx scripts/check-all.mts"
   },
   "dependencies": {

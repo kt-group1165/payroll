@@ -156,6 +156,8 @@ export default function PayrollPage() {
   const [tab, setTab] = useState<"hourly" | "monthly">("monthly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /** 移動距離・時間が取れなかったとき (Google の月間上限・エラー) の警告。移動手当・出張費が少なく出ている */
+  const [distanceWarning, setDistanceWarning] = useState("");
 
   const [hourlyResults, setHourlyResults] = useState<HourlyPayroll[]>([]);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
@@ -196,7 +198,7 @@ export default function PayrollPage() {
 
   async function calculate() {
     if (!selectedMonth || !selectedOfficeId) return;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setDistanceWarning("");
     setHourlyResults([]); setMonthlyResults([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
@@ -549,17 +551,32 @@ export default function PayrollPage() {
           if (allPairs.length > 0) {
             const BATCH_SIZE = 50;
             const distResultsArr: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = [];
+            // 2026-09-17: 取れなかった区間を黙って 0 にしない。上限・Google エラーを画面に出す
+            const distIssues = new Set<string>();
+            let skippedByLimit = 0;
+            let usageInfo: { month: string; used: number; limit: number } | null = null;
             for (let i = 0; i < allPairs.length; i += BATCH_SIZE) {
               const batch = allPairs.slice(i, i + BATCH_SIZE);
               const res = await fetch("/api/distance", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ pairs: batch }),
+                body: JSON.stringify({ pairs: batch, office_number: selectedOffice.office_number, source: "payroll" }),
               });
-              if (res.ok) {
-                const json = await res.json();
-                distResultsArr.push(...(json.results ?? []));
-              }
+              const json = await res.json().catch(() => ({}));
+              distResultsArr.push(...(json.results ?? []));
+              if (!res.ok || json.error) distIssues.add(`距離APIエラー: ${json.error ?? res.status}`);
+              for (const g of json.googleErrors ?? []) distIssues.add(`Google: ${g}`);
+              if (json.limitReached) skippedByLimit += json.skippedPairs ?? 0;
+              if (json.usage) usageInfo = json.usage;
+            }
+            const uniquePairCount = new Set(allPairs.map((p) => `${p.origin}|||${p.destination}`)).size;
+            const missingPairs = uniquePairCount - new Set(distResultsArr.map((r) => `${r.origin}|||${r.destination}`)).size;
+            if (skippedByLimit > 0 || distIssues.size > 0) {
+              const parts: string[] = [];
+              if (skippedByLimit > 0) parts.push(`今月の Google API 利用上限に達しました (${usageInfo ? `${usageInfo.used.toLocaleString()} / ${usageInfo.limit.toLocaleString()} 件` : ""})。${skippedByLimit} 区間を取得していません。`);
+              parts.push(...distIssues);
+              parts.push(`移動距離・時間が取れなかった区間 ${missingPairs} / ${uniquePairCount}。移動手当・通勤費・出張費が少なく計算されています。`);
+              setDistanceWarning(parts.join(" "));
             }
             const distMap = new Map<string, { distance_meters: number; duration_seconds: number }>(
               distResultsArr.map((r) => [`${r.origin}|||${r.destination}`, { distance_meters: r.distance_meters, duration_seconds: r.duration_seconds }])
@@ -991,6 +1008,9 @@ export default function PayrollPage() {
 
       {error && (
         <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded text-sm">{error}</div>
+      )}
+      {distanceWarning && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">⚠ {distanceWarning}</div>
       )}
 
       {(hourlyResults.length > 0 || monthlyResults.length > 0) && (

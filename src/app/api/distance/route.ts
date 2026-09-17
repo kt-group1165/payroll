@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { allowedChunkCount, getMonthlyLimit, getMonthlyUsed, usageMonthJst } from "@/lib/distance-usage";
 
 type Pair = { origin: string; destination: string };
 type DistResult = Pair & { distance_meters: number; duration_seconds: number };
@@ -6,7 +7,9 @@ type DistResult = Pair & { distance_meters: number; duration_seconds: number };
 export async function POST(request: Request) {
   try {
   const GOOGLE_API_KEY = (process.env["DISTANCE_API_KEY"] ?? process.env["GOOGLE_MAPS_API_KEY"] ?? "") as string;
-  const { pairs }: { pairs: Pair[] } = await request.json();
+  const { pairs, office_number, source: rawSource }: { pairs: Pair[]; office_number?: string; source?: string } = await request.json();
+  const officeNumber = typeof office_number === "string" && office_number ? office_number : null;
+  const source = typeof rawSource === "string" && rawSource ? rawSource : null;
   if (!pairs || pairs.length === 0) return Response.json({ results: [] });
 
   // Phase 3-3a: 共通 Supabase の payroll_distance_cache は anon DROP 後 authenticated 必須。
@@ -56,17 +59,48 @@ export async function POST(request: Request) {
   }
 
   // 未キャッシュ分をGoogle APIで取得（origin単位でバッチ）
+  // 2026-09-17: 月間上限 (lib/distance-usage.ts) を超える呼出はしない。
+  //   Google 側の割り当ては日/分単位しか無く、予算アラートは止めないため。
+  //   呼んだ件数は payroll_distance_api_usage に記録する。記録できないときは呼ばない (上限が効かなくなるため)。
   let firstGoogleStatus = "";
+  const googleErrors: string[] = [];
+  let limitReached = false;
+  let skippedPairs = 0;
+  const usageMonth = usageMonthJst();
+  let usage: { month: string; used: number; limit: number } | null = null;
+  if (uncached.length > 0 && !GOOGLE_API_KEY) {
+    googleErrors.push("Google APIキーが設定されていません");
+  }
   if (uncached.length > 0 && GOOGLE_API_KEY) {
     const byOrigin = new Map<string, string[]>();
     for (const pair of uncached) {
       if (!byOrigin.has(pair.origin)) byOrigin.set(pair.origin, []);
       byOrigin.get(pair.origin)!.push(pair.destination);
     }
-
+    const chunks: { origin: string; destinations: string[] }[] = [];
     for (const [origin, destinations] of byOrigin) {
-      for (let i = 0; i < destinations.length; i += 25) {
-        const chunk = destinations.slice(i, i + 25);
+      for (let i = 0; i < destinations.length; i += 25) chunks.push({ origin, destinations: destinations.slice(i, i + 25) });
+    }
+
+    const [{ limit, error: limitErr }, { used, error: usedErr }] = await Promise.all([
+      getMonthlyLimit(supabase),
+      getMonthlyUsed(supabase, usageMonth),
+    ]);
+    if (limitErr || usedErr) {
+      console.error("[distance API] 利用件数の取得に失敗したため Google を呼びません:", limitErr ?? usedErr);
+      return Response.json(
+        { error: `Google API の利用件数を確認できませんでした (${limitErr ?? usedErr})`, results },
+        { status: 500 },
+      );
+    }
+    let usedNow = used;
+    const allowed = allowedChunkCount(chunks.map((c) => c.destinations.length), used, limit);
+    if (allowed < chunks.length) {
+      limitReached = true;
+      skippedPairs = chunks.slice(allowed).reduce((s, c) => s + c.destinations.length, 0);
+    }
+
+    for (const { origin, destinations: chunk } of chunks.slice(0, allowed)) {
         const url =
           `https://maps.googleapis.com/maps/api/distancematrix/json` +
           `?origins=${encodeURIComponent(origin)}` +
@@ -77,7 +111,25 @@ export async function POST(request: Request) {
         const data = await res.json();
 
         if (!firstGoogleStatus) firstGoogleStatus = `${data.status} / msg: ${data.error_message ?? "none"}`;
-        if (data.status !== "OK") continue;
+        const billed = data.status === "OK" ? chunk.length : 0;
+        const { error: usageErr } = await supabase.from("payroll_distance_api_usage").insert({
+          usage_month: usageMonth,
+          elements: billed,
+          google_status: String(data.status ?? "UNKNOWN"),
+          office_number: officeNumber,
+          source,
+        });
+        usedNow += billed;
+        if (usageErr) {
+          // 記録できない = 上限が効かない。これ以上は呼ばない
+          console.error("[distance API] 利用件数の記録に失敗:", usageErr.message);
+          googleErrors.push(`利用件数の記録に失敗したため途中で止めました (${usageErr.message})`);
+          break;
+        }
+        if (data.status !== "OK") {
+          googleErrors.push(`${data.status}${data.error_message ? `: ${data.error_message}` : ""}`);
+          continue;
+        }
         const row = data.rows[0];
         if (!row) continue;
 
@@ -102,12 +154,13 @@ export async function POST(request: Request) {
         }
 
         if (cacheRows.length > 0) {
-          await supabase
+          const { error: cacheErr } = await supabase
             .from("payroll_distance_cache")
             .upsert(cacheRows, { onConflict: "origin_address,destination_address" });
+          if (cacheErr) console.error("[distance API] キャッシュ保存失敗:", cacheErr.message);
         }
-      }
     }
+    usage = { month: usageMonth, used: usedNow, limit };
   }
 
   // デバッグ情報
@@ -116,7 +169,7 @@ export async function POST(request: Request) {
     destination: r.destination.slice(0, 50),
     dist: r.distance_meters,
   }));
-  return Response.json({ results, _debug: { pairsSent: uniquePairs.length, uncachedCount: uncached.length, resultsCount: results.length, apiKeySet: !!GOOGLE_API_KEY, apiKeyLen: GOOGLE_API_KEY.length, googleStatus: firstGoogleStatus, sample: debugSample } });
+  return Response.json({ results, limitReached, skippedPairs, googleErrors: [...new Set(googleErrors)], usage, _debug: { pairsSent: uniquePairs.length, uncachedCount: uncached.length, resultsCount: results.length, apiKeySet: !!GOOGLE_API_KEY, apiKeyLen: GOOGLE_API_KEY.length, googleStatus: firstGoogleStatus, sample: debugSample } });
   } catch (e) {
     console.error("[distance API]", e);
     return Response.json({ error: String(e), results: [] }, { status: 500 });

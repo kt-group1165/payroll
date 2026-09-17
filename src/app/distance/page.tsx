@@ -174,7 +174,7 @@ export default function DistancePage() {
         const res = await fetch("/api/distance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pairs: batch }),
+          body: JSON.stringify({ pairs: batch, office_number: offices.find((o) => o.id === selectedOfficeId)?.office_number, source: "distance" }),
         });
         if (!res.ok) {
           const text = await res.text();
@@ -183,6 +183,10 @@ export default function DistancePage() {
         const json = await res.json();
         if (json.error) throw new Error(`距離APIエラー: ${json.error}`);
         distResults.push(...(json.results ?? []));
+        if (json.limitReached) {
+          toast.warning(`今月の Google API 利用上限に達しました (${json.usage?.used ?? "?"} / ${json.usage?.limit ?? "?"} 件)。${json.skippedPairs} 区間を取得していません`);
+        }
+        for (const g of json.googleErrors ?? []) toast.warning(`Google API: ${g}`);
 
         const _debug = json._debug;
         lastDebug = {
