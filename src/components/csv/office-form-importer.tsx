@@ -15,6 +15,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileDropzone } from "./file-dropzone";
 import { parseOfficeFormFile } from "@/lib/csv/office-form-parser";
+import { officeFormRecordToRow } from "@/lib/csv/office-form-record";
 import type { OfficeFormRecord, CsvParseResult } from "@/types/csv";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -145,22 +146,7 @@ export function OfficeFormImporter({ initialOffices, initialExistingMonths }: Of
       const chunkSize = 500;
       for (let i = 0; i < allData.length; i += chunkSize) {
         const chunk = allData.slice(i, i + chunkSize);
-        const records = chunk.map((r) => ({
-          import_batch_id: batch.id,
-          office_number: r.office_number,
-          employee_number: r.employee_number,
-          processing_month: processingMonth,
-          record_type: r.record_type,
-          item_name: r.item_name,
-          item_date: r.item_date ?? null,
-          start_time: r.start_time ?? null,
-          end_time: r.end_time ?? null,
-          break_time: r.break_time ?? null,
-          numeric_value: r.numeric_value ?? null,
-          year_month: r.year_month ?? null,
-          child_name: r.child_name ?? null,
-          amount: r.amount ?? null,
-        }));
+        const records = chunk.map((r) => officeFormRecordToRow(r, { batchId: batch.id, processingMonth }));
 
         const { error: insertError } = await supabase
           .from("payroll_office_form_records")
