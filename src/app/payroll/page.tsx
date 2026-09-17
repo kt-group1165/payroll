@@ -276,7 +276,9 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id,is_office_worker").eq("office_id", selectedOfficeId).neq("employment_status", "退職者"),
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
+          // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
+          .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
         fetchAllSalarySettings(),
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
@@ -645,7 +647,7 @@ export default function PayrollPage() {
       setProgress({ pct: 92, label: "月給者を計算中" });
       // 月給者
       const monthlyEmps = employees.filter(
-        (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者")
+        (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
       );
       const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
           const sal = salMap.get(e.id) ?? null;
