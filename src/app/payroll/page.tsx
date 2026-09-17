@@ -39,6 +39,9 @@ import {
   hourlyBusinessTripFeeAmount,
   visitPayAmount,
   yochoHoursFromRecords,
+  paidLeaveDays,
+  trainingMinutes,
+  trainingPayAmount,
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
@@ -297,7 +300,7 @@ export default function PayrollPage() {
         while (true) {
           const { data } = await supabase
             .from("payroll_office_form_records")
-            .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,year_month,child_name,amount")
+            .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,break_time,year_month,child_name,amount")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
@@ -431,7 +434,10 @@ export default function PayrollPage() {
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
-      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys()])) {
+      // 研修手当の時給 = その事業所の 同行 の時給
+      const accompanyCategoryId = [...categoryMap.entries()].find(([, name]) => name === "同行")?.[0] ?? null;
+      // 実績・出勤簿が無くても 事業所書式だけある人 (会議費・研修のみ) も対象にする (2026-09-17)
+      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys()])) {
         const info    = roleMap.get(empNum);
         // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
         if (!info) continue;
@@ -457,7 +463,9 @@ export default function PayrollPage() {
           return catId ? categoryMap.get(catId) === "キャンセル" : false;
         }).length;
         const cancelAllowance = cancelAllowanceAmount(cancelCount, empOffice?.cancel_unit_price ?? 0);
-        const paidLeaveAllowance = paidLeaveAllowanceAmount(empSummary.paidLeave, info?.paidLeaveUnitPrice ?? 0);
+        const paidLeaveAllowance = paidLeaveAllowanceAmount(paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
+        const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
+        const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes);
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
         // 出張距離: 事業所書式の「出張km」を優先 (無ければ出勤簿の出張km)。2026-09-17 user 方針: 地図の距離は使わない
@@ -485,6 +493,7 @@ export default function PayrollPage() {
           travel_allowance: 0,
           communication_fee: communicationFee,
           meeting_fee: meetingFee,
+          training_pay: trainingPay,
           childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth),
           commute_fee: commuteFee,
           commute_distance_m: 0,
@@ -800,7 +809,7 @@ export default function PayrollPage() {
         String(computeTenureRate(e.has_care_qualification, e.effective_service_months, e.job_type)),
         String(tenure), "0", String(e.treatment_subsidy), "0",
         e.travel_time_sec > 0 ? secToHm(e.travel_time_sec) : "0:00", String(e.travel_allowance),
-        String(e.paid_leave_allowance), "0", "0", "0", String(e.meeting_fee), String(e.childcare_allowance), "0",
+        String(e.paid_leave_allowance), "0", "0", String(e.training_pay), String(e.meeting_fee), String(e.childcare_allowance), "0",
         String(e.communication_fee),
         String(weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes)),
         String(e.cancel_allowance), "0", "0", "0",

@@ -49,6 +49,9 @@ import {
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
   hourlyRecordPay,
+  paidLeaveDays,
+  trainingMinutes,
+  trainingPayAmount,
   visitPayAmount,
   timePeriodMultiplier,
   yochoHoursFromRecords,
@@ -251,7 +254,7 @@ const hourly = (over: Partial<HourlyPayroll> = {}): HourlyPayroll => ({
   paid_leave_allowance: 0, cancel_count: 0, cancel_allowance: 0,
   travel_time_sec: 0, travel_allowance: 0, communication_fee: 0,
   meeting_fee: 0, childcare_allowance: 0, commute_fee: 0, commute_distance_m: 0,
-  business_trip_fee: 0, office_work_minutes: 0, office_work_hourly_rate: 0, office_work_pay: 0,
+  business_trip_fee: 0, training_pay: 0, office_work_minutes: 0, office_work_hourly_rate: 0, office_work_pay: 0,
   records: [], totalMinutes: 0, totalPay: 0, unmappedCount: 0,
   summary: summary(),
   ...over,
@@ -269,11 +272,11 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
     totalPay: 50000, treatment_subsidy: 1000, paid_leave_allowance: 2000,
     cancel_allowance: 500, travel_allowance: 300, communication_fee: 100,
     meeting_fee: 200, childcare_allowance: 400, commute_fee: 600,
-    business_trip_fee: 700, error_adjustment: -50, office_work_pay: 800,
+    business_trip_fee: 700, error_adjustment: -50, office_work_pay: 800, training_pay: 900,
   });
   eq("hourlyTotalPay = 各要素の合算 (恒等式)", hourlyTotalPay(e),
     e.totalPay + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
-    e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee +
+    e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.training_pay +
     e.childcare_allowance + e.commute_fee + e.business_trip_fee + e.error_adjustment);
 }
 
@@ -399,6 +402,16 @@ eq("★ 同行 1:20 × 1,150 = 1,533 (切り捨て)", visitPayAmount(80, 1150, "
 eq("早朝夜間 25%増し: 身3夜 1:30 = 3,150 + round(787.5) = 3,938 (田村 2026-07 9件で総括表 35,442 と一致)", visitPayAmount(90, 2100, "身体介護", "早朝夜間", 1800), 3938);
 eq("時間帯の表記ゆれ: 夜朝/夜間/早朝/早朝・夜間 はすべて 1.25、日中/通常 は 1", ["夜朝","夜間","早朝","早朝・夜間","日中","通常",""].map(timePeriodMultiplier), [1.25,1.25,1.25,1.25,1,1,1]);
 eq("単価が引けなければ null", visitPayAmount(60, null, "身体介護", "通常", 1800), null);
+eq("有給日数: 有給1 + 半有給1 = 1.5日", paidLeaveDays(1, 1), 1.5);
+eq("★ 半有給1回 × 8,635円 = 4,318円 (森幸代 2026-06 総括表)", paidLeaveAllowanceAmount(paidLeaveDays(0, 1), 8635), 4318);
+{
+  const tr = (item_name: string, s: string, e: string, b = "0:00"): OfficeFormRecord => ({ employee_number: "1", record_type: "training", item_name, item_date: "7/15", numeric_value: null, start_time: s, end_time: e, break_time: b, year_month: null, child_name: null, amount: null });
+  const recs = [tr("HRD研修", "14:00", "16:00"), tr("研修", "9:30", "10:30"), tr("初任者研修", "9:30", "16:40", "0:50")];
+  eq("研修時間: 研修+HRD研修 (休憩を引く)、初任者研修は含めない = 180分 (岩田 2026-07)", trainingMinutes(recs), 180);
+  eq("研修手当: 180分 × 1,150円 = 3,450円 (岩田 2026-07 総括表 HRD2,300+会議費1,150)", trainingPayAmount(180, 1150), 3450);
+  eq("研修手当: 休憩を引く 9:30-16:40 休憩0:50 = 380分", trainingMinutes([tr("研修", "9:30", "16:40", "0:50")]), 380);
+  eq("研修手当: 同行の時給が無ければ0円", trainingPayAmount(120, null), 0);
+}
 eq("夜朝の時間: 早朝夜間だけ合計 (大治 2026-06: 30分×5 + 90分×4 = 510分 = 8.5h)",
   yochoHoursFromRecords([...Array(5)].map(() => ({ calc_duration: "000:30", time_period: "早朝夜間" })).concat([...Array(4)].map(() => ({ calc_duration: "001:30", time_period: "早朝夜間" })), [{ calc_duration: "002:00", time_period: "通常" }])), 8.5);
 eq("夜朝の時間: 表記ゆれ 夜朝/夜間/早朝/早朝・夜間 を含め、深夜・日中は含めない",

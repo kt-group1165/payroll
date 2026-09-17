@@ -105,6 +105,8 @@ export type HourlyPayroll = {
   travel_allowance: number;
   communication_fee: number;
   meeting_fee: number;
+  /** 研修・HRD研修の手当 = 研修時間 × 同行の時給 (trainingPayAmount) */
+  training_pay: number;
   childcare_allowance: number;
   commute_fee: number;
   commute_distance_m: number;
@@ -381,6 +383,7 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
     e.travel_allowance +
     e.communication_fee +
     e.meeting_fee +
+    e.training_pay +
     e.childcare_allowance +
     e.commute_fee +
     e.business_trip_fee +
@@ -427,6 +430,7 @@ export type OfficeFormRecord = {
   numeric_value: number | null;
   start_time: string | null;
   end_time: string | null;
+  break_time?: string | null;
   year_month: string | null; // childcare: 何月分か (YYYYMM)
   child_name: string | null; // childcare: 子供の名前
   amount: number | null;     // childcare: 支払い金額
@@ -534,6 +538,28 @@ export function cancelAllowanceAmount(cancelCount: number, cancelUnitPrice: numb
 }
 
 /** 有給手当 (時給者) */
+/** 有給の日数 = 有給 + 半有給 × 0.5 (森幸代 2026-06 半有給1回 × 8,635円 = 4,318円 で総括表と一致) */
+export function paidLeaveDays(paidLeave: number, halfLeave: number): number {
+  return paidLeave + halfLeave * 0.5;
+}
+
+/**
+ * 研修の時間 (分)。事業所書式の日時項目「研修」「HRD研修」の 開始〜終了 − 休憩。
+ * ⚠ 初任者研修は含めない (総括表の初任者研修時間と記録の時間が合わず、ルール未確認)
+ */
+export function trainingMinutes(ofRecs: OfficeFormRecord[]): number {
+  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  return ofRecs
+    .filter((r) => r.record_type === "training" && (r.item_name === "研修" || r.item_name === "HRD研修") && r.start_time && r.end_time)
+    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+}
+
+/** 研修手当 = 研修時間 × 同行の時給 (さつきが丘 1,150円: 岩田ゆきよ 2026-05 研修2h 2,300円 / 2026-07 HRD2h 2,300円+研修1h 1,150円) */
+export function trainingPayAmount(minutes: number, hourlyRate: number | null): number {
+  if (!hourlyRate || minutes <= 0) return 0;
+  return Math.round((minutes / 60) * hourlyRate);
+}
+
 export function paidLeaveAllowanceAmount(paidLeaveDays: number, paidLeaveUnitPrice: number): number {
   return Math.round(paidLeaveDays * paidLeaveUnitPrice);
 }
