@@ -10,6 +10,7 @@ import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calcu
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart } from "@/lib/payroll/salary-history";
+import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import {
   computeTenureAllowance,
   computeTenureRate,
@@ -38,6 +39,7 @@ import {
   hourlyBusinessTripFeeAmount,
   visitPayAmount,
   yochoHoursFromRecords,
+  careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
   parseDurationMinutes,
@@ -707,6 +709,7 @@ export default function PayrollPage() {
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? []),
+            care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075),
             summary,
           };
         });

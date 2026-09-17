@@ -138,6 +138,8 @@ export type MonthlyPayroll = {
   business_trip_fee: number;
   childcare_allowance: number;
   yocho_hours: number;
+  /** 介護超過の判定に使う介護時間 (分)。無ければ訪問時間 (careMinutesFromRecords) */
+  care_minutes?: number;
   summary: AttendanceSummary;
 };
 
@@ -240,12 +242,23 @@ export function fixedTotal(s: SalarySettings): number {
   );
 }
 
+/**
+ * 介護時間 (分) = 訪問時間 − 0.75 掛け対象サービスの時間 × 0.25 (総括表と同じ。2026-09-17)
+ * 例) 米倉靖子 2026-07: 7,345 − 180×0.25 = 7,300分 → 120h 超過 100分 × 2,500円 = 4,167円
+ */
+export function careMinutesFromRecords(records: { calc_duration: string; service_code: string }[], isHours075: (code: string) => boolean): number {
+  return records.reduce((s, r) => {
+    const m = parseDurationMinutes(r.calc_duration);
+    return s + (isHours075(r.service_code) ? m * 0.75 : m);
+  }, 0);
+}
+
 export function careOvertimePay(p: MonthlyPayroll): number {
   if (p.role_type !== "社員") return 0;
   const s = p.settings;
   if (!s || s.care_overtime_threshold_hours <= 0 || s.care_overtime_unit_price <= 0) return 0;
   const thresholdMin = s.care_overtime_threshold_hours * 60;
-  const overMin = Math.max(0, p.summary.visitMinutes - thresholdMin);
+  const overMin = Math.max(0, (p.care_minutes ?? p.summary.visitMinutes) - thresholdMin);
   return Math.round((overMin / 60) * s.care_overtime_unit_price);
 }
 

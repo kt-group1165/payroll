@@ -52,6 +52,7 @@ import {
   visitPayAmount,
   timePeriodMultiplier,
   yochoHoursFromRecords,
+  careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
   computeSummary,
@@ -67,6 +68,7 @@ import {
   type VisitServiceRecord,
   type OfficeAttendanceRecord,
 } from "../src/lib/payroll/payroll-calc";
+import { isCareHours075 } from "../src/lib/payroll/care-hours-075";
 
 let pass = 0;
 const fail: string[] = [];
@@ -401,6 +403,16 @@ eq("夜朝の時間: 早朝夜間だけ合計 (大治 2026-06: 30分×5 + 90分�
   yochoHoursFromRecords([...Array(5)].map(() => ({ calc_duration: "000:30", time_period: "早朝夜間" })).concat([...Array(4)].map(() => ({ calc_duration: "001:30", time_period: "早朝夜間" })), [{ calc_duration: "002:00", time_period: "通常" }])), 8.5);
 eq("夜朝の時間: 表記ゆれ 夜朝/夜間/早朝/早朝・夜間 を含め、深夜・日中は含めない",
   yochoHoursFromRecords(["夜朝","夜間","早朝","早朝・夜間","深夜","日中"].map((t) => ({ calc_duration: "001:00", time_period: t }))), 4);
+{
+  // 米倉靖子 2026-07: 訪問 7,345分 のうち 移身有0.5/移身有1 が 180分 → 介護時間 7,300分 (1件24h以上は0分扱いなので 1,433分×5件で組む)
+  const recs = [...Array(5)].map(() => ({ calc_duration: "023:53", service_code: "111111" })).concat([{ calc_duration: "002:00", service_code: "010047" }, { calc_duration: "001:00", service_code: "010048" }]);
+  eq("介護時間: 0.75掛け対象(移身有)は ×0.75 (7,165 + 180×0.75 = 7,300分)", careMinutesFromRecords(recs, isCareHours075), 7300);
+  eq("0.75掛け対象コードの判定: 010047 移身有0.5 / 021003 重度介護(自立) は対象、111111 身体介護1・021008 同行援護(自立) は対象外", ["010047","021003","111111","021008"].map(isCareHours075), [true, true, false, false]);
+  const setting = salary({ care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 });
+  eq("介護超過: 米倉 2026-07 (7,300−7,200)/60 × 2,500 = 4,167 (総括表)", careOvertimePay(monthly({ role_type: "社員", settings: setting, care_minutes: 7300, summary: summary({ visitMinutes: 7345 }) })), 4167);
+  eq("介護超過: 米倉 2026-06 (8,020−7,200)/60 × 2,500 = 34,167 (総括表)", careOvertimePay(monthly({ role_type: "社員", settings: setting, care_minutes: 8020 })), 34167);
+  eq("介護超過: 大治 2026-06 (7,610−7,200)/60 × 2,500 = 17,083 (総括表)", careOvertimePay(monthly({ role_type: "社員", settings: setting, care_minutes: 7610 })), 17083);
+}
 eq("夜朝手当: 8.5h × 200円 = 1,700 (大治 2026-06 総括表)", yochoAllowance(monthly({ settings: salary({ yocho_unit_price: 200 }), yocho_hours: 8.5 })), 1700);
 eq("生活援助の単価が無い事業所は段階なし (2h×2,100)", visitPayAmount(120, 2100, "身体介護", "通常", null), 4200);
 eq("実績1件の支給額: 30分×時給2000円 = 1000円 (端数切り上げ丸め)", hourlyRecordPay(30, 2000), 1000);
