@@ -718,7 +718,8 @@ export default function PayrollPage() {
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? []),
-            care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075),
+            // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
+            care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075) + trainingMinutes(empOfRecs),
             summary,
           };
         });

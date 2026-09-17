@@ -275,7 +275,7 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
     business_trip_fee: 700, error_adjustment: -50, office_work_pay: 800, training_pay: 900,
   });
   eq("hourlyTotalPay = 各要素の合算 (恒等式)", hourlyTotalPay(e),
-    e.totalPay + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
+    e.totalPay + weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes) + e.office_work_pay + hourlyTenure(e) + e.treatment_subsidy + e.paid_leave_allowance +
     e.cancel_allowance + e.travel_allowance + e.communication_fee + e.meeting_fee + e.training_pay +
     e.childcare_allowance + e.commute_fee + e.business_trip_fee + e.error_adjustment);
 }
@@ -294,15 +294,20 @@ eq("事務本人給: 端数は四捨五入 (10分×1,000円 = 166.67 → 167)", 
 eq("事務本人給: hourlyTotalPay に入る (本人給10,000 + 事務5,000)",
   hourlyTotalPay(hourly({ totalPay: 10000, office_work_pay: 5000, effective_service_months: 0 })), 15000);
 
-// ★ 土日祝手当は hourlyTotalPay に含まれない (意図的な仕様。業務判断待ち)。
-//   ここで「入っていない」ことを固定する。含めるようになったらこのテストが落ちる。
+// ★ 土日祝手当は hourlyTotalPay に含まれる (2026-09-17 総括表で確認。50円/時)
 {
-  const base = hourly({ totalPay: 10000 });
-  const withWeekend = hourly({ totalPay: 10000, summary: summary({ weekendHolidayMinutes: 600 }) });
-  eq("★ 土日祝手当(600分=10,000円相当)があっても hourlyTotalPay は変わらない",
-    hourlyTotalPay(withWeekend), hourlyTotalPay(base));
-  eq("weekendHolidayAllowanceAmount 自体は 600分→1,000円を返す (表示用の値自体は正しい)",
-    weekendHolidayAllowanceAmount(600), 1000);
+  const base = hourly({ totalPay: 10000, effective_service_months: 0 });
+  const withWeekend = hourly({ totalPay: 10000, effective_service_months: 0, summary: summary({ weekendHolidayMinutes: 600 }) });
+  eq("★ 土日祝手当 600分 × 50円/時 = 500円 が hourlyTotalPay に入る", hourlyTotalPay(withWeekend) - hourlyTotalPay(base), 500);
+  eq("土日祝手当 四捨五入: 1,095分 → 912.5 → 913 (森幸代 2026-04 総括表)", weekendHolidayAllowanceAmount(1095), 913);
+  eq("土日祝手当: 1,885分 → 1,570.8 → 1,571 (滝下 2026-05 総括表)", weekendHolidayAllowanceAmount(1885), 1571);
+}
+{
+  // 提責は固定残業代を超える残業代を払わない (宮野 2026-04: 残業23.9h×2,835=67,757 > 固定残業代50,000 でも 0)
+  const s = salary({ base_personal_salary: 100000, skill_salary: 96000, fixed_overtime_pay: 50000 });
+  const p = (role: string) => monthly({ role_type: role, settings: s, summary: summary({ overtimeMinutes: 1434 }) });
+  eq("★ 提責・管理者は残業代の超過分 0 (社員なら超過が出る設定でも)", [overtimeExcessPay(p("提責"), otMap(ot({ scheduled_hours_per_month: 10 }))), overtimeExcessPay(p("管理者"), otMap(ot({ scheduled_hours_per_month: 10 })))], [0, 0]);
+  eq("社員は超過分を払う (> 0)", overtimeExcessPay(p("社員"), otMap(ot({ scheduled_hours_per_month: 10 }))) > 0, true);
 }
 
 // ─── 移動手当 (訪問介護・時給者) ─────────────────────────────────────────

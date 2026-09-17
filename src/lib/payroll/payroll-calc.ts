@@ -323,7 +323,11 @@ export function commuteFeeAmount(p: MonthlyPayroll): number {
   return Math.round(p.summary.commuteKmTotal * p.office_commute_unit_price);
 }
 
+/** 提責・管理者は固定残業代を超える残業代を払わない (総括表: さつきが丘 提責3名 2026-04〜07、高品 千葉弘美 2026-07 で確認) */
+export const NO_OVERTIME_EXCESS_ROLES = new Set(["提責", "管理者"]);
+
 export function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
+  if (NO_OVERTIME_EXCESS_ROLES.has(p.role_type)) return 0;
   return Math.max(0, computeOvertimePay(p, otSettings) - (p.settings?.fixed_overtime_pay ?? 0));
 }
 
@@ -375,6 +379,7 @@ export function hourlyTenure(e: HourlyPayroll): number {
 export function hourlyTotalPay(e: HourlyPayroll): number {
   return (
     e.totalPay +
+    weekendHolidayAllowanceAmount(e.summary.weekendHolidayMinutes) +
     e.office_work_pay +
     hourlyTenure(e) +
     e.treatment_subsidy +
@@ -392,13 +397,13 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
 }
 
 /**
- * 土日祝手当の額。CSV・一覧・フッタの3箇所が同じ式 Math.round(min/60*100) を
- * 別々に書いていたのを統一した (挙動は変えていない)。
- *
- * ⚠ hourlyTotalPay には含まれない (上記コメント参照)。この関数は表示専用。
+ * 土日祝手当 = 土日祝の訪問時間 (同行を除く) × 50円/時、四捨五入。hourlyTotalPay に含める。
+ * 2026-09-17: 総括表の総支給額に含まれていることを確認 (さつきが丘 2026-04〜07 で 65名中54名が1円一致。
+ *   森幸代 2026-04 1,095分 → 912.5 → 913円)。ずれる数件は祝日カレンダーの違い (振替休日・海の日など、未調査)。
+ *   それまでは 100円/時 の表示専用で総支給に入れていなかった。
  */
 export function weekendHolidayAllowanceAmount(weekendHolidayMinutes: number): number {
-  return Math.round((weekendHolidayMinutes / 60) * 100);
+  return Math.round((weekendHolidayMinutes / 60) * 50);
 }
 
 // ─── 移動手当 (訪問介護・時給者) ─────────────────────────────────────────
