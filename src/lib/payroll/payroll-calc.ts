@@ -641,8 +641,21 @@ export function paidLeaveAllowanceAmount(paidLeaveDays: number, paidLeaveUnitPri
  * 通信手当 (時給者・社保未加入のみ変動支給)。
  * 社保加入者は0円固定。未加入者は当月訪問時間で 50h超=1000円 / 0〜50h=500円 / 0h=0円。
  */
-export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes: number): number {
-  if (hasSocialInsurance) return 0;
+/**
+ * 通信費タイプ (payroll_employees.communication_fee_type)
+ *   none         既定。社保加入 0円 / 未加入は訪問時間で 500・1000円
+ *   variable     社保加入でも 訪問時間で 500・1000円 (スマホ貸与なし。高品 伊藤あゆみ)
+ *   lend         スマホ貸与あり 0円 (高品 松元綾子)
+ *   (DB 列は varchar(10) なので値は 10 文字以内)
+ *   lend_fee  貸与要件を満たさないが引き続き貸与を希望 → 負担 -1,700円 (user 2026-09-17。高品 菊池・中村・西田)
+ */
+export const COMMUNICATION_FEE_TYPES = ["none", "variable", "lend", "lend_fee"] as const;
+export const PHONE_LEND_CHARGE = -1700;
+
+export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes: number, feeType: string = "none"): number {
+  if (feeType === "lend_fee") return PHONE_LEND_CHARGE;
+  if (feeType === "lend") return 0;
+  if (hasSocialInsurance && feeType !== "variable") return 0;
   const visitHours = visitMinutes / 60;
   if (visitHours > 50) return 1000;
   if (visitHours > 0) return 500;

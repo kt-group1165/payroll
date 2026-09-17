@@ -365,8 +365,17 @@ export default function PayrollPage() {
       // 勤怠サマリー計算 (computeSummary) は
       // src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)。
       // 呼出側で対象職員ぶんの出勤簿・事業所書式レコードを絞ってから渡す (verbatim移植)。
+      // 同行はサービスコード (010001 等) で決まり、同行者欄が空のことがある (高品)。
+      // 勤続手当・土日祝手当の「同行を除く訪問時間」から外すため、区分が 同行 の明細は同行扱いにする
+      //   (総括表 高品 2026-04/06: 勤続手当の時間 = 訪問 − 同行コードの時間 で 5 件一致)
+      const withAccompanyByCode = (recs: ServiceRecord[]): ServiceRecord[] =>
+        recs.map((r) => {
+          if (r.accompanied_visit && r.accompanied_visit.trim() !== "") return r;
+          const catId = mappingMap.get(r.service_code) ?? null;
+          return catId && categoryMap.get(catId) === "同行" ? { ...r, accompanied_visit: "同行" } : r;
+        });
       const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[]): AttendanceSummary =>
-        computeSummary(empRecs, attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? []);
+        computeSummary(withAccompanyByCode(empRecs), attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? []);
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
@@ -472,7 +481,7 @@ export default function PayrollPage() {
         const paidLeaveAllowance = paidLeaveAllowanceAmount(paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
         const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
-        const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes);
+        const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
         // 出張距離: 事業所書式の「出張km」を優先 (無ければ出勤簿の出張km)。2026-09-17 user 方針: 地図の距離は使わない
         const ofTripKm = (ofByEmp.get(empNum) ?? [])

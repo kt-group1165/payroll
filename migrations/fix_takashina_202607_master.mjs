@@ -18,6 +18,7 @@
  *     花島 11,000→6月 11,500 / 長谷川 6,000→7月 6,500 / 吉田 4,000→5月 4,500 / 櫻井 0→4月 1,000
  *     一番古い行の勤続手当を変化前の額にし、変化月の 1 日から始まる行を (他の項目は同じで) 作る
  * 13. 社員の有給単価 (円/日): 根本 82 / 櫻井 1,286 / 髙橋幸子 1,370 (総括表 有給休暇手当 ÷ 日数。月によらず一定)
+ * 14. 通信費タイプ: 菊池・中村・西田 = lend_fee (-1,700円: 貸与要件外で貸与希望、user 2026-09-17) / 松元 = lend (貸与あり0円) / 伊藤 = variable (社保でも時間で支給)
  * 11. 退職者のうち 総括表 2026-04 に最後に載っている 鈴木麻亜子・鵜澤奈菜 は 退職日 2026-04-30 (4月の計算に含める)
  *  7. 未対応コード: 010288 移動5.5 / 010147〜010153 有料身有 → 身体介護 (総括表テーブル1: 移動身あり・有料身あり。おゆみ野で 2,100円)
  *
@@ -74,10 +75,11 @@ const TENURE_HISTORY = {
   "250401": [["1970-01-01", 0], ["2026-04-01", 1000]],
 };
 const REINSTATE = ["4097"];
+const COMMUNICATION_FEE_TYPE = { "4095": "lend_fee", "4081": "lend_fee", "230202": "lend_fee", "4089": "lend", "4053": "variable" };
 const RESIGNATION_DATES = { "240303": "2026-04-30", "220503": "2026-04-30" };
 
 const [office] = await get(`payroll_offices?select=id&office_number=eq.${OFFICE_NUMBER}`);
-const emps = await get(`payroll_employees?select=id,employee_number,name,role_type,social_insurance,paid_leave_unit_price,employment_status,resignation_date,has_care_qualification,care_qualification_kind&office_id=eq.${office.id}`);
+const emps = await get(`payroll_employees?select=id,employee_number,name,role_type,social_insurance,paid_leave_unit_price,employment_status,resignation_date,communication_fee_type,has_care_qualification,care_qualification_kind&office_id=eq.${office.id}`);
 const byNo = new Map(emps.map((e) => [e.employee_number, e]));
 const ops = [];
 
@@ -105,6 +107,10 @@ for (const no of QUALIFIED_UNKNOWN) {
 for (const [no, date] of Object.entries(RESIGNATION_DATES)) {
   const e = byNo.get(no);
   if (e && e.resignation_date !== date) ops.push({ label: `退職日 ${no} ${e.name} ${e.resignation_date} → ${date}`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { resignation_date: date }) });
+}
+for (const [no, type] of Object.entries(COMMUNICATION_FEE_TYPE)) {
+  const e = byNo.get(no);
+  if (e && e.communication_fee_type !== type) ops.push({ label: `通信費タイプ ${no} ${e.name} ${e.communication_fee_type} → ${type}`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { communication_fee_type: type }) });
 }
 for (const no of REINSTATE) {
   const e = byNo.get(no);

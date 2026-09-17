@@ -841,6 +841,19 @@ export function EmployeesList({
                   <p className="text-xs text-muted-foreground mt-1">「なし」以外は勤続手当の対象。資格名が分からなければ「不明（要件は満たす）」</p>
                 </div>
                 <div>
+                  <Label>通信費タイプ</Label>
+                  <select
+                    className="mt-1 w-full border rounded px-2 py-1.5 text-sm bg-background"
+                    value={form.communication_fee_type || "none"}
+                    onChange={(e) => setForm({ ...form, communication_fee_type: e.target.value })}
+                  >
+                    <option value="none">標準（社保加入は0円・未加入は時間で500/1,000円）</option>
+                    <option value="variable">社保加入でも時間で500/1,000円（スマホ貸与なし）</option>
+                    <option value="lend">スマホ貸与あり（0円）</option>
+                    <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
+                  </select>
+                </div>
+                <div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"

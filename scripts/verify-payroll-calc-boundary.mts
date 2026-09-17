@@ -417,6 +417,9 @@ eq("通信手当: 未加入・0分は0円", communicationFeeAmount(false, 0), 0)
 eq("★ 通信手当: 未加入・ちょうど50h(3000分) は境界含まず500円", communicationFeeAmount(false, 3000), 500);
 eq("★ 通信手当: 未加入・50h+1分(3001分) は1000円", communicationFeeAmount(false, 3001), 1000);
 eq("通信手当: 未加入・1分でも勤務あれば500円", communicationFeeAmount(false, 1), 500);
+eq("★ 通信手当: 貸与負担 (lend_fee) は社保・時間に関わらず -1,700円 (高品 菊池/中村/西田)", [communicationFeeAmount(true, 2850, "lend_fee"), communicationFeeAmount(false, 0, "lend_fee")], [-1700, -1700]);
+eq("★ 通信手当: スマホ貸与あり (lend) は 0円 (高品 松元)", communicationFeeAmount(false, 1050, "lend"), 0);
+eq("★ 通信手当: variable は社保加入でも時間で 1,000円 (高品 伊藤 5160分)", communicationFeeAmount(true, 5160, "variable"), 1000);
 
 eq("通勤費(時給): 10km×100円/km", hourlyCommuteFeeAmount(10, 100), 1000);
 eq("出張費(時給): 5km×200円/km", hourlyBusinessTripFeeAmount(5, 200), 1000);
