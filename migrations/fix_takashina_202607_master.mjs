@@ -14,6 +14,7 @@
  *  8. 【2回目 2026-09-17 計算後】 時給者で総括表に勤続手当がある7名は 資格 "不明（要件は満たす）" (勤続手当は資格者のみ)
  *  9. 月給者の勤続手当は 総括表の額を手入力 (自動計算は資格・通算年数が DB に無く 0 円になる)
  * 10. 根本高光 休職者 → 在職者 (7月に稼働・総括表に在籍)
+ * 11. 退職者のうち 総括表 2026-04 に最後に載っている 鈴木麻亜子・鵜澤奈菜 は 退職日 2026-04-30 (4月の計算に含める)
  *  7. 未対応コード: 010288 移動5.5 / 010147〜010153 有料身有 → 身体介護 (総括表テーブル1: 移動身あり・有料身あり。おゆみ野で 2,100円)
  *
  * 前提: 岡林真美は migrations/register_payroll_employees.mjs employee_lists/202607_takashina.json で登録済みであること。
@@ -63,9 +64,10 @@ const MAP_TO_SHINTAI = ["010288", "010147", "010149", "010151", "010153"];
 const QUALIFIED_UNKNOWN = ["2010", "4004", "4012", "4081", "4089", "4095", "250705"];
 const MONTHLY_TENURE = { "2025": 9000, "3021": 11500, "4037": 6500, "4096": 4500, "4070": 5000, "250401": 1000 };
 const REINSTATE = ["4097"];
+const RESIGNATION_DATES = { "240303": "2026-04-30", "220503": "2026-04-30" };
 
 const [office] = await get(`payroll_offices?select=id&office_number=eq.${OFFICE_NUMBER}`);
-const emps = await get(`payroll_employees?select=id,employee_number,name,role_type,social_insurance,paid_leave_unit_price,employment_status,has_care_qualification,care_qualification_kind&office_id=eq.${office.id}`);
+const emps = await get(`payroll_employees?select=id,employee_number,name,role_type,social_insurance,paid_leave_unit_price,employment_status,resignation_date,has_care_qualification,care_qualification_kind&office_id=eq.${office.id}`);
 const byNo = new Map(emps.map((e) => [e.employee_number, e]));
 const ops = [];
 
@@ -89,6 +91,10 @@ for (const no of RETIRE) {
 for (const no of QUALIFIED_UNKNOWN) {
   const e = byNo.get(no);
   if (e && (!e.has_care_qualification || !e.care_qualification_kind)) ops.push({ label: `資格 ${no} ${e.name} → 不明（要件は満たす）`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { has_care_qualification: true, care_qualification_kind: e.care_qualification_kind ?? "不明（要件は満たす）" }) });
+}
+for (const [no, date] of Object.entries(RESIGNATION_DATES)) {
+  const e = byNo.get(no);
+  if (e && e.resignation_date !== date) ops.push({ label: `退職日 ${no} ${e.name} ${e.resignation_date} → ${date}`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { resignation_date: date }) });
 }
 for (const no of REINSTATE) {
   const e = byNo.get(no);
