@@ -295,8 +295,13 @@ export function effectiveTravelKm(p: MonthlyPayroll): number {
   return p.travel_km > 0 ? p.travel_km : p.travel_km_auto;
 }
 
+/**
+ * 月給者の出張費 = 距離 × 単価 の円未満切り上げ (総括表と同じ。2026-09-17 確認)
+ * さつきが丘 12.3円/km: 小林志麻 2026-07 530.9km → 6,530.07 → 6,531円 / 宮野宏子 838.1km → 10,308.63 → 10,309円
+ */
 export function travelFeeAmount(p: MonthlyPayroll): number {
-  return Math.round(effectiveTravelKm(p) * p.office_travel_unit_price);
+  // 浮動小数の誤差で余計に 1 円上がらないよう 1e-6 を引いてから切り上げ
+  return Math.ceil(effectiveTravelKm(p) * p.office_travel_unit_price - 1e-6);
 }
 
 export function commuteFeeAmount(p: MonthlyPayroll): number {

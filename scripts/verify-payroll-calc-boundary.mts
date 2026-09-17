@@ -176,6 +176,10 @@ eq("出張費: travel_km が0(未上書き)なら自動値を使う",
   effectiveTravelKm(monthly({ travel_km: 0, travel_km_auto: 15 })), 15);
 eq("出張費金額 = 距離 × 単価",
   travelFeeAmount(monthly({ travel_km: 10, office_travel_unit_price: 100 })), 1000);
+eq("★ 出張費は円未満切り上げ: 530.9km × 12.3 = 6,530.07 → 6,531 (小林 2026-07 総括表)",
+  travelFeeAmount(monthly({ travel_km: 530.9, office_travel_unit_price: 12.3 })), 6531);
+eq("出張費 切り上げ: 838.1km × 12.3 = 10,308.63 → 10,309 (宮野 2026-07 総括表)",
+  travelFeeAmount(monthly({ travel_km: 838.1, office_travel_unit_price: 12.3 })), 10309);
 eq("通勤費金額 = 距離 × 単価",
   commuteFeeAmount(monthly({ summary: summary({ commuteKmTotal: 20 }), office_commute_unit_price: 50 })), 1000);
 
