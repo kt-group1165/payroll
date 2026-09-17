@@ -17,6 +17,16 @@ export type JissekiSourceMode = "csv" | "kaigo";
  */
 export const WEEKEND_HOLIDAY_RATES_KEY = "weekend_holiday_allowance_rates";
 
+/** 介護超過の下の段 (事業所番号 → { from_hours, unit_price })。社員の 100〜120h × 800円 の事業所 */
+export const CARE_OVERTIME_LOWER_TIERS_KEY = "care_overtime_lower_tiers";
+export type CareOvertimeLowerTier = { from_hours: number; unit_price: number };
+
+export async function getCareOvertimeLowerTiers(supabase: SupabaseClient): Promise<{ tiers: Record<string, CareOvertimeLowerTier>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", CARE_OVERTIME_LOWER_TIERS_KEY).maybeSingle();
+  if (error) return { tiers: {}, error: error.message };
+  return { tiers: ((data?.value as { tiers?: Record<string, CareOvertimeLowerTier> } | null)?.tiers) ?? {}, error: null };
+}
+
 export async function getWeekendHolidayRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; error: string | null }> {
   const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", WEEKEND_HOLIDAY_RATES_KEY).maybeSingle();
   if (error) return { rates: {}, error: error.message };

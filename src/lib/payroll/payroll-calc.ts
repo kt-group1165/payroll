@@ -147,6 +147,8 @@ export type MonthlyPayroll = {
   yocho_hours: number;
   /** 介護超過の判定に使う介護時間 (分)。無ければ訪問時間 (careMinutesFromRecords) */
   care_minutes?: number;
+  /** 介護超過の下の段 (閾値より前の from_hours〜閾値 を unit_price 円/時)。事業所ごと。payroll_app_settings care_overtime_lower_tiers */
+  care_overtime_lower_tier?: { from_hours: number; unit_price: number } | null;
   /** 有給1日あたりの単価 (職員マスタ 有給単価)。monthlyPaidLeaveAllowance */
   paid_leave_unit_price?: number;
   /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
@@ -275,8 +277,13 @@ export function careOvertimePay(p: MonthlyPayroll): number {
   const s = p.settings;
   if (!s || s.care_overtime_threshold_hours <= 0 || s.care_overtime_unit_price <= 0) return 0;
   const thresholdMin = s.care_overtime_threshold_hours * 60;
-  const overMin = Math.max(0, (p.care_minutes ?? p.summary.visitMinutes) - thresholdMin);
-  return Math.round((overMin / 60) * s.care_overtime_unit_price);
+  const careMin = p.care_minutes ?? p.summary.visitMinutes;
+  const overMin = Math.max(0, careMin - thresholdMin);
+  // 下の段: 総括表 2026-03〜07 KT姉崎・姉崎ムツミ・市原・やわた・五井・木更津・袖ケ浦・君津 の社員は 100〜120h を 800円/時
+  //   (木更津 江澤 2026-07 146h: 26h×2,500=65,000 + 20h×800=16,000 = 81,000 / 姉崎ムツミ 石田 110.25h: 10.25h×800 = 8,200)
+  const tier = p.care_overtime_lower_tier;
+  const lowerMin = tier && tier.unit_price > 0 ? Math.max(0, Math.min(careMin, thresholdMin) - tier.from_hours * 60) : 0;
+  return Math.round((overMin / 60) * s.care_overtime_unit_price) + (tier ? Math.round((lowerMin / 60) * tier.unit_price) : 0);
 }
 
 export function yochoAllowance(p: MonthlyPayroll): number {

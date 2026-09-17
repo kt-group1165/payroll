@@ -11,7 +11,7 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { getWeekendHolidayRates } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers } from "@/lib/app-settings";
 import {
   computeTenureAllowance,
   computeTenureRate,
@@ -286,7 +286,7 @@ export default function PayrollPage() {
       };
 
       setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
-      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes] = await Promise.all([
+      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
@@ -298,7 +298,9 @@ export default function PayrollPage() {
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
         getWeekendHolidayRates(supabase),
+        getCareOvertimeLowerTiers(supabase),
       ]);
+      if (careTiersRes.error) throw new Error(`介護超過の段の設定の読み込みに失敗: ${careTiersRes.error}`);
       if (weekendRatesRes.error) throw new Error(`土日祝手当の時給設定の読み込みに失敗: ${weekendRatesRes.error}`);
       const weekendRates = weekendRatesRes.rates;
 
@@ -745,6 +747,7 @@ export default function PayrollPage() {
             care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075) + trainingMinutes(empOfRecs),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmp.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
+            care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,
             summary,
           };
         });

@@ -181,6 +181,12 @@ eq("介護時間外手当: 閾値+1h(660分)は1h×1000円=1000円",
     settings: salary({ care_overtime_threshold_hours: 10, care_overtime_unit_price: 1000 }),
     summary: summary({ visitMinutes: 660 }),
   })), 1000);
+eq("★ 介護超過 下の段: 146h (閾値120h×2,500 / 100h〜×800) = 65,000 + 16,000 (木更津 江澤 2026-07)",
+  careOvertimePay(monthly({ settings: salary({ care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 }), care_minutes: 146 * 60, care_overtime_lower_tier: { from_hours: 100, unit_price: 800 } })), 81000);
+eq("★ 介護超過 下の段: 110.25h は 10.25h × 800 = 8,200 (姉崎ムツミ 石田 2026-07)",
+  careOvertimePay(monthly({ settings: salary({ care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 }), care_minutes: 6615, care_overtime_lower_tier: { from_hours: 100, unit_price: 800 } })), 8200);
+eq("介護超過 下の段: ちょうど100h は 0 / 段の設定が無ければ 120h 超だけ",
+  [careOvertimePay(monthly({ settings: salary({ care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 }), care_minutes: 6000, care_overtime_lower_tier: { from_hours: 100, unit_price: 800 } })), careOvertimePay(monthly({ settings: salary({ care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 }), care_minutes: 146 * 60 }))], [0, 65000]);
 
 eq("夜朝手当: 単価か時間が0なら0円",
   yochoAllowance(monthly({ settings: salary({ yocho_unit_price: 0 }), yocho_hours: 5 })), 0);
