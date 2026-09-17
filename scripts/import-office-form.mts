@@ -37,8 +37,8 @@ const offices = [...new Set(parsed.data.map((r) => r.office_number))];
 if (offices.length !== 1) { console.error(`事業所番号が 1 つに決まらない: ${offices.join(",")}`); process.exit(1); }
 const officeNumber = offices[0];
 
-// 稼働月の確かめ: 日付項目 (M/D) の月が --month と合うか
-const monthsInFile = new Set(parsed.data.map((r) => r.item_date).filter(Boolean).map((d) => String(d).split("/")[0]));
+// 稼働月の確かめ: 日付項目 (M/D または M月D日。高品は後者) の月が --month と合うか。月の読めない値 ("7" だけ等) は数えない
+const monthsInFile = new Set(parsed.data.map((r) => /^(\d{1,2})[/月]/.exec(String(r.item_date ?? "").trim())?.[1]).filter((m): m is string => !!m));
 const mm = String(parseInt(MONTH.slice(4, 6), 10));
 if (monthsInFile.size > 0 && (monthsInFile.size !== 1 || !monthsInFile.has(mm))) {
   console.error(`★ ファイル内の日付の月 (${[...monthsInFile].join(",")}) が --month ${MONTH} と合いません`);
