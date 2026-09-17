@@ -14,6 +14,9 @@
  *  8. 【2回目 2026-09-17 計算後】 時給者で総括表に勤続手当がある7名は 資格 "不明（要件は満たす）" (勤続手当は資格者のみ)
  *  9. 月給者の勤続手当は 総括表の額を手入力 (自動計算は資格・通算年数が DB に無く 0 円になる)
  * 10. 根本高光 休職者 → 在職者 (7月に稼働・総括表に在籍)
+ * 12. 月給者の勤続手当の月ごとの変化を 給与設定の履歴 (effective_from) で持つ (総括表 2026-03〜07)
+ *     花島 11,000→6月 11,500 / 長谷川 6,000→7月 6,500 / 吉田 4,000→5月 4,500 / 櫻井 0→4月 1,000
+ *     一番古い行の勤続手当を変化前の額にし、変化月の 1 日から始まる行を (他の項目は同じで) 作る
  * 11. 退職者のうち 総括表 2026-04 に最後に載っている 鈴木麻亜子・鵜澤奈菜 は 退職日 2026-04-30 (4月の計算に含める)
  *  7. 未対応コード: 010288 移動5.5 / 010147〜010153 有料身有 → 身体介護 (総括表テーブル1: 移動身あり・有料身あり。おゆみ野で 2,100円)
  *
@@ -62,7 +65,13 @@ const RETIRE = ["2036", "220503", "221103", "230903", "240303", "240802", "25080
 const SHINTAI_SEIKATSU_RATE = 1900;
 const MAP_TO_SHINTAI = ["010288", "010147", "010149", "010151", "010153"];
 const QUALIFIED_UNKNOWN = ["2010", "4004", "4012", "4081", "4089", "4095", "250705"];
-const MONTHLY_TENURE = { "2025": 9000, "3021": 11500, "4037": 6500, "4096": 4500, "4070": 5000, "250401": 1000 };
+const MONTHLY_TENURE = { "2025": 9000, "4070": 5000 };
+const TENURE_HISTORY = {
+  "3021": [["1970-01-01", 11000], ["2026-06-01", 11500]],
+  "4037": [["1970-01-01", 6000], ["2026-07-01", 6500]],
+  "4096": [["1970-01-01", 4000], ["2026-05-01", 4500]],
+  "250401": [["1970-01-01", 0], ["2026-04-01", 1000]],
+};
 const REINSTATE = ["4097"];
 const RESIGNATION_DATES = { "240303": "2026-04-30", "220503": "2026-04-30" };
 
@@ -105,6 +114,22 @@ for (const [no, amount] of Object.entries(MONTHLY_TENURE)) {
   const [s] = await get(`payroll_salary_settings?select=id,effective_from,tenure_allowance,tenure_allowance_auto&employee_id=eq.${e.id}&order=effective_from.desc&limit=1`);
   if (!s) { console.error(`★ ${no} の給与設定がありません`); process.exit(2); }
   if (s.tenure_allowance !== amount || s.tenure_allowance_auto !== false) ops.push({ label: `勤続手当(手入力) ${no} ${e.name} ${s.tenure_allowance}${s.tenure_allowance_auto === false ? "" : "(自動)"} → ${amount}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${s.id}`, { tenure_allowance: amount, tenure_allowance_auto: false }) });
+}
+for (const [no, steps] of Object.entries(TENURE_HISTORY)) {
+  const e = byNo.get(no);
+  const rows = await get(`payroll_salary_settings?select=*&employee_id=eq.${e.id}&order=effective_from.asc`);
+  if (rows.length === 0) { console.error(`★ ${no} の給与設定がありません`); process.exit(2); }
+  for (const [eff, amount] of steps) {
+    const row = rows.find((r) => r.effective_from === eff);
+    if (row) {
+      if (row.tenure_allowance !== amount || row.tenure_allowance_auto !== false) ops.push({ label: `勤続手当 ${no} ${e.name} ${eff}〜 ${row.tenure_allowance} → ${amount}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, { tenure_allowance: amount, tenure_allowance_auto: false }) });
+    } else {
+      const base = [...rows].reverse().find((r) => r.effective_from < eff) ?? rows[0];
+      const { id, created_at, updated_at, ...copy } = base;
+      void id; void created_at; void updated_at;
+      ops.push({ label: `給与設定の履歴を追加 ${no} ${e.name} ${eff}〜 勤続手当 ${amount} (他は ${base.effective_from} の行と同じ)`, run: () => write("POST", "payroll_salary_settings", { ...copy, effective_from: eff, tenure_allowance: amount, tenure_allowance_auto: false }) });
+    }
+  }
 }
 for (const no of ["4070", "250401"]) {
   const e = byNo.get(no);
