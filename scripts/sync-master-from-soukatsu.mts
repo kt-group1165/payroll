@@ -15,7 +15,11 @@
  *     - 社員は 介護超過 120h × 2,500円 / 夜朝 200円、提責・事務員は 0
  *     - 社員の有給単価 (円/日) = 有給休暇手当 ÷ 有給・特休・欠勤 の日数 (月をまたいで同じ値のときだけ)
  *   時給 (パート_総括表データより)
- *     - 社会保険=1 → 社保あり / 有給単価 = 最新月の値 / 勤続手当単価がある → 資格「不明（要件は満たす）」
+ *     - 社保 (= 処遇改善補助金の対象) は 最新月に 処遇改善補助金手当 が出ているか で決める。
+ *       総括表の「社会保険」列は補助金と一致しない (さつき 滝下: 列は空で補助金あり / 高品 菊池: 列は1で補助金なし)
+ *     - 有給単価 = 最新月の値 / 勤続手当単価がある → 資格「不明（要件は満たす）」
+ *     - 最新月が月給の人には時給側の設定を当てない
+ *   --skip-part: パートを扱わない (いわね: パートは やわた の職員と同じ一覧で、やわたで稼働 = user 判断)
  *   在籍
  *     - 総括表に居て DB に居ない → 登録 (番号・氏名・時給/月給・在職者)
  *     - DB の在職/休職者で、総括表 (指定月) と MEISAI 実績 (全月) のどちらにも居ない → 退職者
@@ -34,6 +38,7 @@ const OFFICE = opt("--office");
 const FOLDER = opt("--folder");
 const MONTHS = (opt("--months") ?? "").split(",").filter(Boolean).sort();
 const DIR = opt("--extract-dir");
+const SKIP_PART = args.includes("--skip-part");
 if (!OFFICE || !FOLDER || MONTHS.length === 0 || !DIR) {
   console.error("--office <事業所番号> --folder <総括表の事業所フォルダ名> --months YYYYMM,... --extract-dir <dir> を指定してください");
   process.exit(1);
@@ -107,8 +112,9 @@ const notes: string[] = [];
 const lastSeen = new Map<string, { month: string; kind: "part" | "shaseki"; row: SRow }>();
 for (const m of MONTHS) {
   const s = byMonth.get(m)!;
-  for (const r of s.part) lastSeen.set(r._code, { month: m, kind: "part", row: r });   // 兼務者 (総支給0) も在籍として扱う
-  for (const r of s.shaseki) lastSeen.set(r._code, { month: m, kind: "shaseki", row: r });
+  // 総支給が 0 / 空 の行は「居ない」とみなす (user 2026-09-17: 総括表に空行だけの人は居ない)。ただし兼務者の行は在籍として扱う
+  for (const r of s.part) if (!SKIP_PART && (num(r["総支給額"]) !== 0 || r["兼務者"])) lastSeen.set(r._code, { month: m, kind: "part", row: r });
+  for (const r of s.shaseki) if (num(r["総支給額"]) !== 0) lastSeen.set(r._code, { month: m, kind: "shaseki", row: r });
 }
 const pendingCreate = new Set<string>();
 for (const [code, seen] of lastSeen) {
@@ -118,7 +124,7 @@ for (const [code, seen] of lastSeen) {
       employee_number: code, name: cleanName(seen.row["氏名"]), office_id: office.id,
       salary_type: seen.kind === "part" ? "時給" : "月給", role_type: seen.kind === "part" ? "パート" : "社員",
       employment_status: seen.month === latest ? "在職者" : "退職者", resignation_date: seen.month === latest ? null : monthEnd(seen.month),
-      job_type: "訪問介護", social_insurance: seen.kind === "shaseki" || num(seen.row["社会保険"]) === 1, communication_fee_type: "none",
+      job_type: "訪問介護", social_insurance: seen.kind === "shaseki" || num(seen.row["処遇改善補助金手当"]) > 0, communication_fee_type: "none",
     };
     pendingCreate.add(code);
     ops.push({ label: `登録 ${code} ${body.name} ${body.salary_type}/${body.employment_status}${body.resignation_date ? ` 退職日${body.resignation_date}` : ""} (総括表 ${seen.month})`, run: async () => { const c = await write("POST", "payroll_employees", body); byNo.set(code, c); } });
@@ -201,8 +207,9 @@ for (const code of shaCodes) {
 }
 
 // ── 時給 ──────────────────────────────────────────────────────
-const partCodes = new Set(MONTHS.flatMap((m) => byMonth.get(m)!.part.map((r) => r._code)));
+const partCodes = new Set(SKIP_PART ? [] : MONTHS.flatMap((m) => byMonth.get(m)!.part.map((r) => r._code)));
 for (const code of partCodes) {
+  if (lastSeen.get(code)?.kind !== "part") continue;   // 最新月が月給 (または居ない) 人には時給側の設定を当てない
   const rows = MONTHS.map((m) => ({ m, r: byMonth.get(m)!.part.find((x) => x._code === code) })).filter((x) => x.r) as { m: string; r: SRow }[];
   const last = rows[rows.length - 1].r;
   const name = cleanName(last["氏名"]);
@@ -210,8 +217,8 @@ for (const code of partCodes) {
   const e = byNo.get(code);
   if (!e && !pendingCreate.has(code)) continue;
   const id = () => byNo.get(code)!.id;
-  const si = num(last["社会保険"]) === 1;
-  if (!e || Boolean(e.social_insurance) !== si) ops.push({ label: `社保 ${code} ${name} ${e?.social_insurance ?? "-"} → ${si} (${rows[rows.length - 1].m})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { social_insurance: si }) });
+  const si = num(last["処遇改善補助金手当"]) > 0;
+  if (!e || Boolean(e.social_insurance) !== si) ops.push({ label: `社保(補助金の対象) ${code} ${name} ${e?.social_insurance ?? "-"} → ${si} (${rows[rows.length - 1].m} 補助金 ${last["処遇改善補助金手当"] ?? "なし"})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { social_insurance: si }) });
   const unitRow = [...rows].reverse().find((x) => num(x.r["有給単価"]) > 0);
   if (unitRow) {
     const unit = num(unitRow.r["有給単価"]);
