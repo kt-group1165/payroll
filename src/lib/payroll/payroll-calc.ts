@@ -717,6 +717,18 @@ export function trainingMinutes(ofRecs: OfficeFormRecord[]): number {
 }
 
 /**
+ * HRD研修だけの時間 (分)。社員の介護超過の時間に足すのはこれだけ (2026-09-18)。
+ * 総括表の式: 時間外h = 訪問 − 重度×0.25 + HRD + … − 120 (「研修」は足さない)。
+ * 高品 櫻井 2026-04: 4/9 HRD研修 1h + 研修 1h → 総括表は HRD の 1h だけ足して 10,000 円
+ */
+export function hrdTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
+  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  return ofRecs
+    .filter((r) => r.record_type === "training" && r.item_name === "HRD研修" && r.start_time && r.end_time)
+    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+}
+
+/**
  * 初任者研修の時間 (事業所書式 研修 の 初任者研修: 終了−開始−休憩)。
  * 総括表では 初任者研修費 = 時間 × 同行の時給 (さつきが丘 福井知佳子 2026-05 2670分 51,175円 / 2026-06 2820分 54,050円 = 1,150円/時)。
  * ⚠ 事業所書式から出す時間は 2840分 / 2990分 で、総括表より両月とも 170分 多い (原因未特定)。

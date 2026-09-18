@@ -40,6 +40,7 @@ import {
   monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
   midMonthWorkDays,
+  hrdTrainingMinutes,
   dailyOvertimeFromVisits,
   shinyaHoursFromRecords,
   absenceDeduction,
@@ -813,6 +814,15 @@ eq("★★ 割増を付けると 719 = 差を検出できる", visitPayAmount(30
   eq("450+60−480 = 30 / 390+60 = 450 → 0 / 300+10 → 0 = 30 分", dailyOvertimeFromVisits(v, t), 30);
   eq("移動が無い日は訪問だけ", dailyOvertimeFromVisits(new Map([["d", 500]]), new Map()), 20);
   eq("★★ 月合計で 8h×日数 を引くと 0 になる = 日ごとに見る差を検出できる", dailyOvertimeFromVisits(v, t) !== Math.max(0, 450 + 390 + 300 + 60 + 60 + 10 - 480 * 3), true);
+}
+
+// ── 介護超過に足すのは HRD研修 だけ (研修 は足さない。2026-09-18) ──
+{
+  const tr = (item: string, s: string, e: string) => ({ record_type: "training", item_name: item, start_time: s, end_time: e, break_time: null }) as unknown as Parameters<typeof hrdTrainingMinutes>[0][number];
+  const recs = [tr("HRD研修", "18:00", "19:00"), tr("研修", "19:00", "20:00")];
+  eq("★ 高品 櫻井 2026-04: HRD 1h + 研修 1h → 介護時間に足すのは 60 分", hrdTrainingMinutes(recs), 60);
+  eq("研修の手当の時間 (trainingMinutes) は 両方 120 分のまま", trainingMinutes(recs), 120);
+  eq("★★ 両方足すと 120 = 差を検出できる", hrdTrainingMinutes(recs) !== trainingMinutes(recs), true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

@@ -60,6 +60,7 @@ import {
   employeeWorkMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
+  hrdTrainingMinutes,
   shinyaHoursFromRecords,
   listedDateCount,
   activePaidLeaveGrant,
@@ -981,7 +982,7 @@ export default function PayrollPage() {
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],
-              care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + trainingMinutes(empOfRecs)
+              care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + hrdTrainingMinutes(empOfRecs)
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
