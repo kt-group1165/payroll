@@ -538,6 +538,7 @@ export default function PayrollPage() {
       // 前月までの使用日数は 事業所書式 (付与月〜前月) の有給から数える
       const grantByEmpId = new Map<string, PaidLeaveGrant>();
       const usedBeforeByNum = new Map<string, number>();
+      const ledgerDaysByNum = new Map<string, Map<string, number>>();
       {
         const empIds = employees.map((e) => e.id);
         const grants: (PaidLeaveGrant & { employee_id: string })[] = [];
@@ -554,6 +555,20 @@ export default function PayrollPage() {
           if (g) grantByEmpId.set(id, g);
         }
         const firstMonth = [...grantByEmpId.values()].map((g) => g.grant_date.slice(0, 7).replace("-", "")).sort()[0];
+        // 有給管理簿の月ごとの使用日数 (payroll_monthly_inputs paid_leave_days)。載っている人は 事業所書式より優先 (2026-09-18)
+        {
+          const { data, error } = await supabase.from("payroll_monthly_inputs")
+            .select("employee_number,processing_month,numeric_value")
+            .eq("office_number", selectedOffice.office_number).eq("item_key", "paid_leave_days")
+            .gte("processing_month", firstMonth && firstMonth < selectedMonth ? firstMonth : selectedMonth)
+            .lte("processing_month", selectedMonth);
+          if (error) throw new Error(`有給管理簿の日数の取得に失敗: ${error.message}`);
+          for (const r of (data ?? []) as { employee_number: string; processing_month: string; numeric_value: number | null }[]) {
+            const num = normEmp(r.employee_number);
+            if (!ledgerDaysByNum.has(num)) ledgerDaysByNum.set(num, new Map());
+            ledgerDaysByNum.get(num)!.set(r.processing_month, Number(r.numeric_value ?? 0));
+          }
+        }
         if (firstMonth && firstMonth < selectedMonth) {
           const prevRecs: OfficeFormRecord[] = [];
           for (let from = 0; ; from += 1000) {
@@ -573,12 +588,16 @@ export default function PayrollPage() {
             const gm = g.grant_date.slice(0, 7).replace("-", "");
             const num = normEmp(e.employee_number);
             const mine = prevRecs.filter((r) => normEmp(r.employee_number) === num && (r as OfficeFormRecord & { processing_month: string }).processing_month >= gm);
-            usedBeforeByNum.set(num, officeFormPaidLeaveDays(mine));
+            const led = ledgerDaysByNum.get(num);
+            usedBeforeByNum.set(num, led
+              ? [...led.entries()].filter(([m]) => m >= gm && m < selectedMonth).reduce((a, [, v]) => a + v, 0)
+              : officeFormPaidLeaveDays(mine));
           }
         }
       }
+      // 当月の有給日数: 有給管理簿に当月の行があればそれ (総括表 4〜7 月 967 件中 940 件一致)、無ければ事業所書式
       const paidLeaveAllowanceOf = (empId: string, empNum: string, days: number, fallbackRate: number): number =>
-        paidLeaveAllowanceByGrant(days, usedBeforeByNum.get(empNum) ?? 0, grantByEmpId.get(empId) ?? null, fallbackRate);
+        paidLeaveAllowanceByGrant(ledgerDaysByNum.get(empNum)?.get(selectedMonth) ?? days, usedBeforeByNum.get(empNum) ?? 0, grantByEmpId.get(empId) ?? null, fallbackRate);
 
       // 時給者
       const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
