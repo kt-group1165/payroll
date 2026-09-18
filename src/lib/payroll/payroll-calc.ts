@@ -410,7 +410,9 @@ export const NO_OVERTIME_EXCESS_ROLES = new Set(["提責", "管理者"]);
 
 export function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
   if (NO_OVERTIME_EXCESS_ROLES.has(p.role_type)) return 0;
-  return Math.max(0, computeOvertimePay(p, otSettings) - (p.settings?.fixed_overtime_pay ?? 0));
+  // 社員は 残業代 − 介護超過手当 (総括表「残業総額2」= 残業代 − 120h以上+深夜。介護超過の中に残業分が含まれている扱い。2026-09-18)
+  const careOffset = p.role_type === "社員" ? careOvertimePay(p) : 0;
+  return Math.max(0, computeOvertimePay(p, otSettings) - (p.settings?.fixed_overtime_pay ?? 0) - careOffset);
 }
 
 /**
@@ -1215,4 +1217,18 @@ export function officeFormPaidLeaveDays(ofRecs: OfficeFormRecord[]): number {
   const full = ofRecs.filter((r) => r.item_name.includes("有給") && !r.item_name.includes("半")).reduce((s, r) => s + cnt(r), 0);
   const half = ofRecs.filter((r) => r.item_name.includes("半有給")).reduce((s, r) => s + cnt(r), 0);
   return paidLeaveDays(full, half);
+}
+
+/**
+ * 出勤簿の無い社員の残業 (分) = 日ごとに (訪問時間 + 移動時間) − 8 時間 を足す (2026-09-18 仮説)。
+ * 総括表の「普通残業」は旧システムが数えた値で、出勤簿の無い社員は 訪問 + 移動 から出しているとみられる
+ * (ちはら台 堀内 2026-07: 訪問 390〜450 分/日 + 移動 約 58 分/日 → 残業 179 分)。
+ * ⚠ 移動時間は当方の計算 (Google) なので 旧システムと 1 分単位では合わない
+ */
+export function dailyOvertimeFromVisits(visitMinByDay: Map<string, number>, travelSecByDay: Map<string, number>): number {
+  let total = 0;
+  for (const [day, visit] of visitMinByDay) {
+    total += Math.max(0, visit + Math.round((travelSecByDay.get(day) ?? 0) / 60) - 480);
+  }
+  return total;
 }

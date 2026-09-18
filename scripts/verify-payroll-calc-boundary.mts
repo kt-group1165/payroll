@@ -40,6 +40,7 @@ import {
   monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
   midMonthWorkDays,
+  dailyOvertimeFromVisits,
   shinyaHoursFromRecords,
   absenceDeduction,
   paidLeaveAllowanceByGrant,
@@ -803,6 +804,15 @@ eq("★★ 割増を付けると 719 = 差を検出できる", visitPayAmount(30
   eq("提責 (夜朝単価 0) は 深夜も 0", yochoAllowance(yp({ settings: { yocho_unit_price: 0 } })), 0);
   eq("深夜の時間 = 時間帯が深夜の算定時間", shinyaHoursFromRecords([{ calc_duration: "002:00", time_period: "深夜" }, { calc_duration: "001:00", time_period: "早朝夜間" }]), 2);
   eq("★★ 深夜を足さないと 2,300 = 差を検出できる", yochoAllowance(yp({})) !== 2300, true);
+}
+
+// ── 出勤簿の無い社員の残業 = 日ごとの (訪問 + 移動 − 8h) (2026-09-18 仮説) ──
+{
+  const v = new Map([["d1", 450], ["d2", 390], ["d3", 300]]);
+  const t = new Map([["d1", 3600], ["d2", 3600], ["d3", 600]]);
+  eq("450+60−480 = 30 / 390+60 = 450 → 0 / 300+10 → 0 = 30 分", dailyOvertimeFromVisits(v, t), 30);
+  eq("移動が無い日は訪問だけ", dailyOvertimeFromVisits(new Map([["d", 500]]), new Map()), 20);
+  eq("★★ 月合計で 8h×日数 を引くと 0 になる = 日ごとに見る差を検出できる", dailyOvertimeFromVisits(v, t) !== Math.max(0, 450 + 390 + 300 + 60 + 60 + 10 - 480 * 3), true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

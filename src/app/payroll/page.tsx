@@ -60,6 +60,7 @@ import {
   employeeWorkMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
+  dailyOvertimeFromVisits,
   shinyaHoursFromRecords,
   listedDateCount,
   activePaidLeaveGrant,
@@ -737,6 +738,7 @@ export default function PayrollPage() {
       // ── 移動手当計算（訪問介護・時給者） + 社員の移動時間（月給・出勤簿なし） ──
       // 社員の出勤時間 = サービス時間 + 訪問間の移動時間の全量 (employeeWorkMinutes)。月給者のループで使う
       const monthlyTravelFullSec = new Map<string, number>();
+      const monthlyTravelSecByDay = new Map<string, Map<string, number>>();
       {
         const visitCareEmps = employees.filter(
           (e) => e.job_type === "訪問介護" && e.address?.trim() &&
@@ -835,8 +837,14 @@ export default function PayrollPage() {
               if (!entry) {
                 // 月給・出勤簿なしの社員: 移動時間の全量だけ控える
                 let fullSec = 0;
-                for (const [date, visits] of dayMap) fullSec += calcDayRoute(date, address, visits, distMap)?.travel_time_full_sec ?? 0;
+                const byDay = new Map<string, number>();
+                for (const [date, visits] of dayMap) {
+                  const sec = calcDayRoute(date, address, visits, distMap)?.travel_time_full_sec ?? 0;
+                  fullSec += sec;
+                  byDay.set(date, sec);
+                }
                 monthlyTravelFullSec.set(normNum, fullSec);
+                monthlyTravelSecByDay.set(normNum, byDay);
                 continue;
               }
               const empObj = employees.find((e) => normEmp(e.employee_number) === normNum);
@@ -931,6 +939,14 @@ export default function PayrollPage() {
               baseSummary.visitMinutes,
               monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
             ),
+            // 出勤簿の無い社員の残業 = 日ごとの (訪問 + 移動 − 8h) の合計 (仮説。出勤簿がある人は出勤簿の残業のまま)
+            overtimeMinutes: (attByEmpM.get(normEmp(e.employee_number)) ?? []).length > 0
+              ? baseSummary.overtimeMinutes
+              : (() => {
+                  const visitByDay = new Map<string, number>();
+                  for (const r of recsByEmpM.get(normEmp(e.employee_number)) ?? []) visitByDay.set(r.service_date, (visitByDay.get(r.service_date) ?? 0) + parseDurationMinutes(r.calc_duration));
+                  return dailyOvertimeFromVisits(visitByDay, monthlyTravelSecByDay.get(normEmp(e.employee_number)) ?? new Map());
+                })(),
           };
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
