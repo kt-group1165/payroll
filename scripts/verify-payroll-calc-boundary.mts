@@ -38,6 +38,8 @@ import {
   overtimeExcessPay,
   monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
+  midMonthWorkDays,
+  prorateMonthlyFixed,
   OFFICE_WORKER_SCHEDULED_HOURS,
   monthlyGrandTotal,
   hourlyTenure,
@@ -711,6 +713,24 @@ eq("★ 土曜 2026-07-04 は対象外 (袖ケ浦などは土曜を払わない)
 eq("★ 祝日 2026-07-20 (海の日・月曜) は対象 (実績の休日区分は「平日」でも)", isSundayOrHoliday("2026/07/20"), true);
 eq("平日 2026-07-21 は対象外", isSundayOrHoliday("20260721"), false);
 eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 つの数え方の差を検出できる)", [isWeekendOrHoliday("20260704"), isSundayOrHoliday("20260704")], [true, false]);
+
+// ── 月の途中で 時給 → 月給 (2026-09-18 user ルール。狩野直子 ちはら台 2026-03 で総括表と 1 円まで一致) ──
+{
+  const d = (serviceMinutes: number, workMinutes = 0, halfDay = false) => ({ serviceMinutes, workMinutes, halfDay });
+  const kano = [390, 390, 240, 390, 360, 390, 390, 330].map((m) => d(m));
+  eq("★ 狩野 3/21〜 8 日 (全日 サービス 3h 以上) = 8 日", midMonthWorkDays(kano, "社員"), 8);
+  eq("社員 サービス 179 分 = 0.5 日 / 180 分 = 1 日", [midMonthWorkDays([d(179)], "社員"), midMonthWorkDays([d(180)], "社員")], [0.5, 1]);
+  eq("提責 は 出勤簿の勤務時間 239 分 = 0.5 日 / 240 分 = 1 日 (サービス時間は見ない)", [midMonthWorkDays([d(600, 239)], "提責"), midMonthWorkDays([d(0, 240)], "提責")], [0.5, 1]);
+  eq("半休の日は 0.5 日", midMonthWorkDays([d(400, 480, true)], "社員"), 0.5);
+  const base = { base_personal_salary: 94000, skill_salary: 76000, position_allowance: 0, qualification_allowance: 0, tenure_allowance: 0, fixed_overtime_pay: 0,
+    treatment_improvement: 80000, specific_treatment_improvement: 10000, treatment_subsidy: 20000 } as unknown as Parameters<typeof prorateMonthlyFixed>[0];
+  const p = prorateMonthlyFixed(base, 8, false);
+  eq("★ 狩野 本人給 94,000 → 560×8h×8日 = 35,840 (総括表)", p.base_personal_salary, 35840);
+  eq("★ 狩野 職能給 76,000 → 452×8h×8日 = 28,928 (総括表)", p.skill_salary, 28928);
+  eq("処遇改善関係は満額", [p.treatment_improvement, p.specific_treatment_improvement, p.treatment_subsidy], [80000, 10000, 20000]);
+  eq("稼働 0 日なら処遇改善も 0", prorateMonthlyFixed(base, 0, false).treatment_improvement, 0);
+  eq("★★ 暦日 (12/31) で割ると 36,387 になり総括表と合わない = この検査は日割りの方式の差を検出できる", Math.round(94000 * 12 / 31) !== p.base_personal_salary, true);
+}
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }

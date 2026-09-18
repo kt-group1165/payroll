@@ -58,6 +58,8 @@ import {
   officeWorkPayAmount,
   employeeWorkMinutes,
   parseDurationMinutes,
+  midMonthWorkDays,
+  prorateMonthlyFixed,
   computeSummary,
   type OvertimeSetting,
   type SalarySettings,
@@ -410,6 +412,46 @@ export default function PayrollPage() {
         ofByEmp.get(key)!.push(r);
       }
 
+      // ── 月の途中で 時給 ↔ 月給 が切り替わる人 (2026-09-18 user ルール) ──
+      // 給与設定の適用開始日を月の途中の日付 (例 2026-03-20) にすると、その月は
+      //   その日より前 = 切替前の形態 / その日以降 = 切替後の形態 で、実績・出勤簿を分けて 2 行で計算する。
+      //   月給の側は 勤務した日数で固定給を日割り (prorateMonthlyFixed)。総括表も 両方のシートに載せている
+      const _monthEndDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const _monthEnd = `${selectedMonth.slice(0, 4)}-${selectedMonth.slice(4, 6)}-${String(_monthEndDay).padStart(2, "0")}`;
+      const _monthStartStr = selectedMonthToMonthStart(selectedMonth);
+      type MidSwitch = { date: string; hourlyBefore: boolean; preRow: SalarySettings | null; postRow: SalarySettings };
+      const switchByNum = new Map<string, MidSwitch>();
+      for (const e of employeesRaw) {
+        const mid = ((salRes.data ?? []) as SalarySettings[])
+          .filter((r) => r.employee_id === e.id && r.effective_from > _monthStartStr && r.effective_from <= _monthEnd)
+          .sort((a, b) => a.effective_from.localeCompare(b.effective_from))[0];
+        if (!mid) continue;
+        const preRow = salMap.get(e.id) ?? null;
+        const pre = resolveEmploymentType(e, preRow).salary_type;
+        const post = resolveEmploymentType(e, mid).salary_type;
+        if (pre === post) continue;
+        switchByNum.set(normEmp(e.employee_number), { date: mid.effective_from.slice(0, 10), hourlyBefore: pre === "時給", preRow, postRow: mid });
+      }
+      const ymdOf = (d: string) => d.replace(/\//g, "-").slice(0, 10);
+      const attDateOf = (day: number) => `${selectedMonth.slice(0, 4)}-${selectedMonth.slice(4, 6)}-${String(day).padStart(2, "0")}`;
+      /** 時給の側か (切替の無い人は常に true。月給者はそもそも時給のループに入らない) */
+      const isHourlySide = (empNum: string, date: string): boolean => {
+        const sw = switchByNum.get(empNum);
+        if (!sw) return true;
+        const before = date < sw.date;
+        return sw.hourlyBefore ? before : !before;
+      };
+      const recsByEmpH = new Map(recsByEmp), recsByEmpM = new Map(recsByEmp);
+      const attByEmpH = new Map(attByEmp), attByEmpM = new Map(attByEmp);
+      for (const num of switchByNum.keys()) {
+        const rs = recsByEmp.get(num) ?? [];
+        recsByEmpH.set(num, rs.filter((r) => isHourlySide(num, ymdOf(r.service_date))));
+        recsByEmpM.set(num, rs.filter((r) => !isHourlySide(num, ymdOf(r.service_date))));
+        const as = attByEmp.get(num) ?? [];
+        attByEmpH.set(num, as.filter((a) => isHourlySide(num, attDateOf(a.day))));
+        attByEmpM.set(num, as.filter((a) => !isHourlySide(num, attDateOf(a.day))));
+      }
+
       // 勤怠サマリー計算 (computeSummary) は
       // src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)。
       // 呼出側で対象職員ぶんの出勤簿・事業所書式レコードを絞ってから渡す (verbatim移植)。
@@ -424,8 +466,8 @@ export default function PayrollPage() {
         });
       // 事務員 (役職=事務員 か 事務時給で払う人) は 通勤km を事業所書式優先、それ以外は出勤簿優先 (user 2026-09-18)
       const officeWorkerNums = new Set(employees.filter((e) => e.role_type === "事務員" || e.is_office_worker).map((e) => normEmp(e.employee_number)));
-      const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[]): AttendanceSummary =>
-        computeSummary(withAccompanyByCode(empRecs), attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
+      const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[], att?: AttendanceRecord[]): AttendanceSummary =>
+        computeSummary(withAccompanyByCode(empRecs), att ?? attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
           officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first");
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
@@ -507,15 +549,16 @@ export default function PayrollPage() {
         const info    = roleMap.get(empNum);
         // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
         if (!info) continue;
-        if (info.salary === "月給") continue;
-        const empRecs = recsByEmp.get(empNum) ?? [];
-        const firstRec = empRecs[0];
-        const sal = info ? salMap.get(info.empId) : null;
-        const baseEmpSummary = computeSummaryOf(empNum, empRecs);
+        const sw = switchByNum.get(empNum);
+        if (info.salary === "月給" && !sw) continue;
+        const empRecs = recsByEmpH.get(empNum) ?? [];
+        const firstRec = empRecs[0] ?? (recsByEmp.get(empNum) ?? [])[0];
+        const sal = sw && !sw.hourlyBefore ? sw.postRow : (info ? salMap.get(info.empId) : null);
+        const baseEmpSummary = computeSummaryOf(empNum, empRecs, attByEmpH.get(empNum) ?? []);
         // 出勤簿の無い時給者の出勤時間 = 訪問時間 (+ 移動時間は経路計算の後で足す)。2026-09-17
         const empSummary = {
           ...baseEmpSummary,
-          workHoursMin: employeeWorkMinutes((attByEmp.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0),
+          workHoursMin: employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0),
         };
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
@@ -567,7 +610,7 @@ export default function PayrollPage() {
           communication_fee: communicationFee,
           meeting_fee: meetingFee,
           training_pay: trainingPay,
-          ...(() => { const m = (attByEmp.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
+          ...(() => { const m = (attByEmpH.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
           childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth),
           commute_fee: commuteFee,
           commute_distance_m: 0,
@@ -588,6 +631,7 @@ export default function PayrollPage() {
       for (const rec of records) {
         const emp = hourlyEmpMap.get(rec.employee_number);
         if (!emp) continue;
+        if (!isHourlySide(normEmp(rec.employee_number), ymdOf(rec.service_date))) continue;
         const minutes    = parseDurationMinutes(rec.calc_duration);
         const categoryId = mappingMap.get(rec.service_code) ?? null;
         const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
@@ -606,7 +650,7 @@ export default function PayrollPage() {
       {
         const visitCareEmps = employees.filter(
           (e) => e.job_type === "訪問介護" && e.address?.trim() &&
-            (e.salary_type === "時給" || (e.salary_type === "月給" && (attByEmp.get(normEmp(e.employee_number)) ?? []).length === 0))
+            (e.salary_type === "時給" || switchByNum.has(normEmp(e.employee_number)) || (e.salary_type === "月給" && (attByEmp.get(normEmp(e.employee_number)) ?? []).length === 0))
         );
         if (visitCareEmps.length > 0) {
           // payroll_clients は 1 事業所で 1000 行を超え得るため paginate
@@ -639,7 +683,8 @@ export default function PayrollPage() {
           const byEmpNum = new Map<string, { address: string; dayMap: Map<string, VisitForRoute[]> }>();
           for (const emp of visitCareEmps) {
             const normNum = normEmp(emp.employee_number);
-            const empRecs = recsByEmp.get(normNum) ?? [];
+            // 切替のある人は 時給の側の日だけ (移動手当は時給の側で払う)
+            const empRecs = recsByEmpH.get(normNum) ?? [];
             const dayMap = new Map<string, VisitForRoute[]>();
             for (const rec of empRecs) {
               const clientAddr = clientMap.get(rec.client_number);
@@ -721,7 +766,7 @@ export default function PayrollPage() {
               // 出勤簿の無い時給者は 出勤時間 = 訪問 + 移動の全量 (社員と同じ。さつきが丘 2026-07 で総括表と照合)
               entry.summary = {
                 ...entry.summary,
-                workHoursMin: employeeWorkMinutes((attByEmp.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec),
+                workHoursMin: employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec),
               };
               const adjustedDistanceM = adjustedCommuteDistanceM(totalCommuteM, empOffice?.distance_adjustment_rate ?? 100);
               entry.travel_time_sec = totalSec;
@@ -739,10 +784,13 @@ export default function PayrollPage() {
       setProgress({ pct: 92, label: "月給者を計算中" });
       // 月給者
       const monthlyEmps = employees.filter(
-        (e) => e.salary_type === "月給" && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
+        (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
       );
       const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
-          const sal = salMap.get(e.id) ?? null;
+          const sw = switchByNum.get(normEmp(e.employee_number));
+          // 切替のある人: 月給の側の給与設定 (時給→月給なら 月の途中から始まる行 / 月給→時給なら 月初の行)
+          const sal = sw ? (sw.hourlyBefore ? sw.postRow : sw.preRow) : (salMap.get(e.id) ?? null);
+          const roleM = sw && sw.hourlyBefore ? resolveEmploymentType(e, sw.postRow).role_type : e.role_type;
           // 勤続手当: tenure_allowance_auto=true (default) なら自動計算、false なら手動入力値
           const computedTenure = computeTenureAllowance(
             e.has_care_qualification ?? false,
@@ -752,16 +800,32 @@ export default function PayrollPage() {
             0, 0, 0
           );
           const resolvedTenure = resolveTenureAllowance(sal, computedTenure);
-          const settingsWithTenure = sal ? { ...sal, tenure_allowance: resolvedTenure } : null;
+          const settingsFull = sal ? { ...sal, tenure_allowance: resolvedTenure } : null;
+          // 月の途中で切り替わった人は 月給の側で勤務した日数で日割り (payroll-calc の prorateMonthlyFixed)
+          const settingsWithTenure = settingsFull && sw
+            ? (() => {
+                const num = normEmp(e.employee_number);
+                const days = new Map<string, { serviceMinutes: number; workMinutes: number; halfDay: boolean }>();
+                const dayOf = (d: string) => { if (!days.has(d)) days.set(d, { serviceMinutes: 0, workMinutes: 0, halfDay: false }); return days.get(d)!; };
+                for (const r of recsByEmpM.get(num) ?? []) dayOf(ymdOf(r.service_date)).serviceMinutes += parseDurationMinutes(r.calc_duration);
+                for (const a of attByEmpM.get(num) ?? []) {
+                  const d = dayOf(attDateOf(a.day));
+                  d.workMinutes += parseDurationMinutes(a.work_hours ?? "");
+                  if ([a.work_note_1, a.work_note_2, a.work_note_3, a.work_note_4, a.work_note_5].some((n) => /半/.test(n ?? ""))) d.halfDay = true;
+                }
+                const workDays = midMonthWorkDays([...days.values()], roleM);
+                return prorateMonthlyFixed(settingsFull, workDays, roleM === "事務員" || (e.is_office_worker ?? false));
+              })()
+            : settingsFull;
           // ⚠ 2026-09-05 是正: recsByEmp は normEmp() 済みキーで格納されているが、
           //   ここだけ生の employee_number でlookupしていた (直下のofByEmp.get は
           //   正しくnormEmp済み)。実データ(月給者355名)では先頭ゼロ付きemployee_numberが
           //   0件のため現状の影響は無いが、揃えておく。
-          const baseSummary = computeSummaryOf(String(e.employee_number), recsByEmp.get(normEmp(e.employee_number)) ?? []);
+          const baseSummary = computeSummaryOf(String(e.employee_number), recsByEmpM.get(normEmp(e.employee_number)) ?? [], attByEmpM.get(normEmp(e.employee_number)) ?? []);
           const summary = {
             ...baseSummary,
             workHoursMin: employeeWorkMinutes(
-              (attByEmp.get(normEmp(e.employee_number)) ?? []).length,
+              (attByEmpM.get(normEmp(e.employee_number)) ?? []).length,
               baseSummary.workHoursMin,
               baseSummary.visitMinutes,
               monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
@@ -779,7 +843,7 @@ export default function PayrollPage() {
             employee_id: e.id,
             employee_number: e.employee_number,
             employee_name: e.name,
-            role_type: e.role_type,
+            role_type: roleM,
             job_type: e.job_type ?? "",
             auth_user_id: e.auth_user_id ?? null,
             settings: settingsWithTenure,
@@ -791,12 +855,12 @@ export default function PayrollPage() {
             business_trip_fee: 0,
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
-            yocho_hours: yochoHoursFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? []),
+            yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
-            care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [],
+            care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],
               care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + trainingMinutes(empOfRecs),
-            legal_within_minutes: legalWithinOvertimeMinutes(attByEmp.get(normEmp(e.employee_number)) ?? [], empOfRecs),
+            legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,
             summary,

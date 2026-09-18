@@ -1095,3 +1095,47 @@ export function computeSummary(
 
   return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes };
 }
+
+// ─── 月の途中で 時給 ↔ 月給 が切り替わる人 (2026-09-18 user ルール) ───
+//
+// 月給の側は「その側で実際に勤務した日数」で固定給を日割りする。
+//   1 日の単価 = 四捨五入(月額 ÷ 月の所定時間) × 8 時間。所定時間は 事務員 159h / それ以外 168h
+//   (総括表 ちはら台 狩野直子 2026-03: 本人給 94,000 → 560円×8h×8日 = 35,840 / 職能給 76,000 → 452×8×8 = 28,928 で 1 円まで一致)
+//   日割りするのは 本人給・職能給・役職・資格・勤続・固定残業代。処遇改善関係は 1 日でも稼働していれば満額
+// 1 日と数えるか:
+//   提責  出勤簿の勤務時間 4 時間以上 = 1 日 / それ未満で勤務あり = 0.5 日
+//   社員  サービス時間 (移動は含まない) 3 時間以上 = 1 日 / それ未満で稼働あり = 0.5 日
+//   半休・半欠勤の日は 0.5 日
+// ⚠ 提責の単価 (÷168 か ÷159 か) と半日換算は 実データでまだ確かめていない (例が狩野さん 1 人だけ)
+
+export type MidMonthDay = { serviceMinutes: number; workMinutes: number; halfDay: boolean };
+
+export function midMonthWorkDays(days: MidMonthDay[], role: string): number {
+  let total = 0;
+  for (const d of days) {
+    if (d.halfDay) { total += 0.5; continue; }
+    const m = role === "提責" ? d.workMinutes : d.serviceMinutes;
+    const full = role === "提責" ? 240 : 180;
+    if (m >= full) total += 1;
+    else if (m > 0) total += 0.5;
+  }
+  return total;
+}
+
+export function prorateMonthlyFixed(s: SalarySettings, workDays: number, isOfficeWorker: boolean): SalarySettings {
+  const hours = isOfficeWorker ? 159 : 168;
+  const pr = (v: number) => Math.round((v ?? 0) / hours) * 8 * workDays;
+  const full = (v: number) => (workDays > 0 ? v ?? 0 : 0);
+  return {
+    ...s,
+    base_personal_salary: pr(s.base_personal_salary),
+    skill_salary: pr(s.skill_salary),
+    position_allowance: pr(s.position_allowance),
+    qualification_allowance: pr(s.qualification_allowance),
+    tenure_allowance: pr(s.tenure_allowance),
+    fixed_overtime_pay: pr(s.fixed_overtime_pay),
+    treatment_improvement: full(s.treatment_improvement),
+    specific_treatment_improvement: full(s.specific_treatment_improvement),
+    treatment_subsidy: full(s.treatment_subsidy),
+  };
+}
