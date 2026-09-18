@@ -60,6 +60,7 @@ import {
   employeeWorkMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
+  shinyaHoursFromRecords,
   listedDateCount,
   activePaidLeaveGrant,
   paidLeaveAllowanceByGrant,
@@ -951,6 +952,7 @@ export default function PayrollPage() {
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
+            shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],

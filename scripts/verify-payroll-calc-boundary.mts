@@ -40,6 +40,7 @@ import {
   monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
   midMonthWorkDays,
+  shinyaHoursFromRecords,
   absenceDeduction,
   paidLeaveAllowanceByGrant,
   activePaidLeaveGrant,
@@ -792,6 +793,16 @@ eq("★★ 割増を付けると 719 = 差を検出できる", visitPayAmount(30
   eq("欠勤 0 日は 0", absenceDeduction(mp({ absence_days: 0 })), 0);
   eq("★ 1 日も出勤していない月は 固定給を全額 (274,000)", absenceDeduction(mp({ absence_days: 21, summary: { workDays: 0, visitMinutes: 0 } })), 274000);
   eq("★★ 固定給全部 (274,000) ÷ 21 で割ると 13,047 = 本人給+職能給 だけに掛ける差を検出できる", absenceDeduction(mp({ absence_days: 1 })) !== Math.floor(274000 / 21), true);
+}
+
+// ── 夜朝手当に深夜 × 500 円を足す (2026-09-18) ──
+{
+  const yp = (o: Record<string, unknown>) => ({ settings: { yocho_unit_price: 200 }, yocho_hours: 11.5, shinya_hours: 4, ...o }) as unknown as Parameters<typeof yochoAllowance>[0];
+  eq("★ KT姉崎 渡邉 2026-07: 夜朝 11.5h × 200 + 深夜 4h × 500 = 4,300 (総括表)", yochoAllowance(yp({})), 4300);
+  eq("深夜だけでも払う", yochoAllowance(yp({ yocho_hours: 0, shinya_hours: 0.5 })), 250);
+  eq("提責 (夜朝単価 0) は 深夜も 0", yochoAllowance(yp({ settings: { yocho_unit_price: 0 } })), 0);
+  eq("深夜の時間 = 時間帯が深夜の算定時間", shinyaHoursFromRecords([{ calc_duration: "002:00", time_period: "深夜" }, { calc_duration: "001:00", time_period: "早朝夜間" }]), 2);
+  eq("★★ 深夜を足さないと 2,300 = 差を検出できる", yochoAllowance(yp({})) !== 2300, true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

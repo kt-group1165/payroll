@@ -161,6 +161,8 @@ export type MonthlyPayroll = {
   care_overtime_lower_tier?: { from_hours: number; unit_price: number } | null;
   /** 有給1日あたりの単価 (職員マスタ 有給単価)。monthlyPaidLeaveAllowance */
   paid_leave_unit_price?: number;
+  /** 深夜の時間 (時間)。夜朝手当に × 500 円で足す */
+  shinya_hours?: number;
   /** 欠勤日数 (半欠勤は 0.5)。出勤簿があれば出勤簿、無ければ事業所書式 */
   absence_days?: number;
   /** 事務員 (欠勤控除の所定時間 159h) */
@@ -306,8 +308,17 @@ export function careOvertimePay(p: MonthlyPayroll): number {
 
 export function yochoAllowance(p: MonthlyPayroll): number {
   const s = p.settings;
-  if (!s || s.yocho_unit_price <= 0 || p.yocho_hours <= 0) return 0;
-  return Math.round(p.yocho_hours * s.yocho_unit_price);
+  if (!s || s.yocho_unit_price <= 0) return 0;
+  // 深夜の時間 × 500 円を足す (総括表「・夜朝・深夜」= 夜朝 + 深夜。KT姉崎・袖ケ浦・山武 2026-03〜07 すべて 500 円/時。2026-09-18)
+  return Math.round(Math.max(0, p.yocho_hours) * s.yocho_unit_price) + Math.round(Math.max(0, p.shinya_hours ?? 0) * SHINYA_UNIT_PRICE);
+}
+
+/** 社員の深夜手当 (円/時)。総括表 2026-03〜07 の 18 件すべて 500 円 */
+export const SHINYA_UNIT_PRICE = 500;
+
+/** 深夜の時間 (時間単位) = 時間帯が深夜の訪問の算定時間の合計 */
+export function shinyaHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
+  return records.filter((r) => (r.time_period ?? "").includes("深夜")).reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0) / 60;
 }
 
 /** 月間時間外 60 時間 (分)。これを超えた分は 50% 割増 (労基法37条1項但書) */
