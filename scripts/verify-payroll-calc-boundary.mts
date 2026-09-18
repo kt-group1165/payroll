@@ -825,6 +825,14 @@ eq("★★ 割増を付けると 719 = 差を検出できる", visitPayAmount(30
   eq("★★ 両方足すと 120 = 差を検出できる", hrdTrainingMinutes(recs) !== trainingMinutes(recs), true);
 }
 
+// ── 時給者の残業に移動時間を含める (user 2026-09-19) ──
+{
+  const recs = [{ service_date: "2026/07/01", calc_duration: "007:30" }];
+  eq("訪問 7.5h だけなら残業 0", hourlyOvertimeMinutes(recs), 0);
+  eq("★ 移動 45 分を足すと 8h15m → 残業 15 分", hourlyOvertimeMinutes(recs, new Map([["2026/07/01", 2700]])), 15);
+  eq("★★ 移動を含めないと 0 = 差を検出できる", hourlyOvertimeMinutes(recs, new Map([["2026/07/01", 2700]])) !== hourlyOvertimeMinutes(recs), true);
+}
+
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
 console.log("\n⚠ この検証が証明していないこと: 出勤簿の集計・移動手当の距離算出自体は");
