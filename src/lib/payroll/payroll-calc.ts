@@ -58,6 +58,8 @@ export type SalarySettings = {
   salary_type?: string | null;
   /** この適用開始月からの役職。NULL = 職員マスタの値 */
   role_type?: string | null;
+  /** この適用開始月からの有給休暇手当の単価 (円/日)。NULL = 職員マスタ */
+  paid_leave_unit_price?: number | null;
 };
 
 export type AttendanceSummary = {

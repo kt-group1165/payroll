@@ -154,9 +154,10 @@ export async function parseAttendanceFile(
       if (headerMap.has("控除")) attendanceRow.控除 = get("控除");
       if (headerMap.has("備考")) attendanceRow.備考 = get("備考");
 
-      fillMissingWorkHours(attendanceRow);
       attendanceRows.push(attendanceRow);
     }
+
+    fillMissingRows(attendanceRows);
 
     // 合計行（行34）
     const totalsRow = rows[34];
@@ -237,6 +238,34 @@ export function fillMissingWorkHours(row: AttendanceRow): void {
   const brk = hhmmToMinutes(row.休憩) ?? 0;
   const work = gross - (brk > 0 ? brk : gross > 360 ? 60 : 0);
   if (work > 0) row.勤務時間 = minutesToHhmm(work);
+}
+
+/**
+ * ファイル 1 枚ぶんの穴埋め。
+ *   1. 勤務時間 が 0 の日を 開始・終了 から埋める (fillMissingWorkHours)
+ *   2. そこで埋めた日の 通勤km も空なので、その月の 通勤km が 1 種類しかないときだけ その値を入れる
+ *
+ * 出勤簿 xlsm は 1 日目だけ 勤務時間 も 通勤km も空で出てくる。総括表は両方入った値で計算している。
+ * 通勤km は同じ人なら毎日同じ値のことが多い (実測 72 ファイル中 55 が 1 種類)。
+ * 2 種類以上ある月は決められないので埋めない。
+ *
+ * 根拠: 総括表 2026-03〜07 の「距離(通)」と突合すると 61 人月中 7 → 45 一致に増える
+ * (例 市原ムツミ 中村素子 2026-07: 172.8km → 182.4km = 総括表)。
+ */
+export function fillMissingRows(rows: AttendanceRow[]): void {
+  const filled: AttendanceRow[] = [];
+  for (const r of rows) {
+    const before = r.勤務時間;
+    fillMissingWorkHours(r);
+    if (r.勤務時間 !== before) filled.push(r);
+  }
+  if (filled.length === 0) return;
+  const kms = new Set(rows.map((r) => parseFloat(r.通勤km ?? "")).filter((v) => Number.isFinite(v) && v > 0));
+  if (kms.size !== 1) return;
+  const km = [...kms][0];
+  for (const r of filled) {
+    if (!(parseFloat(r.通勤km ?? "") > 0)) r.通勤km = String(km);
+  }
 }
 
 /**

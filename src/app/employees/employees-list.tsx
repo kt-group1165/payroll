@@ -864,7 +864,7 @@ export function EmployeesList({
                   </label>
                 </div>
                 <div>
-                  <Label>有給手当単価（円/時間）</Label>
+                  <Label>有給手当単価（円/日）</Label>
                   <Input
                     type="number" min={0}
                     value={form.paid_leave_unit_price}

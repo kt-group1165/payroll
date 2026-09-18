@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
-import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType } from "@/lib/payroll/salary-history";
+import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPrice } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
@@ -352,7 +352,9 @@ export default function PayrollPage() {
       );
       // 給与形態・役職は その月で有効な給与設定の行から決める (無ければ職員マスタ)。
       // 月の途中で時給 ↔ 月給が切り替わった人の過去月を、その月の形態で計算するため (2026-09-18)
-      const employees = employeesRaw.map((e) => ({ ...e, ...resolveEmploymentType(e, salMap.get(e.id)) }));
+      const employees = employeesRaw.map((e) => ({ ...e, ...resolveEmploymentType(e, salMap.get(e.id)),
+        // 有給単価 (円/日) も その月の給与設定の行 → 無ければ職員マスタ (2026-09-18)
+        paid_leave_unit_price: resolvePaidLeaveUnitPrice(e, salMap.get(e.id)) }));
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];

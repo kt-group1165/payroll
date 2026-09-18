@@ -51,6 +51,8 @@ type SalarySettings = {
   salary_type?: string | null;
   /** この適用開始月からの役職。NULL/未設定 = 職員マスタの値 */
   role_type?: string | null;
+  /** 有給休暇手当の単価 (円/日)。NULL/未設定 = 職員マスタの有給手当単価。有給日数 (半休は 0.5) × 単価 */
+  paid_leave_unit_price?: number | null;
   note: string;
 };
 
@@ -1277,6 +1279,30 @@ export function SalaryList({
                           className="pr-16 text-right"
                         />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/時間</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 有給休暇手当の単価 (円/日)。年度で変わるので履歴で持つ (2026-09-18) */}
+                <Card className="border-dashed">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">有給休暇手当</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
+                      <div>
+                        <p className="text-sm font-medium">1日あたりの単価</p>
+                        <p className="text-xs text-muted-foreground">有給の日数 (半休は 0.5 日) × 単価 = 有給休暇手当。空欄 = 職員マスタの有給手当単価</p>
+                      </div>
+                      <div className="relative">
+                        <Input
+                          type="number" min={0} step={1}
+                          value={settings.paid_leave_unit_price ?? ""} placeholder="職員マスタ"
+                          onChange={(e) => upd("paid_leave_unit_price", e.target.value === "" ? null : (parseFloat(e.target.value) || 0))}
+                          className="pr-12 text-right"
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/日</span>
                       </div>
                     </div>
                   </CardContent>

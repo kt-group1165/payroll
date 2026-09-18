@@ -120,3 +120,17 @@ export function resolveEmploymentType(
     role_type: activeRow?.role_type || employee.role_type,
   };
 }
+
+/**
+ * 有給休暇手当の 1 日あたりの単価 (円/日)。その月で有効な給与設定の行に値があればそれ、無ければ職員マスタ。
+ * 単価は年度で変わる (総括表 2026-03 → 04 で多くの社員が変わる) ので履歴で持つ (2026-09-18)。
+ * 0 も「設定した値」として扱う (NULL/undefined だけが 未設定)。
+ */
+export function resolvePaidLeaveUnitPrice(
+  employee: { paid_leave_unit_price?: number | null },
+  activeRow: { paid_leave_unit_price?: number | null } | null | undefined,
+): number {
+  const v = activeRow?.paid_leave_unit_price;
+  if (v !== null && v !== undefined) return Number(v);
+  return Number(employee.paid_leave_unit_price ?? 0);
+}

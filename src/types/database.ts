@@ -128,7 +128,7 @@ export interface Employee {
   has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
   care_qualification_kind?: string | null; // 資格の種類 (不明でも要件を満たす場合は「不明（要件は満たす）」)
   social_insurance: boolean;        // 社会保険加入
-  paid_leave_unit_price: number;    // 有給手当単価（円/時間）
+  paid_leave_unit_price: number;    // 有給手当単価（円/日）。月ごとの値は payroll_salary_settings.paid_leave_unit_price
   communication_fee_type: string;   // 通信費タイプ（none / fixed / variable）
   /** Supabase Auth ユーザーID。兼務職員は同じ auth_user_id を持つ複数行が存在し得る */
   auth_user_id: string | null;
