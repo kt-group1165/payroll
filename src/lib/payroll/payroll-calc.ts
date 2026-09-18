@@ -835,7 +835,9 @@ export function visitPayAmount(
   }
   // 基本額は円未満切り捨て (浮動小数の誤差で 1 円落ちないよう 1e-6 を足す)、割増分は四捨五入して足す
   // (身3夜 1:30: 3,150 + round(787.5)=788 → 3,938。田村佳子 2026-07 9件 35,442円 と一致)
-  const baseYen = Math.floor(base + 1e-6);
+  // ★ 同行だけは基本額も四捨五入 (45分×1,150円 = 862.5 → 863)。2026-07 の総括表で
+  //   端数差だった時給者 307 人が 286 → 307 人 全員 1 円一致 (2026-09-18)
+  const baseYen = categoryName === "同行" ? Math.round(base) : Math.floor(base + 1e-6);
   return baseYen + Math.round(baseYen * (timePeriodMultiplier(timePeriod) - 1));
 }
 

@@ -662,6 +662,14 @@ eq("extractDay: 8桁未満は0", extractDay("2026"), 0);
     nimi.salary_type !== resolveEmploymentType(nimi, buildActiveSalaryMap(rows, "2026-03-01").get("e1")).salary_type, true);
 }
 
+// ── 同行の端数は四捨五入 (2026-09-18) ──
+eq("同行 45分×1,150円 = 862.5 → 863 (四捨五入)", visitPayAmount(45, 1150, "同行", null, null), 863);
+eq("同行 75分×1,150円 = 1,437.5 → 1,438", visitPayAmount(75, 1150, "同行", null, null), 1438);
+eq("同行 20分×1,150円 = 383.33 → 383", visitPayAmount(20, 1150, "同行", null, null), 383);
+eq("★ 生活援助 45分×1,550円 = 1,162.5 → 1,162 (切り捨てのまま)", visitPayAmount(45, 1550, "生活援助", null, null), 1162);
+eq("★ 身体生活 40分×1,900円 = 1,266.67 → 1,266 (切り捨てのまま)", visitPayAmount(40, 1900, "身体生活", null, null), 1266);
+eq("★★ 直す前 (切り捨て) なら 862 = この検査は差を検出できる", visitPayAmount(45, 1150, "同行", null, null) !== Math.floor(45 / 60 * 1150), true);
+
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
 console.log("\n⚠ この検証が証明していないこと: 出勤簿の集計・移動手当の距離算出自体は");
