@@ -49,7 +49,12 @@ import {
   type KyotakuAttendanceCsvRow,
 } from "@/lib/csv/kyotaku-attendance-parser";
 import { useKyotakuOffices } from "@/lib/swr/use-kyotaku-offices";
-import { useKyotakuEmployees } from "@/lib/swr/use-kyotaku-employees";
+import {
+  useKyotakuEmployees,
+  fetchAttendanceTargets,
+  setAttendanceTarget,
+  type AttendanceTargetRow,
+} from "@/lib/swr/use-kyotaku-employees";
 import { useKyotakuAttendanceRows } from "@/lib/swr/use-kyotaku-attendance-rows";
 import { useKyotakuMonthly } from "@/lib/swr/use-kyotaku-attendance-monthly";
 import { useCompanyHolidays } from "@/lib/swr/use-company-holidays";
@@ -92,6 +97,8 @@ type AttendanceRow = {
   note: string | null;
   /** 出張距離 (km)。NULL/0 は出張なし */
   business_km: number | null;
+  /** 通勤距離 (km)。訪問介護・訪問入浴のみ (給与計算の通勤費に使う)。2026-09-18 */
+  commute_km?: number | null;
   /** 振替元日付 (YYYY-MM-DD)。NULL = 振替ではない通常の出勤 */
   substitute_for_date: string | null;
 };
@@ -109,6 +116,8 @@ type RowState = {
   note: string;
   /** 出張距離 (km)、空 = NULL。文字列で保持して step=0.1 の入力を素直に通す */
   business_km: string;
+  /** 通勤距離 (km)、空 = NULL。訪問介護・訪問入浴のみ表示 */
+  commute_km: string;
   /** 振替元日付 ("YYYY-MM-DD" or "")。空 = 振替ではない通常の出勤 */
   substitute_for_date: string;
   dirty: boolean;
@@ -116,6 +125,20 @@ type RowState = {
 };
 
 const TENANT_ID = "kt-group";
+
+/** km (DB の NUMERIC) → 入力欄の文字列。NULL/不正は "" */
+function kmToStr(v: number | string | null | undefined): string {
+  if (v === null || v === undefined || v === "") return "";
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  return Number.isFinite(n) ? String(n) : "";
+}
+/** 入力欄の文字列 → km (小数 1 桁に丸める)。空・負・不正は NULL */
+function strToKm(v: string): number | null {
+  const t = v.trim();
+  if (!t) return null;
+  const n = parseFloat(t);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : null;
+}
 const WEEK_DAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 const DOW_COLOR: Record<number, string> = {
   0: "text-red-600",
@@ -232,6 +255,7 @@ export function KyotakuAttendanceContent() {
   const {
     employees,
     error: employeeFetchError,
+    mutate: mutateEmployees,
   } = useKyotakuEmployees(selectedOfficeId);
 
   /** UI 上の編集可能 row state。
@@ -244,12 +268,17 @@ export function KyotakuAttendanceContent() {
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // 月単位データ (件数 + 加算)
+  // 選択中 office と業態。月次 (件数・加算) と居宅給与警告は 居宅介護支援 のみ
+  const selectedOfficeType =
+    offices.find((o) => o.id === selectedOfficeId)?.office_type ?? "";
+  const isKyotaku = selectedOfficeType === "居宅介護支援";
+
+  // 月単位データ (件数 + 加算) — 居宅のみ fetch
   const {
     monthly: monthlyBase,
     kasanRows: kasanBase,
     mutate: mutateMonthly,
-  } = useKyotakuMonthly(selectedEmployeeId, month);
+  } = useKyotakuMonthly(isKyotaku ? selectedEmployeeId : null, month);
   const [kaigoCount, setKaigoCount] = useState<string>("0");
   const [yobouCount, setYobouCount] = useState<string>("0");
   type KasanEdit = {
@@ -438,6 +467,7 @@ export function KyotakuAttendanceContent() {
       paid_leave_type: null,
       note: "",
       business_km: "",
+      commute_km: "",
       substitute_for_date: "",
       dirty: false,
       existing_id: null,
@@ -473,6 +503,7 @@ export function KyotakuAttendanceContent() {
         paid_leave_type: paidLeaveType,
         note: ex.note ?? "",
         business_km: businessKmStr,
+        commute_km: kmToStr((ex as { commute_km?: number | string | null }).commute_km),
         substitute_for_date: ex.substitute_for_date ?? "",
         dirty: false,
         existing_id: ex.id ?? null,
@@ -627,6 +658,11 @@ export function KyotakuAttendanceContent() {
       ),
     [combinedRecords, selectedOfficeWeekStart, month, companyHolidayDates],
   );
+  /** 月合計 通勤距離 (km、小数 1 桁)。訪問介護・訪問入浴のみ */
+  const totalCommuteKm = useMemo(
+    () => Math.round(rows.reduce((s, r) => s + (strToKm(r.commute_km) ?? 0), 0) * 10) / 10,
+    [rows],
+  );
   /** 月合計 出張距離 (km、小数 1 桁) */
   const totalBusinessKm = useMemo(() => {
     let sum = 0;
@@ -651,11 +687,12 @@ export function KyotakuAttendanceContent() {
       return;
     }
 
-    // 固定残業代 超過チェック (保存前 inline 警告)
+    // 固定残業代 超過チェック (保存前 inline 警告) — 居宅介護支援のみ。
+    //   訪問介護・訪問入浴は給与体系が別 (payroll_salary_settings 系) なのでこの警告は出さない。
     //   居宅ケアマネ給与は payroll_kyotaku_salary (履歴 table) から対象月の active row
     //   を取得して salary 構築する (旧 payroll_employees.kyotaku_* は obsolete)。
     //   overtime_settings は共通 (job_type='居宅介護支援')。
-    try {
+    if (isKyotaku) try {
       const [{ data: salaryRows }, { data: otRow }] = await Promise.all([
         supabase
           .from("payroll_kyotaku_salary")
@@ -738,6 +775,8 @@ export function KyotakuAttendanceContent() {
           paid_leave_type: r.paid_leave_type,
           note: r.note.trim() ? r.note : null,
           business_km: businessKm,
+          // 通勤km は訪問介護・訪問入浴だけ送る (居宅は使わない)
+          ...(isKyotaku ? {} : { commute_km: strToKm(r.commute_km) }),
           substitute_for_date: r.substitute_for_date || null,
         };
       });
@@ -749,7 +788,7 @@ export function KyotakuAttendanceContent() {
       }
 
       // 月単位データの保存 (件数 + 加算)
-      if (monthlyDirty) {
+      if (isKyotaku && monthlyDirty) {
         const monthStart = `${month}-01`;
         const { error: mErr } = await supabase
           .from("payroll_kyotaku_attendance_monthly")
@@ -972,7 +1011,7 @@ export function KyotakuAttendanceContent() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">出勤簿 <span className="text-base font-normal text-muted-foreground">(居宅介護支援)</span></h2>
+        <h2 className="text-2xl font-bold">出勤簿 <span className="text-base font-normal text-muted-foreground">(居宅介護支援・訪問介護・訪問入浴)</span></h2>
       </div>
 
       {err && (
@@ -1003,7 +1042,7 @@ export function KyotakuAttendanceContent() {
                 </option>
                 {offices.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.short_name || o.name || o.office_number}
+                    {o.short_name || o.name || o.office_number}（{o.office_type}）
                   </option>
                 ))}
               </select>
@@ -1034,6 +1073,14 @@ export function KyotakuAttendanceContent() {
                 ))}
               </select>
             </div>
+
+            {/* 出勤簿を作る人/作らない人の切替 (訪問介護前提だが全業態で使える) */}
+            {selectedOfficeId && (
+              <TargetSettingDialog
+                officeId={selectedOfficeId}
+                onChanged={() => mutateEmployees()}
+              />
+            )}
 
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">対象月</label>
@@ -1115,8 +1162,8 @@ export function KyotakuAttendanceContent() {
         </CardContent>
       </Card>
 
-      {/* 月集計: 介護件数 / 予防件数 / 加算 (規定 + 自由記述) */}
-      {selectedEmployeeId && (
+      {/* 月集計: 介護件数 / 予防件数 / 加算 (規定 + 自由記述) — 居宅介護支援のみ */}
+      {isKyotaku && selectedEmployeeId && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -1350,6 +1397,7 @@ export function KyotakuAttendanceContent() {
                     <TableHead className="w-14 text-center">有給</TableHead>
                     <TableHead className="w-20 text-right" title="所定労働時間 - 実労働 (土日祝/全有給は 0、半有給日は所定 4h で判定)">欠勤</TableHead>
                     <TableHead className="w-24 text-right">出張距離(km)</TableHead>
+                    {!isKyotaku && <TableHead className="w-24 text-right" title="給与計算の通勤費に使います">通勤距離(km)</TableHead>}
                     <TableHead>備考</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1562,6 +1610,20 @@ export function KyotakuAttendanceContent() {
                             className="h-8 text-right"
                           />
                         </TableCell>
+                        {!isKyotaku && (
+                          <TableCell className="text-right">
+                            <Input
+                              type="number"
+                              min={0}
+                              step={0.1}
+                              value={row.commute_km}
+                              onChange={(e) =>
+                                updateRow(idx, { commute_km: e.target.value })
+                              }
+                              className="h-8 text-right"
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <Input
                             type="text"
@@ -1628,6 +1690,14 @@ export function KyotakuAttendanceContent() {
                     {totalBusinessKm.toFixed(1)} km
                   </span>
                 </span>
+                {!isKyotaku && (
+                  <span>
+                    通勤距離{" "}
+                    <span className="font-semibold tabular-nums">
+                      {totalCommuteKm.toFixed(1)} km
+                    </span>
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -1698,5 +1768,118 @@ export function KyotakuAttendanceContent() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// =====================================================================
+// 対象者設定 dialog
+// =====================================================================
+// 訪問介護は「出勤簿を作る人と作らない人がいる」(2026-07-29 user 確定) ため、
+// 事業所ごとに 対象/対象外 を切り替える。実体は payroll_employees.attendance_hidden
+// (= order-app 出勤簿の「非表示」と同じフラグを共有)。
+
+function TargetSettingDialog({
+  officeId,
+  onChanged,
+}: {
+  officeId: string;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rows, setTargetRows] = useState<AttendanceTargetRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const loadTargets = useCallback(async () => {
+    setLoading(true);
+    try {
+      setTargetRows(await fetchAttendanceTargets(officeId));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [officeId]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- dialog open 時の async fetch
+    if (open) void loadTargets();
+  }, [open, loadTargets]);
+
+  const handleToggle = async (row: AttendanceTargetRow) => {
+    setBusyId(row.id);
+    try {
+      await setAttendanceTarget(row.id, !row.attendance_hidden);
+      setTargetRows((prev) =>
+        prev.map((r) =>
+          r.id === row.id ? { ...r, attendance_hidden: !row.attendance_hidden } : r,
+        ),
+      );
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const targetCount = rows.filter((r) => !r.attendance_hidden).length;
+
+  return (
+    <>
+    {/* 給与計算システムの Dialog (base-ui) は asChild が無いので、ボタンで開く */}
+    <Button variant="outline" size="sm" className="mb-0.5" onClick={() => setOpen(true)}>
+      対象者設定
+    </Button>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>出勤簿の対象者設定</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground -mt-2">
+          出勤簿を付ける人だけ「対象」にします。対象外の人はスタッフ選択に出ません
+          (給与計算側の職員データはそのまま残ります)。
+        </p>
+        <div className="max-h-[50vh] overflow-y-auto space-y-1">
+          {loading ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">読み込み中...</p>
+          ) : rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">職員がいません</p>
+          ) : (
+            rows.map((r) => (
+              <div
+                key={r.id}
+                className={`flex items-center gap-2 rounded-md border px-3 py-1.5 ${
+                  r.attendance_hidden ? "bg-muted/50 opacity-70" : ""
+                }`}
+              >
+                <span className="flex-1 text-sm truncate">{r.name}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    r.attendance_hidden
+                      ? "bg-muted text-muted-foreground"
+                      : "bg-emerald-100 text-emerald-700"
+                  }`}
+                >
+                  {r.attendance_hidden ? "対象外" : "対象"}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyId === r.id}
+                  onClick={() => void handleToggle(r)}
+                >
+                  {busyId === r.id ? "…" : r.attendance_hidden ? "対象にする" : "対象外にする"}
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          対象 {targetCount} / {rows.length} 名
+        </p>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

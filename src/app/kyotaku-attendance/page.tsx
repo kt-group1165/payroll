@@ -3,7 +3,8 @@ import { KyotakuAttendanceContent } from "@/components/payroll/kyotaku-attendanc
 
 /**
  * /kyotaku-attendance
- * 居宅介護支援ケアマネ用 出勤簿 入力画面。
+ * 出勤簿 入力画面 (居宅介護支援・訪問介護・訪問入浴)。
+ * 2026-09-18: 訪問介護・訪問入浴も入力できるようにした (kaigo-app の出勤簿と同じ画面・同じ表)。
  *
  * Server Component: 直接 client component を render するだけの shell。
  * office / employee の fetch は client 側で dropdown 選択時に行う方が
