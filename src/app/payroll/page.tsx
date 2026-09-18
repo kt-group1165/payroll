@@ -11,7 +11,7 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -356,6 +356,8 @@ export default function PayrollPage() {
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
+      const care075Res = await getCare075Offices(supabase);
+      if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
       const screenOfficesRes = await getVisitAttendanceScreenOffices(supabase);
       if (screenOfficesRes.error) throw new Error(`出勤簿の入力元の設定の読み込みに失敗: ${screenOfficesRes.error}`);
       if (screenOfficesRes.offices.has(selectedOffice.office_number)) {
@@ -789,7 +791,9 @@ export default function PayrollPage() {
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? []),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
-            care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [], isCareHours075) + trainingMinutes(empOfRecs),
+            // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
+            care_minutes: careMinutesFromRecords(recsByEmp.get(normEmp(e.employee_number)) ?? [],
+              care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + trainingMinutes(empOfRecs),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmp.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,

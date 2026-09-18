@@ -69,6 +69,18 @@ export async function getKmAnomalyLines(supabase: SupabaseClient): Promise<{ lin
   return { lines: ((data?.value as { offices?: Record<string, { commute_per_day: number; trip_per_day: number }> } | null)?.offices) ?? {}, error: null };
 }
 
+/**
+ * 社員の介護超過で「0.75 掛け対象サービスの時間 × 0.25」を引く事業所 (事業所番号)。Hana 系だけ。
+ * それ以外は 訪問時間 (同行込み) ＋ 研修時間 をそのまま使う (総括表 2026-03〜07 で確認、2026-09-18)。
+ */
+export const CARE_075_OFFICES_KEY = "care_075_offices";
+
+export async function getCare075Offices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", CARE_075_OFFICES_KEY).maybeSingle();
+  if (error) return { offices: new Set(), error: error.message };
+  return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
+}
+
 export const JISSEKI_SOURCE_MODE_KEY = "jisseki_source_mode";
 
 export async function getJissekiSourceMode(
