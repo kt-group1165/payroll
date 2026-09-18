@@ -99,6 +99,18 @@ export async function getCare075Offices(supabase: SupabaseClient): Promise<{ off
  *   おゆみ野・中央 重度7.5% 1.5h以下 1,700 / 2h以上 1,650、重度15% 1,850 / 1,800。やわた 重度 1,550 / 1,500。
  *   2026-07 の総括表で おゆみ野 3/10 → 10/10・やわた 1/3 → 3/3 人一致 (五井は合わないので入れない)
  */
+/**
+ * 総合事業 (サービスコード A…) で 生活援助 に結び付いている訪問の時給 (2026-09-18)。{ "<事業所番号>": 時給 }
+ * 多くの事業所は生活援助と同じ時給だが、船橋だけ 1,400 円 (生活援助 1,750 円)。
+ * 根拠: 旧システムの確認用ブック 202608「総合事業身なし」のシステム単価。2026-07 の総括表で 船橋の小計 4 → 17 / 19 人一致
+ */
+export const SOUGOU_SEIKATSU_RATES_KEY = "sougou_seikatsu_rates";
+export async function getSougouSeikatsuRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", SOUGOU_SEIKATSU_RATES_KEY).maybeSingle();
+  if (error) return { rates: {}, error: error.message };
+  return { rates: ((data?.value as Record<string, number> | null) ?? {}), error: null };
+}
+
 export const JUHO_SHORT_VISIT_RATES_KEY = "juho_short_visit_rates";
 export type JuhoShortVisitRates = Record<string, Record<string, number>>;
 export async function getJuhoShortVisitRates(supabase: SupabaseClient): Promise<{ rates: JuhoShortVisitRates; error: string | null }> {
