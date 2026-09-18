@@ -8,8 +8,12 @@
 //
 // 変換の中身:
 //   勤務時間     = 終了 − 開始 − 休憩 (calcDaily)
-//   日残業/週残業 = calcDailyListWithWeekly (Excel 出勤簿の 日残業 / 週残業 列にあたる)。
-//                  週は月をまたぐので、呼出側は extendedMonthRange の範囲で行を渡すこと
+//   日残業/週残業 = 出さない (空)。給与計算は空なら「勤務時間 − 8h」の合計を残業にする。
+//                  ★ Excel 出勤簿の大半 (107 人中 98 人) には 日残業/週残業 の列が無く、今の給与計算は
+//                  1 日 8h 超だけを残業にしている。移行で金額が変わらないよう それに揃える (2026-09-18)。
+//                  週 40h 超を入れると 107 人中 57 人しか Excel と合わない。総括表の「残業」はどちらとも
+//                  合わない (105 人中 17 / 8 人) ので、週の扱いは総括表の規則が分かってから決める
+//   勤務時間の計算で週 (法定休日の自動判定) を見るので、呼出側は extendedMonthRange の範囲で行を渡すこと
 //   勤務摘要     = 有給 / 半日有給 / 振替休 (画面の 有給種別・振替元日付) → 無ければ備考
 //   通勤km/出張km = commute_km / business_km
 // ⚠ 有給・半有給の「日数」は今までどおり事業所書式から数える (給与計算は勤務摘要を日数に使っていない)
@@ -91,8 +95,8 @@ export function screenAttendanceToVisitRecords(
         work_note_1: note, work_note_2: "", work_note_3: "", work_note_4: "", work_note_5: "",
         start_time_1: d.work_minutes > 0 ? (hm(r.start_time) ?? "") : "",
         work_hours: formatHM(d.work_minutes),
-        overtime_daily: d.daily_overtime > 0 ? formatHM(d.daily_overtime) : "",
-        overtime_weekly: d.weekly_overtime > 0 ? formatHM(d.weekly_overtime) : "",
+        overtime_daily: "",
+        overtime_weekly: "",
         commute_km: r.commute_km ?? null,
         business_km: r.business_km ?? null,
       });
