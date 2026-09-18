@@ -985,8 +985,14 @@ export default function PayrollPage() {
               baseSummary.visitMinutes,
               monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
             ),
-            // ⚠ 出勤簿の無い社員の残業を 日ごとの (訪問 + 移動 − 8h) で数える仮説 (dailyOvertimeFromVisits) は 2026-07 で外れた
-            //   (花見川 中島 総括表 373 円 → 当方 2,174 円 / おゆみ野 石毛 0 → 337 円)。出勤簿の残業のまま (出勤簿が無ければ 0)
+            // 出勤簿の無い社員の残業 (分) = 日ごとの (訪問 + 移動の全量) で 日8h超 + 週40h超 (日曜始まり)。2026-09-19
+            //   総括表データ (提責_社員 の 残業時間合計) と 7月 社員100名で突合: 訪問 + 移動全量 誤差計 8,469分 /
+            //   訪問のみ 21,065分 / 移動15分超過分のみ 19,584分 (中島 -2 / 東條 -1 / 緑川 0 / 赤間 -3)。
+            //   時給者 (移動は15分超過分だけ) と違い、社員は移動を全部数える。
+            //   (2026-09-18 の 日8h超だけの仮説 dailyOvertimeFromVisits は 週40h と 介護超過の差し引きが無く外れていた)
+            ...((attByEmpM.get(normEmp(e.employee_number)) ?? []).length === 0 && e.role_type === "社員"
+              ? { overtimeMinutes: hourlyOvertimeMinutes(recsByEmpM.get(normEmp(e.employee_number)) ?? [], monthlyTravelSecByDay.get(normEmp(e.employee_number))) }
+              : {}),
           };
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
