@@ -606,6 +606,16 @@ export default function PayrollPage() {
       const paidLeaveAllowanceOf = (empId: string, empNum: string, days: number, fallbackRate: number): number =>
         paidLeaveAllowanceByGrant(ledgerDaysByNum.get(empNum)?.get(selectedMonth) ?? days, usedBeforeByNum.get(empNum) ?? 0, grantByEmpId.get(empId) ?? null, fallbackRate);
 
+      // 月ごとの手入力の 調整手当・過誤 (payroll_monthly_inputs adjustment)。時給者は error_adjustment、月給者は adjustment
+      const adjustmentByNum = new Map<string, number>();
+      {
+        const { data, error } = await supabase.from("payroll_monthly_inputs")
+          .select("employee_number,numeric_value")
+          .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth).eq("item_key", "adjustment");
+        if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
+        for (const r of (data ?? []) as { employee_number: string; numeric_value: number | null }[]) adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
+      }
+
       // 時給者
       const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
         name: e.name,
@@ -679,7 +689,7 @@ export default function PayrollPage() {
           job_type: info?.jobType ?? "",
           effective_service_months: info?.serviceMonths ?? 0,
           care_plan_count: 0,
-          error_adjustment: 0,
+          error_adjustment: sw && !sw.hourlyBefore ? 0 : (adjustmentByNum.get(empNum) ?? 0),
           treatment_subsidy: treatmentSubsidy,
           paid_leave_allowance: paidLeaveAllowance,
           cancel_count: cancelCount,
@@ -966,6 +976,7 @@ export default function PayrollPage() {
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
+            adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,
             shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
@@ -2070,6 +2081,7 @@ export default function PayrollPage() {
                                           <DetailLine label="残業代" v={computeOvertimePay(p, otSettings)} />
                                           {monthlyPaidLeaveAllowance(p) > 0 && <DetailLine label="有給休暇手当" v={monthlyPaidLeaveAllowance(p)} />}
                                           {absenceDeduction(p) > 0 && <DetailLine label={`欠勤控除 (${p.absence_days ?? 0}日)`} v={-absenceDeduction(p)} />}
+                                          {(p.adjustment ?? 0) !== 0 && <DetailLine label="調整手当・過誤 (手入力)" v={p.adjustment ?? 0} />}
                                           <DetailLine label="特別報奨金" v={s.special_bonus} />
                                           {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
                                           {travelFeeAmount(p) > 0 && <DetailLine label={`移動費(${effectiveTravelKm(p)}km)`} v={travelFeeAmount(p)} />}

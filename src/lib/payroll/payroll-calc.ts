@@ -161,6 +161,8 @@ export type MonthlyPayroll = {
   care_overtime_lower_tier?: { from_hours: number; unit_price: number } | null;
   /** 有給1日あたりの単価 (職員マスタ 有給単価)。monthlyPaidLeaveAllowance */
   paid_leave_unit_price?: number;
+  /** 調整手当・過誤 (月ごとの手入力 adjustment。マイナス可) */
+  adjustment?: number;
   /** 深夜の時間 (時間)。夜朝手当に × 500 円で足す */
   shinya_hours?: number;
   /** 欠勤日数 (半欠勤は 0.5)。出勤簿があれば出勤簿、無ければ事業所書式 */
@@ -436,7 +438,8 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     yochoAllowance(p) +
     monthlyPaidLeaveAllowance(p) +
     overtimeExcessPay(p, otSettings) -
-    absenceDeduction(p)
+    absenceDeduction(p) +
+    (p.adjustment ?? 0)
   );
 }
 

@@ -9,6 +9,14 @@ export const MONTHLY_INPUT_ITEMS = [
     label: "入浴件数",
     unit: "件",
     help: "社員の介護超過の時間に 件数 × 1.12 時間 を足す (おゆみ野の総括表の式)",
+    allowNegative: false,
+  },
+  {
+    key: "adjustment",
+    label: "調整手当・過誤",
+    unit: "円",
+    help: "総支給額にそのまま足す (マイナス可。前月分の過誤の精算など、総括表の「調整手当」「過誤(手入力)」)",
+    allowNegative: true,
   },
 ] as const;
 

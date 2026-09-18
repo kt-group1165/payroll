@@ -88,8 +88,9 @@ export default function MonthlyInputsPage() {
         numeric_value: Number(values[k]), updated_at: new Date().toISOString() };
     });
     const deletes = dirtyKeys.filter((k) => (values[k] ?? "") === "");
-    if (upserts.some((u) => !Number.isFinite(u.numeric_value) || u.numeric_value < 0)) {
-      toast.error("数字 (0 以上) を入れてください");
+    const negOk = new Set<string>(MONTHLY_INPUT_ITEMS.filter((i) => i.allowNegative).map((i) => i.key));
+    if (upserts.some((u) => !Number.isFinite(u.numeric_value) || (u.numeric_value < 0 && !negOk.has(u.item_key)))) {
+      toast.error("数字を入れてください (入浴件数は 0 以上)");
       setSaving(false);
       return;
     }
@@ -160,7 +161,7 @@ export default function MonthlyInputsPage() {
                       <td key={i.key} className="px-3 py-1.5 text-right">
                         <div className="relative inline-block">
                           <Input
-                            type="number" min={0} step={1}
+                            type="number" min={i.allowNegative ? undefined : 0} step={1}
                             className={`w-24 pr-7 text-right ${dirty ? "border-amber-500" : ""}`}
                             value={values[k] ?? ""}
                             onChange={(ev) => setValues((p) => ({ ...p, [k]: ev.target.value }))}
