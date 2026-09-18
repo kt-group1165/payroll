@@ -78,7 +78,7 @@ export type AttendanceSummary = {
   businessKmTotal: number;
   weekendHolidayMinutes: number;
   weekendHolidayAccompaniedMinutes: number;
-  /** 実績の休日区分が 日祭・休日 の訪問時間 (同行除く)。土曜を含まない。土日祝手当を 日祝だけで払う事業所用 */
+  /** 日曜・祝日 (カレンダー) の訪問時間 (同行除く)。土曜を含まない。土日祝手当を 日祝だけで払う事業所用 */
   sundayHolidayMinutes: number;
   visitMinutesExcludingAccompanied: number;
 };
@@ -476,8 +476,11 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
  */
 /**
  * 土日祝手当の対象時間。
- * Hana系 (さつき・高品 等) は 土日祝 (カレンダー) × 50円。KT姉崎・ムツミ系・リンクス 等は 実績の休日区分 日祭・休日 だけ × 100円
- * (総括表 姉崎ムツミ 2026-07: 栗原 日祭13.0h+休日0.75h = 13.75h → 1,375円 / 土曜 22h の 加藤 は 日祭8h+休日1h = 900円)。
+ * Hana系 (さつき・高品 等) は 土日祝 (カレンダー) × 50円。
+ * 100円の事業所は 2 通り (総括表 2026-07 で確認、2026-09-18):
+ *   土日祝 (カレンダー): 市原・いすみ・山武・東郷・大網・茂原
+ *   日曜・祝日だけ (土曜を含まない): KT姉崎 20/20・袖ケ浦 21/21・ちはら台 16/16・やわた 8/8・五井・君津・姉ム・木更津
+ * どちらかは payroll_app_settings の weekend_holiday_allowance_rates.sunday_holiday_only で持つ。
  */
 export function weekendAllowanceMinutes(e: { summary: AttendanceSummary; weekend_holiday_sunday_only?: boolean }): number {
   return e.weekend_holiday_sunday_only ? e.summary.sundayHolidayMinutes : e.summary.weekendHolidayMinutes;
@@ -882,6 +885,14 @@ export function isWeekendOrHoliday(dateStr: string): boolean {
   return dow === 0 || dow === 6 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
 }
 
+/** 日曜 か 祝日 (カレンダー)。土曜は含まない */
+export function isSundayOrHoliday(dateStr: string): boolean {
+  const d = dateStr.replace(/\D/g, "");
+  if (d.length < 8) return false;
+  const date = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
+  return date.getDay() === 0 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
+}
+
 export function parseDurationMinutes(str: string): number {
   if (!str) return 0;
   str = str.trim();
@@ -1074,8 +1085,10 @@ export function computeSummary(
   const weekendHolidayAccompaniedMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  // 日曜・祝日 (カレンダー) の訪問時間。2026-09-18 までは実績の休日区分 (日祭・休日) で数えていたが、
+  // カレンダーのほうが総括表と合う (やわた 4→8/8。五井・君津・姉ム・木更津は どちらでも全員一致)
   const sundayHolidayMinutes = empRecs
-    .filter((r) => /日祭|休日/.test(r.holiday_type ?? "") && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .filter((r) => isSundayOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
   return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes };

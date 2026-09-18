@@ -50,6 +50,7 @@ import {
   normalizeYM,
   computeChildcareAllowance,
   computeMeetingFee,
+  isSundayOrHoliday,
   meetingMinutes,
   treatmentSubsidyAmount,
   cancelAllowanceAmount,
@@ -703,6 +704,13 @@ eq("★★ 直す前 (切り捨て) なら 862 = この検査は差を検出で�
   eq("出勤日数 0 で距離だけある人は 1 日として見る", findKmAnomalies([r({ commute_km: 50, work_days: 0 })], L).length, 1);
   eq("★★ 距離 0 の人は出さない (= 誤警告しない)", findKmAnomalies([r({})], L).length, 0);
 }
+
+// ── isSundayOrHoliday (土日祝手当の 日曜・祝日だけ。2026-09-18) ──
+eq("日曜 2026-07-05 は対象", isSundayOrHoliday("20260705"), true);
+eq("★ 土曜 2026-07-04 は対象外 (袖ケ浦などは土曜を払わない)", isSundayOrHoliday("20260704"), false);
+eq("★ 祝日 2026-07-20 (海の日・月曜) は対象 (実績の休日区分は「平日」でも)", isSundayOrHoliday("2026/07/20"), true);
+eq("平日 2026-07-21 は対象外", isSundayOrHoliday("20260721"), false);
+eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 つの数え方の差を検出できる)", [isWeekendOrHoliday("20260704"), isSundayOrHoliday("20260704")], [true, false]);
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
