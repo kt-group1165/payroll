@@ -254,13 +254,15 @@ export default function PayrollPage() {
         const pageSize = 1000;
         let from = 0;
         while (true) {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("payroll_service_records")
             .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time,time_period,holiday_type")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
             .range(from, from + pageSize - 1);
+          // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
+          if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
           if (!data || data.length === 0) break;
           allServiceRecords.push(...(data as ServiceRecord[]));
           setProgress({ pct: Math.min(14, 2 + Math.floor(allServiceRecords.length / 1000) * 2), label: `実績データを読み込み中 (${allServiceRecords.length.toLocaleString()}件)` });
@@ -274,8 +276,10 @@ export default function PayrollPage() {
         const all: SalarySettings[] = [];
         let sFrom = 0;
         while (true) {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("payroll_salary_settings").select("*").range(sFrom, sFrom + 999);
+          // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
+          if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
           if (!data || data.length === 0) break;
           all.push(...(data as SalarySettings[]));
           if (data.length < 1000) break;
@@ -289,11 +293,13 @@ export default function PayrollPage() {
         const all: AttendanceRecord[] = [];
         let aFrom = 0;
         while (true) {
-          const { data } = await supabase.from("payroll_attendance_records")
+          const { data, error } = await supabase.from("payroll_attendance_records")
             .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,overtime_weekly,commute_km,business_km")
             .eq("year", year).eq("month", month)
             .eq("office_number", selectedOffice.office_number)
             .order("id").range(aFrom, aFrom + 999);
+          // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
+          if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
           if (!data || data.length === 0) break;
           all.push(...(data as AttendanceRecord[]));
           if (data.length < 1000) break;
@@ -318,6 +324,15 @@ export default function PayrollPage() {
         getCareOvertimeLowerTiers(supabase),
         getMeetingFeeUnpaidOffices(supabase),
       ]);
+      // 基本のデータの読み込みエラーを見逃さない (2026-09-19: 同時計算で読み込みが失敗し、時給・実績が欠けたまま計算していた)
+      for (const [label, r] of [["サービス区分の対応", mappingRes], ["サービス区分", catRes], ["事業所", officeRes], ["区分の時給", rateRes], ["職員", empRes]] as const) {
+        const err = (r as { error?: { message: string } | null }).error;
+        if (err) throw new Error(`${label}の読み込みに失敗しました (もう一度計算してください): ${err.message}`);
+      }
+      for (const [label, r] of [["出勤簿", attRes], ["残業の設定", otRes]] as const) {
+        const err = (r as { error?: { message: string } | null }).error;
+        if (err) throw new Error(`${label}の読み込みに失敗しました (もう一度計算してください): ${err.message}`);
+      }
       if (careTiersRes.error) throw new Error(`介護超過の段の設定の読み込みに失敗: ${careTiersRes.error}`);
       if (weekendRatesRes.error) throw new Error(`土日祝手当の時給設定の読み込みに失敗: ${weekendRatesRes.error}`);
       if (meetingUnpaidRes.error) throw new Error(`会議費を払わない事業所の設定の読み込みに失敗: ${meetingUnpaidRes.error}`);
@@ -329,13 +344,15 @@ export default function PayrollPage() {
         const pageSize = 1000;
         let from = 0;
         while (true) {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from("payroll_office_form_records")
             .select("id,employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,break_time,year_month,child_name,amount")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
             .range(from, from + pageSize - 1);
+          // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
+          if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
           if (!data || data.length === 0) break;
           allOfRecords.push(...(data as OfficeFormRecord[]));
           if (data.length < pageSize) break;
@@ -510,13 +527,14 @@ export default function PayrollPage() {
         const byEmpYm = new Map<string, number>();
         let ymFrom = 0;
         while (true) {
-          const { data: ymData } = await supabase
+          const { data: ymData, error: ymError } = await supabase
             .from("payroll_service_records")
             .select("employee_number,calc_duration,accompanied_visit")
             .eq("processing_month", ym)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
             .range(ymFrom, ymFrom + 999);
+          if (ymError) throw new Error(`育児手当の按分用の実績の読み込みに失敗しました (もう一度計算してください): ${ymError.message}`);
           if (!ymData || ymData.length === 0) break;
           for (const r of ymData as { employee_number: string; calc_duration: string; accompanied_visit: string }[]) {
             const k = normEmp(r.employee_number);
@@ -767,11 +785,13 @@ export default function PayrollPage() {
             const PAGE = 1000;
             let cFrom = 0;
             while (true) {
-              const { data } = await supabase
+              const { data, error } = await supabase
                 .from("payroll_clients")
                 .select("client_number,address,map_latitude,map_longitude")
                 .eq("office_id", selectedOfficeId)
                 .order("id").range(cFrom, cFrom + PAGE - 1);
+              // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
+              if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
               if (!data || data.length === 0) break;
               clientData.push(...(data as { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }[]));
               if (data.length < PAGE) break;
