@@ -81,6 +81,21 @@ export async function getCare075Offices(supabase: SupabaseClient): Promise<{ off
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
 
+/**
+ * 重度訪問の短時間の時給 (2026-09-18)。{ "<事業所番号>": { "<区分名>": 短時間の時給 } }
+ * 1 回の訪問が 1.5 時間以下なら この時給、それより長ければ 区分の時給 (payroll_category_hourly_rates) を 訪問全体に掛ける。
+ * 根拠: 旧システムの確認用ブック (01_実績データ確認用.xlsm 202608) の 訪問ごとのシステム単価。
+ *   おゆみ野・中央 重度7.5% 1.5h以下 1,700 / 2h以上 1,650、重度15% 1,850 / 1,800。やわた 重度 1,550 / 1,500。
+ *   2026-07 の総括表で おゆみ野 3/10 → 10/10・やわた 1/3 → 3/3 人一致 (五井は合わないので入れない)
+ */
+export const JUHO_SHORT_VISIT_RATES_KEY = "juho_short_visit_rates";
+export type JuhoShortVisitRates = Record<string, Record<string, number>>;
+export async function getJuhoShortVisitRates(supabase: SupabaseClient): Promise<{ rates: JuhoShortVisitRates; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", JUHO_SHORT_VISIT_RATES_KEY).maybeSingle();
+  if (error) return { rates: {}, error: error.message };
+  return { rates: ((data?.value as JuhoShortVisitRates | null) ?? {}), error: null };
+}
+
 export const JISSEKI_SOURCE_MODE_KEY = "jisseki_source_mode";
 
 export async function getJissekiSourceMode(

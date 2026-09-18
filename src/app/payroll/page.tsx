@@ -12,7 +12,7 @@ import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-da
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPrice } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -364,6 +364,8 @@ export default function PayrollPage() {
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
+      const juhoShortRes = await getJuhoShortVisitRates(supabase);
+      if (juhoShortRes.error) throw new Error(`重度訪問の短時間の時給の読み込みに失敗: ${juhoShortRes.error}`);
       const care075Res = await getCare075Offices(supabase);
       if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
       const screenOfficesRes = await getVisitAttendanceScreenOffices(supabase);
@@ -687,7 +689,10 @@ export default function PayrollPage() {
         const categoryId = mappingMap.get(rec.service_code) ?? null;
         const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
         const officeId   = officeMap.get(rec.office_number) ?? null;
-        const hourlyRate = categoryId && officeId ? (rateMap.get(`${officeId}:${categoryId}`) ?? null) : null;
+        const longRate = categoryId && officeId ? (rateMap.get(`${officeId}:${categoryId}`) ?? null) : null;
+        // 重度訪問は 1 回 1.5 時間以下なら短時間の時給 (事業所ごとの設定がある区分だけ)
+        const shortRate = juhoShortRes.rates[rec.office_number]?.[catName];
+        const hourlyRate = longRate !== null && shortRate !== undefined && minutes <= 90 ? shortRate : longRate;
         const overflowRate = officeId && lifeSupportCategoryId ? (rateMap.get(`${officeId}:${lifeSupportCategoryId}`) ?? null) : null;
         const pay        = visitPayAmount(minutes, hourlyRate, catName, rec.time_period, overflowRate);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
