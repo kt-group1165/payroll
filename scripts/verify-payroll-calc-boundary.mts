@@ -40,6 +40,7 @@ import {
   monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
   midMonthWorkDays,
+  absenceDeduction,
   paidLeaveAllowanceByGrant,
   activePaidLeaveGrant,
   prorateMonthlyFixed,
@@ -779,6 +780,19 @@ eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 �
 eq("★ 同行 30分 夜朝 = 575 (割増なし。四街道 若菜 2026-07)", visitPayAmount(30, 1150, "同行", "夜朝", null), 575);
 eq("身体介護 30分 夜朝 は割増あり = 1,050 + 263 = 1,313", visitPayAmount(30, 2100, "身体介護", "夜朝", null), 1313);
 eq("★★ 割増を付けると 719 = 差を検出できる", visitPayAmount(30, 1150, "同行", "夜朝", null) !== 719, true);
+
+// ── 欠勤控除 (2026-09-18 総括表 2026-03〜07 の 32 件から) ──
+{
+  const mp = (o: Record<string, unknown>) => ({ settings: { base_personal_salary: 94000, skill_salary: 60000, position_allowance: 0, qualification_allowance: 0, tenure_allowance: 0,
+    treatment_improvement: 90000, specific_treatment_improvement: 10000, treatment_subsidy: 20000, fixed_overtime_pay: 0, special_bonus: 0 },
+    summary: { workDays: 21, visitMinutes: 8625 }, ...o }) as unknown as Parameters<typeof absenceDeduction>[0];
+  eq("★ やわた 鹿島 2026-07: (94,000+60,000)÷168×8×1日 = 7,333 (総括表)", absenceDeduction(mp({ absence_days: 1 })), 7333);
+  eq("★ 事務員は 159h: 熊谷 190,000÷159×8×1 = 9,559", absenceDeduction(mp({ absence_days: 1, is_office_worker_for_deduction: true, settings: { base_personal_salary: 100000, skill_salary: 90000, position_allowance: 0, qualification_allowance: 0, tenure_allowance: 0, treatment_improvement: 0, specific_treatment_improvement: 0, treatment_subsidy: 14000, fixed_overtime_pay: 0, special_bonus: 0 } })), 9559);
+  eq("半欠勤 0.5 日 = 3,666", absenceDeduction(mp({ absence_days: 0.5 })), 3666);
+  eq("欠勤 0 日は 0", absenceDeduction(mp({ absence_days: 0 })), 0);
+  eq("★ 1 日も出勤していない月は 固定給を全額 (274,000)", absenceDeduction(mp({ absence_days: 21, summary: { workDays: 0, visitMinutes: 0 } })), 274000);
+  eq("★★ 固定給全部 (274,000) ÷ 21 で割ると 13,047 = 本人給+職能給 だけに掛ける差を検出できる", absenceDeduction(mp({ absence_days: 1 })) !== Math.floor(274000 / 21), true);
+}
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }

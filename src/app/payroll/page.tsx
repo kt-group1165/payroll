@@ -51,6 +51,7 @@ import {
   hourlyOvertimeMinutes,
   legalWithinOvertimeMinutes,
   monthlyPaidLeaveAllowance,
+  absenceDeduction,
   hourlyOvertimePayAmount,
   shoninshaTrainingMinutes,
   trainingPayAmount,
@@ -59,6 +60,7 @@ import {
   employeeWorkMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
+  listedDateCount,
   activePaidLeaveGrant,
   paidLeaveAllowanceByGrant,
   officeFormPaidLeaveDays,
@@ -956,6 +958,16 @@ export default function PayrollPage() {
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
+            // 欠勤日数: 出勤簿があれば出勤簿の「欠勤」(半欠勤 0.5)、無ければ事業所書式 (東郷 戸田 2026-03 は出勤簿で 4 日 = 総括表)
+            absence_days: (() => {
+              const att = attByEmpM.get(normEmp(e.employee_number)) ?? [];
+              const notes = (a: AttendanceRecord) => [a.work_note_1, a.work_note_2, a.work_note_3, a.work_note_4, a.work_note_5].map((n) => n ?? "");
+              if (att.length > 0) return att.reduce((s, a) => s + (notes(a).some((n) => n.includes("半欠")) ? 0.5 : notes(a).some((n) => n.includes("欠勤")) ? 1 : 0), 0);
+              const cnt = (r: OfficeFormRecord) => (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : listedDateCount(r.item_date));
+              return empOfRecs.filter((r) => r.item_name === "欠勤").reduce((s, r) => s + cnt(r), 0)
+                + empOfRecs.filter((r) => r.item_name === "半欠勤").reduce((s, r) => s + cnt(r), 0) * 0.5;
+            })(),
+            is_office_worker_for_deduction: roleM === "事務員" || (e.is_office_worker ?? false),
             // 月給者も 付与ごとの日当 (有給管理簿シートの値) で計算する。付与が無い人だけ 給与設定 → 職員マスタ の単価。
             // ⚠ 個人シートの日当は 前年度パートだった社員で総括表と食い違う (さつき 米倉 個人シート 7,712 / 管理簿 906)。
             //   有給管理簿シートの日当なら 2026-04〜07 の社員 224 件中 206 件一致
@@ -2041,6 +2053,7 @@ export default function PayrollPage() {
                                           <DetailLine label="固定残業代" v={s.fixed_overtime_pay} />
                                           <DetailLine label="残業代" v={computeOvertimePay(p, otSettings)} />
                                           {monthlyPaidLeaveAllowance(p) > 0 && <DetailLine label="有給休暇手当" v={monthlyPaidLeaveAllowance(p)} />}
+                                          {absenceDeduction(p) > 0 && <DetailLine label={`欠勤控除 (${p.absence_days ?? 0}日)`} v={-absenceDeduction(p)} />}
                                           <DetailLine label="特別報奨金" v={s.special_bonus} />
                                           {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
                                           {travelFeeAmount(p) > 0 && <DetailLine label={`移動費(${effectiveTravelKm(p)}km)`} v={travelFeeAmount(p)} />}

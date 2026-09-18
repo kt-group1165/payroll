@@ -161,6 +161,10 @@ export type MonthlyPayroll = {
   care_overtime_lower_tier?: { from_hours: number; unit_price: number } | null;
   /** 有給1日あたりの単価 (職員マスタ 有給単価)。monthlyPaidLeaveAllowance */
   paid_leave_unit_price?: number;
+  /** 欠勤日数 (半欠勤は 0.5)。出勤簿があれば出勤簿、無ければ事業所書式 */
+  absence_days?: number;
+  /** 事務員 (欠勤控除の所定時間 159h) */
+  is_office_worker_for_deduction?: boolean;
   /** 付与ごとの日当 (payroll_paid_leave_grants) で計算した有給休暇手当。あれば paid_leave_unit_price より優先 */
   paid_leave_allowance_override?: number;
   /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
@@ -418,8 +422,23 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     careOvertimePay(p) +
     yochoAllowance(p) +
     monthlyPaidLeaveAllowance(p) +
-    overtimeExcessPay(p, otSettings)
+    overtimeExcessPay(p, otSettings) -
+    absenceDeduction(p)
   );
+}
+
+/**
+ * 欠勤控除 (円、正の数で返す。総支給から引く)。2026-09-18 総括表 2026-03〜07 の 32 件から:
+ *   = 切り捨て((本人給 + 職能給) ÷ 所定時間 × 8 時間 × 欠勤日数)。所定時間は 社員 168h / 事務員 159h
+ *   (やわた 鹿島 154,000÷168×8×1 = 7,333 / 熊谷 事務 190,000÷159×8×1 = 9,559 / 東郷 戸田 175,000÷21×4 = 33,333)
+ *   その月に 1 日も出勤していない (欠勤が月の全部) なら 固定給を全額引く (袖ケ浦 浅井・おゆみ野 石毛)
+ */
+export function absenceDeduction(p: MonthlyPayroll): number {
+  const days = p.absence_days ?? 0;
+  if (!p.settings || days <= 0) return 0;
+  if ((p.summary.workDays ?? 0) <= 0 && (p.summary.visitMinutes ?? 0) <= 0) return fixedTotal(p.settings);
+  const hours = p.is_office_worker_for_deduction ? 159 : 168;
+  return Math.floor(((p.settings.base_personal_salary + p.settings.skill_salary) / hours) * 8 * days + 1e-6);
 }
 
 /**
