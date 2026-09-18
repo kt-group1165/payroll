@@ -11,6 +11,7 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPrice } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
+import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
@@ -782,6 +783,17 @@ export default function PayrollPage() {
       setHourlyResults(hourlySorted);
 
       setProgress({ pct: 92, label: "月給者を計算中" });
+      // 月ごとの手入力 (payroll_monthly_inputs)。入浴件数は 社員の介護超過の時間に 件数 × 1.12h を足す (2026-09-18)
+      const bathCountByEmp = new Map<string, number>();
+      {
+        const { data, error } = await supabase.from("payroll_monthly_inputs")
+          .select("employee_number,item_key,numeric_value")
+          .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth);
+        if (error) throw new Error(`月ごとの手入力の取得に失敗: ${error.message}`);
+        for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
+          if (r.item_key === "bath_visit_count") bathCountByEmp.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
+        }
+      }
       // 月給者
       const monthlyEmps = employees.filter(
         (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
@@ -859,7 +871,8 @@ export default function PayrollPage() {
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],
-              care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + trainingMinutes(empOfRecs),
+              care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + trainingMinutes(empOfRecs)
+              + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,

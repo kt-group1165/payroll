@@ -19,6 +19,7 @@
 //       値そのもの) は未検証
 //   - 実データでの妥当性
 import { buildActiveSalaryMap, resolveEmploymentType } from "../src/lib/payroll/salary-history";
+import { bathVisitCareMinutes } from "../src/lib/payroll/monthly-inputs";
 import { keepFirstKmRows } from "../src/lib/csv/office-form-parser";
 import { findKmAnomalies } from "../src/lib/payroll/km-anomaly";
 import {
@@ -730,6 +731,17 @@ eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 �
   eq("処遇改善関係は満額", [p.treatment_improvement, p.specific_treatment_improvement, p.treatment_subsidy], [80000, 10000, 20000]);
   eq("稼働 0 日なら処遇改善も 0", prorateMonthlyFixed(base, 0, false).treatment_improvement, 0);
   eq("★★ 暦日 (12/31) で割ると 36,387 になり総括表と合わない = この検査は日割りの方式の差を検出できる", Math.round(94000 * 12 / 31) !== p.base_personal_salary, true);
+}
+
+// ── 入浴件数 × 1.12h を介護超過に足す (おゆみ野の総括表の式。2026-09-18) ──
+{
+  eq("入浴 115 件 = 115 × 1.12h = 128.8h (7,728 分)", Math.round(bathVisitCareMinutes(115)), 7728);
+  eq("0 件・マイナスは 0", [bathVisitCareMinutes(0), bathVisitCareMinutes(-3)], [0, 0]);
+  const cop = (careMin: number) => careOvertimePay({ role_type: "社員", care_minutes: careMin, summary: { visitMinutes: 0 },
+    settings: { care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 }, care_overtime_lower_tier: null } as unknown as Parameters<typeof careOvertimePay>[0]);
+  eq("★ 福山 2026-07: 訪問 15.5h + 115 件 → 24.3h × 2,500 = 60,750 (総括表)", cop(15.5 * 60 + bathVisitCareMinutes(115)), 60750);
+  eq("★ 緑川 2026-07: 92.125h + 30 件 = 125.725h → 14,313 (総括表。浮動小数で 14,312 にならない)", cop(92.125 * 60 + bathVisitCareMinutes(30)), 14313);
+  eq("★★ 係数 1.1 だと 東條 は 2,500 円 (総括表 4,250) = 係数の違いを検出できる", cop(82.5 * 60 + 35 * 1.1 * 60) !== cop(82.5 * 60 + bathVisitCareMinutes(35)), true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

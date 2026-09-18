@@ -36,6 +36,7 @@ const sections: { title: string; items: NavItem[] }[] = [
       { href: "/kyotaku-attendance",    label: "出勤簿",       icon: "📅" },
       { href: "/kyotaku-labor-check",   label: "居宅労働時間チェック", icon: "🩺" },
       { href: "/office-input",          label: "事業所書式入力", icon: "🏤" },
+      { href: "/monthly-inputs",        label: "月ごとの手入力", icon: "✏️" },
       { href: "/salary",                label: "給与設定",     icon: "⚙️" },
       { href: "/distance",            label: "移動距離計算", icon: "🗺️" },
       { href: "/payroll",             label: "給与計算",     icon: "💰" },

@@ -293,7 +293,9 @@ export function careOvertimePay(p: MonthlyPayroll): number {
   //   (木更津 江澤 2026-07 146h: 26h×2,500=65,000 + 20h×800=16,000 = 81,000 / 姉崎ムツミ 石田 110.25h: 10.25h×800 = 8,200)
   const tier = p.care_overtime_lower_tier;
   const lowerMin = tier && tier.unit_price > 0 ? Math.max(0, Math.min(careMin, thresholdMin) - tier.from_hours * 60) : 0;
-  return Math.round((overMin / 60) * s.care_overtime_unit_price) + (tier ? Math.round((lowerMin / 60) * tier.unit_price) : 0);
+  // 小数の誤差を丸めてから四捨五入 (入浴件数 × 1.12h で 5.725h × 2,500 = 14,312.4999… → 14,313。総括表 緑川 2026-07)
+  const r = (v: number) => Math.round(Number(v.toFixed(6)));
+  return r((overMin / 60) * s.care_overtime_unit_price) + (tier ? r((lowerMin / 60) * tier.unit_price) : 0);
 }
 
 export function yochoAllowance(p: MonthlyPayroll): number {
