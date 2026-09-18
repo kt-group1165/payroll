@@ -271,6 +271,11 @@ export function KyotakuAttendanceContent() {
   // 選択中 office と業態。月次 (件数・加算) と居宅給与警告は 居宅介護支援 のみ
   const selectedOfficeType =
     offices.find((o) => o.id === selectedOfficeId)?.office_type ?? "";
+  // 種別 (居宅介護支援 / 訪問介護 / 訪問入浴) で事業所の選択肢を分ける (user 2026-09-18: 混ざると分かりづらい)。
+  // 未選択なら 選択中の事業所の種別、それも無ければ 居宅介護支援
+  const [businessTypeChoice, setBusinessTypeChoice] = useState<string>("");
+  const businessType = businessTypeChoice || selectedOfficeType || "居宅介護支援";
+  const officesOfType = useMemo(() => offices.filter((o) => o.office_type === businessType), [offices, businessType]);
   const isKyotaku = selectedOfficeType === "居宅介護支援";
 
   // 月単位データ (件数 + 加算) — 居宅のみ fetch
@@ -1025,6 +1030,26 @@ export function KyotakuAttendanceContent() {
           <CardTitle className="text-base">対象選択</CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs text-muted-foreground">種別</span>
+            {["居宅介護支援", "訪問介護", "訪問入浴"].map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  if (t === businessType) return;
+                  if (!confirmIfDirty()) return;
+                  setBusinessTypeChoice(t);
+                  setSelectedOfficeId("");
+                  setSelectedEmployeeId("");
+                }}
+                className={`rounded-full px-3 py-1 text-sm border ${t === businessType ? "bg-foreground text-background border-foreground" : "bg-background hover:bg-muted"}`}
+              >
+                {t}
+                <span className="ml-1 text-xs opacity-70">{offices.filter((o) => o.office_type === t).length}</span>
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">事業所</label>
@@ -1040,9 +1065,9 @@ export function KyotakuAttendanceContent() {
                 <option value="">
                   {officeLoading ? "読み込み中..." : "事業所を選択"}
                 </option>
-                {offices.map((o) => (
+                {officesOfType.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.short_name || o.name || o.office_number}（{o.office_type}）
+                    {o.short_name || o.name || o.office_number}
                   </option>
                 ))}
               </select>
