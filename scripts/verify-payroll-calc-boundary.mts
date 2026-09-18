@@ -18,6 +18,7 @@
 //       ただし distMap の中身 (Google Distance Matrix API / payroll_distance_cache の
 //       値そのもの) は未検証
 //   - 実データでの妥当性
+import { buildActiveSalaryMap, resolveEmploymentType } from "../src/lib/payroll/salary-history";
 import {
   hasTenureQualification,
   computeTenureAllowance,
@@ -638,6 +639,27 @@ eq("extractDay: 8桁未満は0", extractDay("2026"), 0);
   // 実例: 四街道 2026-07 は 60分 × 同行時給 1,150円 = 1,150円
   eq("四街道 2026-07 の実例 60分 × 1,150円/時 = 1,150円",
     trainingPayAmount(meetingMinutes([ofr({ start_time: "18:00", end_time: "19:00" })]), 1150), 1150);
+}
+
+// ── resolveEmploymentType (給与形態・役職の月次履歴。2026-09-18) ──
+{
+  const emp = { salary_type: "時給", role_type: "パート" };
+  eq("履歴の行が無ければ職員マスタの値", resolveEmploymentType(emp, null), { salary_type: "時給", role_type: "パート" });
+  eq("行に値が無い (NULL) なら職員マスタの値", resolveEmploymentType(emp, { salary_type: null, role_type: null }), { salary_type: "時給", role_type: "パート" });
+  eq("行に値があればそれ", resolveEmploymentType(emp, { salary_type: "月給", role_type: "提責" }), { salary_type: "月給", role_type: "提責" });
+  eq("給与形態だけ入っていれば役職はマスタ", resolveEmploymentType(emp, { salary_type: "月給" }), { salary_type: "月給", role_type: "パート" });
+  // 月ごとに active な行が変わる (仁見初江: 1970〜 月給 / 2026-04〜 時給。職員マスタは今の 時給)
+  const rows = [
+    { employee_id: "e1", effective_from: "1970-01-01", salary_type: "月給", role_type: "社員" },
+    { employee_id: "e1", effective_from: "2026-04-01", salary_type: "時給", role_type: "パート" },
+  ];
+  const nimi = { salary_type: "時給", role_type: "パート" };
+  eq("★ 仁見 2026-03 は 月給で計算する", resolveEmploymentType(nimi, buildActiveSalaryMap(rows, "2026-03-01").get("e1")).salary_type, "月給");
+  eq("★ 仁見 2026-04 は 時給で計算する (境界の月)", resolveEmploymentType(nimi, buildActiveSalaryMap(rows, "2026-04-01").get("e1")).salary_type, "時給");
+  eq("★ 仁見 2026-07 は 時給", resolveEmploymentType(nimi, buildActiveSalaryMap(rows, "2026-07-01").get("e1")).salary_type, "時給");
+  // ★ 負のコントロール: 直す前 (職員マスタの今の値だけ) だと 3 月も時給になってしまう
+  eq("★★ 直す前は 3 月も今の形態 (時給) = この検査は差を検出できる",
+    nimi.salary_type !== resolveEmploymentType(nimi, buildActiveSalaryMap(rows, "2026-03-01").get("e1")).salary_type, true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

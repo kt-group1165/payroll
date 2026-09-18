@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
-import { buildActiveSalaryMap, selectedMonthToMonthStart } from "@/lib/payroll/salary-history";
+import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices } from "@/lib/app-settings";
 import {
@@ -336,7 +336,7 @@ export default function PayrollPage() {
       const officeMap         = new Map(officeRows.map((o: Office) => [o.office_number, o.id]));
       const officeByIdMap     = new Map(officeRows.map((o: Office) => [o.id, o]));
       const rateMap    = new Map((rateRes.data ?? []).map((r: CategoryHourlyRate) => [`${r.office_id}:${r.category_id}`, r.hourly_rate]));
-      const employees  = (empRes.data ?? []) as Employee[];
+      const employeesRaw = (empRes.data ?? []) as Employee[];
       // 履歴化方式: 対象月 (selectedMonth = YYYYMM) で active な salary row を選ぶ。
       // effective_from <= 対象月 のうち最新を per-employee で 1 row 抽出。
       // 履歴がまだ無い employee は default '1970-01-01' の backfill row が当たる。
@@ -345,6 +345,9 @@ export default function PayrollPage() {
         (salRes.data ?? []) as SalarySettings[],
         _monthStart,
       );
+      // 給与形態・役職は その月で有効な給与設定の行から決める (無ければ職員マスタ)。
+      // 月の途中で時給 ↔ 月給が切り替わった人の過去月を、その月の形態で計算するため (2026-09-18)
+      const employees = employeesRaw.map((e) => ({ ...e, ...resolveEmploymentType(e, salMap.get(e.id)) }));
       const attRecords = (attRes.data ?? []) as AttendanceRecord[];
       const ofRecords  = allOfRecords;
       const otMap = new Map((otRes.data ?? []).map((r: OvertimeSetting) => [r.job_type, r]));

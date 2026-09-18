@@ -148,6 +148,26 @@ for (const e of emps) {
   ops.push({ label: `退職者に ${code} ${e.name} (${e.employment_status}。総括表 ${MONTHS[0]}〜${latest} にも MEISAI にも居ない)`, run: () => write("PATCH", `payroll_employees?id=eq.${e.id}`, { employment_status: "退職者" }) });
 }
 
+// ── 給与形態の月次 (2026-09-18) ────────────────────────────────
+// 月ごとの形態 = その月に総支給のある行が パート / 提責_社員 のどちらにあるか。
+// 範囲内で形態が変わる人 (switcher) だけ、給与設定の履歴に salary_type / role_type を持たせる。
+// 同じ月に両方ある人 (月の途中で切替。ちはら台 狩野直子 2026-03) はその月を決められないので飛ばす。
+type Kind = "part" | "shaseki";
+const kindOf = (code: string, m: string): Kind | null => {
+  const s = byMonth.get(m)!;
+  const p = !SKIP_PART && s.part.some((r) => r._code === code && num(r["総支給額"]) !== 0);
+  const sh = s.shaseki.some((r) => r._code === code && num(r["総支給額"]) !== 0);
+  return p && sh ? null : p ? "part" : sh ? "shaseki" : null;
+};
+const kindRuns = (code: string) => {
+  const runs: { kind: Kind; start: string }[] = [];
+  for (const m of MONTHS) { const k = kindOf(code, m); if (!k) continue; if (runs[runs.length - 1]?.kind !== k) runs.push({ kind: k, start: m }); }
+  return runs;
+};
+const switchers = new Set([...lastSeen.keys()].filter((c) => new Set(kindRuns(c).map((r) => r.kind)).size > 1));
+const roleOfKubun = (kubun: unknown) => kubun === 3 || kubun === 1 ? "提責" : kubun === 2 ? "事務員" : "社員";
+for (const c of switchers) notes.push(`${c}: 給与形態が月で変わる ${kindRuns(c).map((r) => `${r.start}〜${r.kind === "part" ? "時給" : "月給"}`).join(" / ")} → 給与設定の履歴に形態を入れる`);
+
 // ── 月給 ──────────────────────────────────────────────────────
 // 列名は事業所で揺れる (特別処遇改善手当 / 特別処遇改善 / 特定処遇改善手当 / 特定処遇改善)。報奨金 + 特別報奨金 は special_bonus (固定給に含まれる)
 const FIXED: [string[], string][] = [
@@ -159,24 +179,26 @@ const FIXED: [string[], string][] = [
 const fixedValue = (r: SRow, keys: string[], col: string) => col === "special_bonus" ? keys.reduce((s, k) => s + num(r[k]), 0) : num(r[keys.find((k) => r[k] != null) ?? keys[0]]);
 const shaCodes = new Set(MONTHS.flatMap((m) => byMonth.get(m)!.shaseki.map((r) => r._code)));
 for (const code of shaCodes) {
-  if (lastSeen.get(code)?.kind === "part") {
-    const ms = MONTHS.filter((m) => byMonth.get(m)!.shaseki.some((x) => x._code === code));
-    notes.push(`${code}: ${ms.join(",")} は月給、最新月は時給 (給与形態の月次履歴が無いので、月給だった月は計算が合わない)`);
-    continue;
-  }
+  const isSwitcher = switchers.has(code);
+  // 最新月が時給の人: 月給だった月の固定給だけ入れる (職員マスタの役職は今の値のまま)
+  const latestPart = lastSeen.get(code)?.kind === "part";
+  if (latestPart && !isSwitcher) continue;
   const monthsRows = MONTHS.map((m) => ({ m, r: byMonth.get(m)!.shaseki.find((x) => x._code === code) })).filter((x) => x.r) as { m: string; r: SRow }[];
   const last = monthsRows[monthsRows.length - 1].r;
   const kubun = last["提責・事務"];
   const role = kubun === 3 || kubun === 1 ? "提責" : kubun === 2 ? "事務員" : "社員";
   const e = byNo.get(code);
   const name = cleanName(last["氏名"]);
-  if (e && e.role_type !== role) ops.push({ label: `役割 ${code} ${name} ${e.role_type} → ${role} (提責・事務=${kubun ?? "空"})`, run: () => write("PATCH", `payroll_employees?id=eq.${byNo.get(code)!.id}`, { role_type: role }) });
+  if (!latestPart && e && e.role_type !== role) ops.push({ label: `役割 ${code} ${name} ${e.role_type} → ${role} (提責・事務=${kubun ?? "空"})`, run: () => write("PATCH", `payroll_employees?id=eq.${byNo.get(code)!.id}`, { role_type: role }) });
   if (!e && !pendingCreate.has(code)) continue;
-  if (!e) ops.push({ label: `役割 ${code} ${name} → ${role}`, run: () => write("PATCH", `payroll_employees?id=eq.${byNo.get(code)!.id}`, { role_type: role }) });
+  if (!e && !latestPart) ops.push({ label: `役割 ${code} ${name} → ${role}`, run: () => write("PATCH", `payroll_employees?id=eq.${byNo.get(code)!.id}`, { role_type: role }) });
 
   // 固定給の区間 (値が同じ月をまとめる)
   const care = role === "社員" ? { care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500, yocho_unit_price: 200 } : { care_overtime_threshold_hours: 0, care_overtime_unit_price: 0, yocho_unit_price: 0 };
-  const target = (r: SRow) => ({ ...Object.fromEntries(FIXED.map(([k, c]) => [c, fixedValue(r, k, c)])), ...care, tenure_allowance_auto: false });
+  const target = (r: SRow) => ({
+    ...Object.fromEntries(FIXED.map(([k, c]) => [c, fixedValue(r, k, c)])), ...care, tenure_allowance_auto: false,
+    ...(isSwitcher ? { salary_type: "月給", role_type: roleOfKubun(r["提責・事務"]) } : {}),
+  });
   const segs: { start: string; values: Record<string, unknown> }[] = [];
   for (const { m, r } of monthsRows) {
     const v = target(r);
@@ -186,7 +208,8 @@ for (const code of shaCodes) {
   const settings = e ? await getAll(`payroll_salary_settings?select=*&employee_id=eq.${e.id}`) : [];
   settings.sort((a, b) => String(a.effective_from).localeCompare(String(b.effective_from)));
   segs.forEach((seg, i) => {
-    const eff = i === 0 ? (settings.find((s) => String(s.effective_from) <= monthStart(seg.start)) ? String([...settings].reverse().find((s) => String(s.effective_from) <= monthStart(seg.start))!.effective_from) : "1970-01-01") : monthStart(seg.start);
+    const partBefore = isSwitcher && MONTHS.some((m) => m < seg.start && kindOf(code, m) === "part");
+    const eff = i === 0 && !partBefore ? (settings.find((s) => String(s.effective_from) <= monthStart(seg.start)) ? String([...settings].reverse().find((s) => String(s.effective_from) <= monthStart(seg.start))!.effective_from) : "1970-01-01") : monthStart(seg.start);
     const row = settings.find((s) => String(s.effective_from) === eff);
     const diff = row ? Object.entries(seg.values).filter(([k, v]) => row[k] !== v).map(([k, v]) => `${k} ${row[k]}→${v}`) : [];
     if (row && diff.length) ops.push({ label: `給与設定 ${code} ${name} ${eff}〜: ${diff.join(", ")}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, seg.values) });
@@ -201,7 +224,8 @@ for (const code of shaCodes) {
     if (String(s.effective_from) > monthStart(latest)) notes.push(`${code} ${name}: ${s.effective_from} 開始の給与設定があります (${latest} より後。触っていません)`);
   }
 
-  if (role === "社員") {
+  // 有給単価は職員マスタ 1 つだけなので、最新月が時給の人には時給側の値を残す
+  if (role === "社員" && !latestPart) {
     const units = monthsRows.map(({ m, r }) => ({ m, days: num(r["有給・特休・欠勤"]), amt: num(r["有給休暇手当"]) })).filter((x) => x.days > 0 && x.amt > 0).map((x) => ({ ...x, unit: Math.round(x.amt / x.days) }));
     const set = new Set(units.map((u) => u.unit));
     if (set.size === 1) {
@@ -209,6 +233,44 @@ for (const code of shaCodes) {
       if (!e || e.paid_leave_unit_price !== unit) ops.push({ label: `社員の有給単価 ${code} ${name} ${e?.paid_leave_unit_price ?? 0} → ${unit} (${units.map((u) => `${u.m} ${u.amt}/${u.days}日`).join(", ")})`, run: () => write("PATCH", `payroll_employees?id=eq.${byNo.get(code)!.id}`, { paid_leave_unit_price: unit }) });
     } else if (set.size > 1) notes.push(`${code} ${name}: 社員の有給単価が月で違う ${units.map((u) => `${u.m} ${u.amt}/${u.days}日=${u.unit}`).join(", ")} (設定していません)`);
   }
+}
+
+// ── 給与形態が変わる人の「時給だった月」 (2026-09-18) ─────────────
+// 時給の区間の始まりに salary_type=時給 / role_type=パート の行を置く。
+// 範囲の最初の区間なら その月で有効な行に書く。途中からなら その月 1 日の行を作る
+// (直前の行を写し、月給の固定給は 0 にする — 時給の計算では使わないが、画面で紛らわしいので)。
+const ZERO_MONTHLY: Record<string, number> = Object.fromEntries([
+  ...FIXED.map(([, c]) => [c, 0] as [string, number]),
+  ["care_overtime_threshold_hours", 0], ["care_overtime_unit_price", 0], ["yocho_unit_price", 0],
+]);
+const PART_TYPE = { salary_type: "時給", role_type: "パート" };
+const stripRow = (r: Row) => Object.fromEntries(Object.entries(r).filter(([k]) => !["id", "created_at", "updated_at", "employee_id", "effective_from"].includes(k)));
+for (const code of switchers) {
+  const e = byNo.get(code);
+  if (!e) { notes.push(`${code}: 給与形態が月で変わるが 職員マスタに未登録 (登録してからもう一度流す)`); continue; }
+  const name = String(e.name);
+  const settings = (await getAll(`payroll_salary_settings?select=*&employee_id=eq.${e.id}`)).sort((a, b) => String(a.effective_from).localeCompare(String(b.effective_from)));
+  kindRuns(code).forEach((run, i) => {
+    if (run.kind !== "part") return;
+    const ms = monthStart(run.start);
+    const same = (r: Row) => r.salary_type === PART_TYPE.salary_type && r.role_type === PART_TYPE.role_type;
+    if (i === 0) {
+      const row = [...settings].reverse().find((r) => String(r.effective_from) <= ms);
+      if (!row) ops.push({ label: `給与設定を作る (時給) ${code} ${name} 1970-01-01〜`, run: () => write("POST", "payroll_salary_settings", { employee_id: e.id, effective_from: "1970-01-01", ...PART_TYPE }) });
+      else if (!same(row)) ops.push({ label: `給与形態 ${code} ${name} ${row.effective_from}〜 ${row.salary_type ?? "(マスタ)"} → 時給 (${run.start}〜)`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, PART_TYPE) });
+      return;
+    }
+    const row = settings.find((r) => String(r.effective_from) === ms);
+    if (row) { if (!same(row)) ops.push({ label: `給与形態 ${code} ${name} ${ms}〜 ${row.salary_type ?? "(マスタ)"} → 時給`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, PART_TYPE) }); return; }
+    ops.push({
+      label: `給与設定を作る (時給) ${code} ${name} ${ms}〜`,
+      run: async () => {
+        const now = (await getAll(`payroll_salary_settings?select=*&employee_id=eq.${e.id}`)).sort((a, b) => String(a.effective_from).localeCompare(String(b.effective_from)));
+        const base = [...now].reverse().find((r) => String(r.effective_from) < ms);
+        return write("POST", "payroll_salary_settings", { ...(base ? stripRow(base) : {}), ...ZERO_MONTHLY, ...PART_TYPE, employee_id: e.id, effective_from: ms });
+      },
+    });
+  });
 }
 
 // ── 時給 ──────────────────────────────────────────────────────

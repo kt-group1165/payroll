@@ -54,6 +54,10 @@ export type SalarySettings = {
   yocho_unit_price: number;
   /** 事務時給 (円/時間)。事務員 (payroll_employees.is_office_worker) のみ使用。0 = 計算しない */
   office_work_hourly_rate: number;
+  /** この適用開始月からの給与形態 (時給/月給)。NULL = 職員マスタの値 (resolveEmploymentType) */
+  salary_type?: string | null;
+  /** この適用開始月からの役職。NULL = 職員マスタの値 */
+  role_type?: string | null;
 };
 
 export type AttendanceSummary = {

@@ -47,6 +47,10 @@ type SalarySettings = {
   yocho_unit_price: number;
   /** 事務時給 (円/時間)。事務員のみ、出勤簿の出勤時間 × この単価を本人給に足す */
   office_work_hourly_rate: number;
+  /** この適用開始月からの給与形態。NULL/未設定 = 職員マスタの値 (月の途中で時給↔月給が変わる人用) */
+  salary_type?: string | null;
+  /** この適用開始月からの役職。NULL/未設定 = 職員マスタの値 */
+  role_type?: string | null;
   note: string;
 };
 
@@ -1038,6 +1042,31 @@ export function SalaryList({
                   />
                   <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
                     この月以降の給与計算でこの設定が使われます。保存すると新しい履歴行が作られ、過去の値は履歴として残ります。
+                  </p>
+                </div>
+                {/* 給与形態・役職の月次履歴 (2026-09-18)。空 = 職員マスタの値 */}
+                <div className="flex items-center gap-3 flex-wrap mt-2">
+                  <Label className="text-sm whitespace-nowrap">この月からの給与形態</Label>
+                  <select
+                    className="h-9 rounded-md border bg-background px-2 text-sm"
+                    value={settings.salary_type ?? ""}
+                    onChange={(e) => upd("salary_type", e.target.value || null)}
+                  >
+                    <option value="">職員マスタのまま</option>
+                    <option value="時給">時給</option>
+                    <option value="月給">月給</option>
+                  </select>
+                  <Label className="text-sm whitespace-nowrap">役職</Label>
+                  <select
+                    className="h-9 rounded-md border bg-background px-2 text-sm"
+                    value={settings.role_type ?? ""}
+                    onChange={(e) => upd("role_type", e.target.value || null)}
+                  >
+                    <option value="">職員マスタのまま</option>
+                    {["パート", "社員", "提責", "事務員", "管理者"].map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
+                    月の途中で時給 ↔ 月給が変わった人だけ入れます。過去の月を計算し直しても、その月の形態で計算されます。
                   </p>
                 </div>
               </div>

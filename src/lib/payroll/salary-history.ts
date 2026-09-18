@@ -103,3 +103,20 @@ export function selectedMonthToMonthStart(selectedMonth: string): string {
   const m = selectedMonth.slice(4, 6);
   return `${y}-${m}-01`;
 }
+
+/**
+ * 対象月の給与形態・役職。給与設定の履歴 (その月で active な行) に値があればそれ、
+ * 無ければ (NULL) 職員マスタの値を使う。
+ *
+ * 月の途中で時給 ↔ 月給が切り替わった人 (東郷 仁見初江 2026-03 月給 → 04 時給 等) の
+ * 過去月を計算し直しても、その月の形態で計算されるようにするため (2026-09-18)。
+ */
+export function resolveEmploymentType(
+  employee: { salary_type: string; role_type: string },
+  activeRow: { salary_type?: string | null; role_type?: string | null } | null | undefined,
+): { salary_type: string; role_type: string } {
+  return {
+    salary_type: activeRow?.salary_type || employee.salary_type,
+    role_type: activeRow?.role_type || employee.role_type,
+  };
+}
