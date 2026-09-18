@@ -18,7 +18,7 @@
 //       ただし distMap の中身 (Google Distance Matrix API / payroll_distance_cache の
 //       値そのもの) は未検証
 //   - 実データでの妥当性
-import { buildActiveSalaryMap, resolveEmploymentType } from "../src/lib/payroll/salary-history";
+import { buildActiveSalaryMap, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "../src/lib/payroll/salary-history";
 import { bathVisitCareMinutes } from "../src/lib/payroll/monthly-inputs";
 import { keepFirstKmRows } from "../src/lib/csv/office-form-parser";
 import { findKmAnomalies } from "../src/lib/payroll/km-anomaly";
@@ -759,6 +759,20 @@ eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 �
   eq("日当が両方空なら 給与設定の単価", paidLeaveAllowanceByGrant(1, 0, { grant_date: "2026-04-01", carry_days: 5, prev_rate: null, cur_rate: null }, 700), 700);
   eq("有効な付与 = 付与日 <= 月末 の最新", activePaidLeaveGrant([{ ...g, grant_date: "2025-04-01" }, g], "2026-03-31")?.grant_date, "2025-04-01");
   eq("★★ 今年度の日当だけで払うと 保本は 936 円 (総括表 1,496) = 繰越の扱いの差を検出できる", Math.round(1.5 * 624) !== paidLeaveAllowanceByGrant(1.5, 2, g, 0), true);
+}
+
+// ── 有給単価は履歴を引き継ぐ (空の行で職員マスタに戻らない。2026-09-18) ──
+{
+  const rows = [
+    { employee_id: "y", effective_from: "1970-01-01", paid_leave_unit_price: null },
+    { employee_id: "y", effective_from: "2026-04-01", paid_leave_unit_price: 2416 },
+    { employee_id: "y", effective_from: "2026-07-01", paid_leave_unit_price: null },
+  ];
+  const emp = { id: "y", paid_leave_unit_price: 7712 };
+  eq("★ 米倉 2026-07: 7 月の行は空 → 4 月の 2,416 を引き継ぐ (総括表 1.5 日 3,624)", resolvePaidLeaveUnitPriceFromHistory(emp, rows, "2026-07-01"), 2416);
+  eq("3 月は履歴に値が無い → 職員マスタ", resolvePaidLeaveUnitPriceFromHistory(emp, rows, "2026-03-01"), 7712);
+  eq("0 も値として引き継ぐ", resolvePaidLeaveUnitPriceFromHistory(emp, [...rows, { employee_id: "y", effective_from: "2026-08-01", paid_leave_unit_price: 0 }], "2026-09-01"), 0);
+  eq("★★ 有効な行だけ見ると 職員マスタ 7,712 に戻る = 引き継ぎの差を検出できる", resolvePaidLeaveUnitPriceFromHistory(emp, rows, "2026-07-01") !== 7712, true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

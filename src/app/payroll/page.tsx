@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
-import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPrice } from "@/lib/payroll/salary-history";
+import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems } from "@/lib/app-settings";
@@ -360,7 +360,7 @@ export default function PayrollPage() {
       // 月の途中で時給 ↔ 月給が切り替わった人の過去月を、その月の形態で計算するため (2026-09-18)
       const employees = employeesRaw.map((e) => ({ ...e, ...resolveEmploymentType(e, salMap.get(e.id)),
         // 有給単価 (円/日) も その月の給与設定の行 → 無ければ職員マスタ (2026-09-18)
-        paid_leave_unit_price: resolvePaidLeaveUnitPrice(e, salMap.get(e.id)) }));
+        paid_leave_unit_price: resolvePaidLeaveUnitPriceFromHistory(e, (salRes.data ?? []) as SalarySettings[], _monthStart) }));
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
@@ -932,9 +932,9 @@ export default function PayrollPage() {
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
-            // 月給者は 給与設定のその月の有給単価 (総括表から入れたもの) があればそれを優先。
+            // 月給者は 給与設定 (履歴を引き継ぐ) → 職員マスタ の有給単価があればそれを使い、有給ファイルの日当は 0 のときだけ。
             // 有給ファイルの日当は 前年度にパートだった社員で総括表と大きく食い違う (さつき 大治 ファイル 9,738 / 総括表 252)
-            paid_leave_allowance_override: grantByEmpId.has(e.id) && salMap.get(e.id)?.paid_leave_unit_price == null
+            paid_leave_allowance_override: grantByEmpId.has(e.id) && !((e.paid_leave_unit_price ?? 0) > 0)
               ? paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0)
               : undefined,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,

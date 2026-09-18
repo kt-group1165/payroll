@@ -134,3 +134,22 @@ export function resolvePaidLeaveUnitPrice(
   if (v !== null && v !== undefined) return Number(v);
   return Number(employee.paid_leave_unit_price ?? 0);
 }
+
+/**
+ * 有給単価 (円/日) を 履歴から引き継いで決める: その月以前で最後に値が入っている行 → 無ければ職員マスタ。
+ * 給与設定の行は 有給単価を空 (NULL) のまま後から追加されることがある (固定給の変更など)。
+ * 空の行で職員マスタに戻ると 総括表と合わなくなる (さつき 米倉 2026-07: 4 月の 2,416 を引き継ぐのが正)。
+ */
+export function resolvePaidLeaveUnitPriceFromHistory(
+  employee: { id: string; paid_leave_unit_price?: number | null },
+  rows: { employee_id: string; effective_from: string; paid_leave_unit_price?: number | null }[],
+  monthStart: string,
+): number {
+  let best: { effective_from: string; v: number } | null = null;
+  for (const r of rows) {
+    if (r.employee_id !== employee.id || r.effective_from > monthStart) continue;
+    if (r.paid_leave_unit_price === null || r.paid_leave_unit_price === undefined) continue;
+    if (!best || r.effective_from > best.effective_from) best = { effective_from: r.effective_from, v: Number(r.paid_leave_unit_price) };
+  }
+  return best ? best.v : Number(employee.paid_leave_unit_price ?? 0);
+}
