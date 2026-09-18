@@ -78,9 +78,11 @@ for (const m of MONTHS) {
   for (const f of ex) {
     if (f.kind !== "shaseki") continue;
     for (const r of f.rows) {
-      const amt = r["有給休暇手当"];
+      // 日数があって手当が空 (0) の月は 単価 0 円 (社員は 前年のパート実績・介護超過が無いと 0 = user 2026-09-18)
+      const amt = typeof r["有給休暇手当"] === "number" ? (r["有給休暇手当"] as number) : 0;
       const name = normName(r["氏名"]);
-      if (typeof amt !== "number" || amt <= 0 || !name || /^(合計|小計|計)$/.test(name)) continue;
+      if (amt < 0 || !name || /^(合計|小計|計)$/.test(name)) continue;
+      if (amt === 0 && !(leaveDays(r) > 0)) continue;
       const code = normNo(r._code);
       const key = `${f.office}|${code}`;
       if (seen.has(key)) continue; // 同じ人が同じ月に 2 行 (おゆみ野の重複シート)
