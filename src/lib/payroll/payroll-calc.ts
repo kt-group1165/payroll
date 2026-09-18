@@ -733,6 +733,25 @@ export function trainingMinutes(ofRecs: OfficeFormRecord[]): number {
  * 総括表の式: 時間外h = 訪問 − 重度×0.25 + HRD + … − 120 (「研修」は足さない)。
  * 高品 櫻井 2026-04: 4/9 HRD研修 1h + 研修 1h → 総括表は HRD の 1h だけ足して 10,000 円
  */
+/**
+ * 研修・会議の時間を 日付ごとに (キーは実績と同じ "YYYY/MM/DD")。残業の日8h/週40h の判定に足す (2026-09-19)。
+ * 総括表データ 2026-07 で: 社員 100名 誤差計 8,469 → 8,094分 (根本 HRD 7/8 20:00-22:30 で -166 → -16分 /
+ * 旧の 深夜残業 0:30 はこの研修の 22:00-22:30)、時給者 30名 2,508 → 2,445分。悪化した人は 0。
+ * item_date は "7月8日" / "7/8" 形式。年は処理月 (YYYYMM) から取る
+ */
+export function trainingMinutesByDay(ofRecs: OfficeFormRecord[], processingMonth: string): Map<string, number> {
+  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  const out = new Map<string, number>();
+  for (const r of ofRecs) {
+    if (r.record_type !== "training" || !/HRD|研修|会議/.test(r.item_name) || !r.item_date || !r.start_time || !r.end_time) continue;
+    const m = /(\d+)月(\d+)日|(\d+)\/(\d+)/.exec(r.item_date);
+    if (!m) continue;
+    const key = `${processingMonth.slice(0, 4)}/${String(Number(m[1] ?? m[3])).padStart(2, "0")}/${String(Number(m[2] ?? m[4])).padStart(2, "0")}`;
+    out.set(key, (out.get(key) ?? 0) + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)));
+  }
+  return out;
+}
+
 export function hrdTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
   const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
   return ofRecs
@@ -854,11 +873,14 @@ export const VISIT_PAY_TIER_HOURS = 1.5;
  *   おゆみ野 金城 2026-07 2190分 (日1230+週960) / 加藤 570 / 花見川 朝比奈 150 / 袖ケ浦 藤田 90。
  * ⚠ 合わない例あり (五井 森朱希 2339 vs 1945 / やわた 石本 3153 vs 3015 / 高品 鈴木一生 230 vs 150)。移動時間を含むか等は未特定。
  */
-export function hourlyOvertimeMinutes(records: { service_date: string; calc_duration: string }[], travelSecByDay?: Map<string, number>): number {
-  // 残業は移動時間も含む (user 2026-09-19)。travelSecByDay があれば その日の 移動手当の対象時間 (15分超過分) を足す
+export function hourlyOvertimeMinutes(records: { service_date: string; calc_duration: string }[], travelSecByDay?: Map<string, number>, extraMinByDay?: Map<string, number>): number {
+  // 残業は移動時間も含む (user 2026-09-19)。travelSecByDay があれば その日の移動時間を足す
+  //   (時給者は 移動手当の対象時間 = 15分超過分 / 社員は 全量。呼ぶ側で渡し分ける)
+  // extraMinByDay: 事業所書式の 研修・会議 の時間 (日付つき)。訪問の無い日でも数える
   const day = new Map<string, number>();
   for (const r of records) day.set(r.service_date, (day.get(r.service_date) ?? 0) + parseDurationMinutes(r.calc_duration));
   if (travelSecByDay) for (const [d, sec] of travelSecByDay) if (day.has(d)) day.set(d, day.get(d)! + Math.round(sec / 60));
+  if (extraMinByDay) for (const [d, min] of extraMinByDay) day.set(d, (day.get(d) ?? 0) + min);
   let daily = 0;
   const week = new Map<string, number>();
   for (const [date, min] of day) {

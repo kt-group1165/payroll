@@ -73,6 +73,7 @@ import {
   trainingMinutes,
   shoninshaTrainingMinutes,
   hourlyOvertimeMinutes,
+  trainingMinutesByDay,
   hourlyOvertimePayAmount,
   trainingPayAmount,
   visitPayAmount,
@@ -483,6 +484,9 @@ eq("★ 半有給1回 × 8,635円 = 4,318円 (森幸代 2026-06 総括表)", pai
     eq("時給者残業: 日曜始まりの週 8h×5日=40h ちょうどは0", hourlyOvertimeMinutes(wk), 0);
     eq("★ 時給者残業: 移動手当対象の移動 (15分超過分) を日に足す 7h50+移動15分 → 5分", hourlyOvertimeMinutes([r("2026/07/01", "007:50")], new Map([["2026/07/01", 900]])), 5);
     eq("時給者残業: 別の日の移動は足さない", hourlyOvertimeMinutes([r("2026/07/01", "007:50")], new Map([["2026/07/02", 900]])), 0);
+    eq("★ 時給者残業: 研修の時間を日に足す 7h+研修1h30 → 30分", hourlyOvertimeMinutes([r("2026/07/08", "007:00")], undefined, new Map([["2026/07/08", 90]])), 30);
+    eq("★ 研修の日付: 7月8日 20:00-22:30 → 2026/07/08 に 150分", trainingMinutesByDay([{ record_type: "training", item_name: "HRD研修", item_date: "7月8日", start_time: "20:00", end_time: "22:30", break_time: null } as never], "202607").get("2026/07/08"), 150);
+    eq("研修の日付: 7/8 形式も読む・会議も数える", trainingMinutesByDay([{ record_type: "training", item_name: "会議", item_date: "7/8", start_time: "10:00", end_time: "11:00", break_time: null } as never], "202607").get("2026/07/08"), 60);
     eq("★ 時給者残業: 同じ週に6日目 2h → 週40h超 120分", hourlyOvertimeMinutes([...wk, r("2026-07-10", "002:00")]), 120);
     eq("時給者残業: 翌週 (日曜) に回れば0", hourlyOvertimeMinutes([...wk, r("2026/07/12", "002:00")]), 0);
     eq("時給者残業: 日8h超分は週の40hに数えない 9h×5日 → 日300分のみ", hourlyOvertimeMinutes(wk.map((x) => ({ ...x, calc_duration: "009:00" }))), 300);

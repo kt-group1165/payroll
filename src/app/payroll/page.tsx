@@ -49,6 +49,7 @@ import {
   paidLeaveDays,
   trainingMinutes,
   hourlyOvertimeMinutes,
+  trainingMinutesByDay,
   legalWithinOvertimeMinutes,
   monthlyPaidLeaveAllowance,
   absenceDeduction,
@@ -903,7 +904,7 @@ export default function PayrollPage() {
               //   総括表データ (残業時間合計) と 7月21名で突合: 訪問のみ 誤差計1,340分 / 移動全量 7,719分 / ★15分超過分 1,020分。
               //   旧の移動手当から逆算した移動時間で置き換えると 660分 (峰 +8 / 石本 +6 / 加藤 +7) = 式はこれで、残差は移動時間の見積もり差
               if ((attByEmpH.get(normNum) ?? []).length === 0) {
-                const m = hourlyOvertimeMinutes(recsByEmpH.get(normNum) ?? [], paidTravelSecByDay);
+                const m = hourlyOvertimeMinutes(recsByEmpH.get(normNum) ?? [], paidTravelSecByDay, trainingMinutesByDay(ofByEmp.get(normNum) ?? [], selectedMonth));
                 entry.overtime_minutes = m;
                 entry.overtime_pay = hourlyOvertimePayAmount(m);
               }
@@ -991,7 +992,7 @@ export default function PayrollPage() {
             //   時給者 (移動は15分超過分だけ) と違い、社員は移動を全部数える。
             //   (2026-09-18 の 日8h超だけの仮説 dailyOvertimeFromVisits は 週40h と 介護超過の差し引きが無く外れていた)
             ...((attByEmpM.get(normEmp(e.employee_number)) ?? []).length === 0 && e.role_type === "社員"
-              ? { overtimeMinutes: hourlyOvertimeMinutes(recsByEmpM.get(normEmp(e.employee_number)) ?? [], monthlyTravelSecByDay.get(normEmp(e.employee_number))) }
+              ? { overtimeMinutes: hourlyOvertimeMinutes(recsByEmpM.get(normEmp(e.employee_number)) ?? [], monthlyTravelSecByDay.get(normEmp(e.employee_number)), trainingMinutesByDay(ofByEmp.get(normEmp(e.employee_number)) ?? [], selectedMonth)) }
               : {}),
           };
           // 出張km: 事業所書式 > 出勤簿
