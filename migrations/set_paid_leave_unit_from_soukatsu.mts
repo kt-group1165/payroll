@@ -78,11 +78,16 @@ for (const m of MONTHS) {
   for (const f of ex) {
     if (f.kind !== "shaseki") continue;
     for (const r of f.rows) {
-      // 日数があって手当が空 (0) の月は 単価 0 円 (社員は 前年のパート実績・介護超過が無いと 0 = user 2026-09-18)
+      // 日数があって手当が空欄の月は 入れずに一覧に出すだけ。単価 0 と決めつけない:
+      //   花見川 保本・神宮司 2026-07 は空欄だが 事業所書式は「有給」で、8 月は同じ単価 (997 / 178) で払っている = 入力漏れ
+      //   (社員は 前年のパート実績・介護超過が無いと本当に 0 のこともある = user 2026-09-18)
       const amt = typeof r["有給休暇手当"] === "number" ? (r["有給休暇手当"] as number) : 0;
       const name = normName(r["氏名"]);
       if (amt < 0 || !name || /^(合計|小計|計)$/.test(name)) continue;
-      if (amt === 0 && !(leaveDays(r) > 0)) continue;
+      if (amt === 0) {
+        if (leaveDays(r) > 0) skipped.push(`${m} ${f.office} ${normNo(r._code)} ${name}: 日数 ${leaveDays(r)} だが手当が空欄 (入力漏れか 0 円かを確認)`);
+        continue;
+      }
       const code = normNo(r._code);
       const key = `${f.office}|${code}`;
       if (seen.has(key)) continue; // 同じ人が同じ月に 2 行 (おゆみ野の重複シート)
