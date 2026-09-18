@@ -60,6 +60,15 @@ export async function getVisitAttendanceScreenOffices(supabase: SupabaseClient):
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
 
+/** 通勤km・出張km の確認ライン (事業所番号 → km/日)。km-anomaly.ts */
+export const KM_ANOMALY_LINES_KEY = "km_anomaly_lines";
+
+export async function getKmAnomalyLines(supabase: SupabaseClient): Promise<{ lines: Record<string, { commute_per_day: number; trip_per_day: number }>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", KM_ANOMALY_LINES_KEY).maybeSingle();
+  if (error) return { lines: {}, error: error.message };
+  return { lines: ((data?.value as { offices?: Record<string, { commute_per_day: number; trip_per_day: number }> } | null)?.offices) ?? {}, error: null };
+}
+
 export const JISSEKI_SOURCE_MODE_KEY = "jisseki_source_mode";
 
 export async function getJissekiSourceMode(

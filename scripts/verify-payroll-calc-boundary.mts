@@ -20,6 +20,7 @@
 //   - 実データでの妥当性
 import { buildActiveSalaryMap, resolveEmploymentType } from "../src/lib/payroll/salary-history";
 import { keepFirstKmRows } from "../src/lib/csv/office-form-parser";
+import { findKmAnomalies } from "../src/lib/payroll/km-anomaly";
 import {
   hasTenureQualification,
   computeTenureAllowance,
@@ -690,6 +691,18 @@ eq("同行 20分×1,150円 = 383.33 → 383", visitPayAmount(20, 1150, "同行",
 eq("★ 生活援助 45分×1,550円 = 1,162.5 → 1,162 (切り捨てのまま)", visitPayAmount(45, 1550, "生活援助", null, null), 1162);
 eq("★ 身体生活 40分×1,900円 = 1,266.67 → 1,266 (切り捨てのまま)", visitPayAmount(40, 1900, "身体生活", null, null), 1266);
 eq("★★ 直す前 (切り捨て) なら 862 = この検査は差を検出できる", visitPayAmount(45, 1150, "同行", null, null) !== Math.floor(45 / 60 * 1150), true);
+
+// ── findKmAnomalies (距離の確認ライン。2026-09-18) ──
+{
+  const L = { commute_per_day: 30, trip_per_day: 60 };
+  const r = (o: Partial<{ commute_km: number; trip_km: number; work_days: number }>) => ({ employee_number: "1", employee_name: "x", commute_km: 0, trip_km: 0, work_days: 20, ...o });
+  eq("★ 船橋 金子 通勤km 22,816 ÷ 20日 = 1,140.8km/日 → 警告", findKmAnomalies([r({ commute_km: 22816 })], L).map((w) => [w.kind, w.per_day]), [["通勤", 1140.8]]);
+  eq("普段の距離 (通勤 9.6km×20日 = 192km) は出さない", findKmAnomalies([r({ commute_km: 192 })], L).length, 0);
+  eq("★ 境界: ちょうどライン (30km/日) は出さない / 超えたら出す", [findKmAnomalies([r({ commute_km: 600 })], L).length, findKmAnomalies([r({ commute_km: 601 })], L).length], [0, 1]);
+  eq("出張も同じ (高品 櫻井 13,974km ÷ 21日 = 665.4km/日)", findKmAnomalies([r({ trip_km: 13974, work_days: 21 })], L).map((w) => w.per_day), [665.4]);
+  eq("出勤日数 0 で距離だけある人は 1 日として見る", findKmAnomalies([r({ commute_km: 50, work_days: 0 })], L).length, 1);
+  eq("★★ 距離 0 の人は出さない (= 誤警告しない)", findKmAnomalies([r({})], L).length, 0);
+}
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }

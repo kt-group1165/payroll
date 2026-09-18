@@ -11,7 +11,8 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines } from "@/lib/app-settings";
+import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
 import {
@@ -179,6 +180,8 @@ export default function PayrollPage() {
   const [error, setError] = useState("");
   /** 移動距離・時間が取れなかったとき (Google の月間上限・エラー) の警告。移動手当・出張費が少なく出ている */
   const [distanceWarning, setDistanceWarning] = useState("");
+  // 通勤km・出張km が事業所の確認ラインを超えた職員 (km-anomaly.ts)
+  const [kmWarnings, setKmWarnings] = useState<KmAnomaly[]>([]);
 
   const [hourlyResults, setHourlyResults] = useState<HourlyPayroll[]>([]);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
@@ -219,7 +222,7 @@ export default function PayrollPage() {
 
   async function calculate() {
     if (!selectedMonth || !selectedOfficeId) return;
-    setLoading(true); setError(""); setDistanceWarning("");
+    setLoading(true); setError(""); setDistanceWarning(""); setKmWarnings([]);
     setProgress({ pct: 0, label: "実績データを読み込み中" });
     setSavedAt(null);
     setHourlyResults([]); setMonthlyResults([]);
@@ -795,6 +798,21 @@ export default function PayrollPage() {
         });
       setMonthlyResults(monthlySorted);
 
+      // 距離の確認: 1 日あたりの通勤km・出張km が 事業所の確認ラインを超えた人を出す (計算は止めない)
+      {
+        const linesRes = await getKmAnomalyLines(supabase);
+        if (linesRes.error) throw new Error(`距離の確認ラインの読み込みに失敗: ${linesRes.error}`);
+        const line = linesRes.lines[selectedOffice.office_number] ?? DEFAULT_KM_LINE;
+        const tripKmOfHourly = (empNum: string, s: AttendanceSummary) => {
+          const of = (ofByEmp.get(normEmp(empNum)) ?? []).filter((r) => r.record_type === "km" && r.item_name === "出張km").reduce((a, r) => a + (r.numeric_value ?? 0), 0);
+          return of > 0 ? of : s.businessKmTotal;
+        };
+        setKmWarnings(findKmAnomalies([
+          ...hourlySorted.map((e) => ({ employee_number: e.employee_number, employee_name: e.employee_name, commute_km: e.summary.commuteKmTotal, trip_km: tripKmOfHourly(e.employee_number, e.summary), work_days: e.summary.workDays })),
+          ...monthlySorted.map((p) => ({ employee_number: String(p.employee_number), employee_name: p.employee_name, commute_km: p.summary.commuteKmTotal, trip_km: effectiveTravelKm(p), work_days: p.summary.workDays })),
+        ], line));
+      }
+
       // 総括表用に計算結果を保存。支給合計 (grand_total) は この画面と同じ関数で計算して持たせる
       // (総括表画面が別の式で合計していて、勤続手当・残業などが漏れていたため)
       const payload = {
@@ -1183,6 +1201,19 @@ export default function PayrollPage() {
 
       {error && (
         <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded text-sm">{error}</div>
+      )}
+      {kmWarnings.length > 0 && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">
+          <p className="font-medium">⚠ 距離を確認してください（1日あたりの距離が この事業所の確認ラインを超えています）</p>
+          <ul className="mt-1 space-y-0.5">
+            {kmWarnings.map((w) => (
+              <li key={`${w.employee_number}-${w.kind}`}>
+                {w.employee_name}（{w.employee_number}）{w.kind}距離 {w.km.toLocaleString()}km ÷ 出勤 {w.days}日 = <b>{w.per_day.toLocaleString()}km/日</b>（ライン {w.line}km/日）
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs">入力ミス（金額や小数点の打ち間違い）でないか事業所書式・出勤簿を確かめてください。本当に遠い場合はそのままで構いません。</p>
+        </div>
       )}
       {distanceWarning && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">⚠ {distanceWarning}</div>
