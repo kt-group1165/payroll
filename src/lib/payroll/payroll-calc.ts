@@ -990,6 +990,8 @@ export function computeSummary(
   empRecs: VisitServiceRecord[],
   attDays: OfficeAttendanceRecord[],
   ofRecs: OfficeFormRecord[],
+  /** 通勤km の優先: 事務員は 事業所書式 / それ以外 (提責など) は 出勤簿。空・0 ならもう一方 (user 2026-09-18) */
+  commuteSource: "office_form_first" | "attendance_first" = "attendance_first",
 ): AttendanceSummary {
   // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
   const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -1056,12 +1058,15 @@ export function computeSummary(
   const visitMinutesExcludingAccompanied = empRecs
     .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-  // 通勤km は 事業所書式が入っていればそれ、空・0 なら 出勤簿の合計 (2026-09-18)。
-  // 総括表 2026-04〜07 の提責: 書式が空の人は出勤簿で一致 (茂原 小原・やわた 根本/熊谷)、
-  // 出勤簿と書式が違う人は書式で一致 (高品 福田 出勤簿0→書式69 / 君津 森田 14.4→61.2 / ちはら台 鎗田 988→1020.6)
+  // 通勤km: 出勤簿の合計と 事業所書式のどちらを優先するかは 職種で分ける (user 2026-09-18)。
+  //   事務員 = 書式優先 / 提責など = 出勤簿優先。どちらも 空・0 ならもう一方を使う。
+  // 参考 (総括表 2026-04〜07 の提責): 両方が違うのは 4 件で、いずれも書式の値で一致していた
+  // (高品 福田 出勤簿0→書式69 / 君津 森田 14.4→61.2 / ちはら台 鎗田 988→1020.6)。出勤簿優先はこの 4 件がずれる
   const commuteKmFromAtt = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
   const commuteKmFromOf = ofRecs.filter((r) => r.item_name === "通勤km").reduce((s, r) => s + (Number(r.numeric_value) || 0), 0);
-  const commuteKmTotal = commuteKmFromOf > 0 ? commuteKmFromOf : commuteKmFromAtt;
+  const commuteKmTotal = commuteSource === "office_form_first"
+    ? (commuteKmFromOf > 0 ? commuteKmFromOf : commuteKmFromAtt)
+    : (commuteKmFromAtt > 0 ? commuteKmFromAtt : commuteKmFromOf);
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
   const weekendHolidayMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))

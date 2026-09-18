@@ -415,8 +415,11 @@ export default function PayrollPage() {
           const catId = mappingMap.get(r.service_code) ?? null;
           return catId && categoryMap.get(catId) === "同行" ? { ...r, accompanied_visit: "同行" } : r;
         });
+      // 事務員 (役職=事務員 か 事務時給で払う人) は 通勤km を事業所書式優先、それ以外は出勤簿優先 (user 2026-09-18)
+      const officeWorkerNums = new Set(employees.filter((e) => e.role_type === "事務員" || e.is_office_worker).map((e) => normEmp(e.employee_number)));
       const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[]): AttendanceSummary =>
-        computeSummary(withAccompanyByCode(empRecs), attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? []);
+        computeSummary(withAccompanyByCode(empRecs), attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
+          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first");
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する

@@ -547,12 +547,14 @@ eq("有給: \"7月22日\" は1日 / 読点区切り \"7/1、7/2\" は2日",
   [listedDateCount("7月22日"), listedDateCount("7/1、7/2"), listedDateCount(null)], [1, 2, 1]);
 eq("★ 通勤km: 出勤簿に無ければ事業所書式の通勤km (高品 福田 69km)",
   computeSummary([], [], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 69 })]).commuteKmTotal, 69);
-eq("★ 通勤km: 書式と出勤簿の両方あれば 書式を使う (君津 森田 出勤簿14.4 / 書式61.2 → 総括表61.2。2026-09-18)",
-  computeSummary([], [aRec({ commute_km: 14.4 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 61.2 })]).commuteKmTotal, 61.2);
-eq("★ 通勤km: 書式が 0 なら 出勤簿 (茂原 小原 書式0 / 出勤簿176 → 総括表176)",
-  computeSummary([], [aRec({ commute_km: 176 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 0 })]).commuteKmTotal, 176);
-eq("通勤km: 書式が無ければ 出勤簿",
-  computeSummary([], [aRec({ commute_km: 10 } as never)], []).commuteKmTotal, 10);
+{
+  const att = [aRec({ commute_km: 14.4 } as never)], of = [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 61.2 })];
+  eq("★ 通勤km (事務員): 両方あれば 書式", computeSummary([], att, of, "office_form_first").commuteKmTotal, 61.2);
+  eq("★ 通勤km (提責など・既定): 両方あれば 出勤簿", computeSummary([], att, of).commuteKmTotal, 14.4);
+  eq("通勤km (事務員): 書式が 0 なら 出勤簿", computeSummary([], [aRec({ commute_km: 176 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 0 })], "office_form_first").commuteKmTotal, 176);
+  eq("通勤km (提責): 出勤簿が 0 なら 書式 (高品 福田 出勤簿0 → 書式69)", computeSummary([], [aRec({ commute_km: 0 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 69 })]).commuteKmTotal, 69);
+  eq("★★ 事務員と提責で結果が変わる (= 切替が効いている)", computeSummary([], att, of, "office_form_first").commuteKmTotal !== computeSummary([], att, of).commuteKmTotal, true);
+}
 // 同じ人の通勤km/出張km が書式に 2 行 → 先頭だけ (五井 加瀬 540/567 → 540)
 eq("★ 書式の通勤km が 2 行なら 先頭の行だけ残す (五井 加瀬 540/567 → 540)",
   keepFirstKmRows([oRec({ item_name: "通勤km", record_type: "km", numeric_value: 540 }), oRec({ item_name: "通勤km", record_type: "km", numeric_value: 567 })]).map((r) => r.numeric_value), [540]);
