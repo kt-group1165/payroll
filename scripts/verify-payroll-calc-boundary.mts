@@ -491,7 +491,9 @@ eq("夜朝の時間: 表記ゆれ 夜朝/夜間/早朝/早朝・夜間 を含め
   // 米倉靖子 2026-07: 訪問 7,345分 のうち 移身有0.5/移身有1 が 180分 → 介護時間 7,300分 (1件24h以上は0分扱いなので 1,433分×5件で組む)
   const recs = [...Array(5)].map(() => ({ calc_duration: "023:53", service_code: "111111" })).concat([{ calc_duration: "002:00", service_code: "010047" }, { calc_duration: "001:00", service_code: "010048" }]);
   eq("介護時間: 0.75掛け対象(移身有)は ×0.75 (7,165 + 180×0.75 = 7,300分)", careMinutesFromRecords(recs, isCareHours075), 7300);
-  eq("0.75掛け対象コードの判定: 010047 移身有0.5 / 021003 重度介護(自立) は対象、111111 身体介護1・021008 同行援護(自立) は対象外", ["010047","021003","111111","021008"].map(isCareHours075), [true, true, false, false]);
+  eq("0.75掛け対象コードの判定: 010047 移身有0.5 / 021003 重度介護(自立) は対象、111111 身体介護1 は対象外", ["010047","021003","111111"].map(isCareHours075), [true, true, false]);
+  // 2026-09-18: 021006/021007/021008 は総括表の「重度」時間に入る (Hana 9 事業所 2026-07 社員 43 人で確認)。旧期待値 (対象外) はコード一覧由来で実データ未確認だった
+  eq("★ 通院介助(自立) 021006 / 通院･身体(自立) 021007 / 同行援護(自立) 021008 は対象、家事援助(自立) 021002 は対象外", ["021006","021007","021008","021002"].map(isCareHours075), [true, true, true, false]);
   const setting = salary({ care_overtime_threshold_hours: 120, care_overtime_unit_price: 2500 });
   eq("介護超過: 米倉 2026-07 (7,300−7,200)/60 × 2,500 = 4,167 (総括表)", careOvertimePay(monthly({ role_type: "社員", settings: setting, care_minutes: 7300, summary: summary({ visitMinutes: 7345 }) })), 4167);
   eq("介護超過: 米倉 2026-06 (8,020−7,200)/60 × 2,500 = 34,167 (総括表)", careOvertimePay(monthly({ role_type: "社員", settings: setting, care_minutes: 8020 })), 34167);
