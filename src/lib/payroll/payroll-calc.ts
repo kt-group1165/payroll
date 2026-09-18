@@ -412,9 +412,21 @@ export const NO_OVERTIME_EXCESS_ROLES = new Set(["提責", "管理者"]);
 
 export function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
   if (NO_OVERTIME_EXCESS_ROLES.has(p.role_type)) return 0;
-  // 社員は 残業代 − 介護超過手当 (総括表「残業総額2」= 残業代 − 120h以上+深夜。介護超過の中に残業分が含まれている扱い。2026-09-18)
-  const careOffset = p.role_type === "社員" ? careOvertimePay(p) : 0;
+  // 社員は 残業代 − 「120h介護超過手当+深夜手当」 (総括表「残業総額_new」)。2026-09-19 旧 CSV (提責_社員) で確定:
+  //   差し引く額 = (訪問時間 − 120h) × 介護超過単価 + 深夜手当。訪問時間は 同行込み・0.75 換算や入浴件数を入れない生の時間
+  //   (中島 121:15 → 1:15×2,500 = 3,125 / 根本 120:30 → 1,250 + 深夜 250 = 1,500 / 峯島 157h → 92,500 + 13,500)。
+  //   実際に払う介護超過手当 (0.75 換算・入浴 1.12h 込み) ではない (緑川 118h: 払う介護超過 14,313 だが差し引きは 0)
+  const careOffset = p.role_type === "社員" ? careOvertimeOffsetForOvertime(p) : 0;
   return Math.max(0, computeOvertimePay(p, otSettings) - (p.settings?.fixed_overtime_pay ?? 0) - careOffset);
+}
+
+/** 社員の残業代から差し引く額 = (訪問時間 − 閾値) × 介護超過単価 + 深夜手当 (総括表「120h介護超過手当+深夜手当」) */
+export function careOvertimeOffsetForOvertime(p: MonthlyPayroll): number {
+  const s = p.settings;
+  if (!s || s.care_overtime_threshold_hours <= 0 || s.care_overtime_unit_price <= 0) return 0;
+  const overMin = Math.max(0, (p.summary.visitMinutes ?? 0) - s.care_overtime_threshold_hours * 60);
+  return Math.round(Number(((overMin / 60) * s.care_overtime_unit_price).toFixed(6)))
+    + Math.round(Math.max(0, p.shinya_hours ?? 0) * SHINYA_UNIT_PRICE);
 }
 
 /**
