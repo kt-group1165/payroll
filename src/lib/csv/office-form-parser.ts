@@ -158,8 +158,28 @@ export async function parseOfficeFormFile(
 
   return {
     success: errors.length === 0,
-    data,
+    data: keepFirstKmRows(data),
     errors,
     fileName: file.name,
   };
+}
+
+/**
+ * 同じ職員の 通勤km / 出張km に値の入った行が 2 行以上あるときは 先頭の行だけ残す。
+ * 事業所書式で 同じ人が 2 か所 (提責の欄と下の欄) に出ていることがあり、総括表は先頭の行だけを使っている
+ * (五井 加瀬真紀江 2026-04〜07: 通勤km 540/567・513/567・594/567 → 総括表 540/513/594、
+ *  根本カオリ 通勤km 20/16 → 総括表 通勤費 254円 = 20km×12.7)。両方足すと 通勤費・出張費が倍になる。
+ */
+export function keepFirstKmRows<T extends { record_type: string; item_name: string; employee_number: string; numeric_value?: number | null }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (r.record_type !== "km" || (r.item_name !== "通勤km" && r.item_name !== "出張km")) return true;
+    // 値の無い行 (空欄) は合計に効かないのでそのまま残し、「先頭」の判定にも使わない
+    // (五井では値の行とは別に 空の 出張km 行がある人が多い。空の行を先頭扱いすると距離が 0 になる)
+    if (!(Number(r.numeric_value) > 0)) return true;
+    const key = `${r.employee_number}|${r.item_name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

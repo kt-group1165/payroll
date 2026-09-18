@@ -1056,10 +1056,12 @@ export function computeSummary(
   const visitMinutesExcludingAccompanied = empRecs
     .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-  // 出勤簿に通勤km が無ければ 事業所書式の 通勤km (高品 福田 2026-07: 69km × 12.3 = 849円 が総括表と一致)
+  // 通勤km は 事業所書式が入っていればそれ、空・0 なら 出勤簿の合計 (2026-09-18)。
+  // 総括表 2026-04〜07 の提責: 書式が空の人は出勤簿で一致 (茂原 小原・やわた 根本/熊谷)、
+  // 出勤簿と書式が違う人は書式で一致 (高品 福田 出勤簿0→書式69 / 君津 森田 14.4→61.2 / ちはら台 鎗田 988→1020.6)
   const commuteKmFromAtt = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
-  const commuteKmTotal = commuteKmFromAtt > 0 ? commuteKmFromAtt
-    : ofRecs.filter((r) => r.item_name === "通勤km").reduce((s, r) => s + (Number(r.numeric_value) || 0), 0);
+  const commuteKmFromOf = ofRecs.filter((r) => r.item_name === "通勤km").reduce((s, r) => s + (Number(r.numeric_value) || 0), 0);
+  const commuteKmTotal = commuteKmFromOf > 0 ? commuteKmFromOf : commuteKmFromAtt;
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
   const weekendHolidayMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))

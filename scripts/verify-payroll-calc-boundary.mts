@@ -19,6 +19,7 @@
 //       値そのもの) は未検証
 //   - 実データでの妥当性
 import { buildActiveSalaryMap, resolveEmploymentType } from "../src/lib/payroll/salary-history";
+import { keepFirstKmRows } from "../src/lib/csv/office-form-parser";
 import {
   hasTenureQualification,
   computeTenureAllowance,
@@ -546,8 +547,26 @@ eq("有給: \"7月22日\" は1日 / 読点区切り \"7/1、7/2\" は2日",
   [listedDateCount("7月22日"), listedDateCount("7/1、7/2"), listedDateCount(null)], [1, 2, 1]);
 eq("★ 通勤km: 出勤簿に無ければ事業所書式の通勤km (高品 福田 69km)",
   computeSummary([], [], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 69 })]).commuteKmTotal, 69);
-eq("通勤km: 出勤簿にあれば出勤簿を優先 (書式は足さない)",
-  computeSummary([], [aRec({ commute_km: 10 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 69 })]).commuteKmTotal, 10);
+eq("★ 通勤km: 書式と出勤簿の両方あれば 書式を使う (君津 森田 出勤簿14.4 / 書式61.2 → 総括表61.2。2026-09-18)",
+  computeSummary([], [aRec({ commute_km: 14.4 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 61.2 })]).commuteKmTotal, 61.2);
+eq("★ 通勤km: 書式が 0 なら 出勤簿 (茂原 小原 書式0 / 出勤簿176 → 総括表176)",
+  computeSummary([], [aRec({ commute_km: 176 } as never)], [oRec({ item_name: "通勤km", record_type: "km", numeric_value: 0 })]).commuteKmTotal, 176);
+eq("通勤km: 書式が無ければ 出勤簿",
+  computeSummary([], [aRec({ commute_km: 10 } as never)], []).commuteKmTotal, 10);
+// 同じ人の通勤km/出張km が書式に 2 行 → 先頭だけ (五井 加瀬 540/567 → 540)
+eq("★ 書式の通勤km が 2 行なら 先頭の行だけ残す (五井 加瀬 540/567 → 540)",
+  keepFirstKmRows([oRec({ item_name: "通勤km", record_type: "km", numeric_value: 540 }), oRec({ item_name: "通勤km", record_type: "km", numeric_value: 567 })]).map((r) => r.numeric_value), [540]);
+eq("出張km も同じ / 別の人・別の項目・有給の日付行は残す",
+  keepFirstKmRows([
+    oRec({ item_name: "出張km", record_type: "km", numeric_value: 36 }), oRec({ item_name: "出張km", record_type: "km", numeric_value: 17.1 }),
+    oRec({ employee_number: "999", item_name: "出張km", record_type: "km", numeric_value: 5 }),
+    oRec({ item_name: "通勤km", record_type: "km", numeric_value: 567 }),
+    oRec({ item_name: "有給", item_date: "7/16" }), oRec({ item_name: "有給", item_date: "7/20" }),
+  ]).length, 5);
+eq("★ 空の行が先頭にあっても 値のある先頭の行を使う (五井に空の出張km行が多数)",
+  keepFirstKmRows([oRec({ item_name: "出張km", record_type: "km", numeric_value: null }), oRec({ item_name: "出張km", record_type: "km", numeric_value: 630.1 }), oRec({ item_name: "出張km", record_type: "km", numeric_value: 17.1 })]).map((r) => r.numeric_value), [null, 630.1]);
+eq("★★ 直す前 (両方足す) なら 1,107km = この検査は差を検出できる",
+  computeSummary([], [], keepFirstKmRows([oRec({ item_name: "通勤km", record_type: "km", numeric_value: 540 }), oRec({ item_name: "通勤km", record_type: "km", numeric_value: 567 })])).commuteKmTotal !== 1107, true);
 
 eq("★ HRD時間: start/end timeがあれば差分(9:00-11:30=150分)",
   computeSummary([], [], [oRec({ item_name: "HRD研修", start_time: "09:00", end_time: "11:30" })]).hrdMinutes, 150);
