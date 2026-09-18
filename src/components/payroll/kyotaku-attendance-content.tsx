@@ -253,7 +253,7 @@ export function KyotakuAttendanceContent() {
     error: officeFetchError,
   } = useKyotakuOffices();
   const {
-    employees,
+    employees: allEmployees,
     error: employeeFetchError,
     mutate: mutateEmployees,
   } = useKyotakuEmployees(selectedOfficeId);
@@ -276,6 +276,13 @@ export function KyotakuAttendanceContent() {
   const [businessTypeChoice, setBusinessTypeChoice] = useState<string>("");
   const businessType = businessTypeChoice || selectedOfficeType || "居宅介護支援";
   const officesOfType = useMemo(() => offices.filter((o) => o.office_type === businessType), [offices, businessType]);
+  // 訪問介護の出勤簿は 提責以上 (提責・管理者) と 事務員 だけ (user 2026-09-18)。ヘルパーは実績から計算する
+  const employees = useMemo(
+    () => businessType === "訪問介護"
+      ? allEmployees.filter((e) => ["提責", "管理者", "事務員"].includes(e.role_type ?? "") || e.is_office_worker === true)
+      : allEmployees,
+    [allEmployees, businessType],
+  );
   const isKyotaku = selectedOfficeType === "居宅介護支援";
 
   // 月単位データ (件数 + 加算) — 居宅のみ fetch

@@ -18,6 +18,8 @@ export type KyotakuEmployeeRow = {
   id: string;
   name: string;
   office_id: string;
+  role_type?: string | null;
+  is_office_worker?: boolean | null;
 };
 
 /** 対象者設定 UI 用 (attendance_hidden 込み) */
@@ -38,7 +40,7 @@ async function fetchEmployees(officeId: string): Promise<KyotakuEmployeeRow[]> {
   if (error) throw error;
   return ((data ?? []) as (KyotakuEmployeeRow & { attendance_hidden?: boolean })[])
     .filter((e) => e.attendance_hidden !== true)
-    .map((e) => ({ id: e.id, name: e.name, office_id: e.office_id }));
+    .map((e) => ({ id: e.id, name: e.name, office_id: e.office_id, role_type: e.role_type ?? null, is_office_worker: e.is_office_worker ?? null }));
 }
 
 export type UseKyotakuEmployeesResult = {
