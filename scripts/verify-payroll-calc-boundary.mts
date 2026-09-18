@@ -775,6 +775,11 @@ eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 �
   eq("★★ 有効な行だけ見ると 職員マスタ 7,712 に戻る = 引き継ぎの差を検出できる", resolvePaidLeaveUnitPriceFromHistory(emp, rows, "2026-07-01") !== 7712, true);
 }
 
+// ── 同行には夜朝の割増を付けない (2026-09-18) ──
+eq("★ 同行 30分 夜朝 = 575 (割増なし。四街道 若菜 2026-07)", visitPayAmount(30, 1150, "同行", "夜朝", null), 575);
+eq("身体介護 30分 夜朝 は割増あり = 1,050 + 263 = 1,313", visitPayAmount(30, 2100, "身体介護", "夜朝", null), 1313);
+eq("★★ 割増を付けると 719 = 差を検出できる", visitPayAmount(30, 1150, "同行", "夜朝", null) !== 719, true);
+
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
 if (fail.length) { console.log("\n★ 不一致:"); for (const f of fail) console.log("   " + f); process.exit(1); }
 console.log("\n⚠ この検証が証明していないこと: 出勤簿の集計・移動手当の距離算出自体は");

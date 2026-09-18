@@ -849,6 +849,9 @@ export function visitPayAmount(
   // ★ 同行だけは基本額も四捨五入 (45分×1,150円 = 862.5 → 863)。2026-07 の総括表で
   //   端数差だった時給者 307 人が 286 → 307 人 全員 1 円一致 (2026-09-18)
   const baseYen = categoryName === "同行" ? Math.round(base) : Math.floor(base + 1e-6);
+  // ★ 同行には夜朝・深夜の割増を付けない (旧システムの確認用ブック 202608: 夕方以降に始まる同行 31 件すべて 1,150 円。
+  //   四街道 2026-07 の 3 人 (若菜・星野・鈴木) が 割増分 144/288/432 円だけ総括表とずれていた。2026-09-18)
+  if (categoryName === "同行") return baseYen;
   return baseYen + Math.round(baseYen * (timePeriodMultiplier(timePeriod) - 1));
 }
 
