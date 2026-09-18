@@ -954,8 +954,8 @@ export default function PayrollPage() {
             // 月給者も 付与ごとの日当 (有給管理簿シートの値) で計算する。付与が無い人だけ 給与設定 → 職員マスタ の単価。
             // ⚠ 個人シートの日当は 前年度パートだった社員で総括表と食い違う (さつき 米倉 個人シート 7,712 / 管理簿 906)。
             //   有給管理簿シートの日当なら 2026-04〜07 の社員 224 件中 206 件一致
-            // 提責・事務員は 有給休暇手当なし (総括表 2026-03〜07 で 357 件中 356 件が 0 円)。単価を入れた人だけ払う
-            paid_leave_allowance_override: ["提責", "事務員"].includes(roleM) && !((e.paid_leave_unit_price ?? 0) > 0)
+            // 提責・事務員は 有給休暇手当なし (総括表 2026-03〜07 で 357 件中 356 件が 0 円)。給与設定の単価があっても払わない (さつき 宮野 3 月の 54 円を引き継いでいた)
+            paid_leave_allowance_override: ["提責", "事務員"].includes(roleM)
               ? 0
               : grantByEmpId.has(e.id)
               ? paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0)
