@@ -60,7 +60,6 @@ import {
   employeeWorkMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
-  dailyOvertimeFromVisits,
   shinyaHoursFromRecords,
   listedDateCount,
   activePaidLeaveGrant,
@@ -939,14 +938,8 @@ export default function PayrollPage() {
               baseSummary.visitMinutes,
               monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
             ),
-            // 出勤簿の無い社員の残業 = 日ごとの (訪問 + 移動 − 8h) の合計 (仮説。出勤簿がある人は出勤簿の残業のまま)
-            overtimeMinutes: (attByEmpM.get(normEmp(e.employee_number)) ?? []).length > 0
-              ? baseSummary.overtimeMinutes
-              : (() => {
-                  const visitByDay = new Map<string, number>();
-                  for (const r of recsByEmpM.get(normEmp(e.employee_number)) ?? []) visitByDay.set(r.service_date, (visitByDay.get(r.service_date) ?? 0) + parseDurationMinutes(r.calc_duration));
-                  return dailyOvertimeFromVisits(visitByDay, monthlyTravelSecByDay.get(normEmp(e.employee_number)) ?? new Map());
-                })(),
+            // ⚠ 出勤簿の無い社員の残業を 日ごとの (訪問 + 移動 − 8h) で数える仮説 (dailyOvertimeFromVisits) は 2026-07 で外れた
+            //   (花見川 中島 総括表 373 円 → 当方 2,174 円 / おゆみ野 石毛 0 → 337 円)。出勤簿の残業のまま (出勤簿が無ければ 0)
           };
           // 出張km: 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
