@@ -951,12 +951,13 @@ export default function PayrollPage() {
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
-            // 月給者は 給与設定 (履歴を引き継ぐ) → 職員マスタ の有給単価があればそれを使い、有給ファイルの日当は 0 のときだけ。
-            // 有給ファイルの日当は 前年度にパートだった社員で総括表と大きく食い違う (さつき 大治 ファイル 9,738 / 総括表 252)
+            // 月給者も 付与ごとの日当 (有給管理簿シートの値) で計算する。付与が無い人だけ 給与設定 → 職員マスタ の単価。
+            // ⚠ 個人シートの日当は 前年度パートだった社員で総括表と食い違う (さつき 米倉 個人シート 7,712 / 管理簿 906)。
+            //   有給管理簿シートの日当なら 2026-04〜07 の社員 224 件中 206 件一致
             // 提責・事務員は 有給休暇手当なし (総括表 2026-03〜07 で 357 件中 356 件が 0 円)。単価を入れた人だけ払う
             paid_leave_allowance_override: ["提責", "事務員"].includes(roleM) && !((e.paid_leave_unit_price ?? 0) > 0)
               ? 0
-              : grantByEmpId.has(e.id) && !((e.paid_leave_unit_price ?? 0) > 0)
+              : grantByEmpId.has(e.id)
               ? paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0)
               : undefined,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,
