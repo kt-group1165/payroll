@@ -48,6 +48,17 @@ export async function getMeetingFeeUnpaidOffices(supabase: SupabaseClient): Prom
 }
 
 /**
+ * 会議費で件数を数える事業所書式の項目 (2026-09-18)。{ "<事業所番号>": ["会議2", "会議3"] }。無い事業所は「会議1」。
+ * おゆみ野の総括表「研修」列 = 研修費 + 会議費 = (会議2件数 + 会議3件数) × 1,150 + 会議時間 × 1,150 (2026-07 25 人中 23 人一致)
+ */
+export const MEETING_COUNT_ITEMS_KEY = "meeting_count_items";
+export async function getMeetingCountItems(supabase: SupabaseClient): Promise<{ items: Record<string, string[]>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MEETING_COUNT_ITEMS_KEY).maybeSingle();
+  if (error) return { items: {}, error: error.message };
+  return { items: ((data?.value as Record<string, string[]> | null) ?? {}), error: null };
+}
+
+/**
  * 訪問介護の出勤簿を「画面入力」(kaigo-app の出勤簿) から読む事業所 (事業所番号)。
  * 入っていない事業所は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) を読む。
  * 移行中に事業所ごとに切り替えるため (2026-09-18)。

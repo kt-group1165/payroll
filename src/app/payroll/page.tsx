@@ -12,7 +12,7 @@ import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-da
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPrice } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -364,6 +364,8 @@ export default function PayrollPage() {
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
+      const meetingItemsRes = await getMeetingCountItems(supabase);
+      if (meetingItemsRes.error) throw new Error(`会議費の件数の項目の読み込みに失敗: ${meetingItemsRes.error}`);
       const juhoShortRes = await getJuhoShortVisitRates(supabase);
       if (juhoShortRes.error) throw new Error(`重度訪問の短時間の時給の読み込みに失敗: ${juhoShortRes.error}`);
       const care075Res = await getCare075Offices(supabase);
@@ -639,7 +641,7 @@ export default function PayrollPage() {
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
           ? 0
-          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""))
+          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""), meetingItemsRes.items[empOffice?.office_number ?? ""])
             + (trainingPayAmount(meetingMinutes(ofByEmp.get(empNum) ?? []), trainingRate) ?? 0);
         const officeWorkMinutes = info.isOfficeWorker ? empSummary.workHoursMin : 0;
         const officeWorkRate = sal?.office_work_hourly_rate ?? 0;

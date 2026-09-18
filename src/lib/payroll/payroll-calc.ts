@@ -608,9 +608,10 @@ export function computeChildcareAllowance(
 }
 
 /** 会議費を計算する (月給・時給共通) */
-export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number): number {
+export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number, countItems: readonly string[] = ["会議1"]): number {
+  // 数える件数の項目は事業所で違う: 既定は「会議1」、おゆみ野は「会議2」「会議3」(meeting_count_items。2026-09-18)
   const meetingCount = ofRecs
-    .filter((r) => r.item_name.includes("会議1"))
+    .filter((r) => countItems.some((k) => r.item_name.includes(k)))
     .reduce((s, r) => s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
   return Math.round(meetingCount * meetingUnitPrice);
 }
