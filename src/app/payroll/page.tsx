@@ -609,12 +609,18 @@ export default function PayrollPage() {
 
       // 月ごとの手入力の 調整手当・過誤 (payroll_monthly_inputs adjustment)。時給者は error_adjustment、月給者は adjustment
       const adjustmentByNum = new Map<string, number>();
+      // 社会保険 (処遇改善補助金・通信手当の判定) の月ごとの値。無ければ職員マスタの今の値 (2026-09-19)
+      const socialInsuranceByNum = new Map<string, boolean>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
-          .select("employee_number,numeric_value")
-          .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth).eq("item_key", "adjustment");
+          .select("employee_number,item_key,numeric_value")
+          .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
+          .in("item_key", ["adjustment", "social_insurance"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
-        for (const r of (data ?? []) as { employee_number: string; numeric_value: number | null }[]) adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
+        for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
+          if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
+          if (r.item_key === "social_insurance") socialInsuranceByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0) > 0);
+        }
       }
 
       // 時給者
@@ -627,7 +633,7 @@ export default function PayrollPage() {
         serviceMonths: adjustedMonths(e.effective_service_months ?? 0),
         empId: e.id,
         officeId: e.office_id,
-        socialInsurance: e.social_insurance ?? false,
+        socialInsurance: socialInsuranceByNum.get(normEmp(e.employee_number)) ?? e.social_insurance ?? false,
         paidLeaveUnitPrice: e.paid_leave_unit_price ?? 0,
         communicationFeeType: e.communication_fee_type ?? "none",
         isOfficeWorker: e.is_office_worker ?? false,
