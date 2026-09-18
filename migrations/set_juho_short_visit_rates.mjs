@@ -38,7 +38,8 @@ const LONG = [["1270501180", "重度訪問", 1700, 1650]]; // [事業所, 区分
 
 const ops = [];
 const [cur] = await req("GET", "payroll_app_settings?select=key,value&key=eq.juho_short_visit_rates");
-if (JSON.stringify(cur?.value) !== JSON.stringify(want)) {
+const norm = (v) => JSON.stringify(Object.fromEntries(Object.entries(v ?? {}).sort().map(([k, x]) => [k, Object.fromEntries(Object.entries(x).sort())])));
+if (norm(cur?.value) !== norm(want)) {
   ops.push([`juho_short_visit_rates: ${JSON.stringify(cur?.value ?? null)} → ${JSON.stringify(want)}`,
     () => fetch(`${SB}/rest/v1/payroll_app_settings?on_conflict=key`, { method: "POST", headers: { ...H, Prefer: "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify({ key: "juho_short_visit_rates", value: want, updated_at: new Date().toISOString() }) })]);

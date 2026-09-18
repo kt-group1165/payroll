@@ -930,7 +930,9 @@ export default function PayrollPage() {
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
-            paid_leave_allowance_override: grantByEmpId.has(e.id)
+            // 月給者は 給与設定のその月の有給単価 (総括表から入れたもの) があればそれを優先。
+            // 有給ファイルの日当は 前年度にパートだった社員で総括表と大きく食い違う (さつき 大治 ファイル 9,738 / 総括表 252)
+            paid_leave_allowance_override: grantByEmpId.has(e.id) && salMap.get(e.id)?.paid_leave_unit_price == null
               ? paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0)
               : undefined,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,
