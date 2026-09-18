@@ -12,7 +12,7 @@ import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-da
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -369,6 +369,8 @@ export default function PayrollPage() {
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
       const meetingItemsRes = await getMeetingCountItems(supabase);
       if (meetingItemsRes.error) throw new Error(`会議費の件数の項目の読み込みに失敗: ${meetingItemsRes.error}`);
+      const doukouFlatRes = await getDoukouEngoFlatRates(supabase);
+      if (doukouFlatRes.error) throw new Error(`同行援護の時給の読み込みに失敗: ${doukouFlatRes.error}`);
       const sougouRatesRes = await getSougouSeikatsuRates(supabase);
       if (sougouRatesRes.error) throw new Error(`総合事業の時給の読み込みに失敗: ${sougouRatesRes.error}`);
       const juhoShortRes = await getJuhoShortVisitRates(supabase);
@@ -720,10 +722,13 @@ export default function PayrollPage() {
         const shortRate = juhoShortRes.rates[rec.office_number]?.[catName];
         // 総合事業 (A…) で生活援助に結び付いている訪問は 事業所ごとの総合事業の時給 (船橋 1,400)
         const sougouRate = /^A/.test(rec.service_code) && catName === "生活援助" ? sougouRatesRes.rates[rec.office_number] : undefined;
-        const hourlyRate = sougouRate !== undefined && longRate !== null ? sougouRate
+        // 同行援護 (021008) を固定の時給で払う事業所 (五井・やわた 1,750 / KT姉崎 2,100)。段階式にしない
+        const doukouFlat = String(rec.service_code).padStart(6, "0") === "021008" ? doukouFlatRes.rates[rec.office_number] : undefined;
+        const hourlyRate = doukouFlat !== undefined && longRate !== null ? doukouFlat
+          : sougouRate !== undefined && longRate !== null ? sougouRate
           : longRate !== null && shortRate !== undefined && minutes <= 90 ? shortRate : longRate;
         const overflowRate = officeId && lifeSupportCategoryId ? (rateMap.get(`${officeId}:${lifeSupportCategoryId}`) ?? null) : null;
-        const pay        = visitPayAmount(minutes, hourlyRate, catName, rec.time_period, overflowRate);
+        const pay        = visitPayAmount(minutes, hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;

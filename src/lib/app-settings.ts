@@ -111,6 +111,19 @@ export async function getSougouSeikatsuRates(supabase: SupabaseClient): Promise<
   return { rates: ((data?.value as Record<string, number> | null) ?? {}), error: null };
 }
 
+/**
+ * 同行援護 (021008 同行援護(自立)) を時間によらず固定の時給で払う事業所 (2026-09-18)。{ "<事業所番号>": 時給 }
+ * それ以外の事業所は 身体介護と同じ段階式 (1.5h まで 身体介護の時給、超えた分は生活援助の時給)。
+ * 根拠: 旧システムの確認用ブック 202608 の同行援護のシステム単価。五井・やわた 1,750 / KT姉崎 2,100 (長さによらず一定)。
+ *   2026-07 の総括表で 五井 0/2 → 2/2・KT姉崎 0/2 → 2/2 人一致
+ */
+export const DOUKOU_ENGO_FLAT_RATES_KEY = "doukou_engo_flat_rates";
+export async function getDoukouEngoFlatRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", DOUKOU_ENGO_FLAT_RATES_KEY).maybeSingle();
+  if (error) return { rates: {}, error: error.message };
+  return { rates: ((data?.value as Record<string, number> | null) ?? {}), error: null };
+}
+
 export const JUHO_SHORT_VISIT_RATES_KEY = "juho_short_visit_rates";
 export type JuhoShortVisitRates = Record<string, Record<string, number>>;
 export async function getJuhoShortVisitRates(supabase: SupabaseClient): Promise<{ rates: JuhoShortVisitRates; error: string | null }> {
