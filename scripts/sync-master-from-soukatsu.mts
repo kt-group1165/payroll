@@ -27,7 +27,7 @@
  *     - DB の在職/休職者で、総括表 (指定月) と MEISAI 実績 (全月) のどちらにも居ない → 退職者
  *     - 退職者が総括表の月に載っている → 退職日 = 最後に載っている月の末日 (退職日が無いか、それより前のとき)
  *
- * 触らないもの (人の確認が要る): 通信費タイプ・兼務者・単価マスタ・サービスコード対応。候補として表示だけする。
+ * 触らないもの (人の確認が要る): 兼務者・単価マスタ・サービスコード対応。候補として表示だけする。
  * 冪等: もう一度 DRY RUN すると 0 件になる。
  */
 import { readFileSync } from "node:fs";
@@ -232,20 +232,39 @@ for (const code of partCodes) {
     if (others.size > 1) notes.push(`${code} ${name}: 有給単価が月で違う ${rows.filter((x) => num(x.r["有給単価"]) > 0).map((x) => `${x.m}=${x.r["有給単価"]}`).join(", ")} (最新月の値を入れる)`);
   }
   if (rows.some((x) => num(x.r["勤続手当単価"]) > 0) && (!e || !e.has_care_qualification)) ops.push({ label: `資格 ${code} ${name} → 不明（要件は満たす） (勤続手当単価 ${rows.map((x) => x.r["勤続手当単価"]).filter(Boolean).join("/")})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { has_care_qualification: true, care_qualification_kind: "不明（要件は満たす）" }) });
-  if (num(last["通信手当"]) < 0) notes.push(`${code} ${name}: 通信手当 ${last["通信手当"]} (貸与負担なら 通信費タイプ lend_fee。現在 ${e?.communication_fee_type ?? "-"})`);
+  // 通信費タイプ: 総括表の通信手当から決める
+  //   マイナス (-1,700円) = 貸与の自己負担 lend_fee (user 2026-09-18: スマホ貸与の要件を満たさない人が引き継ぎ貸与を希望する場合の負担)
+  //   0 で 社保なし・訪問時間ありなら 会社貸与で手当なし lend (当方の式なら 500〜1,000円が出てしまう)
+  //   プラスで社保加入なら variable (当方の既定は 社保加入=0円なので、出ている人は例外扱い)
+  //   それ以外は none (訪問時間で 500/1,000円)
+  const tsuushin = num(last["通信手当"]);
+  const shaho = num(last["処遇改善補助金手当"]) > 0;
+  const wantFee = tsuushin < 0 ? "lend_fee"
+    : (tsuushin === 0 && !shaho && num(last["訪問時間"]) > 0) ? "lend"
+    : (tsuushin > 0 && shaho) ? "variable"   // 社保加入でも手当が出ている人 (当方の既定は 社保加入=0円)
+    : "none";
+  if (e && (e.communication_fee_type ?? "none") !== wantFee) {
+    ops.push({ label: `通信費タイプ ${code} ${name} ${e.communication_fee_type ?? "none"} → ${wantFee} (${rows[rows.length - 1].m} 通信手当 ${tsuushin})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { communication_fee_type: wantFee }) });
+  }
   // 事務時給 (総括表にこの列がある人は事務員。本人給 = 出勤時間 × 事務時給 が 5 か月 5 人すべてで一致)
   const jimu = num(last["事務時給"]);
   if (jimu > 0) {
     if (!e || !e.is_office_worker) ops.push({ label: `事務員に ${code} ${name} (事務時給 ${jimu})`, run: () => write("PATCH", `payroll_employees?id=eq.${id()}`, { is_office_worker: true }) });
     const others = new Set(rows.map((x) => num(x.r["事務時給"])).filter((v) => v > 0));
     if (others.size > 1) notes.push(`${code} ${name}: 事務時給が月で違う ${rows.filter((x) => num(x.r["事務時給"]) > 0).map((x) => `${x.m}=${x.r["事務時給"]}`).join(", ")} (最新月の値を入れる)`);
+    // 事務員は訪問実績が無いので、処遇改善補助金は事業所単価ではなく給与設定の額を使う
+    const jimuSubsidy = num(last["処遇改善補助金手当"]);
     if (e) {
-      const ss = await getAll(`payroll_salary_settings?select=id,effective_from,office_work_hourly_rate&employee_id=eq.${e.id}`);
+      const ss = await getAll(`payroll_salary_settings?select=id,effective_from,office_work_hourly_rate,treatment_subsidy&employee_id=eq.${e.id}`);
       for (const row of ss) {
-        if (row.office_work_hourly_rate === jimu) continue;
-        ops.push({ label: `事務時給 ${code} ${name} ${row.effective_from}〜 ${row.office_work_hourly_rate ?? 0} → ${jimu}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, { office_work_hourly_rate: jimu }) });
+        const patch: Record<string, number> = {};
+        if (row.office_work_hourly_rate !== jimu) patch.office_work_hourly_rate = jimu;
+        if (row.treatment_subsidy !== jimuSubsidy) patch.treatment_subsidy = jimuSubsidy;
+        if (Object.keys(patch).length === 0) continue;
+        const label = Object.entries(patch).map(([k, v]) => `${k === "office_work_hourly_rate" ? "事務時給" : "補助金"} ${row[k] ?? 0} → ${v}`).join(" / ");
+        ops.push({ label: `事務員の給与設定 ${code} ${name} ${row.effective_from}〜 ${label}`, run: () => write("PATCH", `payroll_salary_settings?id=eq.${row.id}`, patch) });
       }
-      if (ss.length === 0) ops.push({ label: `給与設定を作る (事務時給のみ) ${code} ${name} ${jimu}`, run: () => write("POST", "payroll_salary_settings", { employee_id: e.id, effective_from: "1970-01-01", office_work_hourly_rate: jimu }) });
+      if (ss.length === 0) ops.push({ label: `給与設定を作る (事務員) ${code} ${name} 事務時給${jimu} 補助金${jimuSubsidy}`, run: () => write("POST", "payroll_salary_settings", { employee_id: e.id, effective_from: "1970-01-01", office_work_hourly_rate: jimu, treatment_subsidy: jimuSubsidy }) });
     }
   }
 }
