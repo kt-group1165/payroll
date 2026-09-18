@@ -45,14 +45,17 @@ const have = new Map((await getAll("payroll_paid_leave_grants?select=id,employee
   .map((g) => [`${g.employee_id}|${g.grant_date}`, g]));
 
 const rows = [];
+const negatives = [];
 let unmatched = 0;
 const unmatchedList = [];
 for (const g of src) {
   const hits = emps.filter((e) => nn(e.employee_number) === nn(g.employee_number) && nm(e.name) === nm(g.name));
   if (hits.length === 0) { unmatched++; if (unmatchedList.length < 20) unmatchedList.push(`${g.employee_number} ${g.name} (${g.file})`); continue; }
   for (const e of hits) {
-    const row = { employee_id: e.id, grant_date: g.grant_date, carry_days: g.carry ?? 0, grant_days: g.grant ?? null,
-      prev_rate: g.prev ?? null, cur_rate: g.cur ?? null, source: g.file, updated_at: new Date().toISOString() };
+    // 日当がマイナスの人がいる (前年の金額の合計がマイナス。さつき 2025 で -1,084)。払えないので 0 にして数を出す
+    const clamp = (v) => { if (v == null) return null; if (v < 0) { negatives.push(`${g.employee_number} ${g.name} ${g.grant_date} ${v}`); return 0; } return v; };
+    const row = { employee_id: e.id, grant_date: g.grant_date, carry_days: Math.max(0, g.carry ?? 0), grant_days: g.grant ?? null,
+      prev_rate: clamp(g.prev ?? null), cur_rate: clamp(g.cur ?? null), source: g.file, updated_at: new Date().toISOString() };
     const cur = have.get(`${e.id}|${g.grant_date}`);
     if (cur && Number(cur.carry_days) === Number(row.carry_days) && (cur.prev_rate ?? null) === row.prev_rate && (cur.cur_rate ?? null) === row.cur_rate) continue;
     rows.push(row);
@@ -60,6 +63,7 @@ for (const g of src) {
 }
 console.log(`有給ファイルの行 ${src.length} / 書き込み ${rows.length} / 職員が見つからない ${unmatched}`);
 for (const u of unmatchedList) console.log(`  見つからない: ${u}`);
+for (const n of [...new Set(negatives)]) console.log(`  日当がマイナス → 0: ${n}`);
 for (const r of rows.slice(0, 5)) console.log("  例", JSON.stringify(r));
 if (!EXECUTE) { console.log("DRY RUN (--execute で書き込み)"); process.exit(0); }
 for (let i = 0; i < rows.length; i += 500) {
