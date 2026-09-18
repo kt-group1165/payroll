@@ -889,18 +889,24 @@ export default function PayrollPage() {
               let totalSec = 0;
               let totalFullSec = 0;
               let totalCommuteM = 0;
+              const paidTravelSecByDay = new Map<string, number>();
               for (const [date, visits] of dayMap) {
                 const day = calcDayRoute(date, address, visits, distMap);
                 if (day) {
                   totalSec += day.travel_time_sec;
                   totalFullSec += day.travel_time_full_sec;
                   totalCommuteM += day.commute_distance_m;
+                  paidTravelSecByDay.set(date, day.travel_time_sec);
                 }
               }
-              // 出勤簿の無い時給者の残業に 移動時間は足さない (2026-09-19 検証)。
-              //   総括表 2026-07 の 22 名で 旧「残業時間合計」と突合: 訪問のみ = 誤差計 1,340 分 (完全一致 8) /
-              //   訪問 + 移動 = 7,788 分 (完全一致 3)。移動を足すと 大井 +880分・峰 +1,535分 など大きく過大になる。
-              //   旧システムの 出勤 (= 訪問 + 移動) は移動を含むが、残業の判定は訪問時間だけで行っている
+              // 出勤簿の無い時給者の残業 = 訪問時間 + 移動手当の対象時間 (区間ごとの 15 分超過分) で 日8h超 + 週40h超。2026-09-19
+              //   総括表データ (残業時間合計) と 7月21名で突合: 訪問のみ 誤差計1,340分 / 移動全量 7,719分 / ★15分超過分 1,020分。
+              //   旧の移動手当から逆算した移動時間で置き換えると 660分 (峰 +8 / 石本 +6 / 加藤 +7) = 式はこれで、残差は移動時間の見積もり差
+              if ((attByEmpH.get(normNum) ?? []).length === 0) {
+                const m = hourlyOvertimeMinutes(recsByEmpH.get(normNum) ?? [], paidTravelSecByDay);
+                entry.overtime_minutes = m;
+                entry.overtime_pay = hourlyOvertimePayAmount(m);
+              }
               // 出勤簿の無い時給者は 出勤時間 = 訪問 + 移動の全量 (社員と同じ。さつきが丘 2026-07 で総括表と照合)
               entry.summary = {
                 ...entry.summary,

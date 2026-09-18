@@ -843,7 +843,7 @@ export const VISIT_PAY_TIER_HOURS = 1.5;
  * ⚠ 合わない例あり (五井 森朱希 2339 vs 1945 / やわた 石本 3153 vs 3015 / 高品 鈴木一生 230 vs 150)。移動時間を含むか等は未特定。
  */
 export function hourlyOvertimeMinutes(records: { service_date: string; calc_duration: string }[], travelSecByDay?: Map<string, number>): number {
-  // 残業は移動時間も含む (user 2026-09-19)。travelSecByDay があれば その日の移動時間 (全量) を足す
+  // 残業は移動時間も含む (user 2026-09-19)。travelSecByDay があれば その日の 移動手当の対象時間 (15分超過分) を足す
   const day = new Map<string, number>();
   for (const r of records) day.set(r.service_date, (day.get(r.service_date) ?? 0) + parseDurationMinutes(r.calc_duration));
   if (travelSecByDay) for (const [d, sec] of travelSecByDay) if (day.has(d)) day.set(d, day.get(d)! + Math.round(sec / 60));
