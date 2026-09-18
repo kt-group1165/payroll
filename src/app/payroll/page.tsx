@@ -11,7 +11,9 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices } from "@/lib/app-settings";
+import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
+import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
 import {
   computeTenureAllowance,
   computeTenureRate,
@@ -348,7 +350,32 @@ export default function PayrollPage() {
       // 給与形態・役職は その月で有効な給与設定の行から決める (無ければ職員マスタ)。
       // 月の途中で時給 ↔ 月給が切り替わった人の過去月を、その月の形態で計算するため (2026-09-18)
       const employees = employeesRaw.map((e) => ({ ...e, ...resolveEmploymentType(e, salMap.get(e.id)) }));
-      const attRecords = (attRes.data ?? []) as AttendanceRecord[];
+      // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
+      // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
+      let attRecords = (attRes.data ?? []) as AttendanceRecord[];
+      const screenOfficesRes = await getVisitAttendanceScreenOffices(supabase);
+      if (screenOfficesRes.error) throw new Error(`出勤簿の入力元の設定の読み込みに失敗: ${screenOfficesRes.error}`);
+      if (screenOfficesRes.offices.has(selectedOffice.office_number)) {
+        const ym = `${year}-${String(month).padStart(2, "0")}`;
+        const { data: wk, error: wkErr } = await supabase.from("payroll_offices").select("work_week_start").eq("id", selectedOfficeId).maybeSingle();
+        if (wkErr) throw new Error(`週の起算曜日の読み込みに失敗: ${wkErr.message}`);
+        const weekStart = (wk?.work_week_start as number | null) ?? 0;
+        const { start, end } = extendedMonthRange(ym, weekStart);
+        const screenRows: ScreenAttendanceRow[] = [];
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase.from("payroll_kyotaku_attendance_records").select("*")
+            .eq("office_id", selectedOfficeId).gte("work_date", start).lte("work_date", end)
+            .order("id").range(from, from + 999);
+          if (error) throw new Error(`画面入力の出勤簿の読み込みに失敗: ${error.message}`);
+          screenRows.push(...((data ?? []) as ScreenAttendanceRow[]));
+          if (!data || data.length < 1000) break;
+        }
+        attRecords = screenAttendanceToVisitRecords(
+          screenRows,
+          new Map(employeesRaw.map((e) => [e.id, { employee_number: e.employee_number, name: e.name }])),
+          ym, weekStart,
+        ) as unknown as AttendanceRecord[];
+      }
       const ofRecords  = allOfRecords;
       const otMap = new Map((otRes.data ?? []).map((r: OvertimeSetting) => [r.job_type, r]));
       setOtSettings(otMap);

@@ -47,6 +47,19 @@ export async function getMeetingFeeUnpaidOffices(supabase: SupabaseClient): Prom
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
 
+/**
+ * 訪問介護の出勤簿を「画面入力」(kaigo-app の出勤簿) から読む事業所 (事業所番号)。
+ * 入っていない事業所は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) を読む。
+ * 移行中に事業所ごとに切り替えるため (2026-09-18)。
+ */
+export const VISIT_ATTENDANCE_SCREEN_OFFICES_KEY = "visit_attendance_screen_offices";
+
+export async function getVisitAttendanceScreenOffices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", VISIT_ATTENDANCE_SCREEN_OFFICES_KEY).maybeSingle();
+  if (error) return { offices: new Set(), error: error.message };
+  return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
+}
+
 export const JISSEKI_SOURCE_MODE_KEY = "jisseki_source_mode";
 
 export async function getJissekiSourceMode(

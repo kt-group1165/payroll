@@ -13,6 +13,7 @@ import {
 } from "../src/lib/payroll/attendance-calc";
 import { calcOvertimePayBreakdown } from "../src/lib/payroll/overtime-pay-calc";
 import { fillMissingWorkHours } from "../src/lib/csv/attendance-parser";
+import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "../src/lib/payroll/visit-attendance-adapter";
 import type { AttendanceRow } from "../src/types/csv";
 
 let pass = 0;
@@ -259,6 +260,36 @@ eq("★ monthFilter 省略時は 6日分すべて total_work に入る (480*6)",
   // ★ 負のコントロール: 直す前の実装 (何もしない) と違う値になることを示す
   const before = row({ 開始: "9:00", 終了: "18:00", 休憩: "0:00" }).勤務時間;
   eq("★★ 直す前 (0:00) と直した後 (8:00) は違う (=この検査は差を検出できる)", before !== filled({ 開始: "9:00", 終了: "18:00", 休憩: "0:00" }), true);
+}
+
+// ── screenAttendanceToVisitRecords (画面入力の出勤簿 → 訪問介護の給与計算の形。2026-09-18) ──
+{
+  const emps = new Map([["e1", { employee_number: "793", name: "中村 素子" }]]);
+  const row = (o: Partial<ScreenAttendanceRow>): ScreenAttendanceRow => ({
+    employee_id: "e1", work_date: "2026-07-01", start_time: null, end_time: null, break_minutes: 0,
+    is_legal_holiday: false, paid_leave_type: null, substitute_for_date: null, note: null, commute_km: null, business_km: null, ...o,
+  });
+  const one = (o: Partial<ScreenAttendanceRow>) => screenAttendanceToVisitRecords([row(o)], emps, "2026-07")[0];
+  eq("勤務時間 = 終了−開始−休憩 (9:00-18:00 休憩60 → 8:00)", one({ start_time: "09:00:00", end_time: "18:00:00", break_minutes: 60 }).work_hours, "8:00");
+  eq("日残業 = 8h 超 (9:00-19:00 休憩60 → 1:00)", one({ start_time: "09:00", end_time: "19:00", break_minutes: 60 }).overtime_daily, "1:00");
+  eq("★ 境界: ちょうど 8h は日残業なし", one({ start_time: "09:00", end_time: "18:00", break_minutes: 60 }).overtime_daily, "");
+  eq("出勤した日は 開始 が入る (出勤日数に数える)", one({ start_time: "09:00", end_time: "12:00" }).start_time_1, "09:00");
+  eq("有給の日は 勤務摘要=有給・開始なし", [one({ paid_leave_type: "full" }).work_note_1, one({ paid_leave_type: "full" }).start_time_1], ["有給", ""]);
+  eq("半有給は 半日有給", one({ paid_leave_type: "half", start_time: "09:00", end_time: "13:00" }).work_note_1, "半日有給");
+  eq("通勤km・出張km はそのまま", [one({ commute_km: 9.6, business_km: 12 }).commute_km, one({ commute_km: 9.6, business_km: 12 }).business_km], [9.6, 12]);
+  eq("職員番号・日", [one({ work_date: "2026-07-15", start_time: "09:00", end_time: "10:00" }).employee_number, one({ work_date: "2026-07-15" }).day], ["793", 15]);
+  eq("職員マスタに居ない人は出さない", screenAttendanceToVisitRecords([row({ employee_id: "zz" })], emps, "2026-07").length, 0);
+  // 週残業: 日曜始まりの週 (2026-07-05 日 〜 07-11 土) に 6 日 × 8h = 48h → 8h が週残業
+  const week = ["05","06","07","08","09","10"].map((d) => row({ work_date: `2026-07-${d}`, start_time: "09:00", end_time: "18:00", break_minutes: 60 }));
+  const wr = screenAttendanceToVisitRecords(week, emps, "2026-07");
+  eq("週 40h 超の 8h が週残業になる", wr.reduce((s, r) => s + (r.overtime_weekly ? Number(r.overtime_weekly.split(":")[0]) * 60 + Number(r.overtime_weekly.split(":")[1]) : 0), 0), 480);
+  // 月をまたぐ週: 6/28(日)〜7/4(土)。6 月の日は週の計算に使うが、7 月ぶんだけを返す
+  const cross = ["2026-06-29","2026-06-30","2026-07-01","2026-07-02","2026-07-03","2026-07-04"].map((d) => row({ work_date: d, start_time: "09:00", end_time: "18:00", break_minutes: 60 }));
+  const cr = screenAttendanceToVisitRecords(cross, emps, "2026-07");
+  eq("月をまたぐ週: 7 月の 4 日ぶんだけ返す", cr.length, 4);
+  eq("★ 月をまたぐ週: 6 月の 2 日を含めて 40h を超えた 6 日目 (7/4) に 8h の週残業", cr.filter((r) => r.overtime_weekly).map((r) => [r.day, r.overtime_weekly]), [[4, "8:00"]]);
+  // ★ 負のコントロール: 前月の日を渡さないと週残業が出ない (= この検査は月またぎの違いを検出できる)
+  eq("★★ 前月の日を落とすと週残業 0 (差を検出できる)", screenAttendanceToVisitRecords(cross.slice(2), emps, "2026-07").filter((r) => r.overtime_weekly).length, 0);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);
