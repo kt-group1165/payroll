@@ -40,6 +40,8 @@ import {
   monthlyPaidLeaveAllowance,
   legalWithinOvertimeMinutes,
   midMonthWorkDays,
+  paidLeaveAllowanceByGrant,
+  activePaidLeaveGrant,
   prorateMonthlyFixed,
   OFFICE_WORKER_SCHEDULED_HOURS,
   monthlyGrandTotal,
@@ -744,6 +746,19 @@ eq("★★ 土曜は 土日祝では対象・日曜祝日では対象外 (= 2 �
   eq("★ 福山 2026-07: 訪問 15.5h + 115 件 → 24.3h × 2,500 = 60,750 (総括表)", cop(15.5 * 60 + bathVisitCareMinutes(115)), 60750);
   eq("★ 緑川 2026-07: 92.125h + 30 件 = 125.725h → 14,313 (総括表。浮動小数で 14,312 にならない)", cop(92.125 * 60 + bathVisitCareMinutes(30)), 14313);
   eq("★★ 係数 1.1 だと 東條 は 2,500 円 (総括表 4,250) = 係数の違いを検出できる", cop(82.5 * 60 + 35 * 1.1 * 60) !== cop(82.5 * 60 + bathVisitCareMinutes(35)), true);
+}
+
+// ── 有給の付与ごとの日当: 前年度繰越を使い切るまでは前年度の日当 (2026-09-18 user ルール) ──
+{
+  const g = { grant_date: "2026-04-01", carry_days: 20, prev_rate: 997, cur_rate: 624 };
+  eq("★ 保本 2026-08: 繰越 20 日のうち使用 2 日 → 1.5 日 × 前年度 997 = 1,496 (総括表)", paidLeaveAllowanceByGrant(1.5, 2, g, 0), 1496);
+  const m = { grant_date: "2026-04-01", carry_days: 1, prev_rate: 9871, cur_rate: 9877 };
+  eq("★ 松元 繰越 1 日で 4 月 3 日: 1 日 × 9,871 + 2 日 × 9,877 = 29,625 (月の途中で使い切る)", paidLeaveAllowanceByGrant(3, 0, m, 0), 29625);
+  eq("使い切った後は今年度の日当だけ", paidLeaveAllowanceByGrant(2, 1, m, 0), 19754);
+  eq("付与が無ければ 給与設定の単価", paidLeaveAllowanceByGrant(2, 0, null, 500), 1000);
+  eq("日当が両方空なら 給与設定の単価", paidLeaveAllowanceByGrant(1, 0, { grant_date: "2026-04-01", carry_days: 5, prev_rate: null, cur_rate: null }, 700), 700);
+  eq("有効な付与 = 付与日 <= 月末 の最新", activePaidLeaveGrant([{ ...g, grant_date: "2025-04-01" }, g], "2026-03-31")?.grant_date, "2025-04-01");
+  eq("★★ 今年度の日当だけで払うと 保本は 936 円 (総括表 1,496) = 繰越の扱いの差を検出できる", Math.round(1.5 * 624) !== paidLeaveAllowanceByGrant(1.5, 2, g, 0), true);
 }
 
 console.log(`\n合格 ${pass} / ${pass + fail.length}`);

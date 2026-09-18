@@ -161,6 +161,8 @@ export type MonthlyPayroll = {
   care_overtime_lower_tier?: { from_hours: number; unit_price: number } | null;
   /** 有給1日あたりの単価 (職員マスタ 有給単価)。monthlyPaidLeaveAllowance */
   paid_leave_unit_price?: number;
+  /** 付与ごとの日当 (payroll_paid_leave_grants) で計算した有給休暇手当。あれば paid_leave_unit_price より優先 */
+  paid_leave_allowance_override?: number;
   /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
   legal_within_minutes?: number;
   summary: AttendanceSummary;
@@ -426,6 +428,7 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
  * 提責・事務員は有給単価 0 のまま (総括表で有給休暇手当が出ていない)。
  */
 export function monthlyPaidLeaveAllowance(p: MonthlyPayroll): number {
+  if (p.paid_leave_allowance_override !== undefined) return p.paid_leave_allowance_override;
   return paidLeaveAllowanceAmount(paidLeaveDays(p.summary.paidLeave, p.summary.halfLeave), p.paid_leave_unit_price ?? 0);
 }
 
@@ -1140,4 +1143,42 @@ export function prorateMonthlyFixed(s: SalarySettings, workDays: number, isOffic
     specific_treatment_improvement: full(s.specific_treatment_improvement),
     treatment_subsidy: full(s.treatment_subsidy),
   };
+}
+
+// ─── 有給の付与ごとの日当 (payroll_paid_leave_grants。2026-09-18 user ルール) ───
+//
+// 1 日単価は Box 03_有給 の個人シートの「今年度日当」。付与日から 前年度繰越日数 を使い切るまでは
+// 前年度の日当、使い切ったら今年度の日当。月の途中で使い切ったら 日数で分けて両方。
+// 総括表 2026-04〜07 全事業所: 予想が外れたのは 510 件中 2 件 (花見川 保本 繰越20日 → 8月も前年度 997円)。
+
+export type PaidLeaveGrant = { grant_date: string; carry_days: number; prev_rate: number | null; cur_rate: number | null };
+
+/** その月で有効な付与 (付与日 <= 月末 のうち最新)。monthEnd は 'YYYY-MM-DD' */
+export function activePaidLeaveGrant<T extends PaidLeaveGrant>(grants: T[], monthEnd: string): T | null {
+  let best: T | null = null;
+  for (const g of grants) if (g.grant_date <= monthEnd && (!best || g.grant_date > best.grant_date)) best = g;
+  return best;
+}
+
+/**
+ * 有給休暇手当 (付与ごとの日当)。
+ * @param days        当月の有給日数 (半休は 0.5)
+ * @param usedBefore  付与日から前月までに使った有給日数
+ * @param fallbackRate 付与が無い / 日当が空のときの単価 (給与設定・職員マスタの有給単価)
+ */
+export function paidLeaveAllowanceByGrant(days: number, usedBefore: number, g: PaidLeaveGrant | null, fallbackRate: number): number {
+  if (days <= 0) return 0;
+  if (!g || (g.cur_rate == null && g.prev_rate == null)) return Math.round(days * fallbackRate);
+  const cur = g.cur_rate ?? fallbackRate;
+  const prev = g.prev_rate ?? cur;
+  const oldDays = Math.min(days, Math.max(0, (g.carry_days ?? 0) - usedBefore));
+  return Math.round(oldDays * prev + (days - oldDays) * cur);
+}
+
+/** 事業所書式の有給日数 (有給 + 半有給 × 0.5)。computeSummary と同じ数え方 */
+export function officeFormPaidLeaveDays(ofRecs: OfficeFormRecord[]): number {
+  const cnt = (r: OfficeFormRecord) => (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : listedDateCount(r.item_date));
+  const full = ofRecs.filter((r) => r.item_name.includes("有給") && !r.item_name.includes("半")).reduce((s, r) => s + cnt(r), 0);
+  const half = ofRecs.filter((r) => r.item_name.includes("半有給")).reduce((s, r) => s + cnt(r), 0);
+  return paidLeaveDays(full, half);
 }

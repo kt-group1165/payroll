@@ -41,7 +41,6 @@ import {
   meetingMinutes,
   treatmentSubsidyAmount,
   cancelAllowanceFromCodes,
-  paidLeaveAllowanceAmount,
   communicationFeeAmount,
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
@@ -60,6 +59,10 @@ import {
   employeeWorkMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
+  activePaidLeaveGrant,
+  paidLeaveAllowanceByGrant,
+  officeFormPaidLeaveDays,
+  type PaidLeaveGrant,
   prorateMonthlyFixed,
   computeSummary,
   type OvertimeSetting,
@@ -526,6 +529,53 @@ export default function PayrollPage() {
       const meetingUnitPriceOf = (officeId: string) =>
         officeByIdMap.get(officeId)?.meeting_unit_price ?? 0;
 
+      // ── 有給の付与ごとの日当 (payroll_paid_leave_grants。2026-09-18) ──
+      // 付与日から 前年度繰越 を使い切るまでは前年度の日当、以降は今年度の日当。
+      // 前月までの使用日数は 事業所書式 (付与月〜前月) の有給から数える
+      const grantByEmpId = new Map<string, PaidLeaveGrant>();
+      const usedBeforeByNum = new Map<string, number>();
+      {
+        const empIds = employees.map((e) => e.id);
+        const grants: (PaidLeaveGrant & { employee_id: string })[] = [];
+        for (let i = 0; i < empIds.length; i += 150) {
+          const { data, error } = await supabase.from("payroll_paid_leave_grants")
+            .select("employee_id,grant_date,carry_days,prev_rate,cur_rate").in("employee_id", empIds.slice(i, i + 150));
+          if (error) throw new Error(`有給の付与の取得に失敗: ${error.message}`);
+          grants.push(...((data ?? []) as (PaidLeaveGrant & { employee_id: string })[]));
+        }
+        const byEmp = new Map<string, (PaidLeaveGrant & { employee_id: string })[]>();
+        for (const g of grants) byEmp.set(g.employee_id, [...(byEmp.get(g.employee_id) ?? []), g]);
+        for (const [id, gs] of byEmp) {
+          const g = activePaidLeaveGrant(gs, _monthEnd);
+          if (g) grantByEmpId.set(id, g);
+        }
+        const firstMonth = [...grantByEmpId.values()].map((g) => g.grant_date.slice(0, 7).replace("-", "")).sort()[0];
+        if (firstMonth && firstMonth < selectedMonth) {
+          const prevRecs: OfficeFormRecord[] = [];
+          for (let from = 0; ; from += 1000) {
+            const { data, error } = await supabase.from("payroll_office_form_records")
+              .select("employee_number,processing_month,record_type,item_name,item_date,numeric_value")
+              .eq("office_number", selectedOffice.office_number)
+              .gte("processing_month", firstMonth).lt("processing_month", selectedMonth)
+              .like("item_name", "%有給%")
+              .order("id").range(from, from + 999);
+            if (error) throw new Error(`前月までの有給の取得に失敗: ${error.message}`);
+            prevRecs.push(...((data ?? []) as unknown as OfficeFormRecord[]));
+            if (!data || data.length < 1000) break;
+          }
+          for (const e of employees) {
+            const g = grantByEmpId.get(e.id);
+            if (!g) continue;
+            const gm = g.grant_date.slice(0, 7).replace("-", "");
+            const num = normEmp(e.employee_number);
+            const mine = prevRecs.filter((r) => normEmp(r.employee_number) === num && (r as OfficeFormRecord & { processing_month: string }).processing_month >= gm);
+            usedBeforeByNum.set(num, officeFormPaidLeaveDays(mine));
+          }
+        }
+      }
+      const paidLeaveAllowanceOf = (empId: string, empNum: string, days: number, fallbackRate: number): number =>
+        paidLeaveAllowanceByGrant(days, usedBeforeByNum.get(empNum) ?? 0, grantByEmpId.get(empId) ?? null, fallbackRate);
+
       // 時給者
       const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
         name: e.name,
@@ -574,7 +624,7 @@ export default function PayrollPage() {
         });
         const cancelCount = cancelRecs.length;
         const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0);
-        const paidLeaveAllowance = paidLeaveAllowanceAmount(paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
+        const paidLeaveAllowance = paidLeaveAllowanceOf(info.empId, empNum, paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
         const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
@@ -875,6 +925,9 @@ export default function PayrollPage() {
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
+            paid_leave_allowance_override: grantByEmpId.has(e.id)
+              ? paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0)
+              : undefined,
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,
             summary,
           };
