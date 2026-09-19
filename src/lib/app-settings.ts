@@ -163,3 +163,16 @@ export async function setJissekiSourceMode(
   });
   return error ? error.message : null;
 }
+
+/**
+ * 固定残業代を超えた残業代を払う提責 (2026-09-19)。{ "<事業所番号>": ["<社員番号>", ...] }
+ * 提責は原則 超過分を払わない (総括表「提責・事務」= 3 の 96 名) が、区分 1 の人は 超過分を払う
+ * (大網 髙橋久江 2026-07: 残業代 69,686 − 固定 50,000 = 19,686 / 八千代 田中恵 2026-05: 298)。
+ */
+export const OVERTIME_EXCESS_PAID_KEY = "overtime_excess_paid_employees";
+export async function getOvertimeExcessPaidEmployees(supabase: SupabaseClient): Promise<{ keys: Set<string>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", OVERTIME_EXCESS_PAID_KEY).maybeSingle();
+  if (error) return { keys: new Set(), error: error.message };
+  const v = (data?.value as Record<string, string[]> | null) ?? {};
+  return { keys: new Set(Object.entries(v).flatMap(([off, nums]) => nums.map((n) => `${off}|${String(n).replace(/^0+/, "")}`))), error: null };
+}

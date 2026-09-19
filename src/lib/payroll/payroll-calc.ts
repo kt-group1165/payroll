@@ -165,6 +165,8 @@ export type MonthlyPayroll = {
   paid_leave_unit_price?: number;
   /** 調整手当・過誤 (月ごとの手入力 adjustment。マイナス可) */
   adjustment?: number;
+  /** 提責でも 固定残業代を超えた分を払う人 (payroll_app_settings overtime_excess_paid_employees) */
+  overtime_excess_paid?: boolean;
   /** 深夜の時間 (時間)。夜朝手当に × 500 円で足す */
   shinya_hours?: number;
   /** 欠勤日数 (半欠勤は 0.5)。出勤簿があれば出勤簿、無ければ事業所書式 */
@@ -417,7 +419,7 @@ export const COMMUTE_KM_AS_YEN_DAILY = 200;
 export const NO_OVERTIME_EXCESS_ROLES = new Set(["提責", "管理者"]);
 
 export function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number {
-  if (NO_OVERTIME_EXCESS_ROLES.has(p.role_type)) return 0;
+  if (NO_OVERTIME_EXCESS_ROLES.has(p.role_type) && !p.overtime_excess_paid) return 0;
   // 社員は 残業代 − 「120h介護超過手当+深夜手当」 (総括表「残業総額_new」)。2026-09-19 旧 CSV (提責_社員) で確定:
   //   差し引く額 = (訪問時間 − 120h) × 介護超過単価 + 深夜手当。訪問時間は 同行込み・0.75 換算や入浴件数を入れない生の時間
   //   (中島 121:15 → 1:15×2,500 = 3,125 / 根本 120:30 → 1,250 + 深夜 250 = 1,500 / 峯島 157h → 92,500 + 13,500)。
