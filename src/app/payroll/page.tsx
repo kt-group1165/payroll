@@ -446,6 +446,50 @@ export default function PayrollPage() {
         ofByEmp.get(key)!.push(r);
       }
 
+      // ── 勤続月数: 基準月より後は 稼働 (実績 or 出勤簿の出勤) のあった月だけ足す (2026-09-19 user「稼働がないと月数が増えない」) ──
+      //   総括表 2026-03〜07 で 当方が高く出ていた人 (山武 石坂 5年以上/総括表 5年未満、ちはら台 戸谷・東郷 長谷川・おゆみ野 熊谷 1年以上/総括表 1年未満)
+      //   基準月より後に 記録が 1 件も無い人 (出勤簿が見つからない人など) は 判断できないので 従来どおり全月を足す
+      const workedMonthsAfterBase = new Map<string, number>();
+      {
+        const months: string[] = [];
+        for (let ym = TENURE_BASE_YEAR * 12 + TENURE_BASE_MONTH; ym < year * 12 + month; ym++) {
+          const y = Math.floor(ym / 12), m = ym % 12 + 1; // ym+1 を表す (基準月の翌月から)
+          months.push(`${y}${String(m).padStart(2, "0")}`);
+        }
+        const add = (num: string, ymKey: string, seen: Map<string, Set<string>>) => {
+          if (!seen.has(num)) seen.set(num, new Set());
+          seen.get(num)!.add(ymKey);
+        };
+        const seen = new Map<string, Set<string>>();
+        for (const ym of months) {
+          if (ym === selectedMonth) {
+            for (const [num, rs] of recsByEmp) if (rs.length > 0) add(num, ym, seen);
+            for (const [num, as] of attByEmp) if (as.some((a) => String(a.start_time_1 ?? "").trim())) add(num, ym, seen);
+            continue;
+          }
+          for (let from = 0; ; from += 1000) {
+            const { data, error } = await supabase.from("payroll_service_records").select("employee_number")
+              .eq("processing_month", ym).eq("office_number", selectedOffice.office_number).order("id").range(from, from + 999);
+            if (error) throw new Error(`勤続月数用の実績の読み込みに失敗しました (もう一度計算してください): ${error.message}`);
+            for (const r of (data ?? []) as { employee_number: string }[]) add(normEmp(r.employee_number), ym, seen);
+            if (!data || data.length < 1000) break;
+          }
+          for (let from = 0; ; from += 1000) {
+            const { data, error } = await supabase.from("payroll_attendance_records").select("employee_number,start_time_1")
+              .eq("year", Number(ym.slice(0, 4))).eq("month", Number(ym.slice(4))).eq("office_number", selectedOffice.office_number)
+              .neq("start_time_1", "").order("id").range(from, from + 999);
+            if (error) throw new Error(`勤続月数用の出勤簿の読み込みに失敗しました (もう一度計算してください): ${error.message}`);
+            for (const r of (data ?? []) as { employee_number: string }[]) add(normEmp(r.employee_number), ym, seen);
+            if (!data || data.length < 1000) break;
+          }
+        }
+        for (const [num, set] of seen) workedMonthsAfterBase.set(num, set.size);
+      }
+      const tenureMonthsOf = (e: { employee_number: string | number; effective_service_months?: number | null }) => {
+        const worked = workedMonthsAfterBase.get(normEmp(e.employee_number));
+        return worked === undefined ? adjustedMonths(e.effective_service_months ?? 0) : Math.max(0, (e.effective_service_months ?? 0) + worked);
+      };
+
       // ── 月の途中で 時給 ↔ 月給 が切り替わる人 (2026-09-18 user ルール) ──
       // 給与設定の適用開始日を月の途中の日付 (例 2026-03-20) にすると、その月は
       //   その日より前 = 切替前の形態 / その日以降 = 切替後の形態 で、実績・出勤簿を分けて 2 行で計算する。
@@ -646,7 +690,7 @@ export default function PayrollPage() {
         salary: e.salary_type,
         hasQual: e.has_care_qualification ?? false,
         jobType: e.job_type ?? "",
-        serviceMonths: adjustedMonths(e.effective_service_months ?? 0),
+        serviceMonths: tenureMonthsOf(e),
         empId: e.id,
         officeId: e.office_id,
         socialInsurance: socialInsuranceByNum.get(normEmp(e.employee_number)) ?? e.social_insurance ?? false,
@@ -954,7 +998,7 @@ export default function PayrollPage() {
           // 勤続手当: tenure_allowance_auto=true (default) なら自動計算、false なら手動入力値
           const computedTenure = computeTenureAllowance(
             e.has_care_qualification ?? false,
-            adjustedMonths(e.effective_service_months ?? 0),
+            tenureMonthsOf(e),
             "月給",
             e.job_type ?? "",
             0, 0, 0
