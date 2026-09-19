@@ -73,6 +73,7 @@ import {
   trainingMinutes,
   shoninshaTrainingMinutes,
   hourlyOvertimeMinutes,
+  payMinutesOf,
   trainingMinutesByDay,
   hourlyOvertimePayAmount,
   trainingPayAmount,
@@ -486,6 +487,8 @@ eq("★ 半有給1回 × 8,635円 = 4,318円 (森幸代 2026-06 総括表)", pai
     eq("時給者残業: 別の日の移動は足さない", hourlyOvertimeMinutes([r("2026/07/01", "007:50")], new Map([["2026/07/02", 900]])), 0);
     eq("★ 会議件数の欄に金額 1500 → 1,500円 (件数×単価にしない。八千代 2026-06)", computeMeetingFee([{ record_type: "km", item_name: "会議1件数", numeric_value: 1500 } as never], 1500), 1500);
     eq("会議件数 2 → 2×単価", computeMeetingFee([{ record_type: "km", item_name: "会議1件数", numeric_value: 2 } as never], 1500), 3000);
+    eq("★ 本人給の時間: 44分 → 45分 (5分単位に切り上げ)", payMinutesOf(44), 45);
+    eq("本人給の時間: 45分はそのまま / 0分は0", [payMinutesOf(45), payMinutesOf(0)], [45, 0]);
     eq("★ 通勤: km 92 × 12.7 + 金額欄の入力ミス 22,816円 → 1168+22816", hourlyCommuteFeeAmount(92, 12.7, 22816), 1168 + 22816);
     eq("★ 時給者残業: 研修の時間を日に足す 7h+研修1h30 → 30分", hourlyOvertimeMinutes([r("2026/07/08", "007:00")], undefined, new Map([["2026/07/08", 90]])), 30);
     eq("★ 研修の日付: 7月8日 20:00-22:30 → 2026/07/08 に 150分", trainingMinutesByDay([{ record_type: "training", item_name: "HRD研修", item_date: "7月8日", start_time: "20:00", end_time: "22:30", break_time: null } as never], "202607").get("2026/07/08"), 150);

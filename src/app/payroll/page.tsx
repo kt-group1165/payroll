@@ -49,6 +49,7 @@ import {
   paidLeaveDays,
   trainingMinutes,
   hourlyOvertimeMinutes,
+  payMinutesOf,
   trainingMinutesByDay,
   legalWithinOvertimeMinutes,
   monthlyPaidLeaveAllowance,
@@ -810,7 +811,9 @@ export default function PayrollPage() {
           : sougouRate !== undefined && longRate !== null ? sougouRate
           : longRate !== null && shortRate !== undefined && minutes <= 90 ? shortRate : longRate;
         const overflowRate = officeId && lifeSupportCategoryId ? (rateMap.get(`${officeId}:${lifeSupportCategoryId}`) ?? null) : null;
-        const pay        = visitPayAmount(minutes, hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
+        // 本人給は 1 回の訪問時間を 5 分単位に切り上げて払う (2026-09-19。姉ム 竹内 44分→45分 ×3件 = 78円 / 姉ム 小岩 59→60 = 35円 /
+        //   おゆみ野 澤木 72→75 = 131円 が 総括表の差と一致)。時間の集計 (介護超過・残業など) は切り上げない
+        const pay        = visitPayAmount(payMinutesOf(minutes), hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;

@@ -927,6 +927,11 @@ export function timePeriodMultiplier(timePeriod: string | null | undefined): num
   if (/夜朝|夜間|早朝/.test(t)) return 1.25;
   return 1;
 }
+/** 本人給を払う時間 = 1 回の訪問時間を 5 分単位に切り上げたもの (総括表 2026-06 の 3 名で確認) */
+export function payMinutesOf(minutes: number): number {
+  return minutes > 0 ? Math.ceil(minutes / 5) * 5 : minutes;
+}
+
 export function visitPayAmount(
   minutes: number,
   hourlyRate: number | null,
