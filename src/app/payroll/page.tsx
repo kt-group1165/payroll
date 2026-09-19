@@ -773,7 +773,10 @@ export default function PayrollPage() {
       const monthlyTravelSecByDay = new Map<string, Map<string, number>>();
       {
         const visitCareEmps = employees.filter(
-          (e) => e.job_type === "訪問介護" && e.address?.trim() &&
+          // 住所が空の職員も対象にする (2026-09-19)。移動手当・移動時間は 訪問と訪問の間の区間だけで決まり自宅は要らない
+          //   (旧システムの Gmap結果も 前の利用者→利用者 の区間だけ)。住所が空だと 26xx 入社の新人など 7月だけで 56名 81,400円 が 0 になっていた。
+          //   自宅の区間は collectAddressPairs / calcDayRoute が空の住所を飛ばす
+          (e) => e.job_type === "訪問介護" &&
             (e.salary_type === "時給" || switchByNum.has(normEmp(e.employee_number)) || (e.salary_type === "月給" && (attByEmp.get(normEmp(e.employee_number)) ?? []).length === 0))
         );
         if (visitCareEmps.length > 0) {
@@ -823,7 +826,7 @@ export default function PayrollPage() {
                 dispatch_end_time: rec.dispatch_end_time,
               });
             }
-            if (dayMap.size > 0) byEmpNum.set(normNum, { address: emp.address, dayMap });
+            if (dayMap.size > 0) byEmpNum.set(normNum, { address: emp.address ?? "", dayMap });
           }
 
           const allPairs: { origin: string; destination: string }[] = [];
