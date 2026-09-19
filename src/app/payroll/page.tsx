@@ -12,7 +12,7 @@ import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-da
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -996,6 +996,8 @@ export default function PayrollPage() {
       }
       const overtimeExcessPaidRes = await getOvertimeExcessPaidEmployees(supabase);
       if (overtimeExcessPaidRes.error) throw new Error(`固定残業の超過を払う提責の設定の読み込みに失敗: ${overtimeExcessPaidRes.error}`);
+      const offsetFullCareRes = await getOvertimeOffsetFullCareOffices(supabase);
+      if (offsetFullCareRes.error) throw new Error(`残業代から介護超過を差し引く事業所の設定の読み込みに失敗: ${offsetFullCareRes.error}`);
       // 月給者
       const monthlyEmps = employees.filter(
         (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
@@ -1080,6 +1082,7 @@ export default function PayrollPage() {
             yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,
             overtime_excess_paid: overtimeExcessPaidRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`),
+            overtime_offset_full_care: offsetFullCareRes.offices.has(selectedOffice.office_number),
             shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)

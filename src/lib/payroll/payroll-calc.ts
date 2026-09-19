@@ -167,6 +167,8 @@ export type MonthlyPayroll = {
   adjustment?: number;
   /** 提責でも 固定残業代を超えた分を払う人 (payroll_app_settings overtime_excess_paid_employees) */
   overtime_excess_paid?: boolean;
+  /** 残業代から 介護超過の支払額 (入浴・HRD 込み) をそのまま差し引く事業所 (茂原) */
+  overtime_offset_full_care?: boolean;
   /** 深夜の時間 (時間)。夜朝手当に × 500 円で足す */
   shinya_hours?: number;
   /** 欠勤日数 (半欠勤は 0.5)。出勤簿があれば出勤簿、無ければ事業所書式 */
@@ -431,6 +433,7 @@ export function overtimeExcessPay(p: MonthlyPayroll, otSettings: Map<string, Ove
 /** 社員の残業代から差し引く額 = (訪問時間 − 閾値) × 介護超過単価 + 深夜手当 (総括表「120h介護超過手当+深夜手当」) */
 export function careOvertimeOffsetForOvertime(p: MonthlyPayroll): number {
   const s = p.settings;
+  if (p.overtime_offset_full_care) return careOvertimePay(p) + Math.round(Math.max(0, p.shinya_hours ?? 0) * SHINYA_UNIT_PRICE);
   if (!s || s.care_overtime_threshold_hours <= 0 || s.care_overtime_unit_price <= 0) return 0;
   const overMin = Math.max(0, (p.summary.visitMinutes ?? 0) - s.care_overtime_threshold_hours * 60);
   return Math.round(Number(((overMin / 60) * s.care_overtime_unit_price).toFixed(6)))

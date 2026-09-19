@@ -176,3 +176,15 @@ export async function getOvertimeExcessPaidEmployees(supabase: SupabaseClient): 
   const v = (data?.value as Record<string, string[]> | null) ?? {};
   return { keys: new Set(Object.entries(v).flatMap(([off, nums]) => nums.map((n) => `${off}|${String(n).replace(/^0+/, "")}`))), error: null };
 }
+
+/**
+ * 社員の残業代から「支払う介護超過手当の全額 (入浴時間・HRD 込み) + 深夜手当」を差し引く事業所 (2026-09-19)。{ offices: ["<事業所番号>"] }
+ * 既定は (生の訪問時間 − 120h) × 単価 + 深夜手当。リンクス茂原の総括表は 差し引き = 介護超過の支払額 と同額
+ * (寺内 2026-06: 生 76,042 + HRD 1h 2,500 = 78,542 / HO 2026-07: 入浴 2,310分 + HRD 込みで 107,292)。
+ */
+export const OVERTIME_OFFSET_FULL_CARE_OFFICES_KEY = "overtime_offset_full_care_offices";
+export async function getOvertimeOffsetFullCareOffices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", OVERTIME_OFFSET_FULL_CARE_OFFICES_KEY).maybeSingle();
+  if (error) return { offices: new Set(), error: error.message };
+  return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
+}
