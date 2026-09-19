@@ -110,6 +110,7 @@ type Employee = {
   salary_type: string;
   employment_status: string;
   has_care_qualification: boolean;
+  care_qualification_from?: string | null;
   job_type: string;
   effective_service_months: number;
   office_id: string;
@@ -315,7 +316,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
           .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
         fetchAllSalarySettings(),
@@ -485,6 +486,10 @@ export default function PayrollPage() {
         }
         for (const [num, set] of seen) workedMonthsAfterBase.set(num, set.size);
       }
+      // 勤続手当の資格要件: care_qualification_from があれば その日が処理月の末日以前のときだけ (途中で資格を取った人。2026-09-19)
+      const monthEndIso = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+      const qualifiedInMonth = (e: { has_care_qualification?: boolean | null; care_qualification_from?: string | null }) =>
+        (e.has_care_qualification ?? false) && (!e.care_qualification_from || e.care_qualification_from <= monthEndIso);
       const tenureMonthsOf = (e: { employee_number: string | number; effective_service_months?: number | null }) => {
         const worked = workedMonthsAfterBase.get(normEmp(e.employee_number));
         return worked === undefined ? adjustedMonths(e.effective_service_months ?? 0) : Math.max(0, (e.effective_service_months ?? 0) + worked);
@@ -688,7 +693,7 @@ export default function PayrollPage() {
         name: e.name,
         role: e.role_type,
         salary: e.salary_type,
-        hasQual: e.has_care_qualification ?? false,
+        hasQual: qualifiedInMonth(e),
         jobType: e.job_type ?? "",
         serviceMonths: tenureMonthsOf(e),
         empId: e.id,
@@ -997,7 +1002,7 @@ export default function PayrollPage() {
           const roleM = sw && sw.hourlyBefore ? resolveEmploymentType(e, sw.postRow).role_type : e.role_type;
           // 勤続手当: tenure_allowance_auto=true (default) なら自動計算、false なら手動入力値
           const computedTenure = computeTenureAllowance(
-            e.has_care_qualification ?? false,
+            qualifiedInMonth(e),
             tenureMonthsOf(e),
             "月給",
             e.job_type ?? "",
