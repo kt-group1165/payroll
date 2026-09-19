@@ -77,6 +77,8 @@ export type AttendanceSummary = {
   hrdMinutes: number;
   meetingCount: number;
   commuteKmTotal: number;
+  /** 通勤km の欄に 金額 (円) が入っていた分 (入力ミス)。km に単価を掛けず そのまま円で払う (2026-09-19) */
+  commuteYenTotal?: number;
   businessKmTotal: number;
   weekendHolidayMinutes: number;
   weekendHolidayAccompaniedMinutes: number;
@@ -404,8 +406,12 @@ export function travelFeeAmount(p: MonthlyPayroll): number {
 }
 
 export function commuteFeeAmount(p: MonthlyPayroll): number {
-  return Math.round(p.summary.commuteKmTotal * p.office_commute_unit_price);
+  return Math.round(p.summary.commuteKmTotal * p.office_commute_unit_price) + Math.round(p.summary.commuteYenTotal ?? 0);
 }
+
+/** 通勤km の欄の値がこれ以上なら km ではなく 金額 (円) の入力ミスとみなす (書式=月の合計 / 出勤簿=1日) */
+export const COMMUTE_KM_AS_YEN_MONTHLY = 2000;
+export const COMMUTE_KM_AS_YEN_DAILY = 200;
 
 /** 提責・管理者は固定残業代を超える残業代を払わない (総括表: さつきが丘 提責3名 2026-04〜07、高品 千葉弘美 2026-07 で確認) */
 export const NO_OVERTIME_EXCESS_ROLES = new Set(["提責", "管理者"]);
@@ -815,8 +821,8 @@ export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes
 }
 
 /** 通勤費 (時給者) */
-export function hourlyCommuteFeeAmount(commuteKmTotal: number, commuteUnitPrice: number): number {
-  return Math.round(commuteKmTotal * commuteUnitPrice);
+export function hourlyCommuteFeeAmount(commuteKmTotal: number, commuteUnitPrice: number, commuteYenTotal = 0): number {
+  return Math.round(commuteKmTotal * commuteUnitPrice) + Math.round(commuteYenTotal);
 }
 
 /** 出張費 (時給者) */
@@ -1174,11 +1180,19 @@ export function computeSummary(
   //   事務員 = 書式優先 / 提責など = 出勤簿優先。どちらも 空・0 ならもう一方を使う。
   // 参考 (総括表 2026-04〜07 の提責): 両方が違うのは 4 件で、いずれも書式の値で一致していた
   // (高品 福田 出勤簿0→書式69 / 君津 森田 14.4→61.2 / ちはら台 鎗田 988→1020.6)。出勤簿優先はこの 4 件がずれる
-  const commuteKmFromAtt = attDays.reduce((s, r) => s + ((r as unknown as { commute_km?: number }).commute_km ?? 0), 0);
-  const commuteKmFromOf = ofRecs.filter((r) => r.item_name === "通勤km").reduce((s, r) => s + (Number(r.numeric_value) || 0), 0);
-  const commuteKmTotal = commuteSource === "office_form_first"
-    ? (commuteKmFromOf > 0 ? commuteKmFromOf : commuteKmFromAtt)
-    : (commuteKmFromAtt > 0 ? commuteKmFromAtt : commuteKmFromOf);
+  // ⚠ 通勤km の欄に 金額 (円) を入れた入力ミスがある (2026-09-19)。総括表は その値をそのまま円で払っている:
+  //   船橋 金子 事業所書式 3〜7月 21,390〜25,668 (月の km としてありえない) / やわた 熊谷 2026-04 出勤簿 1日 460 (往復の運賃) × 15日
+  //   → 書式は 月 COMMUTE_KM_AS_YEN_MONTHLY 以上、出勤簿は 1日 COMMUTE_KM_AS_YEN_DAILY 以上 を 金額 とみなす
+  const attCommute = attDays.map((r) => (r as unknown as { commute_km?: number }).commute_km ?? 0);
+  const commuteKmFromAtt = attCommute.filter((v) => v < COMMUTE_KM_AS_YEN_DAILY).reduce((s, v) => s + v, 0);
+  const commuteYenFromAtt = attCommute.filter((v) => v >= COMMUTE_KM_AS_YEN_DAILY).reduce((s, v) => s + v, 0);
+  const ofCommute = ofRecs.filter((r) => r.item_name === "通勤km").map((r) => Number(r.numeric_value) || 0);
+  const commuteKmFromOf = ofCommute.filter((v) => v < COMMUTE_KM_AS_YEN_MONTHLY).reduce((s, v) => s + v, 0);
+  const commuteYenFromOf = ofCommute.filter((v) => v >= COMMUTE_KM_AS_YEN_MONTHLY).reduce((s, v) => s + v, 0);
+  const attAny = commuteKmFromAtt + commuteYenFromAtt > 0, ofAny = commuteKmFromOf + commuteYenFromOf > 0;
+  const useOf = commuteSource === "office_form_first" ? (ofAny || !attAny) : (!attAny && ofAny);
+  const commuteKmTotal = useOf ? commuteKmFromOf : commuteKmFromAtt;
+  const commuteYenTotal = useOf ? commuteYenFromOf : commuteYenFromAtt;
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
   const weekendHolidayMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
@@ -1192,7 +1206,7 @@ export function computeSummary(
     .filter((r) => isSundayOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes };
+  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, commuteYenTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes };
 }
 
 // ─── 月の途中で 時給 ↔ 月給 が切り替わる人 (2026-09-18 user ルール) ───

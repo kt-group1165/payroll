@@ -691,7 +691,7 @@ export default function PayrollPage() {
         const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
         const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
-        const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0);
+        const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
         // 出張距離: 事業所書式の「出張km」を優先 (無ければ出勤簿の出張km)。2026-09-17 user 方針: 地図の距離は使わない
         const ofTripKm = (ofByEmp.get(empNum) ?? [])
           .filter((r) => r.record_type === "km" && r.item_name === "出張km")
