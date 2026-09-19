@@ -926,6 +926,7 @@ export default function PayrollPage() {
       setProgress({ pct: 92, label: "月給者を計算中" });
       // 月ごとの手入力 (payroll_monthly_inputs)。入浴件数は 社員の介護超過の時間に 件数 × 1.12h を足す (2026-09-18)
       const bathCountByEmp = new Map<string, number>();
+      const bathMinutesByEmp = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
@@ -933,6 +934,8 @@ export default function PayrollPage() {
         if (error) throw new Error(`月ごとの手入力の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "bath_visit_count") bathCountByEmp.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
+          // 入浴時間 (分) はそのまま足す (リンクス茂原 総括表「入浴時間」。木村 2026-03: 8,440 + 1,500 分 → 45.67h × 2,500 = 114,167)
+          if (r.item_key === "bath_minutes") bathMinutesByEmp.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
         }
       }
       // 月給者
@@ -1023,7 +1026,8 @@ export default function PayrollPage() {
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],
               care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + hrdTrainingMinutes(empOfRecs)
-              + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
+              + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0)
+              + Math.max(0, bathMinutesByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             // 欠勤日数: 出勤簿があれば出勤簿の「欠勤」(半欠勤 0.5)、無ければ事業所書式 (東郷 戸田 2026-03 は出勤簿で 4 日 = 総括表)

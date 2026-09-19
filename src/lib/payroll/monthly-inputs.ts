@@ -12,6 +12,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "bath_minutes",
+    label: "入浴時間",
+    unit: "分",
+    help: "社員の介護超過の時間にそのまま足す (リンクス茂原の総括表「入浴時間」)",
+    allowNegative: false,
+  },
+  {
     key: "adjustment",
     label: "調整手当・過誤",
     unit: "円",
