@@ -781,30 +781,31 @@ export default function PayrollPage() {
         );
         if (visitCareEmps.length > 0) {
           // payroll_clients は 1 事業所で 1000 行を超え得るため paginate
-          const clientData: { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }[] = [];
+          const clientData: { client_number: string; address: string; map_address: string | null; map_latitude: number | null; map_longitude: number | null }[] = [];
           {
             const PAGE = 1000;
             let cFrom = 0;
             while (true) {
               const { data, error } = await supabase
                 .from("payroll_clients")
-                .select("client_number,address,map_latitude,map_longitude")
+                .select("client_number,address,map_address,map_latitude,map_longitude")
                 .eq("office_id", selectedOfficeId)
                 .order("id").range(cFrom, cFrom + PAGE - 1);
               // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
               if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
               if (!data || data.length === 0) break;
-              clientData.push(...(data as { client_number: string; address: string; map_latitude: number | null; map_longitude: number | null }[]));
+              clientData.push(...(data as { client_number: string; address: string; map_address: string | null; map_latitude: number | null; map_longitude: number | null }[]));
               if (data.length < PAGE) break;
               cFrom += PAGE;
             }
           }
-          // マップ用座標が設定されていればそちらを優先（"lat,lng" 文字列としてDistance Matrix APIに渡せる）
+          // マップ用座標 → 地図用住所 (map_address) → 登録住所 の順 (座標は "lat,lng" 文字列として Distance Matrix API に渡せる)
+          // map_address = 登録住所と訪問場所が違う利用者 (旧システムの MAP住所。おゆみ野 2113113372 東金市 → 川戸町のグループホーム。2026-09-19)
           const clientMap = new Map(
             clientData.map((c) => {
               const addr = (c.map_latitude != null && c.map_longitude != null)
                 ? `${c.map_latitude},${c.map_longitude}`
-                : c.address;
+                : (c.map_address?.trim() || c.address);
               return [c.client_number, addr];
             })
           );
