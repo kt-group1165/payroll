@@ -507,15 +507,14 @@ export default function PayrollPage() {
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
       const childcareRecs = ofRecords.filter((r) => r.record_type === "childcare");
-      // visitMinutesByEmpMonth: key = "empNum:YYYYMM", value = visitMinutesExcludingAccompanied
+      // visitMinutesByEmpMonth: key = "empNum:YYYYMM", value = その月の訪問時間 (同行込み)
       const visitMinutesByEmpMonth = new Map<string, number>();
       // まず現在の処理月のデータをセット
       for (const emp of employees) {
         const normNum = normEmp(emp.employee_number);
         const empRecs = recsByEmp.get(normNum) ?? [];
-        const visitMin = empRecs
-          .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
-          .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+        // 育児手当の按分は 同行も含めた訪問時間で (2026-09-19 総括表 7月: 松原 3,350→3,450 / 長谷川 869→931 で一致。悪化 0)
+        const visitMin = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
         visitMinutesByEmpMonth.set(`${normNum}:${selectedMonth}`, visitMin);
       }
       // 参照月が処理月と異なる場合は追加取得（year_month を YYYYMM に正規化）
@@ -540,9 +539,7 @@ export default function PayrollPage() {
           for (const r of ymData as { employee_number: string; calc_duration: string; accompanied_visit: string }[]) {
             const k = normEmp(r.employee_number);
             if (!byEmpYm.has(k)) byEmpYm.set(k, 0);
-            if (!r.accompanied_visit || r.accompanied_visit.trim() === "") {
-              byEmpYm.set(k, (byEmpYm.get(k) ?? 0) + parseDurationMinutes(r.calc_duration));
-            }
+            byEmpYm.set(k, (byEmpYm.get(k) ?? 0) + parseDurationMinutes(r.calc_duration));
           }
           if (ymData.length < 1000) break;
           ymFrom += 1000;
