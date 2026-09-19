@@ -657,11 +657,18 @@ export function computeChildcareAllowance(
 /** 会議費を計算する (月給・時給共通) */
 export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number, countItems: readonly string[] = ["会議1"]): number {
   // 数える件数の項目は事業所で違う: 既定は「会議1」、おゆみ野は「会議2」「会議3」(meeting_count_items。2026-09-18)
-  const meetingCount = ofRecs
-    .filter((r) => countItems.some((k) => r.item_name.includes(k)))
+  // ⚠ 件数の欄に 金額 (1,500) を入れた書式がある (船橋 3月・四街道 6月・八千代 6月 の 12 件、すべて 1,500)。
+  //   総括表はそれを 1,500 円として払っている。件数として 100 以上はありえないので 金額 (円) として足す (2026-09-19)
+  const recs = ofRecs.filter((r) => countItems.some((k) => r.item_name.includes(k)));
+  const amountAsCount = (r: OfficeFormRecord) => r.record_type === "km" && (r.numeric_value ?? 0) >= MEETING_COUNT_AS_YEN_THRESHOLD;
+  const meetingCount = recs.filter((r) => !amountAsCount(r))
     .reduce((s, r) => s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-  return Math.round(meetingCount * meetingUnitPrice);
+  const yen = recs.filter(amountAsCount).reduce((s, r) => s + (r.numeric_value ?? 0), 0);
+  return Math.round(meetingCount * meetingUnitPrice) + Math.round(yen);
 }
+
+/** 会議の件数の欄がこれ以上なら 件数ではなく 金額 (円) を入れた入力ミスとみなす */
+export const MEETING_COUNT_AS_YEN_THRESHOLD = 100;
 
 /**
  * 会議の時間 (分)。事業所書式の 研修 の「会議」(開始・終了あり) を足す。
