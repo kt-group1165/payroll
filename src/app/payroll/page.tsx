@@ -1199,9 +1199,10 @@ export default function PayrollPage() {
         }, { onConflict: "office_number,processing_month" });
         if (!saveErr) {
           setSavedAt(payload.calculated_at);
-          // 「DBに保存しました」を一瞬で消さず少しだけ見せる
+          // 「DBに保存しました」を一瞬で消さず少しだけ見せる。
+          // ⚠ ここを await しない (2026-09-20)。全事業所を続けて回すとき タブが裏に回ると
+          //   Chrome の intensive throttling で setTimeout が 1分に引き延ばされ、1事業所あたり 1分 無駄になる
           setProgress({ pct: 100, label: "DBに保存しました" });
-          await new Promise((r) => setTimeout(r, 1500));
         }
         if (saveErr) {
           console.error("[payroll] 計算結果の DB 保存に失敗:", saveErr.message);
