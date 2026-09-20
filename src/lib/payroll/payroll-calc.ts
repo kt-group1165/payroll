@@ -819,8 +819,11 @@ export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes
   if (feeType === "lend_fee") return PHONE_LEND_CHARGE;
   if (feeType === "lend") return 0;
   if (hasSocialInsurance && feeType !== "variable") return 0;
+  // 段は 訪問時間で 500 / 1,000 / 1,500 円 (2026-09-20 総括表 3〜7月 1,351 件中 1,350 件が一致)。
+  //   50h ちょうどは 1,000 円 (市原 鈴木正子 2026-03 など 3,000 分ちょうどが 5 件) / 100h 以上は 1,500 円 (さつき 滝下 110h・茂原 白井 102h)
   const visitHours = visitMinutes / 60;
-  if (visitHours > 50) return 1000;
+  if (visitHours >= 100) return 1500;
+  if (visitHours >= 50) return 1000;
   if (visitHours > 0) return 500;
   return 0;
 }

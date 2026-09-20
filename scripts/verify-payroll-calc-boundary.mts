@@ -441,7 +441,7 @@ eq("有給手当: 2.5日×1000円 (半休を含む端数)", paidLeaveAllowanceAm
 
 eq("通信手当: 社保加入なら0円固定 (時間に関わらず)", communicationFeeAmount(true, 999999), 0);
 eq("通信手当: 未加入・0分は0円", communicationFeeAmount(false, 0), 0);
-eq("★ 通信手当: 未加入・ちょうど50h(3000分) は境界含まず500円", communicationFeeAmount(false, 3000), 500);
+  eq("★ 通信手当: 未加入・ちょうど50h(3000分) は 1,000円 (2026-09-20 総括表で是正。50h 以上が 1,000円)", communicationFeeAmount(false, 3000), 1000);
 eq("★ 通信手当: 未加入・50h+1分(3001分) は1000円", communicationFeeAmount(false, 3001), 1000);
 eq("通信手当: 未加入・1分でも勤務あれば500円", communicationFeeAmount(false, 1), 500);
 eq("★ 通信手当: 貸与負担 (lend_fee) は社保・時間に関わらず -1,700円 (高品 菊池/中村/西田)", [communicationFeeAmount(true, 2850, "lend_fee"), communicationFeeAmount(false, 0, "lend_fee")], [-1700, -1700]);
@@ -487,6 +487,9 @@ eq("★ 半有給1回 × 8,635円 = 4,318円 (森幸代 2026-06 総括表)", pai
     eq("時給者残業: 別の日の移動は足さない", hourlyOvertimeMinutes([r("2026/07/01", "007:50")], new Map([["2026/07/02", 900]])), 0);
     eq("★ 会議件数の欄に金額 1500 → 1,500円 (件数×単価にしない。八千代 2026-06)", computeMeetingFee([{ record_type: "km", item_name: "会議1件数", numeric_value: 1500 } as never], 1500), 1500);
     eq("会議件数 2 → 2×単価", computeMeetingFee([{ record_type: "km", item_name: "会議1件数", numeric_value: 2 } as never], 1500), 3000);
+    eq("★ 通信手当: 訪問 50h ちょうどは 1,000円", communicationFeeAmount(false, 3000), 1000);
+    eq("★ 通信手当: 訪問 100h 以上は 1,500円 / 99h は 1,000円", [communicationFeeAmount(false, 6000), communicationFeeAmount(false, 5940)], [1500, 1000]);
+    eq("通信手当: 49h は 500円 / 0 は 0円", [communicationFeeAmount(false, 2940), communicationFeeAmount(false, 0)], [500, 0]);
     eq("★ 本人給の時間: 44分 → 45分 (5分単位に切り上げ)", payMinutesOf(44), 45);
     eq("本人給の時間: 45分はそのまま / 0分は0", [payMinutesOf(45), payMinutesOf(0)], [45, 0]);
     eq("★ 通勤: km 92 × 12.7 + 金額欄の入力ミス 22,816円 → 1168+22816", hourlyCommuteFeeAmount(92, 12.7, 22816), 1168 + 22816);
