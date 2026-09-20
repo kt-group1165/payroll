@@ -643,38 +643,38 @@ export function computeChildcareAllowance(
   selectedMonth: string,
 ): number {
   if (recs.length === 0) return 0;
-  // ⚠ 事業所書式で 同じ子の同じ保育料が 2〜4 回 登録されていることがある (2026-03〜07 の 125 行中 15 行 = 12%)。
-  //   そのまま足すと手当が倍になるので (子, 項目, 金額, 何月分) が同じ行は 1 件に畳む。
-  //   同じ子の同じ費目を 同じ月に 2 回払うことは無いので 畳んで安全。
-  {
-    const seen = new Set<string>();
-    recs = recs.filter((r) => {
-      const k = `${r.child_name ?? ""}|${r.item_name}|${r.amount ?? 0}|${r.year_month ?? ""}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
-  const uniqueChildren = new Set(recs.map((r) => r.child_name ?? "不明")).size;
-  const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
-  let total = 0;
+  // ⚠ 上限 (子1名 20,000 / 2名以上 30,000) は 保育料の「何月分」ごとに当てる。合算に当てるのではない。
+  //   1 か月に 数か月ぶんの保育料をまとめて払うことがある (2026-03〜07 で 86 人月中 13 人月)。
+  //   KT姉崎 大矢 2026-06 は 2025/12〜2026/03 の 4 か月ぶん 19,500 円 → 7,800 × 4 = 31,200 円 で、
+  //   合算に 20,000 の上限を当てると 11,200 円 足りなくなる (総括表は 31,200 円)。
+  const byYm = new Map<string, OfficeFormRecord[]>();
   for (const rec of recs) {
-    const amount = rec.amount ?? 0;
-    if (amount <= 0) continue;
-    const isKindergarten = rec.item_name.includes("幼稚園");
-    const baseRate = isKindergarten ? 0.2 : 0.4;
-    if (salaryType === "月給") {
-      total += Math.round(amount * baseRate);
-    } else {
-      // year_month を YYYYMM に正規化してからルックアップ
-      const rawYm = rec.year_month ?? selectedMonth;
-      const ym = normalizeYM(rawYm);
-      const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
-      const ratio = Math.min(visitMin / (120 * 60), 1.0);
-      total += Math.round(amount * baseRate * ratio);
-    }
+    const ym = normalizeYM(rec.year_month ?? selectedMonth);
+    if (!byYm.has(ym)) byYm.set(ym, []);
+    byYm.get(ym)!.push(rec);
   }
-  return Math.min(total, ceiling);
+  let grand = 0;
+  for (const [ym, group] of byYm) {
+    const uniqueChildren = new Set(group.map((r) => r.child_name ?? "不明")).size;
+    const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
+    let total = 0;
+    for (const rec of group) {
+      const amount = rec.amount ?? 0;
+      if (amount <= 0) continue;
+      const isKindergarten = rec.item_name.includes("幼稚園");
+      const baseRate = isKindergarten ? 0.2 : 0.4;
+      if (salaryType === "月給") {
+        total += Math.round(amount * baseRate);
+      } else {
+        // 時給者は その「何月分」の実働 (120 時間) で按分する
+        const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
+        const ratio = Math.min(visitMin / (120 * 60), 1.0);
+        total += Math.round(amount * baseRate * ratio);
+      }
+    }
+    grand += Math.min(total, ceiling);
+  }
+  return grand;
 }
 
 /** 会議費を計算する (月給・時給共通) */

@@ -398,19 +398,21 @@ eq("★ 保育手当: 子2名以上の上限は30,000円",
   computeChildcareAllowance(
     [cRec({ amount: 50000, item_name: "保育園", child_name: "子1" }), cRec({ amount: 50000, item_name: "保育園", child_name: "子2" })],
     "月給", new Map(), "1", "202606"), 30000);
-// 事業所書式で同じ行が 2〜4 回 登録されていることがある (2026-03〜07 の 125 行中 15 行)。畳まないと手当が倍になる
-eq("★ 保育手当: 同じ子・同じ費目・同じ金額の重複行は 1 件に畳む",
+// 上限は「何月分」ごとに当てる。1 か月に数か月ぶんをまとめて払うことがある
+// (KT姉崎 大矢 2026-06 = 2025/12〜2026/03 の 4 か月ぶん 19,500 円 → 31,200 円。合算に 20,000 を当てると 11,200 円 足りない)
+eq("★ 保育手当: 上限は何月分ごと (4か月分 19,500 → 7,800×4 = 31,200。合算上限20,000にしない)",
   computeChildcareAllowance(
-    [cRec({ amount: 10000 }), cRec({ amount: 10000 })],
-    "月給", new Map(), "1", "202606"), 4000);
-eq("★ 保育手当: 金額が違えば別の行として足す (畳みすぎない)",
+    [cRec({ amount: 19500, year_month: "2025/12" }), cRec({ amount: 19500, year_month: "2026/1" }),
+     cRec({ amount: 19500, year_month: "2026/2" }), cRec({ amount: 19500, year_month: "2026/3" })],
+    "月給", new Map(), "1", "202606"), 31200);
+eq("★ 保育手当: 同じ月分の中では上限が効く (50,000×2 = 40,000 → 20,000)",
   computeChildcareAllowance(
-    [cRec({ amount: 10000 }), cRec({ amount: 8000 })],
-    "月給", new Map(), "1", "202606"), 7200);
-eq("★ 保育手当: 子が違えば畳まない",
+    [cRec({ amount: 50000, year_month: "2026/6" }), cRec({ amount: 50000, year_month: "2026/6" })],
+    "月給", new Map(), "1", "202606"), 20000);
+eq("★ 保育手当: 何月分が同じなら子2名の上限 30,000 が効く",
   computeChildcareAllowance(
-    [cRec({ amount: 10000, child_name: "子1" }), cRec({ amount: 10000, child_name: "子2" })],
-    "月給", new Map(), "1", "202606"), 8000);
+    [cRec({ amount: 50000, child_name: "子1", year_month: "2026/6" }), cRec({ amount: 50000, child_name: "子2", year_month: "2026/6" })],
+    "月給", new Map(), "1", "202606"), 30000);
 // 時給者: visitMinutesByEmpMonth の按分。120h(7200分)で満額、60h(3600分)で半額
 eq("★ 保育手当(時給): visitMin=7200分(120h)以上 → ratio=1.0 (満額)",
   computeChildcareAllowance([cRec({ item_name: "保育園" })], "時給", new Map([["1:202606", 7200]]), "1", "202606"), 4000);
