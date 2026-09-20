@@ -537,7 +537,10 @@ eq("★ 半有給1回 × 8,635円 = 4,318円 (森幸代 2026-06 総括表)", pai
     eq("通信手当: 49h は 500円 / 0 は 0円", [communicationFeeAmount(false, 2940), communicationFeeAmount(false, 0)], [500, 0]);
     eq("★ 本人給の時間: 44分 → 45分 (5分単位に切り上げ)", payMinutesOf(44), 45);
     eq("本人給の時間: 45分はそのまま / 0分は0", [payMinutesOf(45), payMinutesOf(0)], [45, 0]);
-    eq("★ 通勤: km 92 × 12.7 + 金額欄の入力ミス 22,816円 → 1168+22816", hourlyCommuteFeeAmount(92, 12.7, 22816), 1168 + 22816);
+    // ⚠ 期待値を 1168 (四捨五入) にしていたのは誤り。総括表 (やわた 熊谷 明日香) は 1,169 円。2026-09-21 是正
+    eq("★ 通勤: km 92 × 12.7 = 1168.4 は 切り上げて 1169 (+ 金額欄の入力ミス 22,816円)", hourlyCommuteFeeAmount(92, 12.7, 22816), 1169 + 22816);
+    eq("★ 通勤: 円未満は切り上げ (出張費・移動手当と同じ)。10km × 12.5 = 125 はちょうどなので 125 のまま",
+      [hourlyCommuteFeeAmount(10, 12.5), hourlyCommuteFeeAmount(10.1, 12.5), hourlyCommuteFeeAmount(1, 12.7)], [125, 127, 13]);
     eq("★ 時給者残業: 研修の時間を日に足す 7h+研修1h30 → 30分", hourlyOvertimeMinutes([r("2026/07/08", "007:00")], undefined, new Map([["2026/07/08", 90]])), 30);
     eq("★ 研修の日付: 7月8日 20:00-22:30 → 2026/07/08 に 150分", trainingMinutesByDay([{ record_type: "training", item_name: "HRD研修", item_date: "7月8日", start_time: "20:00", end_time: "22:30", break_time: null } as never], "202607").get("2026/07/08"), 150);
     eq("研修の日付: 7/8 形式も読む・会議も数える", trainingMinutesByDay([{ record_type: "training", item_name: "会議", item_date: "7/8", start_time: "10:00", end_time: "11:00", break_time: null } as never], "202607").get("2026/07/08"), 60);

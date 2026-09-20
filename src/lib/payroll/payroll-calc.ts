@@ -409,8 +409,14 @@ export function travelFeeAmount(p: MonthlyPayroll): number {
   return Math.ceil(effectiveTravelKm(p) * p.office_travel_unit_price - 1e-6);
 }
 
+/**
+ * 通勤費 = 通勤km × 事業所の通勤単価、円未満切り上げ (出張費・移動手当と同じ丸め。2026-09-21)。
+ * ⚠ 以前は四捨五入だった。総括表の「通勤距離 × 通勤費」がそろっている 22 人月で
+ *   切り上げ 21 / 四捨五入 16。突合の 1 円差 20 件は 20 件とも「当方が 1 円低い」で、
+ *   切り上げにすると全部消える方向。
+ */
 export function commuteFeeAmount(p: MonthlyPayroll): number {
-  return Math.round(p.summary.commuteKmTotal * p.office_commute_unit_price) + Math.round(p.summary.commuteYenTotal ?? 0);
+  return Math.ceil(p.summary.commuteKmTotal * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
 }
 
 /** 通勤km の欄の値がこれ以上なら km ではなく 金額 (円) の入力ミスとみなす (書式=月の合計 / 出勤簿=1日) */
@@ -852,7 +858,7 @@ export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes
 
 /** 通勤費 (時給者) */
 export function hourlyCommuteFeeAmount(commuteKmTotal: number, commuteUnitPrice: number, commuteYenTotal = 0): number {
-  return Math.round(commuteKmTotal * commuteUnitPrice) + Math.round(commuteYenTotal);
+  return Math.ceil(commuteKmTotal * commuteUnitPrice - 1e-6) + Math.round(commuteYenTotal);
 }
 
 /** 出張費 (時給者) */
