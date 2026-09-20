@@ -924,7 +924,10 @@ export default function PayrollPage() {
           }
 
           if (allPairs.length > 0) {
-            const BATCH_SIZE = 50;
+            // 1 回の /api/distance で投げる区間数。1 事業所 600 区間で 50 ずつだと 12 往復 = 約 60 秒かかる。
+            //   中でやるのは payroll_distance_cache の .in(origin) 照会なので 200 でも重くならない
+            //   (.in() は 350 件を超えると seq scan に落ちるので それより十分小さく取る。2026-09-21)
+            const BATCH_SIZE = 200;
             const distResultsArr: { origin: string; destination: string; distance_meters: number; duration_seconds: number }[] = [];
             // 2026-09-17: 取れなかった区間を黙って 0 にしない。上限・Google エラーを画面に出す
             const distIssues = new Set<string>();
