@@ -635,12 +635,18 @@ export function normalizeYM(ym: string): string {
  * @param empNum 対象職員番号 (visitMinutesByEmpMonth のキー組み立てに使う)
  * @param selectedMonth year_month が空のレコードのフォールバック月
  */
+/**
+ * @param contract 旧システムの従業員契約情報 (payroll_legacy_contract) がある職員はそれを優先する。
+ *   limit    育児手当支給限度額。職員ごとに違う (20,000 円 49名 / 30,000 円 20名 / 40,000 円 2名)
+ *   ratePct  育児手当指定割合 (%)。費目別 (保育園40% / 幼稚園20%) ではなく一律で払う職員が 20 名いる
+ */
 export function computeChildcareAllowance(
   recs: OfficeFormRecord[],
   salaryType: string,
   visitMinutesByEmpMonth: Map<string, number>,
   empNum: string,
   selectedMonth: string,
+  contract?: { limit?: number | null; ratePct?: number | null },
 ): number {
   if (recs.length === 0) return 0;
   // ⚠ 上限 (子1名 20,000 / 2名以上 30,000) は 保育料の「何月分」ごとに当てる。合算に当てるのではない。
@@ -656,13 +662,13 @@ export function computeChildcareAllowance(
   let grand = 0;
   for (const [ym, group] of byYm) {
     const uniqueChildren = new Set(group.map((r) => r.child_name ?? "不明")).size;
-    const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
+    const ceiling = (contract?.limit ?? 0) > 0 ? (contract!.limit as number) : (uniqueChildren >= 2 ? 30000 : 20000);
     let total = 0;
     for (const rec of group) {
       const amount = rec.amount ?? 0;
       if (amount <= 0) continue;
       const isKindergarten = rec.item_name.includes("幼稚園");
-      const baseRate = isKindergarten ? 0.2 : 0.4;
+      const baseRate = (contract?.ratePct ?? 0) > 0 ? (contract!.ratePct as number) / 100 : (isKindergarten ? 0.2 : 0.4);
       if (salaryType === "月給") {
         total += Math.round(amount * baseRate);
       } else {

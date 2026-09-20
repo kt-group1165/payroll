@@ -409,6 +409,19 @@ eq("★ 保育手当: 同じ月分の中では上限が効く (50,000×2 = 40,00
   computeChildcareAllowance(
     [cRec({ amount: 50000, year_month: "2026/6" }), cRec({ amount: 50000, year_month: "2026/6" })],
     "月給", new Map(), "1", "202606"), 20000);
+// 旧システムの従業員契約情報 (payroll_legacy_contract) は職員ごとの上限・割合を持つ。あれば優先する
+eq("★ 保育手当: 契約の支給限度額が子人数の既定より優先される (40,000)",
+  computeChildcareAllowance(
+    [cRec({ amount: 150000, year_month: "2026/6" })],
+    "月給", new Map(), "1", "202606", { limit: 40000 }), 40000);
+eq("★ 保育手当: 契約の指定割合があれば 費目別 (幼稚園20%/他40%) ではなくその割合",
+  computeChildcareAllowance(
+    [cRec({ amount: 10000, item_name: "○○幼稚園", year_month: "2026/6" })],
+    "月給", new Map(), "1", "202606", { ratePct: 40 }), 4000);
+eq("★ 保育手当: 契約が空なら従来どおり",
+  computeChildcareAllowance(
+    [cRec({ amount: 10000, year_month: "2026/6" })],
+    "月給", new Map(), "1", "202606", { limit: null, ratePct: null }), 4000);
 eq("★ 保育手当: 何月分が同じなら子2名の上限 30,000 が効く",
   computeChildcareAllowance(
     [cRec({ amount: 50000, child_name: "子1", year_month: "2026/6" }), cRec({ amount: 50000, child_name: "子2", year_month: "2026/6" })],
