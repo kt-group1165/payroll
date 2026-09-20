@@ -492,7 +492,30 @@ export default function PayrollPage() {
       const monthEndIso = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
       const qualifiedInMonth = (e: { has_care_qualification?: boolean | null; care_qualification_from?: string | null }) =>
         (e.has_care_qualification ?? false) && (!e.care_qualification_from || e.care_qualification_from <= monthEndIso);
+      // ── 勤続月数の基準値: 旧システムの従業員データ (payroll_legacy_employee) を最優先する ──
+      //   旧システムは「グループ勤続年数」を **月数** で持っていて、出力時点 (tenure_as_of) の値。
+      //   総括表 2026-03〜07 のパート 575 人月で検算:
+      //     グループ 563 一致 (97.9%) / 会社 562 (97.7%) / 事業所 557 (96.9%) / 入社日からの暦月 86.6%
+      //   ⚠ 入社年月日は「その事業所に来た日」で転籍前が入っていないため使えない
+      //     (東郷 細谷靖子 入社2015/12 → 暦月129ヶ月 だが グループ勤続 95ヶ月)
+      //   ⚠ 社員No は事業所をまたぐと重複するので 所属名 と対で引く
+      const legacyTenureMonths = new Map<string, number>();
+      {
+        const normName = (x: string) => x.normalize("NFKC").replace(/[\s　]/g, "");
+        const target = normName(selectedOffice.name ?? "");
+        const { data, error } = await supabase
+          .from("payroll_legacy_employee")
+          .select("office_name,employee_number,group_tenure_months,tenure_as_of");
+        if (error) console.warn("[payroll] 旧システムの従業員データを読めませんでした (従来の勤続月数で計算します):", error.message);
+        for (const r of (data ?? []) as { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string }[]) {
+          if (r.group_tenure_months == null || normName(r.office_name) !== target) continue;
+          const asOf = Number(r.tenure_as_of.slice(0, 4)) * 12 + Number(r.tenure_as_of.slice(4, 6));
+          legacyTenureMonths.set(normEmp(r.employee_number), Math.max(0, r.group_tenure_months - (asOf - (year * 12 + month))));
+        }
+      }
       const tenureMonthsOf = (e: { employee_number: string | number; effective_service_months?: number | null }) => {
+        const legacy = legacyTenureMonths.get(normEmp(e.employee_number));
+        if (legacy !== undefined) return legacy;
         const worked = workedMonthsAfterBase.get(normEmp(e.employee_number));
         return worked === undefined ? adjustedMonths(e.effective_service_months ?? 0) : Math.max(0, (e.effective_service_months ?? 0) + worked);
       };
@@ -705,6 +728,52 @@ export default function PayrollPage() {
         }
       }
 
+      // 旧システムの確定値 (payroll_legacy_travel_daily)。あればこれを使い、Google の推定は使わない。
+      //   2026-03〜07 を実測: 当方の推定は 総括表の移動手当と ¥676,520 ずれていたが、旧システムの値なら 94.5% 一致する。
+      //   1行 = 1職員×1日。travel_paid_min = 移動手当の対象時間 / travel_full_min = 移動の全量 (出勤時間に乗る分)。
+      //   ⚠ 通勤費・出張費の距離は この CSV に無いので 従来どおり Google の距離を使う。
+      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number; otMin: number; svcTotalMin: number; hourly: boolean }>();
+      {
+        const PAGE = 1000;
+        let lFrom = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from("payroll_legacy_travel_daily")
+            .select("work_date,employee_number,pay_type,travel_paid_min,travel_full_min,ot_service_min,ot_travel_min,service_total_min")
+            .eq("processing_month", selectedMonth)
+            .eq("office_number", selectedOffice.office_number)
+            .order("id").range(lFrom, lFrom + PAGE - 1);
+          if (error) throw new Error(`旧システムの移動データの読み込みに失敗しました: ${error.message}`);
+          if (!data || data.length === 0) break;
+          for (const r of data) {
+            const num = normEmp(r.employee_number);
+            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0, otMin: 0, svcTotalMin: 0, hourly: true });
+            const x = legacyTravel.get(num)!;
+            const date = String(r.work_date).replace(/-/g, "/"); // 実績側は "2026/06/01" 形式
+            const sec = (r.travel_paid_min ?? 0) * 60;
+            x.paidSecByDay.set(date, (x.paidSecByDay.get(date) ?? 0) + sec);
+            x.paidSec += sec;
+            x.fullSec += (r.travel_full_min ?? 0) * 60;
+            x.otMin += (r.ot_service_min ?? 0) + (r.ot_travel_min ?? 0);
+            x.svcTotalMin += r.service_total_min ?? 0;
+            // ⚠ 旧システムの「移動」は 時給者は手当の対象時間 / 月給者は移動の全量 (手当は付かない)。
+            //   当方が時給扱いでも 旧が月給なら ×20 して手当にしてはいけない
+            //   (さつきが丘 米倉 2026-03: 613分 → ¥12,260 になるが 総括表は ¥540)
+            if (r.pay_type === "月給") x.hourly = false;
+          }
+          if (data.length < PAGE) break;
+          lFrom += PAGE;
+        }
+      }
+
+      /** 旧システムの日計から その月の出勤時間 (分) = サービス合計 + 移動の全量 */
+      const legacyWorkMinOf = (num: string): number | null => {
+        const x = legacyTravel.get(num);
+        if (!x) return null;
+        const v = x.svcTotalMin + Math.round(x.fullSec / 60);
+        return v > 0 ? v : null;
+      };
+
       // 時給者
       const roleMap = new Map(employees.map((e) => [normEmp(e.employee_number), {
         name: e.name,
@@ -740,7 +809,7 @@ export default function PayrollPage() {
         // 出勤簿の無い時給者の出勤時間 = 訪問時間 (+ 移動時間は経路計算の後で足す)。2026-09-17
         const empSummary = {
           ...baseEmpSummary,
-          workHoursMin: employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0),
+          workHoursMin: employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0, legacyWorkMinOf(empNum)),
         };
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
@@ -844,42 +913,6 @@ export default function PayrollPage() {
       // 社員の出勤時間 = サービス時間 + 訪問間の移動時間の全量 (employeeWorkMinutes)。月給者のループで使う
       const monthlyTravelFullSec = new Map<string, number>();
       const monthlyTravelSecByDay = new Map<string, Map<string, number>>();
-      // 旧システムの確定値 (payroll_legacy_travel_daily)。あればこれを使い、Google の推定は使わない。
-      //   2026-03〜07 を実測: 当方の推定は 総括表の移動手当と ¥676,520 ずれていたが、旧システムの値なら 94.5% 一致する。
-      //   1行 = 1職員×1日。travel_paid_min = 移動手当の対象時間 / travel_full_min = 移動の全量 (出勤時間に乗る分)。
-      //   ⚠ 通勤費・出張費の距離は この CSV に無いので 従来どおり Google の距離を使う。
-      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number; otMin: number; hourly: boolean }>();
-      {
-        const PAGE = 1000;
-        let lFrom = 0;
-        while (true) {
-          const { data, error } = await supabase
-            .from("payroll_legacy_travel_daily")
-            .select("work_date,employee_number,pay_type,travel_paid_min,travel_full_min,ot_service_min,ot_travel_min")
-            .eq("processing_month", selectedMonth)
-            .eq("office_number", selectedOffice.office_number)
-            .order("id").range(lFrom, lFrom + PAGE - 1);
-          if (error) throw new Error(`旧システムの移動データの読み込みに失敗しました: ${error.message}`);
-          if (!data || data.length === 0) break;
-          for (const r of data) {
-            const num = normEmp(r.employee_number);
-            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0, otMin: 0, hourly: true });
-            const x = legacyTravel.get(num)!;
-            const date = String(r.work_date).replace(/-/g, "/"); // 実績側は "2026/06/01" 形式
-            const sec = (r.travel_paid_min ?? 0) * 60;
-            x.paidSecByDay.set(date, (x.paidSecByDay.get(date) ?? 0) + sec);
-            x.paidSec += sec;
-            x.fullSec += (r.travel_full_min ?? 0) * 60;
-            x.otMin += (r.ot_service_min ?? 0) + (r.ot_travel_min ?? 0);
-            // ⚠ 旧システムの「移動」は 時給者は手当の対象時間 / 月給者は移動の全量 (手当は付かない)。
-            //   当方が時給扱いでも 旧が月給なら ×20 して手当にしてはいけない
-            //   (さつきが丘 米倉 2026-03: 613分 → ¥12,260 になるが 総括表は ¥540)
-            if (r.pay_type === "月給") x.hourly = false;
-          }
-          if (data.length < PAGE) break;
-          lFrom += PAGE;
-        }
-      }
       {
         const visitCareEmps = employees.filter(
           // 住所が空の職員も対象にする (2026-09-19)。移動手当・移動時間は 訪問と訪問の間の区間だけで決まり自宅は要らない
@@ -1041,7 +1074,7 @@ export default function PayrollPage() {
               // 出勤簿の無い時給者は 出勤時間 = 訪問 + 移動の全量 (社員と同じ。さつきが丘 2026-07 で総括表と照合)
               entry.summary = {
                 ...entry.summary,
-                workHoursMin: employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec),
+                workHoursMin: employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec, legacyWorkMinOf(normNum)),
               };
               const adjustedDistanceM = adjustedCommuteDistanceM(totalCommuteM, empOffice?.distance_adjustment_rate ?? 100);
               entry.travel_time_sec = totalSec;
@@ -1122,6 +1155,7 @@ export default function PayrollPage() {
               baseSummary.workHoursMin,
               baseSummary.visitMinutes,
               monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
+              legacyWorkMinOf(normEmp(e.employee_number)),
             ),
             // 出勤簿の無い社員の残業 (分) = 日ごとの (訪問 + 移動の全量) で 日8h超 + 週40h超 (日曜始まり)。2026-09-19
             //   総括表データ (提責_社員 の 残業時間合計) と 7月 社員100名で突合: 訪問 + 移動全量 誤差計 8,469分 /

@@ -885,8 +885,15 @@ export function employeeWorkMinutes(
   attendanceWorkMin: number,
   visitMinutes: number,
   travelTimeFullSec: number,
+  legacyWorkMin?: number | null,
 ): number {
   if (attendanceDays > 0) return attendanceWorkMin;
+  // 出勤簿が無い人は 旧システムの日計 (サービス合計 + 移動の全量) を使う。当方の推定より総括表に近い。
+  //   2026-03〜07 実測 (出勤簿なしの人):
+  //     時給 1,851人月  当方の推定 60.1% → 旧システム 87.3% (旧だけ一致 517 / 当方だけ一致 14)
+  //     月給   583人月  当方の推定 44.9% → 旧システム 69.1% (旧だけ一致 143 / 当方だけ一致  2)
+  //   ⚠ 旧システムの「計算結果」ではなく サービス時間と移動時間の実測値。計算は当方のロジックのまま
+  if (legacyWorkMin != null && legacyWorkMin > 0) return legacyWorkMin;
   return visitMinutes + Math.round(travelTimeFullSec / 60);
 }
 
