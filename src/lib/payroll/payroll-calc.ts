@@ -643,6 +643,18 @@ export function computeChildcareAllowance(
   selectedMonth: string,
 ): number {
   if (recs.length === 0) return 0;
+  // ⚠ 事業所書式で 同じ子の同じ保育料が 2〜4 回 登録されていることがある (2026-03〜07 の 125 行中 15 行 = 12%)。
+  //   そのまま足すと手当が倍になるので (子, 項目, 金額, 何月分) が同じ行は 1 件に畳む。
+  //   同じ子の同じ費目を 同じ月に 2 回払うことは無いので 畳んで安全。
+  {
+    const seen = new Set<string>();
+    recs = recs.filter((r) => {
+      const k = `${r.child_name ?? ""}|${r.item_name}|${r.amount ?? 0}|${r.year_month ?? ""}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
   const uniqueChildren = new Set(recs.map((r) => r.child_name ?? "不明")).size;
   const ceiling = uniqueChildren >= 2 ? 30000 : 20000;
   let total = 0;
