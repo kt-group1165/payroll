@@ -823,6 +823,37 @@ export default function PayrollPage() {
       // 社員の出勤時間 = サービス時間 + 訪問間の移動時間の全量 (employeeWorkMinutes)。月給者のループで使う
       const monthlyTravelFullSec = new Map<string, number>();
       const monthlyTravelSecByDay = new Map<string, Map<string, number>>();
+      // 旧システムの確定値 (payroll_legacy_travel_daily)。あればこれを使い、Google の推定は使わない。
+      //   2026-03〜07 を実測: 当方の推定は 総括表の移動手当と ¥676,520 ずれていたが、旧システムの値なら 94.5% 一致する。
+      //   1行 = 1職員×1日。travel_paid_min = 移動手当の対象時間 / travel_full_min = 移動の全量 (出勤時間に乗る分)。
+      //   ⚠ 通勤費・出張費の距離は この CSV に無いので 従来どおり Google の距離を使う。
+      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number }>();
+      {
+        const PAGE = 1000;
+        let lFrom = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from("payroll_legacy_travel_daily")
+            .select("work_date,employee_number,travel_paid_min,travel_full_min")
+            .eq("processing_month", selectedMonth)
+            .eq("office_number", selectedOffice.office_number)
+            .order("id").range(lFrom, lFrom + PAGE - 1);
+          if (error) throw new Error(`旧システムの移動データの読み込みに失敗しました: ${error.message}`);
+          if (!data || data.length === 0) break;
+          for (const r of data) {
+            const num = normEmp(r.employee_number);
+            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0 });
+            const x = legacyTravel.get(num)!;
+            const date = String(r.work_date).replace(/-/g, "/"); // 実績側は "2026/06/01" 形式
+            const sec = (r.travel_paid_min ?? 0) * 60;
+            x.paidSecByDay.set(date, (x.paidSecByDay.get(date) ?? 0) + sec);
+            x.paidSec += sec;
+            x.fullSec += (r.travel_full_min ?? 0) * 60;
+          }
+          if (data.length < PAGE) break;
+          lFrom += PAGE;
+        }
+      }
       {
         const visitCareEmps = employees.filter(
           // 住所が空の職員も対象にする (2026-09-19)。移動手当・移動時間は 訪問と訪問の間の区間だけで決まり自宅は要らない
@@ -924,8 +955,14 @@ export default function PayrollPage() {
 
             for (const [normNum, { address, dayMap }] of byEmpNum) {
               const entry = hourlyEmpMap.get(normNum);
+              const legacy = legacyTravel.get(normNum);
               if (!entry) {
                 // 月給・出勤簿なしの社員: 移動時間の全量だけ控える
+                if (legacy) {
+                  monthlyTravelFullSec.set(normNum, legacy.fullSec);
+                  monthlyTravelSecByDay.set(normNum, legacy.paidSecByDay);
+                  continue;
+                }
                 let fullSec = 0;
                 const byDay = new Map<string, number>();
                 for (const [date, visits] of dayMap) {
@@ -943,15 +980,21 @@ export default function PayrollPage() {
               let totalSec = 0;
               let totalFullSec = 0;
               let totalCommuteM = 0;
-              const paidTravelSecByDay = new Map<string, number>();
+              let paidTravelSecByDay = new Map<string, number>();
               for (const [date, visits] of dayMap) {
                 const day = calcDayRoute(date, address, visits, distMap);
                 if (day) {
                   totalSec += day.travel_time_sec;
                   totalFullSec += day.travel_time_full_sec;
-                  totalCommuteM += day.commute_distance_m;
+                  totalCommuteM += day.commute_distance_m; // 通勤費・出張費の距離は旧システムに無いので Google のまま
                   paidTravelSecByDay.set(date, day.travel_time_sec);
                 }
+              }
+              // 旧システムの確定値があれば 移動時間だけ差し替える (距離は差し替えない)
+              if (legacy) {
+                totalSec = legacy.paidSec;
+                totalFullSec = legacy.fullSec;
+                paidTravelSecByDay = legacy.paidSecByDay;
               }
               // 出勤簿の無い時給者の残業 = 訪問時間 + 移動手当の対象時間 (区間ごとの 15 分超過分) で 日8h超 + 週40h超。2026-09-19
               //   総括表データ (残業時間合計) と 7月21名で突合: 訪問のみ 誤差計1,340分 / 移動全量 7,719分 / ★15分超過分 1,020分。
