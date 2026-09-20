@@ -611,11 +611,11 @@ export default function PayrollPage() {
       //   育児手当支給限度額 20,000円49名 / 30,000円20名 / 40,000円2名 / 育児手当指定割合 40%が19名
       //   ⚠ 出張費単価も入っているが そちらは「今の値」でガソリン単価に連動して月ごとに変わるので使わない
       // ⚠ テーブルが無い環境でも計算は続ける (SQL 未適用でも落とさない)
-      const contractOf = new Map<string, { childcare_limit: number | null; childcare_rate_pct: number | null }>();
+      const contractOf = new Map<string, { childcare_limit: number | null; childcare_rate_pct: number | null; childcare_method: string | null }>();
       {
         const { data, error } = await supabase
           .from("payroll_legacy_contract")
-          .select("employee_number,childcare_limit,childcare_rate_pct")
+          .select("employee_number,childcare_limit,childcare_rate_pct,childcare_method")
           .eq("office_number", selectedOffice.office_number);
         if (error) console.warn("[payroll] 従業員契約情報を読めませんでした (事業所の設定で計算します):", error.message);
         for (const r of data ?? []) contractOf.set(normEmp(r.employee_number), r);
@@ -796,7 +796,7 @@ export default function PayrollPage() {
           meeting_fee: meetingFee,
           training_pay: trainingPay,
           ...(() => { const m = (attByEmpH.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
-          childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth, { limit: contractOf.get(empNum)?.childcare_limit, ratePct: contractOf.get(empNum)?.childcare_rate_pct }),
+          childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth, { limit: contractOf.get(empNum)?.childcare_limit, ratePct: contractOf.get(empNum)?.childcare_rate_pct, method: contractOf.get(empNum)?.childcare_method }),
           commute_fee: commuteFee,
           commute_distance_m: 0,
           business_trip_fee: businessTripFee,
@@ -1154,7 +1154,7 @@ export default function PayrollPage() {
             office_travel_unit_price: office?.travel_unit_price ?? 0,
             office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
-            childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct }),
+            childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,

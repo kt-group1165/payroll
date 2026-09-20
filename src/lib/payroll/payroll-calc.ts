@@ -646,7 +646,7 @@ export function computeChildcareAllowance(
   visitMinutesByEmpMonth: Map<string, number>,
   empNum: string,
   selectedMonth: string,
-  contract?: { limit?: number | null; ratePct?: number | null },
+  contract?: { limit?: number | null; ratePct?: number | null; method?: string | null },
 ): number {
   if (recs.length === 0) return 0;
   // ⚠ 上限 (子1名 20,000 / 2名以上 30,000) は 保育料の「何月分」ごとに当てる。合算に当てるのではない。
@@ -669,7 +669,11 @@ export function computeChildcareAllowance(
       if (amount <= 0) continue;
       const isKindergarten = rec.item_name.includes("幼稚園");
       const baseRate = (contract?.ratePct ?? 0) > 0 ? (contract!.ratePct as number) / 100 : (isKindergarten ? 0.2 : 0.4);
-      if (salaryType === "月給") {
+      // 育児手当計算方法が「指定割合」の人は 時給者でも按分しない (2026-09-21)
+      //   船橋 手塚 有希 (指定割合40%・限度30,000) 2026-03〜06 の 4 か月で確認:
+      //   16,000 × 40% = 6,400 / 6,400 / 6,400、10,000 × 40% = 4,000 が総括表の値と 1 円一致。
+      //   按分すると 4,645 / 4,795 / 3,631 / 3,317 になって全部ズレる。
+      if (salaryType === "月給" || contract?.method === "指定割合") {
         total += Math.round(amount * baseRate);
       } else {
         // 時給者は その「何月分」の実働 (120 時間) で按分する

@@ -440,6 +440,23 @@ eq("★ 保育手当(時給): year_month='2026/6' が normalizeYM で '202606' �
   computeChildcareAllowance([cRec({ item_name: "保育園", year_month: "2026/6" })], "時給", new Map([["1:202606", 7200]]), "1", "209912"), 4000);
 eq("★ 保育手当(時給): year_month が無ければ selectedMonth にフォールバック",
   computeChildcareAllowance([cRec({ item_name: "保育園", year_month: null })], "時給", new Map([["1:202607", 7200]]), "1", "202607"), 4000);
+// 育児手当計算方法が「指定割合」の人は 時給者でも按分しない (2026-09-21 / 船橋 手塚 有希 4か月で実証)
+eq("★ 保育手当(時給): 指定割合なら按分しない (16,000×40% = 6,400。按分すると 4,645 になってズレる)",
+  computeChildcareAllowance(
+    [cRec({ amount: 6000, child_name: "子1", year_month: "2026/3" }), cRec({ amount: 10000, child_name: "子2", year_month: "2026/3" })],
+    "時給", new Map([["1:202603", 4830]]), "1", "202603", { method: "指定割合", ratePct: 40, limit: 30000 }), 6400);
+eq("★ 保育手当(時給): 指定割合でも上限は効く (100,000×40% = 40,000 → 限度 30,000)",
+  computeChildcareAllowance(
+    [cRec({ amount: 100000, year_month: "2026/6" })],
+    "時給", new Map([["1:202606", 0]]), "1", "202606", { method: "指定割合", ratePct: 40, limit: 30000 }), 30000);
+eq("★ 保育手当(時給): 指定割合で割合が空なら 費目の既定 (保育園40%) を使う",
+  computeChildcareAllowance(
+    [cRec({ amount: 10000, item_name: "保育園", year_month: "2026/6" })],
+    "時給", new Map([["1:202606", 0]]), "1", "202606", { method: "指定割合", ratePct: null, limit: 20000 }), 4000);
+eq("★ 保育手当(時給): 訪問時間で割合を計算 なら従来どおり按分する",
+  computeChildcareAllowance(
+    [cRec({ amount: 10000, item_name: "保育園", year_month: "2026/6" })],
+    "時給", new Map([["1:202606", 3600]]), "1", "202606", { method: "訪問時間で割合を計算", ratePct: null, limit: 20000 }), 2000);
 eq("normalizeYM 単体: '2026/6' → '202606'", normalizeYM("2026/6"), "202606");
 eq("normalizeYM 単体: 'Dec-25' → '202512'", normalizeYM("Dec-25"), "202512");
 
