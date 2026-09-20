@@ -118,6 +118,7 @@ type Employee = {
   social_insurance: boolean;
   paid_leave_unit_price: number;
   communication_fee_type: string;
+  communication_fee_from: string | null;
   /** 事務員。事務時間 (= 出勤簿の出勤時間) × 事務時給 を本人給に足す */
   is_office_worker: boolean;
   /** Supabase Auth ユーザーID。兼務職員は同じ auth_user_id の複数行が存在し得る */
@@ -317,7 +318,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
           .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
         fetchAllSalarySettings(),
@@ -701,7 +702,9 @@ export default function PayrollPage() {
         officeId: e.office_id,
         socialInsurance: socialInsuranceByNum.get(normEmp(e.employee_number)) ?? e.social_insurance ?? false,
         paidLeaveUnitPrice: e.paid_leave_unit_price ?? 0,
-        communicationFeeType: e.communication_fee_type ?? "none",
+        // 貸与 (lend / lend_fee) は 始まった月が人によって違うが 列は「今の値」1つしかない。
+        //   適用開始日より前の月は none 扱いにする (高品 菊池 4月から / 中村 6月から。2026-09-21)
+        communicationFeeType: (e.communication_fee_from && e.communication_fee_from > monthEndIso) ? "none" : (e.communication_fee_type ?? "none"),
         isOfficeWorker: e.is_office_worker ?? false,
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
