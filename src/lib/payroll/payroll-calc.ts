@@ -230,7 +230,12 @@ export function computeTenureAllowance(
   if (salaryType === "時給") {
     if (jobType === "訪問介護" || jobType === "訪問看護") {
       const rate = visitCareTenureRate(years);
-      return Math.round((workHoursMin / 60) * rate);
+      // ⚠ 旧システムは 時間を小数で持っているので 1,385分 = 23.0833… は 23.083333 止まりになり、
+      //   ×90 = 2,077.4999… で 2,077 円に落ちる。分数のまま計算すると 2,077.5 → 2,078 円で 1 円ズレる。
+      //   総括表 558 人月で検算: 切り捨ててから四捨五入 550 / 分のまま四捨五入 538。
+      //   ★ 分のままで合って切り捨てで外れる行は 0 件 (= 一方的に良くなる。2026-09-21)
+      const hours = Math.floor((workHoursMin / 60) * 1e6) / 1e6;
+      return Math.round(hours * rate);
     }
     if (jobType === "訪問入浴") {
       const rate = (Math.floor(years / 5) + 1) * 10;
