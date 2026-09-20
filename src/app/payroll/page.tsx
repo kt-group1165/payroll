@@ -609,13 +609,13 @@ export default function PayrollPage() {
       // ── 旧システムの従業員契約情報 (payroll_legacy_contract。2026-09-21) ──
       // 給与のルールは職員ごとに違う。事業所単位の設定より優先する。
       //   育児手当支給限度額 20,000円49名 / 30,000円20名 / 40,000円2名 / 育児手当指定割合 40%が19名
-      //   出張費単価も職員ごと (事業所の travel_unit_price ではない)
+      //   ⚠ 出張費単価も入っているが そちらは「今の値」でガソリン単価に連動して月ごとに変わるので使わない
       // ⚠ テーブルが無い環境でも計算は続ける (SQL 未適用でも落とさない)
-      const contractOf = new Map<string, { childcare_limit: number | null; childcare_rate_pct: number | null; business_trip_unit_price: number | null; business_trip_method: string | null }>();
+      const contractOf = new Map<string, { childcare_limit: number | null; childcare_rate_pct: number | null }>();
       {
         const { data, error } = await supabase
           .from("payroll_legacy_contract")
-          .select("employee_number,childcare_limit,childcare_rate_pct,business_trip_unit_price,business_trip_method")
+          .select("employee_number,childcare_limit,childcare_rate_pct")
           .eq("office_number", selectedOffice.office_number);
         if (error) console.warn("[payroll] 従業員契約情報を読めませんでした (事業所の設定で計算します):", error.message);
         for (const r of data ?? []) contractOf.set(normEmp(r.employee_number), r);
@@ -764,9 +764,10 @@ export default function PayrollPage() {
         const ofTripKm = (ofByEmp.get(empNum) ?? [])
           .filter((r) => r.record_type === "km" && r.item_name === "出張km")
           .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
-        // 出張費単価は職員ごと (旧システムの従業員契約情報)。無ければ事業所の単価
-        const tripUnitPrice = contractOf.get(empNum)?.business_trip_unit_price ?? empOffice?.travel_unit_price ?? 0;
-        const businessTripFee = hourlyBusinessTripFeeAmount(ofTripKm > 0 ? ofTripKm : empSummary.businessKmTotal, tripUnitPrice);
+        // ⚠ 出張費単価は 従業員契約情報 にも入っているが そちらは「今 (2026-09) の値」で、
+        //   ガソリン単価に連動して月ごとに変わる (事業所 12.3〜12.7 に対し 契約は 12.0〜12.1)。
+        //   過去月に当てると壊れるので 事業所の単価 (総括表 3〜7月に合わせた値) を使う。2026-09-21
+        const businessTripFee = hourlyBusinessTripFeeAmount(ofTripKm > 0 ? ofTripKm : empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
           ? 0
