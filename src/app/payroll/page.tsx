@@ -827,14 +827,14 @@ export default function PayrollPage() {
       //   2026-03〜07 を実測: 当方の推定は 総括表の移動手当と ¥676,520 ずれていたが、旧システムの値なら 94.5% 一致する。
       //   1行 = 1職員×1日。travel_paid_min = 移動手当の対象時間 / travel_full_min = 移動の全量 (出勤時間に乗る分)。
       //   ⚠ 通勤費・出張費の距離は この CSV に無いので 従来どおり Google の距離を使う。
-      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number }>();
+      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number; otMin: number; hourly: boolean }>();
       {
         const PAGE = 1000;
         let lFrom = 0;
         while (true) {
           const { data, error } = await supabase
             .from("payroll_legacy_travel_daily")
-            .select("work_date,employee_number,travel_paid_min,travel_full_min")
+            .select("work_date,employee_number,pay_type,travel_paid_min,travel_full_min,ot_service_min,ot_travel_min")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id").range(lFrom, lFrom + PAGE - 1);
@@ -842,13 +842,18 @@ export default function PayrollPage() {
           if (!data || data.length === 0) break;
           for (const r of data) {
             const num = normEmp(r.employee_number);
-            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0 });
+            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0, otMin: 0, hourly: true });
             const x = legacyTravel.get(num)!;
             const date = String(r.work_date).replace(/-/g, "/"); // 実績側は "2026/06/01" 形式
             const sec = (r.travel_paid_min ?? 0) * 60;
             x.paidSecByDay.set(date, (x.paidSecByDay.get(date) ?? 0) + sec);
             x.paidSec += sec;
             x.fullSec += (r.travel_full_min ?? 0) * 60;
+            x.otMin += (r.ot_service_min ?? 0) + (r.ot_travel_min ?? 0);
+            // ⚠ 旧システムの「移動」は 時給者は手当の対象時間 / 月給者は移動の全量 (手当は付かない)。
+            //   当方が時給扱いでも 旧が月給なら ×20 して手当にしてはいけない
+            //   (さつきが丘 米倉 2026-03: 613分 → ¥12,260 になるが 総括表は ¥540)
+            if (r.pay_type === "月給") x.hourly = false;
           }
           if (data.length < PAGE) break;
           lFrom += PAGE;
@@ -991,7 +996,7 @@ export default function PayrollPage() {
                 }
               }
               // 旧システムの確定値があれば 移動時間だけ差し替える (距離は差し替えない)
-              if (legacy) {
+              if (legacy && legacy.hourly) {
                 totalSec = legacy.paidSec;
                 totalFullSec = legacy.fullSec;
                 paidTravelSecByDay = legacy.paidSecByDay;
@@ -1000,7 +1005,12 @@ export default function PayrollPage() {
               //   総括表データ (残業時間合計) と 7月21名で突合: 訪問のみ 誤差計1,340分 / 移動全量 7,719分 / ★15分超過分 1,020分。
               //   旧の移動手当から逆算した移動時間で置き換えると 660分 (峰 +8 / 石本 +6 / 加藤 +7) = 式はこれで、残差は移動時間の見積もり差
               if ((attByEmpH.get(normNum) ?? []).length === 0) {
-                const m = hourlyOvertimeMinutes(recsByEmpH.get(normNum) ?? [], paidTravelSecByDay, trainingMinutesByDay(ofByEmp.get(normNum) ?? [], selectedMonth));
+                // 旧システムが残業を確定させているならそれを使う (2026-09-21)。
+                //   総括表と突合: 当方の計算 82/130 (63.1%) に対し 旧システムの値は 121/130 (93.1%)。
+                //   旧は 1日ごとに max(0, 総合計 - 8h) で、週40時間の判定は入っていない (53,255行で 99.1% 再現)
+                const m = legacy && legacy.hourly
+                  ? legacy.otMin
+                  : hourlyOvertimeMinutes(recsByEmpH.get(normNum) ?? [], paidTravelSecByDay, trainingMinutesByDay(ofByEmp.get(normNum) ?? [], selectedMonth));
                 entry.overtime_minutes = m;
                 entry.overtime_pay = hourlyOvertimePayAmount(m);
               }
