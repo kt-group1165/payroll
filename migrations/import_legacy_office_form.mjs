@@ -43,6 +43,8 @@ const num = (s) => { const v = String(s ?? "").replace(/,/g, "").trim(); return 
 const dates = (s) => String(s ?? "").split(",").map((x) => x.trim()).filter(Boolean)
   .map((x) => { const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(x); return m ? `${+m[2]}月${+m[3]}日` : null; })
   .filter((x) => x !== null);
+/** "2026/5" "2026/05" → "202605" (読めなければ null) */
+const ymKey = (s) => { const m = /^(\d{4})\/(\d{1,2})/.exec(String(s ?? "").trim()); return m ? m[1] + String(+m[2]).padStart(2, "0") : null; };
 /** "03/02" → "3月2日" */
 const mdate = (s) => { const m = /^(\d{1,2})\/(\d{1,2})$/.exec(String(s ?? "").trim()); return m ? `${+m[1]}月${+m[2]}日` : null; };
 
@@ -75,33 +77,49 @@ for (const f of files.sort()) {
   if (!out.has(key)) out.set(key, { office_number: office, processing_month: pm, rows: [], emps: new Set(), files: [] });
   const bucket = out.get(key);
   bucket.files.push(f);
+  // ⚠ 1 人が複数行になることがある (保育料の履歴・研修の 2 件目以降)。
+  //   2 行目以降は「従業員コード」が空欄で、直前の職員の続き。
+  //   以前はこの空欄行を捨てていたため、保育料は 1 行目 (= 最も古い履歴) を当月分として入れ、
+  //   本当の当月分と 研修の 2 件目以降を落としていた (2026-09-21 に発見。空欄行 216 行 = 保育料 193 / 研修 21)。
+  let cur = null;        // いま読んでいる職員 (この本で初めて出てきた人だけ。別の本で入れた人は null)
+  let isHead = false;    // 職員の 1 行目か
   for (const l of lines.slice(1)) {
     const c = l.split('","').map((x) => x.replace(/^"|"$/g, ""));
-    const emp = nn(at(c, "従業員コード"));
-    if (!emp) continue;
-    if (bucket.emps.has(emp)) continue;   // 同じ月を 2 回出したぶんは 1 回だけ入れる
-    bucket.emps.add(emp);
+    const code = nn(at(c, "従業員コード"));
+    if (code) {
+      isHead = true;
+      if (bucket.emps.has(code)) { cur = null; continue; }   // 同じ月を 2 回出したぶんは 1 回だけ入れる
+      bucket.emps.add(code);
+      cur = code;
+    } else {
+      isHead = false;
+      if (!cur) continue;
+    }
+    const emp = cur;
     const base = { office_number: office, employee_number: emp, processing_month: pm };
     const push = (o) => bucket.rows.push({ ...base, item_date: null, start_time: null, end_time: null, break_time: null, numeric_value: null, year_month: null, child_name: null, amount: null, ...o });
     // ⚠ 通勤km は取り込まない。この CSV の「通勤km」列は 出張km と同じ値が入っていることが多く
     //   (ちはら台 2026-06 の 22 名中 21 名が 通勤km == 出張km)、そのまま入れると
     //   総括表が 0 円の人に 通勤費を払ってしまう (2026-09-21 に踏んだ)。
-    {
+    if (isHead) {
       const v = num(at(c, "出張km"));
       if (v != null && v !== 0) push({ record_type: "km", item_name: "出張km", numeric_value: v });
+      for (const [col, name] of [["有給(全休)取得日", "有給"], ["有給(半休)取得日", "半有給"],
+                                 ["欠勤(全休)取得日", "欠勤"], ["欠勤(半休)取得日", "半欠勤"],
+                                 ["特休(全休)取得日", "特休"], ["特休(半休)取得日", "半特休"]]) {
+        for (const d of dates(at(c, col))) push({ record_type: "leave", item_name: name, item_date: d });
+      }
     }
-    for (const [col, name] of [["有給(全休)取得日", "有給"], ["有給(半休)取得日", "半有給"],
-                               ["欠勤(全休)取得日", "欠勤"], ["欠勤(半休)取得日", "半欠勤"],
-                               ["特休(全休)取得日", "特休"], ["特休(半休)取得日", "半特休"]]) {
-      for (const d of dates(at(c, col))) push({ record_type: "leave", item_name: name, item_date: d });
-    }
+    // 保育料は その月に「支給」する行だけ (支給月 = 処理月)。CSV には過去 1 年ぶんの履歴が並んでいる。
+    //   利用月 (= 何月ぶんの保育料か) は 上限を当てる単位なので year_month に入れる。
     for (const [pre, name] of [["保育園料", "保育料"], ["幼稚園料", "幼稚園料"]]) {
       const amt = num(at(c, `${pre}(金額)`));
-      if (amt) push({ record_type: "childcare", item_name: name, year_month: txt(at(c, `${pre}(利用月)`)), child_name: txt(at(c, `${pre}(お子さんの名前)`)), amount: amt });
+      if (amt && ymKey(at(c, `${pre}(支給月)`)) === pm)
+        push({ record_type: "childcare", item_name: name, year_month: txt(at(c, `${pre}(利用月)`)), child_name: txt(at(c, `${pre}(お子さんの名前)`)), amount: amt });
     }
     const td = mdate(at(c, "研修(日付)"));
     if (td) push({ record_type: "training", item_name: txt(at(c, "研修(区分)")) ?? "研修", item_date: td, start_time: txt(at(c, "研修(開始時間)")), end_time: txt(at(c, "研修(終了時間)")), break_time: txt(at(c, "研修(休憩時間)")) });
-    const md = mdate(at(c, "会議(日付)"));
+    const md = isHead ? mdate(at(c, "会議(日付)")) : null;
     if (md) {
       push({ record_type: "training", item_name: "会議", item_date: md, start_time: txt(at(c, "会議(開始時間)")), end_time: txt(at(c, "会議(終了時間)")), break_time: txt(at(c, "会議(休憩時間)")) });
       // ⚠ 件数 (会議N件数) は立てない。旧システムの 会議費 は
@@ -112,6 +130,42 @@ for (const f of files.sort()) {
   }
 }
 if (unknown.size) console.warn("⚠ 事業所名を解決できなかったファイル:", [...unknown].join(" / "));
+
+// ── MODE=fix-childcare: 保育料と 研修の追加分だけを直す (2026-09-21) ─────────────────────
+//   既存の事業所月をまるごと消すと 会議N件数 (import_soukatsu_meeting_counts.mjs) まで消える。
+//   ・保育料/幼稚園料: その事業所月の childcare を消して CSV から入れ直す (支給月 = 処理月 の行だけ)
+//   ・研修: 空欄行で落ちていた 2 件目以降を「無ければ足す」。既存は消さない
+if (process.env.MODE === "fix-childcare") {
+  const key = (r) => [r.employee_number, r.item_name, r.item_date, r.start_time, r.end_time].join("|");
+  let delN = 0, insC = 0, insT = 0;
+  const plan = [];
+  for (const [, v] of [...out].sort()) {
+    const q = `office_number=eq.${v.office_number}&processing_month=eq.${v.processing_month}`;
+    const cc = await (await fetch(`${SB}payroll_office_form_records?select=id,employee_number,year_month,amount&record_type=eq.childcare&${q}`, { headers: H })).json();
+    const tr = await (await fetch(`${SB}payroll_office_form_records?select=employee_number,item_name,item_date,start_time,end_time&record_type=eq.training&${q}`, { headers: H })).json();
+    const have = new Set(tr.map(key));
+    const newC = v.rows.filter((r) => r.record_type === "childcare");
+    const newT = v.rows.filter((r) => r.record_type === "training" && r.item_name !== "会議" && !have.has(key(r)));
+    delN += cc.length; insC += newC.length; insT += newT.length;
+    console.log(`  ${v.office_number} ${v.processing_month}  保育料 ${cc.length}行 → ${newC.length}行 / 研修 追加 ${newT.length}`);
+    for (const r of newC) console.log(`      保育料 ${r.employee_number} 利用月${r.year_month} ${r.child_name ?? ""} ${r.amount}`);
+    plan.push({ v, q, newC, newT });
+  }
+  console.log(`
+保育料 消す ${delN} / 入れる ${insC}  ・  研修 追加 ${insT}`);
+  if (!EXECUTE) { console.log("DRY RUN (--execute で書き込み)"); process.exit(0); }
+  for (const { v, q, newC, newT } of plan) {
+    const del = await fetch(`${SB}payroll_office_form_records?record_type=eq.childcare&${q}`, { method: "DELETE", headers: { ...H, Prefer: "return=minimal" } });
+    if (!del.ok) { console.error(`✗ 保育料の削除に失敗 (${v.office_number} ${v.processing_month}): ${await del.text()}`); process.exit(1); }
+    const rows = [...newC, ...newT];
+    if (rows.length) {
+      const res = await fetch(`${SB}payroll_office_form_records`, { method: "POST", headers: { ...H, Prefer: "return=minimal" }, body: JSON.stringify(rows) });
+      if (!res.ok) { console.error(`✗ 書き込み失敗 (${v.office_number} ${v.processing_month}): ${await res.text()}`); process.exit(1); }
+    }
+  }
+  console.log("完了");
+  process.exit(0);
+}
 
 console.log(`CSV ${files.length} 本 → 事業所×月 ${out.size}`);
 let total = 0;
