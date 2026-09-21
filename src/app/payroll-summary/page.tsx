@@ -108,7 +108,9 @@ type ColDef<T> = {
   label: string;
   align?: "left" | "right" | "center";
   always?: boolean;          // trueなら非表示不可（識別用）
-  defaultOff?: boolean;      // 既定で非表示
+  /** ⚠ 2026-09-21 以降 既定の表示/非表示には使っていない (値が入っていれば出す)。
+   *  列の並び・分類の目印として残してある */
+  defaultOff?: boolean;
   render: (row: T) => React.ReactNode;
 };
 
@@ -218,11 +220,35 @@ const MONTHLY_COLS: ColDef<MonthlyRow>[] = [
 
 // ─── 列表示設定の localStorage 管理 ───────────────────
 
-const HOURLY_COL_STORAGE = "payroll-summary:cols:hourly";
-const MONTHLY_COL_STORAGE = "payroll-summary:cols:monthly";
+const HOURLY_COL_STORAGE = "payroll-summary:cols:hourly:v2";
+const MONTHLY_COL_STORAGE = "payroll-summary:cols:monthly:v2";
 
-function defaultVisibleKeys<T>(cols: ColDef<T>[]): string[] {
-  return cols.filter((c) => !c.defaultOff).map((c) => c.key);
+/**
+ * 「自動」= その月のデータで 値が入っている列だけを出す。
+ * 既定はこれ。⚠ 金額や値が入っている列は 既定で隠さない (2026-09-21 user)。
+ * 横に長くなるぶんは 左右スクロールで見る。
+ */
+const AUTO_COLS = "__auto__";
+
+/** render() の結果から文字を取り出す。"—" と空は「値が無い」とみなす */
+function nodeText(n: React.ReactNode): string {
+  if (n == null || typeof n === "boolean") return "";
+  if (typeof n === "string" || typeof n === "number") return String(n);
+  if (Array.isArray(n)) return n.map(nodeText).join("");
+  if (typeof n === "object" && "props" in n) {
+    return nodeText((n as React.ReactElement<{ children?: React.ReactNode }>).props.children);
+  }
+  return "";
+}
+
+/** 1 行でも値が入っている列の key。always の列は呼ぶ側で足す */
+function keysWithValue<T>(cols: ColDef<T>[], rows: T[]): string[] {
+  return cols
+    .filter((c) => rows.some((r) => {
+      const t = nodeText(c.render(r)).trim();
+      return t !== "" && t !== "—";
+    }))
+    .map((c) => c.key);
 }
 
 function fmtMonth(m: string) {
@@ -326,9 +352,10 @@ export default function PayrollSummaryPage() {
 
   const [visibleHourly, setVisibleHourly] = useLocalStorage<string[]>(
     HOURLY_COL_STORAGE,
-    defaultVisibleKeys(HOURLY_COLS),
+    [AUTO_COLS],
     (raw) => {
       const arr = JSON.parse(raw) as string[];
+      if (arr.includes(AUTO_COLS)) return [AUTO_COLS];
       const allKeys = HOURLY_COLS.map((c) => c.key);
       return arr.filter((k) => allKeys.includes(k));
     },
@@ -336,9 +363,10 @@ export default function PayrollSummaryPage() {
   );
   const [visibleMonthly, setVisibleMonthly] = useLocalStorage<string[]>(
     MONTHLY_COL_STORAGE,
-    defaultVisibleKeys(MONTHLY_COLS),
+    [AUTO_COLS],
     (raw) => {
       const arr = JSON.parse(raw) as string[];
+      if (arr.includes(AUTO_COLS)) return [AUTO_COLS];
       const allKeys = MONTHLY_COLS.map((c) => c.key);
       return arr.filter((k) => allKeys.includes(k));
     },
@@ -383,24 +411,33 @@ export default function PayrollSummaryPage() {
   const summary: Summary | null = dbResult?.summary ?? localSummary;
   const calculatedAt = dbResult?.summary?.calculated_at ?? matchingIndexEntry?.calculated_at ?? null;
 
+  // 「自動」のときは その月のデータで 値が入っている列を出す
+  const autoHourly = useMemo(() => keysWithValue(HOURLY_COLS, summary?.hourly ?? []), [summary]);
+  const autoMonthly = useMemo(() => keysWithValue(MONTHLY_COLS, summary?.monthly ?? []), [summary]);
+  const isAutoHourly = visibleHourly.includes(AUTO_COLS);
+  const isAutoMonthly = visibleMonthly.includes(AUTO_COLS);
+  const effHourly = isAutoHourly ? autoHourly : visibleHourly;
+  const effMonthly = isAutoMonthly ? autoMonthly : visibleMonthly;
+
   // 列選択 (useLocalStorage の setter が localStorage 書込まで担当)
+  //   ⚠ 自動の状態で 1 つでも触ったら その時点の列を実体化して 手動に切り替える
   const toggleHourly = (key: string, on: boolean) => {
-    const next = on ? [...new Set([...visibleHourly, key])] : visibleHourly.filter((k) => k !== key);
-    setVisibleHourly(next);
+    const base = effHourly;
+    setVisibleHourly(on ? [...new Set([...base, key])] : base.filter((k) => k !== key));
   };
   const toggleMonthly = (key: string, on: boolean) => {
-    const next = on ? [...new Set([...visibleMonthly, key])] : visibleMonthly.filter((k) => k !== key);
-    setVisibleMonthly(next);
+    const base = effMonthly;
+    setVisibleMonthly(on ? [...new Set([...base, key])] : base.filter((k) => k !== key));
   };
 
   // 表示する列の順序は COLS の定義順を維持
   const hourlyVisibleCols = useMemo(
-    () => HOURLY_COLS.filter((c) => c.always || visibleHourly.includes(c.key)),
-    [visibleHourly]
+    () => HOURLY_COLS.filter((c) => c.always || effHourly.includes(c.key)),
+    [effHourly]
   );
   const monthlyVisibleCols = useMemo(
-    () => MONTHLY_COLS.filter((c) => c.always || visibleMonthly.includes(c.key)),
-    [visibleMonthly]
+    () => MONTHLY_COLS.filter((c) => c.always || effMonthly.includes(c.key)),
+    [effMonthly]
   );
 
   const hourlyTotal = useMemo(
@@ -423,6 +460,22 @@ export default function PayrollSummaryPage() {
               <DialogHeader>
                 <DialogTitle>表示項目の設定</DialogTitle>
               </DialogHeader>
+              <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  既定は<strong className="text-foreground">自動</strong>
+                  （その月に値が入っている列を全部出す。横は左右スクロール）。
+                  チェックを触ると手動に切り替わります。
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto shrink-0"
+                  disabled={isAutoHourly && isAutoMonthly}
+                  onClick={() => { setVisibleHourly([AUTO_COLS]); setVisibleMonthly([AUTO_COLS]); }}
+                >
+                  自動に戻す
+                </Button>
+              </div>
               <div className="space-y-6 mt-2">
                 <section>
                   <h3 className="font-semibold mb-2 text-sm">時給者の列</h3>
@@ -431,7 +484,7 @@ export default function PayrollSummaryPage() {
                       <label key={c.key} className={`flex items-center gap-2 text-sm ${c.always ? "opacity-60" : ""}`}>
                         <input
                           type="checkbox"
-                          checked={c.always || visibleHourly.includes(c.key)}
+                          checked={c.always || effHourly.includes(c.key)}
                           disabled={c.always}
                           onChange={(e) => toggleHourly(c.key, e.target.checked)}
                         />
@@ -448,7 +501,7 @@ export default function PayrollSummaryPage() {
                       <label key={c.key} className={`flex items-center gap-2 text-sm ${c.always ? "opacity-60" : ""}`}>
                         <input
                           type="checkbox"
-                          checked={c.always || visibleMonthly.includes(c.key)}
+                          checked={c.always || effMonthly.includes(c.key)}
                           disabled={c.always}
                           onChange={(e) => toggleMonthly(c.key, e.target.checked)}
                         />
