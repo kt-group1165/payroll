@@ -78,9 +78,12 @@ for (const f of files.sort()) {
     bucket.emps.add(emp);
     const base = { office_number: office, employee_number: emp, processing_month: pm };
     const push = (o) => bucket.rows.push({ ...base, item_date: null, start_time: null, end_time: null, break_time: null, numeric_value: null, year_month: null, child_name: null, amount: null, ...o });
-    for (const [col, name] of [["通勤km", "通勤km"], ["出張km", "出張km"]]) {
-      const v = num(at(c, col));
-      if (v != null && v !== 0) push({ record_type: "km", item_name: name, numeric_value: v });
+    // ⚠ 通勤km は取り込まない。この CSV の「通勤km」列は 出張km と同じ値が入っていることが多く
+    //   (ちはら台 2026-06 の 22 名中 21 名が 通勤km == 出張km)、そのまま入れると
+    //   総括表が 0 円の人に 通勤費を払ってしまう (2026-09-21 に踏んだ)。
+    {
+      const v = num(at(c, "出張km"));
+      if (v != null && v !== 0) push({ record_type: "km", item_name: "出張km", numeric_value: v });
     }
     for (const [col, name] of [["有給(全休)取得日", "有給"], ["有給(半休)取得日", "半有給"],
                                ["欠勤(全休)取得日", "欠勤"], ["欠勤(半休)取得日", "半欠勤"],
