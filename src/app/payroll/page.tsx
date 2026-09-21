@@ -650,6 +650,11 @@ export default function PayrollPage() {
       // 付与日から 前年度繰越 を使い切るまでは前年度の日当、以降は今年度の日当。
       // 前月までの使用日数は 事業所書式 (付与月〜前月) の有給から数える
       const grantByEmpId = new Map<string, PaidLeaveGrant>();
+      /** その職員の 有給管理簿シートが carrying している最初の月 (= 最新の付与日の月)。
+       *  管理簿の 4月〜3月 の列は ★その行の付与日から 1 年ぶんしか無い。
+       *  それより前の月に 0 を書き込んでいたため、事業所書式に日数があっても 0 円になっていた
+       *  (おゆみ野 2026-03 の 16 名 ¥372,297。2026-09-21 実測)。 */
+      const ledgerFromByEmpId = new Map<string, string>();
       const usedBeforeByNum = new Map<string, number>();
       const ledgerDaysByNum = new Map<string, Map<string, number>>();
       {
@@ -666,6 +671,8 @@ export default function PayrollPage() {
         for (const [id, gs] of byEmp) {
           const g = activePaidLeaveGrant(gs, _monthEnd);
           if (g) grantByEmpId.set(id, g);
+          const latest = gs.map((x) => x.grant_date).sort().at(-1);
+          if (latest) ledgerFromByEmpId.set(id, latest.slice(0, 7).replace("-", ""));
         }
         const firstMonth = [...grantByEmpId.values()].map((g) => g.grant_date.slice(0, 7).replace("-", "")).sort()[0];
         // 有給管理簿の月ごとの使用日数 (payroll_monthly_inputs paid_leave_days)。載っている人は 事業所書式より優先 (2026-09-18)
@@ -709,8 +716,15 @@ export default function PayrollPage() {
         }
       }
       // 当月の有給日数: 有給管理簿に当月の行があればそれ (総括表 4〜7 月 967 件中 940 件一致)、無ければ事業所書式
+      //   ⚠ 管理簿が carrying していない月 (最新の付与日より前) は 0 が入っていても信用しない。
+      //     シートの月列は 付与日から 1 年ぶんしか無く、それより前は 取込が 0 を書いただけ
+      const paidLeaveDaysOf = (empId: string, empNum: string, days: number): number => {
+        const from = ledgerFromByEmpId.get(empId);
+        if (from && selectedMonth < from) return days;
+        return ledgerDaysByNum.get(empNum)?.get(selectedMonth) ?? days;
+      };
       const paidLeaveAllowanceOf = (empId: string, empNum: string, days: number, fallbackRate: number): number =>
-        paidLeaveAllowanceByGrant(ledgerDaysByNum.get(empNum)?.get(selectedMonth) ?? days, usedBeforeByNum.get(empNum) ?? 0, grantByEmpId.get(empId) ?? null, fallbackRate);
+        paidLeaveAllowanceByGrant(paidLeaveDaysOf(empId, empNum, days), usedBeforeByNum.get(empNum) ?? 0, grantByEmpId.get(empId) ?? null, fallbackRate);
 
       // 月ごとの手入力の 調整手当・過誤 (payroll_monthly_inputs adjustment)。時給者は error_adjustment、月給者は adjustment
       const adjustmentByNum = new Map<string, number>();
