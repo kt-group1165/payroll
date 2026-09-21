@@ -349,7 +349,7 @@ eq("出勤時間: 出勤簿があれば出勤簿の合計 (訪問・移動は見
 eq("出勤時間: 出勤簿が無ければ 訪問 + 移動全量 (米倉靖子 2026-07: 7,345 + 1,093分)", employeeWorkMinutes(0, 0, 7345, 1093 * 60), 8438);
 eq("出勤時間: 出勤簿があれば研修は足さない (出勤簿に含まれる)", employeeWorkMinutes(22, 10970, 4065, 0, null, 120), 10970);
 eq("出勤時間: 出勤簿が無ければ研修を足す", employeeWorkMinutes(0, 0, 7345, 1093 * 60, null, 120), 8558);
-eq("出勤時間: 旧日計があっても研修を足す", employeeWorkMinutes(0, 0, 0, 0, 9000, 90), 9090);
+eq("出勤時間: 旧日計は研修込みなので足さない (二重計上しない)", employeeWorkMinutes(0, 0, 0, 0, 9000, 90), 9000);
 {
   const tr = (item_name: string, start_time: string, end_time: string, break_time: string | null = null) =>
     ({ record_type: "training", item_name, start_time, end_time, break_time }) as Parameters<typeof allTrainingMinutes>[0][number];
