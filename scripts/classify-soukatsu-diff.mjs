@@ -21,6 +21,9 @@ const MAP_PART={ "移動手当":["移動手当"], "勤続":["勤続手当（パ�
 const MAP_SHA={ "育児":["育児手当"], "通勤":["通勤費"], "出張":["出張費"], "有給":["有給"],
   "勤続":["勤続手当"], "夜朝":["夜朝"], "残業":["残業手当総額"] };
 const L1=new Map();
+/** ①シートで その列が実際に埋まっているか。空の列と 0 を突き合わせると 偽の「一致」になる
+ *  (2026-09-21 実測: 有給 0.0% / 通勤費 0.0% / 育児手当 1.9% は ①に入っていない) */
+const COV={};
 for(const m of ["202603","202604","202605","202606","202607"]){
   const root=join(S,`soukatsu${m}`); if(!existsSync(root))continue;
   for(const corp of readdirSync(root,{withFileTypes:true}).filter(d=>d.isDirectory()))
@@ -34,6 +37,7 @@ for(const m of ["202603","202604","202605","202606","202607"]){
     for(let r=2;r<=ws.rowCount;r++){
       const v=ws.getRow(r).values; const emp=nn(v[cols["従業員コード"]]); if(!emp)continue;
       L1.set(`${off.name}|${m}|${emp}`,{kind,v,cols});
+      for(const c of Object.keys(cols)){const k=`${kind}/${c}`; const s2=COV[k]??(COV[k]={n:0,nz:0}); s2.n++; if(num(v[cols[c]])!==0)s2.nz++;}
     }
   }
 }
@@ -58,8 +62,10 @@ for(const r of rows){
     const s=st[i.k]??(st[i.k]={n:0,abs:0,ok:0,okAbs:0});
     const d=Math.abs(i.a-i.b); s.n++; s.abs+=d;
     const map=(l1?.kind==="part"?MAP_PART:MAP_SHA)[i.k];
+    // ★ 空の列は証拠にならない。1 つでも「埋まっている列」がある組み合わせだけ採用する
     const have=(l1&&map)?map.filter(c=>l1.cols[c]):[];
-    if(have.length&&have.reduce((a,c)=>a+num(l1.v[l1.cols[c]]),0)===i.a){ s.ok++; s.okAbs+=d; }
+    const usable=have.some(c=>{const cv=COV[`${l1.kind}/${c}`]; return cv && cv.nz/cv.n>=0.05;});
+    if(usable&&have.reduce((a,c)=>a+num(l1.v[l1.cols[c]]),0)===i.a){ s.ok++; s.okAbs+=d; }
     else real.push({...r,item:i.k,ours:i.a,sou:i.b,d});
   }
 }
