@@ -17,6 +17,8 @@ import { supabase } from "@/lib/supabase";
 export type KyotakuEmployeeRow = {
   id: string;
   name: string;
+  /** Excel 取込の出勤簿 (payroll_attendance_records) を引くのに要る (2026-09-21) */
+  employee_number: string;
   office_id: string;
   role_type?: string | null;
   is_office_worker?: boolean | null;
@@ -40,7 +42,7 @@ async function fetchEmployees(officeId: string): Promise<KyotakuEmployeeRow[]> {
   if (error) throw error;
   return ((data ?? []) as (KyotakuEmployeeRow & { attendance_hidden?: boolean })[])
     .filter((e) => e.attendance_hidden !== true)
-    .map((e) => ({ id: e.id, name: e.name, office_id: e.office_id, role_type: e.role_type ?? null, is_office_worker: e.is_office_worker ?? null }));
+    .map((e) => ({ id: e.id, name: e.name, employee_number: String(e.employee_number ?? ""), office_id: e.office_id, role_type: e.role_type ?? null, is_office_worker: e.is_office_worker ?? null }));
 }
 
 export type UseKyotakuEmployeesResult = {

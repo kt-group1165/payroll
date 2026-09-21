@@ -447,7 +447,15 @@ export function KyotakuAttendanceContent() {
     isLoading: attendanceLoading,
     error: attendanceFetchError,
     mutate: mutateAttendance,
-  } = useKyotakuAttendanceRows(selectedEmployeeId, month, selectedOfficeWeekStart);
+  } = useKyotakuAttendanceRows(
+    selectedEmployeeId,
+    month,
+    selectedOfficeWeekStart,
+    offices.find((o) => o.id === selectedOfficeId)?.office_number ?? "",
+    employees.find((e) => e.id === selectedEmployeeId)?.employee_number ?? "",
+  );
+  /** この月の表示が Excel 取込のほう (= この画面からは編集できない) か */
+  const isExcelSource = attendanceData?.source === "excel";
 
   // 会社休日 (お盆/年末年始等)。tenant 単位で全期間 fetch (件数は数十/年で軽い)。
   // attendance-calc に渡して祝日と同じく「所定労働日でない日」として扱う。
@@ -1383,9 +1391,11 @@ export function KyotakuAttendanceContent() {
             <Button
               variant="outline"
               onClick={handleDelete}
-              disabled={deleting || saving || !selectedEmployeeId}
+              disabled={deleting || saving || !selectedEmployeeId || isExcelSource}
               className="text-destructive border-destructive/40 hover:bg-destructive/10"
-              title="選択スタッフ・対象月の出勤簿データを DB から削除します"
+              title={isExcelSource
+                ? "Excel 出勤簿の取込ぶんはこの画面からは消せません"
+                : "選択スタッフ・対象月の出勤簿データを DB から削除します"}
             >
               {deleting ? "削除中..." : "削除"}
             </Button>
@@ -1395,14 +1405,25 @@ export function KyotakuAttendanceContent() {
                 saving ||
                 deleting ||
                 !selectedEmployeeId ||
+                isExcelSource ||
                 (rows.every((r) => !r.dirty) && !monthlyDirty)
               }
+              title={isExcelSource ? "Excel 出勤簿の取込ぶんはこの画面からは保存できません" : undefined}
             >
               {saving ? "保存中..." : "保存"}
             </Button>
           </div>
         </CardHeader>
         <CardContent>
+          {isExcelSource && (
+            <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <span className="font-medium">Excel 出勤簿の取込ぶんを表示しています（読み取り専用）。</span>
+              <span className="ml-1">
+                この事業所は給与計算も この取込ぶんを見ます。直すときは Excel を取り込み直してください。
+                画面入力に切り替えるには 事業所の設定 (visit_attendance_screen_offices) が要ります。
+              </span>
+            </div>
+          )}
           {loading && (
             <p className="text-sm text-muted-foreground mb-2">読み込み中...</p>
           )}
