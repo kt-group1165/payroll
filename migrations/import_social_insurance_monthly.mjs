@@ -17,7 +17,7 @@
  *   と 通信手当の判定。
  * 冪等: (office_number, employee_number, processing_month, item_key) で upsert。
  */
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const EXECUTE = process.argv.includes("--execute");
@@ -96,7 +96,10 @@ for (const [k, v] of [...per].sort()) console.log(`   ${k.padEnd(34)} ${v.join("
 
 if (!EXECUTE) { console.log("\nDRY RUN (--execute で書き込み)"); process.exit(0); }
 for (let i = 0; i < rows.length; i += 200) {
-  const body = rows.slice(i, i + 200).map(({ _name, _office, _from, _src, ...r }) => r);
+  const body = rows.slice(i, i + 200).map((r) => ({
+    office_number: r.office_number, employee_number: r.employee_number,
+    processing_month: r.processing_month, item_key: r.item_key, numeric_value: r.numeric_value,
+  }));
   const res = await fetch(`${SB}payroll_monthly_inputs?on_conflict=office_number,employee_number,processing_month,item_key`, {
     method: "POST", headers: { ...H, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(body),
   });
