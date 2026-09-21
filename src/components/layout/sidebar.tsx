@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useMemo, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 
 type NavItem = { href: string; label: string; icon: string };
@@ -61,6 +62,23 @@ const sections: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+/** 畳んだセクションの記憶先。読めなくても動くので try/catch で握る (プライベートウィンドウ等) */
+const STORAGE_KEY = "kt-payroll-sidebar-collapsed";
+/** 同じタブ内の変更を拾うための自前イベント (storage イベントは他タブにしか飛ばない) */
+const CHANGED = "kt-payroll-sidebar-changed";
+
+const subscribe = (onChange: () => void) => {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(CHANGED, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(CHANGED, onChange);
+  };
+};
+/** スナップショットは「生の文字列」。毎回 parse すると参照が変わって無限再描画になる */
+const readRaw = () => { try { return localStorage.getItem(STORAGE_KEY) ?? ""; } catch { return ""; } };
+const readRawServer = () => "";
+
 export function Sidebar() {
   const pathname = usePathname();
 
@@ -75,6 +93,21 @@ export function Sidebar() {
     return matches.reduce((best, h) => (h.length > best.length ? h : best));
   })();
 
+  const activeSection = sections.find((s) => s.items.some((i) => i.href === activeHref))?.title ?? null;
+
+  // SSR では「全部開いた状態」。ハイドレーション後に localStorage の記憶へ切り替わる
+  const raw = useSyncExternalStore(subscribe, readRaw, readRawServer);
+  const collapsed = useMemo<string[]>(() => {
+    if (!raw) return [];
+    try { const v = JSON.parse(raw); return Array.isArray(v) ? (v as string[]) : []; } catch { return []; }
+  }, [raw]);
+
+  const toggle = (title: string) => {
+    const next = collapsed.includes(title) ? collapsed.filter((t) => t !== title) : [...collapsed, title];
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* 保存できなくても動く */ }
+    window.dispatchEvent(new Event(CHANGED));
+  };
+
   return (
     <aside className="w-60 border-r bg-muted/30 flex flex-col">
       <div className="p-4 border-b">
@@ -84,29 +117,46 @@ export function Sidebar() {
         </h1>
       </div>
       <nav className="flex-1 p-2 overflow-y-auto">
-        {sections.map((sec) => (
-          <div key={sec.title} className="mb-3">
-            <p className="px-2 pt-1 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              {sec.title}
-            </p>
-            {sec.items.map((item) => {
-              const isActive = activeHref === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                    isActive ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-                  )}
-                >
-                  <span>{item.icon}</span>
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+        {sections.map((sec) => {
+          // ⚠ 「今いるページのセクションは常に開く」にはしない。
+          //   今いるページのセクションこそ畳みたい (2026-09-21 user)
+          const isOpen = !collapsed.includes(sec.title);
+          const hasActive = sec.title === activeSection;
+          return (
+            <div key={sec.title} className="mb-3">
+              <button
+                type="button"
+                onClick={() => toggle(sec.title)}
+                aria-expanded={isOpen}
+                className="w-full flex items-center gap-1 px-2 pt-1 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <span className={cn("transition-transform", isOpen ? "rotate-90" : "")}>▸</span>
+                <span>{sec.title}</span>
+                {!isOpen && (
+                  <span className="ml-auto normal-case tracking-normal">
+                    {hasActive ? "●" : sec.items.length}
+                  </span>
+                )}
+              </button>
+              {isOpen && sec.items.map((item) => {
+                const isActive = activeHref === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+                      isActive ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                    )}
+                  >
+                    <span>{item.icon}</span>
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })}
       </nav>
     </aside>
   );
