@@ -60,6 +60,7 @@ import {
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
+  allTrainingMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
   hrdTrainingMinutes,
@@ -852,7 +853,7 @@ export default function PayrollPage() {
         // 出勤簿の無い時給者の出勤時間 = 訪問時間 (+ 移動時間は経路計算の後で足す)。2026-09-17
         const empSummary = {
           ...baseEmpSummary,
-          workHoursMin: employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0, legacyWorkMinOf(empNum)),
+          workHoursMin: employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0, legacyWorkMinOf(empNum), allTrainingMinutes(ofByEmp.get(empNum) ?? [])),
         };
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
@@ -1117,7 +1118,7 @@ export default function PayrollPage() {
               // 出勤簿の無い時給者は 出勤時間 = 訪問 + 移動の全量 (社員と同じ。さつきが丘 2026-07 で総括表と照合)
               entry.summary = {
                 ...entry.summary,
-                workHoursMin: employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec, legacyWorkMinOf(normNum)),
+                workHoursMin: employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec, legacyWorkMinOf(normNum), allTrainingMinutes(ofByEmp.get(normNum) ?? [])),
               };
               const adjustedDistanceM = adjustedCommuteDistanceM(totalCommuteM, empOffice?.distance_adjustment_rate ?? 100);
               entry.travel_time_sec = totalSec;
@@ -1199,6 +1200,7 @@ export default function PayrollPage() {
               baseSummary.visitMinutes,
               monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
               legacyWorkMinOf(normEmp(e.employee_number)),
+              allTrainingMinutes(ofByEmp.get(normEmp(e.employee_number)) ?? []),
             ),
             // 出勤簿の無い社員の残業 (分) = 日ごとの (訪問 + 移動の全量) で 日8h超 + 週40h超 (日曜始まり)。2026-09-19
             //   総括表データ (提責_社員 の 残業時間合計) と 7月 社員100名で突合: 訪問 + 移動全量 誤差計 8,469分 /

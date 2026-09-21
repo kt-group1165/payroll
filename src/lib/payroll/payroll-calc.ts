@@ -901,6 +901,7 @@ export function employeeWorkMinutes(
   visitMinutes: number,
   travelTimeFullSec: number,
   legacyWorkMin?: number | null,
+  trainingMin = 0,
 ): number {
   if (attendanceDays > 0) return attendanceWorkMin;
   // 出勤簿が無い人は 旧システムの日計 (サービス合計 + 移動の全量) を使う。当方の推定より総括表に近い。
@@ -908,8 +909,18 @@ export function employeeWorkMinutes(
   //     時給 1,851人月  当方の推定 60.1% → 旧システム 87.3% (旧だけ一致 517 / 当方だけ一致 14)
   //     月給   583人月  当方の推定 44.9% → 旧システム 69.1% (旧だけ一致 143 / 当方だけ一致  2)
   //   ⚠ 旧システムの「計算結果」ではなく サービス時間と移動時間の実測値。計算は当方のロジックのまま
-  if (legacyWorkMin != null && legacyWorkMin > 0) return legacyWorkMin;
-  return visitMinutes + Math.round(travelTimeFullSec / 60);
+  // 出勤簿が無い人は 事業所書式の研修・会議・HRD研修・初任者研修の時間も足す (2026-09-21)。
+  //   総括表 2026-03〜07 (出勤簿なし): 時給 1,836人月 68.2% → 86.8% (+341 / 悪化 0) / 月給 537人月 61.8% → 74.1% (+68 / 悪化 2)
+  if (legacyWorkMin != null && legacyWorkMin > 0) return legacyWorkMin + trainingMin;
+  return visitMinutes + Math.round(travelTimeFullSec / 60) + trainingMin;
+}
+
+/** 事業所書式の研修系 (研修・会議・HRD研修・初任者研修) の時間 (分) の合計。出勤簿の無い人の出勤時間に足す */
+export function allTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
+  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  return ofRecs
+    .filter((r) => r.record_type === "training" && /HRD|研修|会議/.test(r.item_name) && r.start_time && r.end_time)
+    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
 }
 
 /**
