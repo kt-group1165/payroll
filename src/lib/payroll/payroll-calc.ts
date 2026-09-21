@@ -698,17 +698,32 @@ export function computeChildcareAllowance(
   return grand;
 }
 
-/** 会議費を計算する (月給・時給共通) */
-export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number, countItems: readonly string[] = ["会議1"]): number {
-  // 数える件数の項目は事業所で違う: 既定は「会議1」、おゆみ野は「会議2」「会議3」(meeting_count_items。2026-09-18)
-  // ⚠ 件数の欄に 金額 (1,500) を入れた書式がある (船橋 3月・四街道 6月・八千代 6月 の 12 件、すべて 1,500)。
-  //   総括表はそれを 1,500 円として払っている。件数として 100 以上はありえないので 金額 (円) として足す (2026-09-19)
-  const recs = ofRecs.filter((r) => countItems.some((k) => r.item_name.includes(k)));
+/** 会議1 の単価。22 事業所すべてで 1,500 円/件 (2026-09-21 に総括表データ 2,593 行から割り出した) */
+export const MEETING1_UNIT_PRICE = 1500;
+
+/**
+ * 会議費を計算する (月給・時給共通)。
+ *   会議費 = 会議1件数 × 1,500 + (会議2件数 + 会議3件数) × 事業所の会議単価
+ * ★ 2026-09-21 に 旧システムの出力 (総括表xlsm の「総括表データ_パート」シート) で確定:
+ *     会議1 = 1,500円/件  … 22 事業所すべて共通
+ *     会議2 / 会議3 = 1,150円/件 … おゆみ野だけが使う (= おゆみ野の会議単価)
+ *   例) おゆみ野 2026-06 森塚勝枝 会議1=1・会議2=1・会議3=1 → 1,500+1,150+1,150 = 3,800 円
+ * ⚠ 会議「時間」(開始・終了のある 会議) は 研修手当として別に払う。**件数と時間は別の入力**で、
+ *   両方を件数として数えると二重計上になる (2026-09-21 に踏んだ)。
+ * ⚠ 件数の欄に 金額 (1,500) を入れた書式がある (船橋 3月・四街道 6月・八千代 6月 の 12 件)。
+ *   件数として 100 以上はありえないので 金額 (円) として足す (2026-09-19)
+ */
+export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number): number {
   const amountAsCount = (r: OfficeFormRecord) => r.record_type === "km" && (r.numeric_value ?? 0) >= MEETING_COUNT_AS_YEN_THRESHOLD;
-  const meetingCount = recs.filter((r) => !amountAsCount(r))
+  const countOf = (key: string) => ofRecs
+    .filter((r) => r.item_name.includes(key) && !amountAsCount(r))
     .reduce((s, r) => s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
-  const yen = recs.filter(amountAsCount).reduce((s, r) => s + (r.numeric_value ?? 0), 0);
-  return Math.round(meetingCount * meetingUnitPrice) + Math.round(yen);
+  const yen = ofRecs
+    .filter((r) => /会議[123]/.test(r.item_name) && amountAsCount(r))
+    .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
+  return Math.round(countOf("会議1") * MEETING1_UNIT_PRICE)
+    + Math.round((countOf("会議2") + countOf("会議3")) * meetingUnitPrice)
+    + Math.round(yen);
 }
 
 /** 会議の件数の欄がこれ以上なら 件数ではなく 金額 (円) を入れた入力ミスとみなす */

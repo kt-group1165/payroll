@@ -471,12 +471,20 @@ eq("normalizeYM 単体: 'Dec-25' → '202512'", normalizeYM("Dec-25"), "202512")
 const mRec = (item_name: string, record_type = "count", numeric_value: number | null = null): OfficeFormRecord =>
   ({ employee_number: "1", record_type, item_name, item_date: null, numeric_value,
     start_time: null, end_time: null, year_month: null, child_name: null, amount: null });
-eq("会議費: 会議1以外の記録は数えない", computeMeetingFee([mRec("会議2")], 1000), 0);
-eq("会議費: 会議1 かつ record_type!=km は1件=1回", computeMeetingFee([mRec("会議1")], 1000), 1000);
+// ★ 2026-09-21 に旧システムの出力で確定: 会議1 = 1,500円/件 (全22事業所共通) / 会議2・会議3 = 事業所の会議単価
+eq("★ 会議費: 会議1 は事業所の単価によらず 1,500円/件", computeMeetingFee([mRec("会議1")], 1000), 1500);
+eq("★ 会議費: 会議2・会議3 は 事業所の会議単価 (おゆみ野 1,150円)",
+  computeMeetingFee([mRec("会議2"), mRec("会議3")], 1150), 2300);
+eq("★ 会議費: おゆみ野 2026-06 森塚勝枝 会議1+会議2+会議3 → 1,500+1,150+1,150",
+  computeMeetingFee([mRec("会議1"), mRec("会議2"), mRec("会議3")], 1150), 3800);
+eq("★ 会議費: おゆみ野 2026-06 日暮まゆみ 会議1+会議3 → 1,500+1,150", 
+  computeMeetingFee([mRec("会議1"), mRec("会議3")], 1150), 2650);
 eq("★ 会議費: record_type=km は numeric_value を回数として丸めて使う",
-  computeMeetingFee([mRec("会議1", "km", 2.6)], 1000), 3000);
-eq("会議費: 複数レコード合算 (1回+1回)×単価1000円",
-  computeMeetingFee([mRec("会議1"), mRec("会議1")], 1000), 2000);
+  computeMeetingFee([mRec("会議1", "km", 2.6)], 1000), 4500);
+eq("会議費: 複数レコード合算 (1回+1回)×1,500円",
+  computeMeetingFee([mRec("会議1"), mRec("会議1")], 1000), 3000);
+eq("★ 会議費: 会議の「時間」(training) は件数として数えない (二重計上になる)",
+  computeMeetingFee([{ record_type: "training", item_name: "会議", item_date: "6月3日", start_time: "18:00", end_time: "19:00", break_time: null } as never], 1150), 0);
 
 // ── 時給者の各種手当 (2026-09-05 追加) ───────────────────────────────────
 eq("処遇改善支援費: 訪問介護+社保加入+当月実績あり → 事業所単価",

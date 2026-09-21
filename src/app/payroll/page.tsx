@@ -840,7 +840,7 @@ export default function PayrollPage() {
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
           ? 0
-          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""), meetingItemsRes.items[empOffice?.office_number ?? ""])
+          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""))
             + (trainingPayAmount(meetingMinutes(ofByEmp.get(empNum) ?? []), trainingRate) ?? 0);
         const officeWorkMinutes = info.isOfficeWorker ? empSummary.workHoursMin : 0;
         const officeWorkRate = sal?.office_work_hourly_rate ?? 0;
