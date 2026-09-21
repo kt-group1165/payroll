@@ -39,6 +39,11 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
   const [offices] = useState<Office[]>(initialOffices);
+  // シートに事業所番号が無いファイル (四街道 池谷 2026-08 等) に使う事業所番号。
+  // 空のまま登録すると payroll_import_batches の RLS で弾かれ、しかも成功トーストが出ていた (2026-09-22)
+  const [fallbackOffice, setFallbackOffice] = useState("");
+  const officeOf = (a: ParsedAttendance) => (a.meta.officeNumber ?? "").trim() || fallbackOffice;
+  const missingOffice = allData.filter((a) => !(a.meta.officeNumber ?? "").trim());
   // (年月文字列 YYYYMM, 事業所番号) → 件数
   const [existingCounts, setExistingCounts] = useState<AttendanceExistingCount[]>(initialExistingCounts);
 
@@ -110,19 +115,26 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
 
   const handleImport = async () => {
     if (allData.length === 0) return;
+    if (missingOffice.length > 0 && !fallbackOffice) {
+      toast.error(`事業所番号が入っていない出勤簿があります。「事業所番号が空のファイルに使う事業所」を選んでください: ${missingOffice.map((a) => a.meta.employeeName).join("、")}`);
+      return;
+    }
     setIsImporting(true);
 
     try {
       // 重複チェック（既存データがあれば取り込み不可）
+      // ⚠ 社員番号は事業所をまたぐと同じ番号の別人がいる (221005 = やわた 石本 / 君津 岡村)。事業所番号でも絞る
       const duplicates: string[] = [];
       for (const attendance of allData) {
         const { meta } = attendance;
-        const { count } = await supabase
+        const { count, error: countError } = await supabase
           .from("payroll_attendance_records")
           .select("id", { count: "exact", head: true })
           .eq("employee_number", meta.employeeNumber)
+          .eq("office_number", officeOf(attendance))
           .eq("year", meta.year)
           .eq("month", meta.month);
+        if (countError) throw new Error(`既存データの確認に失敗 (${meta.employeeName}): ${countError.message}`);
         if (count && count > 0) {
           duplicates.push(`${meta.employeeName}（${meta.year}年${meta.month}月）`);
         }
@@ -136,8 +148,11 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
         return;
       }
 
+      const failed: ParsedAttendance[] = [];
+      let okRows = 0;
       for (const attendance of allData) {
-        const { meta, rows } = attendance;
+        const { rows } = attendance;
+        const meta = { ...attendance.meta, officeNumber: officeOf(attendance) };
 
         // バッチ作成
         const { data: batch, error: batchError } = await supabase
@@ -156,7 +171,8 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
           .single();
 
         if (batchError || !batch) {
-          toast.error(`バッチ作成エラー: ${batchError?.message}`);
+          toast.error(`${meta.employeeName} のバッチ作成エラー: ${batchError?.message}`);
+          failed.push(attendance);
           continue;
         }
 
@@ -177,28 +193,32 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
           toast.error(
             `${meta.employeeName}のデータ登録エラー: ${insertError.message}`
           );
+          failed.push(attendance);
           continue;
         }
 
-        await supabase
+        const { error: doneError } = await supabase
           .from("payroll_import_batches")
           .update({ status: "completed" as const })
           .eq("id", batch.id);
+        if (doneError) toast.warning(`${meta.employeeName}: 取込バッチの状態を更新できませんでした (${doneError.message})。データは登録済みです`);
+        okRows += rows.length;
       }
 
-      setImported(true);
-      const totalRows = allData.reduce(
-        (sum, a) => sum + a.rows.length,
-        0
-      );
-      toast.success(
-        `${allData.length}名分（${totalRows}日分）の出勤簿を登録しました`
-      );
-      // 一覧更新＆ファイルクリア（重複取り込み防止）
+      const okCount = allData.length - failed.length;
+      if (okCount > 0) toast.success(`${okCount}名分（${okRows}日分）の出勤簿を登録しました`);
       fetchExistingCounts();
-      setFiles([]);
-      setResults([]);
-      setAllData([]);
+      if (failed.length > 0) {
+        // 失敗した人だけ残す (登録済みの人を再登録しないため)。直してから もう一度「データベースに登録」
+        toast.error(`${failed.length}名分は登録できませんでした: ${failed.map((a) => a.meta.employeeName).join("、")}`);
+        setAllData(failed);
+      } else {
+        setImported(true);
+        // 一覧更新＆ファイルクリア（重複取り込み防止）
+        setFiles([]);
+        setResults([]);
+        setAllData([]);
+      }
     } catch (e) {
       toast.error(
         `エラー: ${e instanceof Error ? e.message : String(e)}`
@@ -333,6 +353,31 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
             </Alert>
           )}
 
+          {/* 事業所番号がシートに無いファイル */}
+          {missingOffice.length > 0 && (
+            <Alert variant={fallbackOffice ? "default" : "destructive"}>
+              <AlertDescription>
+                <div className="mb-2">
+                  事業所番号が入っていない出勤簿が {missingOffice.length} 件あります（{missingOffice.map((a) => a.meta.employeeName).join("、")}）。
+                  どの事業所の出勤簿かを選んでから登録してください。
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  事業所番号が空のファイルに使う事業所
+                  <select
+                    className="border rounded-md px-2 py-1 bg-background"
+                    value={fallbackOffice}
+                    onChange={(e) => setFallbackOffice(e.target.value)}
+                  >
+                    <option value="">選択してください</option>
+                    {offices.map((o) => (
+                      <option key={o.id} value={o.office_number}>{o.short_name || o.name}（{o.office_number}）</option>
+                    ))}
+                  </select>
+                </label>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* プレビュー */}
           {allData.length > 0 && (
             <>
@@ -344,7 +389,7 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
                 </p>
                 <Button
                   onClick={handleImport}
-                  disabled={isImporting || imported}
+                  disabled={isImporting || imported || (missingOffice.length > 0 && !fallbackOffice)}
                 >
                   {isImporting
                     ? "登録中..."

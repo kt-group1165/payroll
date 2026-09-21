@@ -203,6 +203,19 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
       const processingMonth = selectedProcessingMonth.replace("-", "");
       const selectedOffice = offices.find((o) => o.id === selectedOfficeId)!;
       const officeNumber = selectedOffice.office_number;
+      // 同じ事業所 × 処理月が既にあれば止める (重複チェックが無く、入れ直すと実績が二重になっていた。2026-09-22)
+      {
+        const { count, error: countError } = await supabase
+          .from("payroll_service_records")
+          .select("id", { count: "exact", head: true })
+          .eq("office_number", officeNumber)
+          .eq("processing_month", processingMonth);
+        if (countError) { toast.error(`既存データの確認に失敗: ${countError.message}`); return; }
+        if (count && count > 0) {
+          toast.error(`${selectedOffice.name} の ${processingMonth.slice(0, 4)}年${Number(processingMonth.slice(4))}月分は既に ${count} 件あります。入れ直すときは上の表の ✕ で消してから登録してください`);
+          return;
+        }
+      }
 
       const { data: batch, error: batchError } = await supabase
         .from("payroll_import_batches")

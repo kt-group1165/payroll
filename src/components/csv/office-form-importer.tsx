@@ -123,7 +123,30 @@ export function OfficeFormImporter({ initialOffices, initialExistingMonths }: Of
 
     try {
       const processingMonth = selectedProcessingMonth.replace("-", "");
-      const officeNumber    = allData[0]?.office_number ?? "";
+      // 1 回の登録は 1 事業所だけ (取込記録 payroll_import_batches は事業所 1 つしか持てない)。2026-09-22
+      const officeNumbers = [...new Set(allData.map((r) => (r.office_number ?? "").trim()))];
+      if (officeNumbers.includes("")) {
+        toast.error("事業所番号が空の行があります。事業所書式の「事業所番号」列を確認してください");
+        return;
+      }
+      if (officeNumbers.length > 1) {
+        toast.error(`複数の事業所のファイルが混ざっています (${officeNumbers.join(", ")})。1 事業所ずつ登録してください`);
+        return;
+      }
+      const officeNumber = officeNumbers[0];
+      // 同じ事業所 × 処理月が既にあれば止める (入れ直すと行が二重になる)。消すときは上の表の ✕
+      {
+        const { count, error: countError } = await supabase
+          .from("payroll_office_form_records")
+          .select("id", { count: "exact", head: true })
+          .eq("office_number", officeNumber)
+          .eq("processing_month", processingMonth);
+        if (countError) { toast.error(`既存データの確認に失敗: ${countError.message}`); return; }
+        if (count && count > 0) {
+          toast.error(`${officeNumber} の ${processingMonth.slice(0, 4)}年${Number(processingMonth.slice(4))}月分は既に ${count} 件登録されています。入れ直すときは上の表の ✕ で消してから登録してください`);
+          return;
+        }
+      }
 
       const { data: batch, error: batchError } = await supabase
         .from("payroll_import_batches")
@@ -162,14 +185,19 @@ export function OfficeFormImporter({ initialOffices, initialExistingMonths }: Of
         }
       }
 
-      await supabase
+      const { error: doneError } = await supabase
         .from("payroll_import_batches")
         .update({ status: "completed" as const })
         .eq("id", batch.id);
+      if (doneError) toast.warning(`取込バッチの状態を更新できませんでした (${doneError.message})。データは登録済みです`);
 
       setImported(true);
       toast.success(`${allData.length}件の事業所書式データを登録しました`);
       fetchExistingMonths();
+      // ファイルを残すと、足して もう一度押したときに 登録済みの分まで二重に入る (2026-09-22)
+      setFiles([]);
+      setResults([]);
+      setAllData([]);
     } catch (e) {
       toast.error(`エラー: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
