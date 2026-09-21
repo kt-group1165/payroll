@@ -408,8 +408,9 @@ export function AttendanceImporter({ initialOffices, initialExistingCounts }: At
                     </Table>
                   </ScrollArea>
                   <p className="text-xs text-muted-foreground mt-1">
+                    {/* 出張km の合計は日ごとの値から出す。シート下部の合計欄は空のことがあり「出張0km」と出ていた (さつき 2026-08、2026-09-22) */}
                     合計: 勤務{attendance.totals.workHours} / 出張
-                    {attendance.totals.businessKm}km / 残業
+                    {Math.round(attendance.rows.reduce((s, r) => s + (parseFloat(String(r.出張km ?? "")) || 0), 0) * 10) / 10}km / 残業
                     {attendance.totals.overtimeHours}
                   </p>
                 </div>

@@ -83,6 +83,7 @@ import {
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
+  tokubiAllowanceAmount,
   allTrainingMinutes,
   computeSummary,
   isWeekendOrHoliday,
@@ -619,7 +620,7 @@ eq("空のrecsは全部0", empty, {
   workDays: 0, helperDays: 0, paidLeave: 0, halfLeave: 0, specialLeave: 0, workHoursMin: 0,
   overtimeMinutes: 0, recordCount: 0, accompaniedCount: 0, visitMinutes: 0,
   visitMinutesExcludingAccompanied: 0, hrdCount: 0, hrdMinutes: 0, meetingCount: 0,
-  commuteKmTotal: 0, commuteYenTotal: 0, businessKmTotal: 0, weekendHolidayMinutes: 0, weekendHolidayAccompaniedMinutes: 0, sundayHolidayMinutes: 0,
+  commuteKmTotal: 0, commuteYenTotal: 0, businessKmTotal: 0, weekendHolidayMinutes: 0, weekendHolidayAccompaniedMinutes: 0, sundayHolidayMinutes: 0, tokubiMinutes: 0,
 });
 eq("★ 通勤: 書式の通勤km 22,816 (月) は 金額 → km 0 / 円 22,816 (船橋 金子)", (({ commuteKmTotal: k, commuteYenTotal: y }) => [k, y])(computeSummary([], [], [{ record_type: "km", item_name: "通勤km", numeric_value: 22816 } as never], "office_form_first")), [0, 22816]);
 eq("通勤: 書式の通勤km 92 は km のまま", computeSummary([], [], [{ record_type: "km", item_name: "通勤km", numeric_value: 92 } as never], "office_form_first").commuteKmTotal, 92);
@@ -709,6 +710,25 @@ eq("★ 土日祝手当の対象時間: sunday_only なら日祭・休日、そ�
   [weekendAllowanceMinutes({ summary: summary({ weekendHolidayMinutes: 600, sundayHolidayMinutes: 120 }), weekend_holiday_sunday_only: true }), weekendAllowanceMinutes({ summary: summary({ weekendHolidayMinutes: 600, sundayHolidayMinutes: 120 }) })], [120, 600]);
 eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (2026-06-06は土曜)",
   computeSummary([vRec({ service_date: "20260606", calc_duration: "1:00", accompanied_visit: "" })], [], []).weekendHolidayMinutes, 60);
+{
+  // 特日 (会社休日) 2026-09-22: お盆 8/13〜15。8/15 は土曜だが 土日祝ではなく特日で払う
+  const sp = new Set(["20260813", "20260814", "20260815"]);
+  const recs = [
+    vRec({ id: "a", service_date: "2026/08/13", calc_duration: "1:00" }),
+    vRec({ id: "b", service_date: "2026/08/15", calc_duration: "0:30" }),
+    vRec({ id: "c", service_date: "2026/08/15", calc_duration: "1:30", accompanied_visit: "同行" }),
+    vRec({ id: "d", service_date: "2026/08/16", calc_duration: "2:00" }),
+  ];
+  const sm = computeSummary(recs, [], [], "attendance_first", sp);
+  eq("★ 特日: 会社休日の訪問 (同行除く) を tokubiMinutes に数える", sm.tokubiMinutes, 90);
+  eq("★ 特日: 特日の土曜 (8/15) は 土日祝の時間に数えない (8/16 日曜だけ)", sm.weekendHolidayMinutes, 120);
+  eq("★ 特日: 日祝だけの時間からも外す", sm.sundayHolidayMinutes, 120);
+  eq("特日: 会社休日を渡さなければ 0 (従来どおり)", computeSummary(recs, [], []).tokubiMinutes, 0);
+  eq("★ 特日手当 = 時間 × 200円/時 四捨五入 (KT姉崎 小倉 2026-08 215分 → 717円)", tokubiAllowanceAmount(215), 717);
+  eq("特日手当: 0.75 掛け後の端数 (峯島 960分×0.75=720分 → 2,400円)", tokubiAllowanceAmount(720), 2400);
+  eq("特日手当: 0分は 0円", tokubiAllowanceAmount(0), 0);
+  eq("★ 特日手当は 時給者の総支給に入る", hourlyTotalPay(hourly({ totalPay: 10000, effective_service_months: 0, tokubi_allowance: 717 })) - hourlyTotalPay(hourly({ totalPay: 10000, effective_service_months: 0 })), 717);
+}
 eq("weekendHolidayMinutes: 平日は集計しない (2026-06-01は月曜)",
   computeSummary([vRec({ service_date: "20260601", calc_duration: "1:00" })], [], []).weekendHolidayMinutes, 0);
 eq("★ weekendHolidayAccompaniedMinutes: 休日かつ同伴ありは別枠で集計",

@@ -84,6 +84,8 @@ export type AttendanceSummary = {
   weekendHolidayAccompaniedMinutes: number;
   /** 日曜・祝日 (カレンダー) の訪問時間 (同行除く)。土曜を含まない。土日祝手当を 日祝だけで払う事業所用 */
   sundayHolidayMinutes: number;
+  /** 特日 (会社休日: お盆・年末年始) の訪問時間 (同行除く)。特日の日は 土日祝・日祝 の時間には数えない */
+  tokubiMinutes?: number;
   visitMinutesExcludingAccompanied: number;
 };
 
@@ -117,6 +119,8 @@ export type HourlyPayroll = {
   meeting_fee: number;
   /** 研修・HRD研修の手当 = 研修時間 × 同行の時給 (trainingPayAmount) */
   training_pay: number;
+  /** 特日手当 (tokubiAllowanceAmount)。hourlyTotalPay に含める */
+  tokubi_allowance?: number;
   /** 土日祝手当の時給 (事業所ごと。未設定は 50円) */
   weekend_holiday_rate?: number;
   /** true なら土日祝手当を 日祭・休日 (実績の休日区分) の時間だけで払う (土曜を含まない) */
@@ -142,6 +146,8 @@ export type HourlyPayroll = {
 
 // 月給者
 export type MonthlyPayroll = {
+  /** 特日手当 (tokubiAllowanceAmount)。monthlyGrandTotal に含める */
+  tokubi_allowance?: number;
   employee_id: string;
   employee_number: string;
   employee_name: string;
@@ -471,7 +477,8 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     careOvertimePay(p) +
     yochoAllowance(p) +
     monthlyPaidLeaveAllowance(p) +
-    overtimeExcessPay(p, otSettings) -
+    overtimeExcessPay(p, otSettings) +
+    (p.tokubi_allowance ?? 0) -
     absenceDeduction(p) +
     (p.adjustment ?? 0)
   );
@@ -540,6 +547,7 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
     e.childcare_allowance +
     e.commute_fee +
     e.business_trip_fee +
+    (e.tokubi_allowance ?? 0) +
     e.error_adjustment
   );
 }
@@ -567,6 +575,27 @@ export const DEFAULT_WEEKEND_HOLIDAY_RATE = 50;
 
 export function weekendHolidayAllowanceAmount(weekendHolidayMinutes: number, ratePerHour: number = DEFAULT_WEEKEND_HOLIDAY_RATE): number {
   return Math.round((weekendHolidayMinutes / 60) * ratePerHour);
+}
+
+/**
+ * 特日手当の時給 (円/時)。特日 = 会社休日 (payroll_company_holidays: お盆 8/13〜15・年末年始)。
+ * 総括表 2026-08 (特日 8/13〜15) 全事業所の時給者 266 名中 263 名が 1 円一致 (残り 3 名は兼務者の行と 33 円差 1 名)。
+ * 全事業所 同じ 200 円 (土日祝手当のような事業所差は無い)。
+ */
+export const TOKUBI_RATE_PER_HOUR = 200;
+
+/**
+ * 特日手当 = 特日の訪問時間 (同行を除く。同行援護は数える) × 200円/時、四捨五入。
+ * 月給者 (社員) の Hana 系は 介護時間と同じく 0.75 掛け対象のサービスを ×0.75 した時間で払う
+ * (おゆみ野 峯島 2026-08: 960分 ×0.75 → 2,400円)。呼ぶ側で careMinutesFromRecords を通した分を渡す。
+ */
+export function tokubiAllowanceAmount(minutes: number, ratePerHour: number = TOKUBI_RATE_PER_HOUR): number {
+  return Math.round(Number(((minutes / 60) * ratePerHour).toFixed(6)));
+}
+
+/** 特日かどうか。specialDays は "YYYYMMDD" の集合 */
+export function isSpecialDay(dateStr: string, specialDays: ReadonlySet<string>): boolean {
+  return specialDays.size > 0 && specialDays.has(dateStr.replace(/\D/g, "").slice(0, 8));
 }
 
 // ─── 移動手当 (訪問介護・時給者) ─────────────────────────────────────────
@@ -1192,6 +1221,8 @@ export function computeSummary(
   ofRecs: OfficeFormRecord[],
   /** 通勤km の優先: 事務員は 事業所書式 / それ以外 (提責など) は 出勤簿。空・0 ならもう一方 (user 2026-09-18) */
   commuteSource: "office_form_first" | "attendance_first" = "attendance_first",
+  /** 特日 (会社休日) "YYYYMMDD"。特日の日は 土日祝・日祝の時間に数えず tokubiMinutes に数える (総括表 2026-08) */
+  specialDays: ReadonlySet<string> = new Set(),
 ): AttendanceSummary {
   // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
   const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -1276,8 +1307,9 @@ export function computeSummary(
   const commuteKmTotal = useOf ? commuteKmFromOf : commuteKmFromAtt;
   const commuteYenTotal = useOf ? commuteYenFromOf : commuteYenFromAtt;
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
+  // 特日 (8/15 土曜など) は 土日祝ではなく特日として払う (Hana系パート 2026-08: 8/15 を土日祝から外すと 42 → 62/74 名一致)
   const weekendHolidayMinutes = empRecs
-    .filter((r) => isWeekendOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .filter((r) => isWeekendOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   const weekendHolidayAccompaniedMinutes = empRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
@@ -1285,10 +1317,13 @@ export function computeSummary(
   // 日曜・祝日 (カレンダー) の訪問時間。2026-09-18 までは実績の休日区分 (日祭・休日) で数えていたが、
   // カレンダーのほうが総括表と合う (やわた 4→8/8。五井・君津・姉ム・木更津は どちらでも全員一致)
   const sundayHolidayMinutes = empRecs
-    .filter((r) => isSundayOrHoliday(r.service_date) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .filter((r) => isSundayOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  const tokubiMinutes = empRecs
+    .filter((r) => isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
-  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, commuteYenTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes };
+  return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, commuteYenTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes, tokubiMinutes };
 }
 
 // ─── 月の途中で 時給 ↔ 月給 が切り替わる人 (2026-09-18 user ルール) ───

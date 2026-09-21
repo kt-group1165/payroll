@@ -60,6 +60,8 @@ import {
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
+  tokubiAllowanceAmount,
+  isSpecialDay,
   allTrainingMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
@@ -400,6 +402,15 @@ export default function PayrollPage() {
       if (juhoShortRes.error) throw new Error(`重度訪問の短時間の時給の読み込みに失敗: ${juhoShortRes.error}`);
       const care075Res = await getCare075Offices(supabase);
       if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
+      // 特日 (会社休日: お盆・年末年始)。特日手当を払い、その日は土日祝手当の対象から外す (総括表 2026-08、2026-09-22)
+      const specialDays = new Set<string>();
+      {
+        const ym = `${selectedMonth.slice(0, 4)}-${selectedMonth.slice(4, 6)}`;
+        const next = new Date(Date.UTC(+selectedMonth.slice(0, 4), +selectedMonth.slice(4, 6), 1)).toISOString().slice(0, 10);
+        const { data, error } = await supabase.from("payroll_company_holidays").select("holiday_date").gte("holiday_date", `${ym}-01`).lt("holiday_date", next);
+        if (error) throw new Error(`会社休日 (特日) の読み込みに失敗: ${error.message}`);
+        for (const r of (data ?? []) as { holiday_date: string }[]) specialDays.add(String(r.holiday_date).replace(/\D/g, ""));
+      }
       const screenOfficesRes = await getVisitAttendanceScreenOffices(supabase);
       if (screenOfficesRes.error) throw new Error(`出勤簿の入力元の設定の読み込みに失敗: ${screenOfficesRes.error}`);
       if (screenOfficesRes.offices.has(selectedOffice.office_number)) {
@@ -577,7 +588,7 @@ export default function PayrollPage() {
       const officeWorkerNums = new Set(employees.filter((e) => e.role_type === "事務員" || e.is_office_worker).map((e) => normEmp(e.employee_number)));
       const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[], att?: AttendanceRecord[]): AttendanceSummary =>
         computeSummary(withAccompanyByCode(empRecs), att ?? attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
-          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first");
+          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first", specialDays);
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
@@ -903,6 +914,7 @@ export default function PayrollPage() {
           weekend_holiday_rate: weekendRates[empOffice?.office_number ?? ""] ?? DEFAULT_WEEKEND_HOLIDAY_RATE,
           weekend_holiday_sunday_only: weekendRatesRes.sundayHolidayOnly.has(empOffice?.office_number ?? ""),
           cancel_allowance: cancelAllowance,
+          tokubi_allowance: tokubiAllowanceAmount(empSummary.tokubiMinutes ?? 0),
           travel_time_sec: 0,
           travel_allowance: 0,
           communication_fee: communicationFee,
@@ -1240,6 +1252,11 @@ export default function PayrollPage() {
             overtime_excess_paid: overtimeExcessPaidRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`),
             overtime_offset_full_care: offsetFullCareRes.offices.has(selectedOffice.office_number),
             shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
+            // 特日手当: Hana系 (0.75 掛けの事業所) は 介護時間と同じく 0.75 掛け対象を ×0.75 した時間で払う (おゆみ野 峯島 2026-08 960分 → 2,400円)
+            tokubi_allowance: tokubiAllowanceAmount(care075Res.offices.has(selectedOffice.office_number)
+              ? careMinutesFromRecords(withAccompanyByCode(recsByEmpM.get(normEmp(e.employee_number)) ?? [])
+                  .filter((r) => isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === "")), isCareHours075)
+              : (summary.tokubiMinutes ?? 0)),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],
@@ -1359,7 +1376,7 @@ export default function PayrollPage() {
       "職員番号","職員名","役職",
       "出勤日数","ヘルパー日数","有給","半有給","特休欠勤","出勤時間",
       "実績時間","同行時間","訪問時間","HRD",
-      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","保育手当(円)","その他手当(円)","通信手当(円)","土日祝手当(円)","キャンセル手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
+      "合計算定時間(分)","合計算定時間","本人給（パート）(円)","勤続手当単価","勤続手当(円)","資格手当(円)","処遇改善補助金手当(円)","報奨金(円)","移動時間","移動手当(円)","有給休暇手当(円)","調整手当(円)","育児手当(円)","HRD研修(円)","会議費(円)","保育手当(円)","その他手当(円)","通信手当(円)","土日祝手当(円)","キャンセル手当(円)","特日手当(円)","残業(円)","休日(円)","残業総額(円)","通勤費(円)","出張距離(km)","出張費(円)","総支給額(円)",
     ]];
     for (const e of hourlyResults) {
       const s = e.summary;
@@ -1377,7 +1394,7 @@ export default function PayrollPage() {
         String(e.paid_leave_allowance), "0", "0", String(e.training_pay), String(e.meeting_fee), String(e.childcare_allowance), "0",
         String(e.communication_fee),
         String(weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate)),
-        String(e.cancel_allowance), "0", "0", "0",
+        String(e.cancel_allowance), String(e.tokubi_allowance ?? 0), "0", "0", "0",
         String(e.commute_fee), `${(e.commute_distance_m / 1000).toFixed(1)}`, String(e.business_trip_fee), String(total),
       ]);
     }
@@ -1955,7 +1972,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right">{emp.totalPay > 0 ? yen(emp.totalPay) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
+                              <td className="px-3 py-2 text-right">{(emp.tokubi_allowance ?? 0) > 0 ? yen(emp.tokubi_allowance ?? 0) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{weekendAllowanceMinutes(emp) > 0 ? yen(weekendHolidayAllowanceAmount(weekendAllowanceMinutes(emp), emp.weekend_holiday_rate)) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
@@ -2097,7 +2114,7 @@ export default function PayrollPage() {
                         {/* ドタキャン */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + e.cancel_allowance, 0))}</td>
                         {/* 特日 */}
-                        <td></td>
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + (e.tokubi_allowance ?? 0), 0))}</td>
                         {/* 土日祝 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate), 0))}</td>
                         {/* 初任者研修調整費 */}
