@@ -48,11 +48,6 @@ const ymKey = (s) => { const m = /^(\d{4})\/(\d{1,2})/.exec(String(s ?? "").trim
 /** "03/02" → "3月2日" */
 const mdate = (s) => { const m = /^(\d{1,2})\/(\d{1,2})$/.exec(String(s ?? "").trim()); return m ? `${+m[1]}月${+m[2]}日` : null; };
 
-// 会議費で件数を数える項目 (payroll_app_settings.meeting_count_items)。無い事業所は「会議1」
-//   ⚠ おゆみ野は「会議2」「会議3」を数える。ここを合わせないと 入れた会議が 1 件も数えられない
-const mciRes = await fetch(`${SB}payroll_app_settings?select=value&key=eq.meeting_count_items`, { headers: H });
-const meetingCountItems = mciRes.ok ? (((await mciRes.json())[0]?.value) ?? {}) : {};
-
 // 事業所名 → 事業所番号
 const offRes = await fetch(`${SB}payroll_offices?select=office_number,master:offices!office_id(name)`, { headers: H });
 if (!offRes.ok) { console.error("✗ 事業所の取得に失敗:", await offRes.text()); process.exit(1); }
