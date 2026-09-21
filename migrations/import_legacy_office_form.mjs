@@ -104,9 +104,10 @@ for (const f of files.sort()) {
     const md = mdate(at(c, "会議(日付)"));
     if (md) {
       push({ record_type: "training", item_name: "会議", item_date: md, start_time: txt(at(c, "会議(開始時間)")), end_time: txt(at(c, "会議(終了時間)")), break_time: txt(at(c, "会議(休憩時間)")) });
-      // 会議費は「会議N件数」(km/numeric_value) で数えている。事業所ごとに どの欄を数えるかが違う
-      const cnt = (meetingCountItems[office] ?? ["会議1"])[0];
-      push({ record_type: "km", item_name: `${cnt}件数`, numeric_value: 1 });
+      // ⚠ 件数 (会議N件数) は立てない。旧システムの 会議費 は
+      //     会議1件数×1,500 + 会議2件数×1,150 + 会議3件数×1,150 + 会議時間×1,150/60
+      //   で、**件数と時間は別の入力**。事業所入力の 会議(日付・開始・終了) は「時間」のほうなので、
+      //   ここで件数も立てると 二重計上になる (2026-09-21 に踏んだ。おゆみ野 3〜5月が 575円→1,725円 になった)
     }
   }
 }
