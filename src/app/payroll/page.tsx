@@ -766,8 +766,37 @@ export default function PayrollPage() {
         }
       }
 
-      /** 旧システムの日計から その月の出勤時間 (分) = サービス合計 + 移動の全量 */
+      // 旧システムの「従業員日別データ」(payroll_legacy_daily)。work_min = その日の出勤時間。
+      //   出勤簿がある人は 出勤簿 (始業〜終業−休憩) から、無い人は サービス+移動 から 旧システムが出した値。
+      //   ⚠ 当方に 出勤簿が無い人の「出勤時間」だけに使う。残業・手当の計算は当方のロジックのまま。
+      //   実測 (2026-03〜07・総括表の「出勤」と突合): パート 90.4% 一致
+      //   (当方の推定 サービス+移動 は 69.7%)。月給者は 50.7% (推定 35.4%)。
+      const legacyDailyWorkMin = new Map<string, number>();
+      {
+        const PAGE = 1000;
+        let dFrom = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from("payroll_legacy_daily")
+            .select("employee_number,work_min")
+            .eq("processing_month", selectedMonth)
+            .eq("office_number", selectedOffice.office_number)
+            .order("id").range(dFrom, dFrom + PAGE - 1);
+          if (error) { console.warn("[payroll] 旧システムの日別データを読めませんでした (出勤時間の補完は行いません):", error.message); break; }
+          if (!data || data.length === 0) break;
+          for (const r of data) {
+            const num = normEmp(r.employee_number);
+            legacyDailyWorkMin.set(num, (legacyDailyWorkMin.get(num) ?? 0) + (r.work_min ?? 0));
+          }
+          if (data.length < PAGE) break;
+          dFrom += PAGE;
+        }
+      }
+
+      /** 出勤簿が当方に無い人の その月の出勤時間 (分)。旧システムの日別 work_min を優先する */
       const legacyWorkMinOf = (num: string): number | null => {
+        const w = legacyDailyWorkMin.get(num);
+        if (w != null && w > 0) return w;
         const x = legacyTravel.get(num);
         if (!x) return null;
         const v = x.svcTotalMin + Math.round(x.fullSec / 60);
