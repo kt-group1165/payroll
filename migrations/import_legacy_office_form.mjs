@@ -46,6 +46,11 @@ const dates = (s) => String(s ?? "").split(",").map((x) => x.trim()).filter(Bool
 /** "03/02" → "3月2日" */
 const mdate = (s) => { const m = /^(\d{1,2})\/(\d{1,2})$/.exec(String(s ?? "").trim()); return m ? `${+m[1]}月${+m[2]}日` : null; };
 
+// 会議費で件数を数える項目 (payroll_app_settings.meeting_count_items)。無い事業所は「会議1」
+//   ⚠ おゆみ野は「会議2」「会議3」を数える。ここを合わせないと 入れた会議が 1 件も数えられない
+const mciRes = await fetch(`${SB}payroll_app_settings?select=value&key=eq.meeting_count_items`, { headers: H });
+const meetingCountItems = mciRes.ok ? (((await mciRes.json())[0]?.value) ?? {}) : {};
+
 // 事業所名 → 事業所番号
 const offRes = await fetch(`${SB}payroll_offices?select=office_number,master:offices!office_id(name)`, { headers: H });
 if (!offRes.ok) { console.error("✗ 事業所の取得に失敗:", await offRes.text()); process.exit(1); }
@@ -99,8 +104,9 @@ for (const f of files.sort()) {
     const md = mdate(at(c, "会議(日付)"));
     if (md) {
       push({ record_type: "training", item_name: "会議", item_date: md, start_time: txt(at(c, "会議(開始時間)")), end_time: txt(at(c, "会議(終了時間)")), break_time: txt(at(c, "会議(休憩時間)")) });
-      // 会議費は「会議1件数」(km/numeric_value) で数えている。件数として 1 を立てる
-      push({ record_type: "km", item_name: "会議1件数", numeric_value: 1 });
+      // 会議費は「会議N件数」(km/numeric_value) で数えている。事業所ごとに どの欄を数えるかが違う
+      const cnt = (meetingCountItems[office] ?? ["会議1"])[0];
+      push({ record_type: "km", item_name: `${cnt}件数`, numeric_value: 1 });
     }
   }
 }
