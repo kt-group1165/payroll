@@ -857,13 +857,17 @@ export default function PayrollPage() {
       //   実測 (2026-03〜07・総括表の「出勤」と突合): パート 90.4% 一致
       //   (当方の推定 サービス+移動 は 69.7%)。月給者は 50.7% (推定 35.4%)。
       const legacyDailyWorkMin = new Map<string, number>();
+      // 月給者の残業 (分)。旧システムの日別 overtime_min の合計 (2026-09-23)。
+      //   旧は 1日の出勤時間に 出勤簿の外の訪問・移動も含めて 8h 超を数える (大網 髙橋 7/1: 出勤簿 585分 / 旧 627分 → 残業 147分)。
+      //   3〜7月の月給者 911人月で総括表の残業時間と突合: 当方の計算 229 一致 / 旧の値 623 / ★旧 (>0) → 無ければ当方 655
+      const legacyDailyOtMin = new Map<string, number>();
       if (useLegacyRes.enabled) {
         const PAGE = 1000;
         let dFrom = 0;
         while (true) {
           const { data, error } = await supabase
             .from("payroll_legacy_daily")
-            .select("employee_number,work_min")
+            .select("employee_number,work_min,overtime_min,pay_type")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id").range(dFrom, dFrom + PAGE - 1);
@@ -872,6 +876,7 @@ export default function PayrollPage() {
           for (const r of data) {
             const num = normEmp(r.employee_number);
             legacyDailyWorkMin.set(num, (legacyDailyWorkMin.get(num) ?? 0) + (r.work_min ?? 0));
+            if (r.pay_type === "月給") legacyDailyOtMin.set(num, (legacyDailyOtMin.get(num) ?? 0) + (r.overtime_min ?? 0));
           }
           if (data.length < PAGE) break;
           dFrom += PAGE;
@@ -1333,6 +1338,10 @@ export default function PayrollPage() {
             ...((attByEmpM.get(normEmp(e.employee_number)) ?? []).length === 0 && e.role_type === "社員"
               ? { overtimeMinutes: hourlyOvertimeMinutes(recsByEmpM.get(normEmp(e.employee_number)) ?? [], monthlyTravelSecByDay.get(normEmp(e.employee_number)), trainingMinutesByDay(ofByEmp.get(normEmp(e.employee_number)) ?? [], selectedMonth)) }
               : {}),
+            // 旧システムの残業時間があれば それを使う (上の legacyDailyOtMin の注記)
+            ...((legacyDailyOtMin.get(normEmp(e.employee_number)) ?? 0) > 0
+              ? { overtimeMinutes: legacyDailyOtMin.get(normEmp(e.employee_number))! }
+              : {}),
           };
           // 出張km: 手入力 (精算書) > 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
@@ -1412,6 +1421,7 @@ export default function PayrollPage() {
         const used: string[] = [];
         if (legacyTravel.has(num) && !legacyTravel.get(num)!.hourly) used.push("移動時間");
         if ((attByEmpM.get(num) ?? []).length === 0 && legacyWorkMinOf(num) != null) used.push("出勤時間");
+        if ((legacyDailyOtMin.get(num) ?? 0) > 0) used.push("残業時間");
         if (used.length) (p as { legacy_used?: string[] }).legacy_used = used;
       }
       setMonthlyResults(monthlySorted);
