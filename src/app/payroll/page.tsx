@@ -1215,14 +1215,17 @@ export default function PayrollPage() {
                 return computeTenureAllowance(true, tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth), "月給", e.job_type ?? "", 0, 0, 0);
               })()
             : null;
-          const resolvedTenure = autoFirstYear !== null ? autoFirstYear : manualTenure && selectedMonth > tenureBaseRes.month
+          // 基準の月 = 設定の基準の月 と 給与設定の適用開始月 の遅い方 (2026-08-01 から入れた行の額は 8月時点で上がった後の額)
+          const rowMonth = sal?.effective_from ? sal.effective_from.slice(0, 7).replace("-", "") : "";
+          const tenureBase = rowMonth > tenureBaseRes.month ? rowMonth : tenureBaseRes.month;
+          const resolvedTenure = autoFirstYear !== null ? autoFirstYear : manualTenure && selectedMonth > tenureBase
             ? (() => {
                 const num = normEmp(e.employee_number);
-                const offset = (year * 12 + month) - (Number(tenureBaseRes.month.slice(0, 4)) * 12 + Number(tenureBaseRes.month.slice(4, 6)));
+                const offset = (year * 12 + month) - (Number(tenureBase.slice(0, 4)) * 12 + Number(tenureBase.slice(4, 6)));
                 const g = legacyStepMonths.get(num) ?? tenureMonthsOf(e);
                 const stored = sal!.tenure_allowance ?? 0;
                 const monthsNow = tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth);
-                const monthsBase = tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month);
+                const monthsBase = tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBase);
                 // ⚠ 月給者の資格フラグ (has_care_qualification) は 366 名中 363 名が false で使えない (2026-09-22 実測)。
                 //   手入力が 0 円より大きい = 勤続手当が出ている = 資格あり。0 円でも 基準の月に 1 年未満なら 0 円の理由は年数なので資格ありとみなす
                 //   (市原 石川・袖ケ浦 坂尾 2026-08: 入社 1 年で 0 → 1,000円)。基準の月に 1 年以上で 0 円の人は 資格なしとみなし上げない
