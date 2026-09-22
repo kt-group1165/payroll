@@ -694,15 +694,25 @@ export function EmployeesList({
 
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger render={<Button variant="outline" />}>手動追加</DialogTrigger>
-            <DialogContent side="right" className="sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle>{editingId ? "職員を編集" : "職員を登録"}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
+            <DialogContent className="max-w-5xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
+              {/* 上の帯: 誰か / 保存 を スクロールしても見えるように固定 (2026-09-22 「全面に出ていい、とにかく見やすく」) */}
+              <div className="sticky top-0 z-10 bg-popover border-b px-5 py-3 flex items-center gap-4">
+                <DialogHeader className="flex-1 min-w-0">
+                  <DialogTitle className="text-base truncate">
+                    {editingId ? "職員を編集" : "職員を登録"}
+                    {form.name && <span className="ml-2 font-normal">— {form.name}</span>}
+                    {form.employee_number && <span className="ml-2 text-sm font-normal text-muted-foreground">No. {form.employee_number}</span>}
+                  </DialogTitle>
+                </DialogHeader>
+                <Button onClick={handleSubmit} className="shrink-0 mr-8">{editingId ? "更新" : "登録"}</Button>
+              </div>
+
+              <div className="px-5 py-4 grid gap-4 md:grid-cols-3">
                 {/* 基本情報 */}
-                <div className="grid grid-cols-2 gap-4">
+                <section className="rounded-lg border p-4 space-y-3">
+                  <h3 className="text-xs font-semibold text-muted-foreground">基本情報</h3>
                   <div>
-                    <Label>社員番号</Label>
+                    <Label className="text-xs text-muted-foreground">社員番号</Label>
                     <Input
                       value={form.employee_number}
                       onChange={(e) => setForm({ ...form, employee_number: e.target.value })}
@@ -710,150 +720,157 @@ export function EmployeesList({
                     />
                   </div>
                   <div>
-                    <Label>名前</Label>
+                    <Label className="text-xs text-muted-foreground">名前</Label>
                     <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                   </div>
-                </div>
-
-                <div>
-                  <Label>住所</Label>
-                  <Input
-                    value={form.address}
-                    onChange={(e) => setForm({ ...form, address: e.target.value })}
-                    placeholder="例: 千葉県長生郡白子町..."
-                  />
-                </div>
-
-                <div>
-                  <Label>所属事業所</Label>
-                  <select
-                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
-                    value={form.office_id}
-                    onChange={(e) => setForm({ ...form, office_id: e.target.value })}
-                    disabled={!!lockedOfficeId}
-                  >
-                    <option value="">事業所を選択</option>
-                    {offices.map((o) => (
-                      <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 在職情報 */}
-                <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <Label>在職区分</Label>
-                    <Select
-                      value={form.employment_status}
-                      onValueChange={(v) =>
-                        setForm({ ...form, employment_status: (v ?? form.employment_status) as EmploymentStatus })
-                      }
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {EMPLOYMENT_STATUSES.map((s) => (
-                          <SelectItem key={s} value={s}>{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>入社年月日</Label>
+                    <Label className="text-xs text-muted-foreground">住所</Label>
                     <Input
-                      type="date"
-                      value={form.hire_date}
-                      onChange={(e) => setForm({ ...form, hire_date: e.target.value })}
+                      value={form.address}
+                      onChange={(e) => setForm({ ...form, address: e.target.value })}
+                      placeholder="例: 千葉県長生郡白子町..."
                     />
                   </div>
                   <div>
-                    <Label>退職年月日</Label>
-                    <Input
-                      type="date"
-                      value={form.resignation_date}
-                      onChange={(e) => setForm({ ...form, resignation_date: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label>実勤続月数（ヶ月）</Label>
-                  <Input
-                    type="number"
-                    value={form.effective_service_months}
-                    onChange={(e) => setForm({ ...form, effective_service_months: e.target.value })}
-                    placeholder="例: 120（=10年）"
-                  />
-                </div>
-
-                {/* 職種・役職・給与形態 */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <Label>職種</Label>
-                    <Select
-                      value={form.job_type}
-                      onValueChange={(v) => setForm({ ...form, job_type: (v ?? form.job_type) as JobType })}
+                    <Label className="text-xs text-muted-foreground">所属事業所</Label>
+                    <select
+                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
+                      value={form.office_id}
+                      onChange={(e) => setForm({ ...form, office_id: e.target.value })}
+                      disabled={!!lockedOfficeId}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {JOB_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                      <option value="">事業所を選択</option>
+                      {offices.map((o) => (
+                        <option key={o.id} value={o.id}>{o.short_name || o.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </section>
+
+                {/* 在職・職種 */}
+                <section className="rounded-lg border p-4 space-y-3">
+                  <h3 className="text-xs font-semibold text-muted-foreground">在職・職種</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">在職区分</Label>
+                      <Select
+                        value={form.employment_status}
+                        onValueChange={(v) =>
+                          setForm({ ...form, employment_status: (v ?? form.employment_status) as EmploymentStatus })
+                        }
+                      >
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {EMPLOYMENT_STATUSES.map((s) => (
+                            <SelectItem key={s} value={s}>{s}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">実勤続月数</Label>
+                      <Input
+                        type="number"
+                        value={form.effective_service_months}
+                        onChange={(e) => setForm({ ...form, effective_service_months: e.target.value })}
+                        placeholder="例: 120 (=10年)"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">入社年月日</Label>
+                      <Input type="date" value={form.hire_date} onChange={(e) => setForm({ ...form, hire_date: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">退職年月日</Label>
+                      <Input type="date" value={form.resignation_date} onChange={(e) => setForm({ ...form, resignation_date: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">職種</Label>
+                      <Select value={form.job_type} onValueChange={(v) => setForm({ ...form, job_type: (v ?? form.job_type) as JobType })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {JOB_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">役職</Label>
+                      <Select value={form.role_type} onValueChange={(v) => setForm({ ...form, role_type: (v ?? form.role_type) as RoleType })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {ROLE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">給与形態</Label>
+                      <Select value={form.salary_type} onValueChange={(v) => setForm({ ...form, salary_type: (v ?? form.salary_type) as SalaryType })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {SALARY_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">月の途中で役職・給与形態が変わった人は「給与設定」で月ごとに入れます。</p>
+                </section>
+
+                {/* 給与計算の条件 */}
+                <section className="rounded-lg border p-4 space-y-3">
+                  <h3 className="text-xs font-semibold text-muted-foreground">給与計算の条件</h3>
+                  {/* 給与額 (基本給/固定残業) は payroll_salary_settings (/salary) で per-employee 管理。
+                     旧 base_salary / fixed_overtime_* 列は 2026-05-08 削除済 */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">勤続手当の資格</Label>
+                    <select
+                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
+                      value={form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : ""}
+                      onChange={(e) => setForm({ ...form, has_care_qualification: e.target.value !== "", care_qualification_kind: e.target.value })}
+                      title="「なし」以外は勤続手当の対象。資格名が分からなければ「不明（要件は満たす）」"
+                    >
+                      <option value="">なし（勤続手当の対象外）</option>
+                      {CARE_QUALIFICATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
                   </div>
                   <div>
-                    <Label>役職</Label>
-                    <Select
-                      value={form.role_type}
-                      onValueChange={(v) => setForm({ ...form, role_type: (v ?? form.role_type) as RoleType })}
+                    <Label className="text-xs text-muted-foreground">通信費タイプ</Label>
+                    <select
+                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
+                      value={form.communication_fee_type || "none"}
+                      onChange={(e) => setForm({ ...form, communication_fee_type: e.target.value })}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {ROLE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                      <option value="none">標準（社保加入は0円・未加入は時間で500/1,000円）</option>
+                      <option value="variable">社保加入でも時間で500/1,000円（スマホ貸与なし）</option>
+                      <option value="lend">スマホ貸与あり（0円）</option>
+                      <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">途中で変わった人は「給与設定」の「この月からの通信費」で。</p>
                   </div>
-                  <div>
-                    <Label>給与形態</Label>
-                    <Select
-                      value={form.salary_type}
-                      onValueChange={(v) => setForm({ ...form, salary_type: (v ?? form.salary_type) as SalaryType })}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {SALARY_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">有給手当単価 (円/日)</Label>
+                      <Input
+                        type="number" min={0}
+                        value={form.paid_leave_unit_price}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">移動手段</Label>
+                      <Select value={form.transport_type} onValueChange={(v) => setForm({ ...form, transport_type: v ?? form.transport_type })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="車">車</SelectItem>
+                          <SelectItem value="自転車">自転車</SelectItem>
+                          <SelectItem value="徒歩">徒歩</SelectItem>
+                          <SelectItem value="バイク">バイク</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                </div>
-
-                {/* 給与額 (基本給/固定残業) は payroll_salary_settings (/salary) で per-employee 管理。
-                   旧 base_salary / fixed_overtime_* 列は 2026-05-08 削除済 */}
-
-                <div>
-                  <Label>勤続手当の資格</Label>
-                  <select
-                    className="mt-1 w-full border rounded px-2 py-1.5 text-sm bg-background"
-                    value={form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : ""}
-                    onChange={(e) => setForm({ ...form, has_care_qualification: e.target.value !== "", care_qualification_kind: e.target.value })}
-                  >
-                    <option value="">なし（勤続手当の対象外）</option>
-                    {CARE_QUALIFICATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-                  </select>
-                  <p className="text-xs text-muted-foreground mt-1">「なし」以外は勤続手当の対象。資格名が分からなければ「不明（要件は満たす）」</p>
-                </div>
-                <div>
-                  <Label>通信費タイプ</Label>
-                  <select
-                    className="mt-1 w-full border rounded px-2 py-1.5 text-sm bg-background"
-                    value={form.communication_fee_type || "none"}
-                    onChange={(e) => setForm({ ...form, communication_fee_type: e.target.value })}
-                  >
-                    <option value="none">標準（社保加入は0円・未加入は時間で500/1,000円）</option>
-                    <option value="variable">社保加入でも時間で500/1,000円（スマホ貸与なし）</option>
-                    <option value="lend">スマホ貸与あり（0円）</option>
-                    <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
-                  </select>
-                </div>
-                <div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -862,36 +879,7 @@ export function EmployeesList({
                     />
                     <span className="text-sm">社会保険加入（処遇改善補助金手当対象）</span>
                   </label>
-                </div>
-                <div>
-                  <Label>有給手当単価（円/日）</Label>
-                  <Input
-                    type="number" min={0}
-                    value={form.paid_leave_unit_price}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
-                  />
-                </div>
-
-                <div>
-                  <Label>移動手段</Label>
-                  <Select
-                    value={form.transport_type}
-                    onValueChange={(v) => setForm({ ...form, transport_type: v ?? form.transport_type })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="車">車</SelectItem>
-                      <SelectItem value="自転車">自転車</SelectItem>
-                      <SelectItem value="徒歩">徒歩</SelectItem>
-                      <SelectItem value="バイク">バイク</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button onClick={handleSubmit} className="w-full">
-                  {editingId ? "更新" : "登録"}
-                </Button>
+                </section>
               </div>
             </DialogContent>
           </Dialog>

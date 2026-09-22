@@ -97,6 +97,8 @@ export interface CategoryHourlyRate {
   office_id: string;
   category_id: string;
   hourly_rate: number;
+  /** この日 (月初) からの時給。2000-01-01 = 履歴を持つ前からの値 (2026-09-22) */
+  effective_from?: string | null;
   /** payroll_offices.short_name + master offices.name via nested JOIN */
   offices?: { short_name: string; master?: { name: string } | null };
   service_categories?: { name: string };
@@ -636,6 +638,13 @@ function MappingsTab({
 // ====================
 // 時給設定タブ
 // ====================
+// 事業所 (行) × 類型 (列) の表で、選んだ月に有効な時給を出す。
+// 時給は履歴で持つ (2026-09-22 user「類型と時給の結びつき (事業所ごと) と 月次の変更の履歴」):
+//   セルを変えると「表示している月の 1 日から」の新しい行を作る (その月の行が既にあれば上書き)。前の月は元の時給のまま。
+//   2000-01-01 の行 = 履歴を持つ前からの値。
+const BASE_FROM = "2000-01-01";
+const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+
 function RatesTab({
   initialRates,
   initialCategories,
@@ -647,376 +656,200 @@ function RatesTab({
 }) {
   const router = useRouter();
   const rates = initialRates;
-  const categories = initialCategories;
-  const offices = initialOffices;
-  const [isOpen, setIsOpen] = useState(false);
-  const [form, setForm] = useState({
-    office_id: "",
-    category_id: "",
-    hourly_rate: "",
-  });
+  const categories = initialCategories.slice().sort((a, b) => a.sort_order - b.sort_order);
+  const [month, setMonth] = useState(thisMonth());
+  const [saving, setSaving] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
-
+  const monthStart = `${month}-01`;
   const fetchData = useCallback(() => router.refresh(), [router]);
 
-  const handleAdd = async () => {
-    if (!form.office_id || !form.category_id || !form.hourly_rate) {
-      toast.error("全項目を入力してください");
-      return;
+  const officesWithRates = new Set(rates.map((r) => r.office_id));
+  const offices = initialOffices
+    .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id))
+    .slice().sort((a, b) => (a.short_name || a.name).localeCompare(b.short_name || b.name, "ja"));
+  const officeName = (o: Office) => o.short_name || o.name;
+
+  // その月に有効な行 (適用開始 ≦ 月初 の最新) と、その月より後に予定されている変更
+  const activeOf = new Map<string, CategoryHourlyRate>();
+  const laterOf = new Map<string, CategoryHourlyRate[]>();
+  for (const r of rates) {
+    const k = `${r.office_id}|${r.category_id}`;
+    const from = r.effective_from ?? BASE_FROM;
+    if (from <= monthStart) {
+      const cur = activeOf.get(k);
+      if (!cur || (cur.effective_from ?? BASE_FROM) <= from) activeOf.set(k, r);
+    } else {
+      laterOf.set(k, [...(laterOf.get(k) ?? []), r]);
     }
-    const { error } = await supabase.from("payroll_category_hourly_rates").insert({
-      office_id: form.office_id,
-      category_id: form.category_id,
-      hourly_rate: parseInt(form.hourly_rate, 10),
-    });
-    if (error) {
-      if (error.message.includes("duplicate")) {
-        toast.error("この事業所×類型の組み合わせは既に登録されています");
-      } else {
-        toast.error(`エラー: ${error.message}`);
-      }
-      return;
-    }
-    toast.success("時給を設定しました");
-    setForm({ office_id: "", category_id: "", hourly_rate: "" });
-    setIsOpen(false);
+  }
+  const history = rates
+    .filter((r) => (r.effective_from ?? BASE_FROM) > BASE_FROM)
+    .slice().sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? ""));
+  const catName = (id: string) => categories.find((c) => c.id === id)?.name ?? "?";
+  const offName = (id: string) => { const o = initialOffices.find((x) => x.id === id); return o ? officeName(o) : "?"; };
+
+  // セルの時給を変える = この月の 1 日からの行を作る / 上書きする
+  const saveCell = async (officeId: string, categoryId: string, raw: string) => {
+    const k = `${officeId}|${categoryId}`;
+    const cur = activeOf.get(k);
+    const rate = raw.trim() === "" ? null : parseInt(raw, 10);
+    if (rate === null) return; // 空にしただけでは消さない (消すのは 下の履歴から)
+    if (isNaN(rate) || rate <= 0) { toast.error("時給は 1 以上の数字で入れてください"); return; }
+    if (cur && cur.hourly_rate === rate) return;
+    setSaving(true);
+    const { error } = await supabase.from("payroll_category_hourly_rates").upsert(
+      { office_id: officeId, category_id: categoryId, hourly_rate: rate, effective_from: monthStart, updated_at: new Date().toISOString() },
+      { onConflict: "office_id,category_id,effective_from" });
+    setSaving(false);
+    if (error) { toast.error(`保存に失敗: ${error.message}`); return; }
+    toast.success(`${offName(officeId)} ${catName(categoryId)}: ${month.replace("-", "年")}月から ${rate.toLocaleString()}円 にしました`);
     fetchData();
   };
 
-  const handleUpdateRate = async (id: string, newRate: string) => {
-    const rate = parseInt(newRate, 10);
-    if (isNaN(rate) || rate <= 0) return;
-    const { error } = await supabase
-      .from("payroll_category_hourly_rates")
-      .update({ hourly_rate: rate })
-      .eq("id", id);
-    if (error) {
-      toast.error(`エラー: ${error.message}`);
-      return;
-    }
-    toast.success("時給を更新しました");
+  const handleDelete = async (r: CategoryHourlyRate) => {
+    const from = r.effective_from ?? BASE_FROM;
+    const label = from === BASE_FROM ? "最初からの時給" : `${from.slice(0, 7).replace("-", "年")}月からの時給`;
+    if (!confirm(`${offName(r.office_id)} ${catName(r.category_id)} の ${label} (${r.hourly_rate.toLocaleString()}円) を消しますか？\n消すと その月からは 1 つ前の時給に戻ります。`)) return;
+    const { error } = await supabase.from("payroll_category_hourly_rates").delete().eq("id", r.id);
+    if (error) { toast.error(`削除に失敗: ${error.message}`); return; }
+    toast.success("消しました");
     fetchData();
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("この時給設定を削除しますか？")) return;
-    const { error } = await supabase
-      .from("payroll_category_hourly_rates")
-      .delete()
-      .eq("id", id);
-    if (error) {
-      toast.error(`エラー: ${error.message}`);
-      return;
-    }
-    toast.success("削除しました");
-    fetchData();
-  };
-
-  // 事業所 × 類型 単位でCSV出力（UIと同じ粒度・DB保存と同じ粒度）
-  // 対象: 訪問介護事業所 + 既に時給が1件以上設定されている事業所
+  // 表示している月の時給を 事業所 × 類型 で出す
   const handleExport = () => {
-    const rateByKey = new Map<string, number>();
-    const officesWithRates = new Set<string>();
-    for (const r of rates) {
-      rateByKey.set(`${r.office_id}|${r.category_id}`, r.hourly_rate);
-      officesWithRates.add(r.office_id);
+    const rows: string[][] = [["事業所番号", "事業所名", "類型", "時給"]];
+    for (const o of offices) for (const c of categories) {
+      const r = activeOf.get(`${o.id}|${c.id}`);
+      rows.push([o.office_number, officeName(o), c.name, r ? String(r.hourly_rate) : ""]);
     }
-    const targetOffices = offices
-      .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id))
-      .slice()
-      .sort((a, b) => a.office_number.localeCompare(b.office_number));
-    const sortedCategories = categories.slice().sort((a, b) => a.sort_order - b.sort_order);
-
-    const rows: string[][] = [
-      ["事業所番号", "事業所名", "類型", "時給"],
-    ];
-    for (const office of targetOffices) {
-      for (const c of sortedCategories) {
-        const rate = rateByKey.get(`${office.id}|${c.id}`);
-        rows.push([
-          office.office_number,
-          office.short_name || office.name,
-          c.name,
-          rate != null ? rate.toString() : "",
-        ]);
-      }
-    }
-    downloadCsv("時給設定.csv", rows);
-    toast.success(`${targetOffices.length}事業所 × ${sortedCategories.length}類型 = ${rows.length - 1}件をエクスポートしました`);
+    downloadCsv(`時給設定_${month}.csv`, rows);
+    toast.success(`${month.replace("-", "年")}月の時給を ${rows.length - 1} 件出力しました`);
   };
 
-  // UTF-8/Shift-JIS両対応、事業所番号＋類型名をキーに(office_id, category_id)へ変換してupsert
+  // 取り込んだ時給は 表示している月の 1 日からの時給として入れる (違う値のものだけ)
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (ev) => {
+      const clear = () => { if (importRef.current) importRef.current.value = ""; };
       const buf = ev.target?.result as ArrayBuffer;
       const bytes = new Uint8Array(buf);
       const isUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
-      const enc = isUtf8Bom
-        ? "utf-8"
-        : (() => {
-            const tryUtf8 = new TextDecoder("utf-8").decode(buf);
-            return tryUtf8.includes("事業所番号") ? "utf-8" : "shift_jis";
-          })();
-      const text = new TextDecoder(enc).decode(buf);
-      const parsed = parseCsvText(text);
-      if (parsed.length < 2) {
-        toast.error("データ行がありません");
-        if (importRef.current) importRef.current.value = "";
-        return;
-      }
-
+      const enc = isUtf8Bom ? "utf-8" : (new TextDecoder("utf-8").decode(buf).includes("事業所番号") ? "utf-8" : "shift_jis");
+      const parsed = parseCsvText(new TextDecoder(enc).decode(buf));
+      if (parsed.length < 2) { toast.error("データ行がありません"); clear(); return; }
       const headers = parsed[0].map((h) => h.trim());
-      const idx = (name: string) => headers.indexOf(name);
-      const officeNumIdx = idx("事業所番号");
-      const categoryIdx = idx("類型");
-      const rateIdx = idx("時給");
-      if (officeNumIdx < 0 || categoryIdx < 0 || rateIdx < 0) {
-        toast.error("ヘッダーに「事業所番号」「類型」「時給」が必要です");
-        if (importRef.current) importRef.current.value = "";
-        return;
-      }
-
-      const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const [oi, ci, ri] = ["事業所番号", "類型", "時給"].map((n) => headers.indexOf(n));
+      if (oi < 0 || ci < 0 || ri < 0) { toast.error("ヘッダーに「事業所番号」「類型」「時給」が必要です"); clear(); return; }
+      const officeByNumber = new Map(initialOffices.map((o) => [o.office_number, o]));
       const categoryByName = new Map(categories.map((c) => [c.name, c]));
-
-      // (office_id, category_id)で重複排除（最後の値が勝つ）
-      const upsertMap = new Map<
-        string,
-        { office_id: string; category_id: string; hourly_rate: number }
-      >();
+      const upsertMap = new Map<string, { office_id: string; category_id: string; hourly_rate: number; effective_from: string }>();
       const errors: string[] = [];
-
       for (let i = 1; i < parsed.length; i++) {
         const r = parsed[i];
-        const officeNum = (r[officeNumIdx] ?? "").trim();
-        const catName = (r[categoryIdx] ?? "").trim();
-        const rateStr = (r[rateIdx] ?? "").trim();
-        if (!officeNum || !catName) continue;
-        if (!rateStr) continue; // 時給が空欄の行は未設定としてスキップ
-
-        const office = officeByNumber.get(officeNum);
-        if (!office) {
-          errors.push(`行${i + 1}: 事業所番号「${officeNum}」が未登録`);
-          continue;
-        }
-        const cat = categoryByName.get(catName);
-        if (!cat) {
-          errors.push(`行${i + 1}: 類型「${catName}」が未登録`);
-          continue;
-        }
-        const rate = parseInt(rateStr, 10);
-        if (isNaN(rate)) {
-          errors.push(`行${i + 1}: 時給「${rateStr}」が数値ではありません`);
-          continue;
-        }
-        if (rate <= 0) continue;
-
-        upsertMap.set(`${office.id}|${cat.id}`, {
-          office_id: office.id,
-          category_id: cat.id,
-          hourly_rate: rate,
-        });
+        const num = (r[oi] ?? "").trim(), cn = (r[ci] ?? "").trim(), rs = (r[ri] ?? "").trim();
+        if (!num || !cn || !rs) continue;
+        const o = officeByNumber.get(num);
+        if (!o) { errors.push(`行${i + 1}: 事業所番号「${num}」が未登録`); continue; }
+        const c = categoryByName.get(cn);
+        if (!c) { errors.push(`行${i + 1}: 類型「${cn}」が未登録`); continue; }
+        const rate = parseInt(rs, 10);
+        if (isNaN(rate)) { errors.push(`行${i + 1}: 時給「${rs}」が数値ではありません`); continue; }
+        if (rate <= 0 || activeOf.get(`${o.id}|${c.id}`)?.hourly_rate === rate) continue; // 変わらないものは入れない
+        upsertMap.set(`${o.id}|${c.id}`, { office_id: o.id, category_id: c.id, hourly_rate: rate, effective_from: monthStart });
       }
-
-      if (errors.length > 0) {
-        toast.error(errors.slice(0, 5).join("\n"));
-        if (importRef.current) importRef.current.value = "";
-        return;
-      }
-
-      const upsertRows = Array.from(upsertMap.values());
-      if (upsertRows.length === 0) {
-        toast.error("取り込むデータがありません");
-        if (importRef.current) importRef.current.value = "";
-        return;
-      }
-      if (!confirm(`${upsertRows.length}件を取り込みますか？（既存設定は上書き）`)) {
-        if (importRef.current) importRef.current.value = "";
-        return;
-      }
-
-      const { error } = await supabase
-        .from("payroll_category_hourly_rates")
-        .upsert(upsertRows, { onConflict: "office_id,category_id" });
-      if (error) {
-        toast.error(`インポートエラー: ${error.message}`);
-        if (importRef.current) importRef.current.value = "";
-        return;
-      }
-      toast.success(`${upsertRows.length}件をインポートしました`);
+      if (errors.length > 0) { toast.error(errors.slice(0, 5).join("\n")); clear(); return; }
+      const rows = [...upsertMap.values()];
+      if (rows.length === 0) { toast.message("今の時給と違うものはありませんでした"); clear(); return; }
+      if (!confirm(`${rows.length} 件を ${month.replace("-", "年")}月からの時給として入れますか？ (前の月は元の時給のまま)`)) { clear(); return; }
+      const { error } = await supabase.from("payroll_category_hourly_rates").upsert(rows, { onConflict: "office_id,category_id,effective_from" });
+      if (error) { toast.error(`取り込みに失敗: ${error.message}`); clear(); return; }
+      toast.success(`${rows.length} 件を取り込みました`);
       fetchData();
-      if (importRef.current) importRef.current.value = "";
+      clear();
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // 事業所ごとにグループ化
-  const ratesByOffice = rates.reduce(
-    (acc, r) => {
-      const officeName = (r.offices?.short_name || r.offices?.master?.name) ?? "不明";
-      if (!acc[officeName]) acc[officeName] = [];
-      acc[officeName].push(r);
-      return acc;
-    },
-    {} as Record<string, CategoryHourlyRate[]>
-  );
-
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          事業所 × 類型ごとの時給を設定します
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="text-sm">表示する月
+          <Input type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} className="mt-1 h-9 w-40" />
+        </label>
+        <p className="text-sm text-muted-foreground flex-1 min-w-[260px]">
+          表の値は <b>{month.replace("-", "年")}月</b> に使われる時給です。セルを書き換えると <b>{month.replace("-", "年")}月から</b> の時給になり、それより前の月は元の時給のままです。
+          <span className="text-amber-700"> 色付きのセル</span> = この月から変わった時給。
         </p>
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExport}>📥 CSV出力</Button>
-          <Button variant="outline" onClick={() => importRef.current?.click()}>
-            📤 CSV取り込み
-          </Button>
-          <input
-            ref={importRef}
-            type="file"
-            accept=".csv"
-            onChange={handleImport}
-            className="hidden"
-          />
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger render={<Button />}>時給を追加</DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>時給設定を追加</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>事業所</Label>
-                <Select
-                  value={form.office_id}
-                  onValueChange={(v) =>
-                    setForm({ ...form, office_id: v ?? "" })
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="事業所を選択">
-                      {(v: string) => {
-                        const o = offices.find((x) => x.id === v);
-                        return o ? (o.short_name || o.name) : "事業所を選択";
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent
-                    alignItemWithTrigger={false}
-                    className="max-h-[60vh] min-w-[360px]"
-                  >
-                    {offices.filter((o) => o.office_type === "訪問介護").map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.short_name || o.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>類型</Label>
-                <Select
-                  value={form.category_id}
-                  onValueChange={(v) =>
-                    setForm({ ...form, category_id: v ?? "" })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="類型を選択">
-                      {(v: string) => {
-                        const c = categories.find((x) => x.id === v);
-                        return c ? c.name : "類型を選択";
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>時給（円）</Label>
-                <Input
-                  type="number"
-                  value={form.hourly_rate}
-                  onChange={(e) =>
-                    setForm({ ...form, hourly_rate: e.target.value })
-                  }
-                  placeholder="例: 1500"
-                />
-              </div>
-              <Button onClick={handleAdd} className="w-full">
-                追加
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+          <Button variant="outline" onClick={() => importRef.current?.click()}>📤 CSV取り込み</Button>
+          <input ref={importRef} type="file" accept=".csv" onChange={handleImport} className="hidden" />
         </div>
       </div>
 
-      {Object.keys(ratesByOffice).length === 0 ? (
-        <p className="text-center text-muted-foreground py-8">
-          時給が設定されていません
-        </p>
-      ) : (
-        Object.entries(ratesByOffice).map(([officeName, officeRates]) => (
-          <div key={officeName}>
-            <h4 className="font-medium text-sm mb-2">{officeName}</h4>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>類型</TableHead>
-                  <TableHead className="w-[150px]">時給</TableHead>
-                  <TableHead className="w-[80px]">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {officeRates.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <Badge variant="secondary">
-                        {r.service_categories?.name}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Input
-                          type="number"
-                          defaultValue={r.hourly_rate}
-                          className="w-[100px]"
-                          onBlur={(e) =>
-                            handleUpdateRate(r.id, e.target.value)
-                          }
-                        />
-                        <span className="text-sm text-muted-foreground">
-                          円
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(r.id)}
-                      >
-                        削除
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        ))
-      )}
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="text-sm border-collapse">
+          <thead className="bg-muted/60">
+            <tr>
+              <th className="sticky left-0 bg-muted px-3 py-2 text-left font-medium min-w-44">事業所</th>
+              {categories.map((c) => <th key={c.id} className="px-2 py-2 text-center font-medium whitespace-nowrap min-w-24">{c.name}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {offices.map((o) => (
+              <tr key={o.id} className="border-t hover:bg-muted/30">
+                <td className="sticky left-0 bg-background px-3 py-1 whitespace-nowrap">{officeName(o)}</td>
+                {categories.map((c) => {
+                  const k = `${o.id}|${c.id}`;
+                  const r = activeOf.get(k);
+                  const changedHere = r && (r.effective_from ?? BASE_FROM) === monthStart;
+                  const later = laterOf.get(k) ?? [];
+                  const tip = [r ? `${(r.effective_from ?? BASE_FROM) === BASE_FROM ? "最初から" : `${r.effective_from!.slice(0, 7)} から`} ${r.hourly_rate}円` : "未設定",
+                    ...later.map((x) => `${x.effective_from!.slice(0, 7)} から ${x.hourly_rate}円 (予定)`)].join("\n");
+                  return (
+                    <td key={`${k}|${month}|${r?.id ?? ""}|${r?.hourly_rate ?? ""}`} className="px-1 py-1" title={tip}>
+                      <Input
+                        type="number" min={1} step={1} disabled={saving}
+                        defaultValue={r?.hourly_rate ?? ""} placeholder="—"
+                        onBlur={(e) => saveCell(o.id, c.id, e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        className={`h-8 w-24 text-right ${changedHere ? "bg-amber-50 border-amber-300" : ""} ${later.length ? "underline decoration-dotted" : ""}`}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-medium mb-2">時給の変更履歴 ({history.length} 件)</h4>
+        {history.length === 0 ? (
+          <p className="text-sm text-muted-foreground">まだ変更はありません (全部 最初からの時給です)。</p>
+        ) : (
+          <table className="text-sm">
+            <thead className="text-muted-foreground">
+              <tr><th className="text-left pr-6 py-1 font-normal">適用開始</th><th className="text-left pr-6 font-normal">事業所</th><th className="text-left pr-6 font-normal">類型</th><th className="text-right pr-6 font-normal">時給</th><th /></tr>
+            </thead>
+            <tbody>
+              {history.map((r) => (
+                <tr key={r.id} className="border-t">
+                  <td className="pr-6 py-1">{r.effective_from!.slice(0, 7).replace("-", "年")}月から</td>
+                  <td className="pr-6">{offName(r.office_id)}</td>
+                  <td className="pr-6">{catName(r.category_id)}</td>
+                  <td className="pr-6 text-right">{r.hourly_rate.toLocaleString()}円</td>
+                  <td><Button variant="ghost" size="sm" onClick={() => handleDelete(r)}>消す</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -53,6 +52,8 @@ type SalarySettings = {
   role_type?: string | null;
   /** 有給休暇手当の単価 (円/日)。NULL/未設定 = 職員マスタの有給手当単価。有給日数 (半休は 0.5) × 単価 */
   paid_leave_unit_price?: number | null;
+  /** この適用開始月からの通信費タイプ。NULL/未設定 = 職員マスタの値 (2026-09-22) */
+  communication_fee_type?: string | null;
   note: string;
 };
 
@@ -143,7 +144,6 @@ const emptySettings = (employeeId: string, effectiveFrom?: string): SalarySettin
 
 // ─── ユーティリティ ──────────────────────────────────────────
 
-const yen = (n: number) => (n > 0 ? n.toLocaleString("ja-JP") + "円" : "—");
 
 function fixedTotal(s: SalarySettings): number {
   return (
@@ -285,6 +285,45 @@ function OvertimeSettingsPanel({
   );
 }
 
+/** 給与設定ダイアログのまとまり (見出し + 行 + 小計) */
+function Section({ title, total, children }: { title: string; total: number; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border p-3 flex flex-col gap-1.5">
+      <p className="text-xs font-semibold text-muted-foreground">{title}</p>
+      {children}
+      <div className="mt-auto pt-1.5 border-t flex justify-between text-sm font-semibold">
+        <span>計</span><span>{total.toLocaleString("ja-JP")}円</span>
+      </div>
+    </div>
+  );
+}
+
+/** 給与設定ダイアログの 1 行: ラベル | 入力 (右寄せ・単位付き)。説明は hint (小さく 1 行) */
+function Field({
+  label, value, onChange, unit = "円", hint, nullable = false, placeholder = "0",
+}: {
+  label: string; value: number | null; onChange: (v: number | null) => void;
+  unit?: string; hint?: string; nullable?: boolean; placeholder?: string;
+}) {
+  return (
+    <div className="grid grid-cols-[1fr_8.5rem] items-center gap-2">
+      <div className="min-w-0">
+        <p className="text-sm leading-tight truncate">{label}</p>
+        {hint && <p className="text-[11px] text-muted-foreground leading-tight truncate" title={hint}>{hint}</p>}
+      </div>
+      <div className="relative">
+        <Input
+          type="number" min={0} step={1}
+          value={nullable ? (value ?? "") : (value || "")} placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value === "" ? (nullable ? null : 0) : (parseFloat(e.target.value) || 0))}
+          className="h-8 pr-11 text-right text-sm"
+        />
+        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground pointer-events-none">{unit}</span>
+      </div>
+    </div>
+  );
+}
+
 function YenInput({
   label, value, onChange, sublabel,
 }: {
@@ -305,26 +344,6 @@ function YenInput({
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円</span>
       </div>
-    </div>
-  );
-}
-
-function Subtotal({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex justify-between text-sm font-semibold pt-2 border-t mt-1">
-      <span>{label}</span>
-      <span>{value.toLocaleString("ja-JP")}円</span>
-    </div>
-  );
-}
-
-function SummaryItem({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex justify-between py-1 border-b border-border/40">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={value > 0 ? "font-medium" : "text-muted-foreground/50"}>
-        {value > 0 ? value.toLocaleString("ja-JP") + "円" : "—"}
-      </span>
     </div>
   );
 }
@@ -1020,365 +1039,106 @@ export function SalaryList({
 
       {/* ── 給与設定編集ダイアログ ──────────────────────────── */}
       <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setSelectedId(""); }}>
-        <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              給与設定 — {editEmp?.name}
-              {editOffice && <span className="text-sm font-normal text-muted-foreground ml-2">({editOffice.short_name || editOffice.name})</span>}
-            </DialogTitle>
-          </DialogHeader>
-
-          {loading && <p className="text-center py-10 text-muted-foreground">読み込み中…</p>}
-
-          {!loading && settings && (
-            <>
-              {/* 適用開始月 (履歴化) */}
-              <div className="mb-3 p-3 rounded-lg border-2 border-blue-200 bg-blue-50/30">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <Label className="text-sm font-semibold whitespace-nowrap">適用開始月</Label>
-                  <Input
-                    type="date"
-                    value={settings.effective_from}
-                    onChange={(e) => upd("effective_from", e.target.value)}
-                    className="w-44"
-                  />
-                  <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
-                    この月以降の給与計算でこの設定が使われます。保存すると新しい履歴行が作られ、過去の値は履歴として残ります。
-                  </p>
-                </div>
-                {/* 給与形態・役職の月次履歴 (2026-09-18)。空 = 職員マスタの値 */}
-                <div className="flex items-center gap-3 flex-wrap mt-2">
-                  <Label className="text-sm whitespace-nowrap">この月からの給与形態</Label>
-                  <select
-                    className="h-9 rounded-md border bg-background px-2 text-sm"
-                    value={settings.salary_type ?? ""}
-                    onChange={(e) => upd("salary_type", e.target.value || null)}
-                  >
+        <DialogContent className="max-w-6xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
+          {/* 上の帯: 誰の・いつからの設定か / 合計 / 保存 を スクロールしても見えるように固定 (2026-09-22 見やすく) */}
+          <div className="sticky top-0 z-10 bg-popover border-b px-5 pt-4 pb-3">
+            <DialogHeader>
+              <DialogTitle className="text-base">
+                給与設定 — {editEmp?.name}
+                {editOffice && <span className="text-sm font-normal text-muted-foreground ml-2">{editOffice.short_name || editOffice.name}</span>}
+              </DialogTitle>
+            </DialogHeader>
+            {!loading && settings && (
+              <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
+                <label className="text-xs text-muted-foreground">適用開始月
+                  <Input type="date" value={settings.effective_from} onChange={(e) => upd("effective_from", e.target.value)} className="h-8 w-40 mt-0.5 text-sm" />
+                </label>
+                <label className="text-xs text-muted-foreground" title="月の途中で時給 ↔ 月給が変わった人だけ入れる。空 = 職員マスタの値">この月からの給与形態
+                  <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm" value={settings.salary_type ?? ""} onChange={(e) => upd("salary_type", e.target.value || null)}>
                     <option value="">職員マスタのまま</option>
                     <option value="時給">時給</option>
                     <option value="月給">月給</option>
                   </select>
-                  <Label className="text-sm whitespace-nowrap">役職</Label>
-                  <select
-                    className="h-9 rounded-md border bg-background px-2 text-sm"
-                    value={settings.role_type ?? ""}
-                    onChange={(e) => upd("role_type", e.target.value || null)}
-                  >
+                </label>
+                <label className="text-xs text-muted-foreground">役職
+                  <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm" value={settings.role_type ?? ""} onChange={(e) => upd("role_type", e.target.value || null)}>
                     <option value="">職員マスタのまま</option>
                     {["パート", "社員", "提責", "事務員", "管理者"].map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
-                  <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
-                    月の途中で時給 ↔ 月給が変わった人だけ入れます。過去の月を計算し直しても、その月の形態で計算されます。
-                  </p>
-                </div>
-              </div>
-
-              {/* 合計バー */}
-              <div className="mb-5 p-4 rounded-lg bg-primary/5 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">固定支給合計（月額）</p>
-                  <p className="text-2xl font-bold">{fixedTotal(settings).toLocaleString("ja-JP")}円</p>
-                </div>
-                <div className="text-right text-xs text-muted-foreground space-y-0.5">
-                  <p>報奨金（条件付き）{settings.bonus_amount > 0 ? yen(settings.bonus_amount) : "未設定"}</p>
-                  <p>移動費単価　{settings.travel_unit_price > 0 ? `${settings.travel_unit_price}円/km` : "未設定"}</p>
-                </div>
-                <Button onClick={handleSave} disabled={saving} className="shrink-0">
-                  {saving ? "保存中…" : "💾 保存"}
-                </Button>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                {/* 基本給 */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">基本給</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <YenInput label="本人給" value={settings.base_personal_salary} onChange={(v) => upd("base_personal_salary", v)} />
-                    <YenInput label="職能給" value={settings.skill_salary} onChange={(v) => upd("skill_salary", v)} />
-                    <Subtotal label="基本給計" value={settings.base_personal_salary + settings.skill_salary} />
-                  </CardContent>
-                </Card>
-
-                {/* 手当 */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">手当</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <YenInput label="役職手当" value={settings.position_allowance} onChange={(v) => upd("position_allowance", v)} />
-                    <YenInput label="資格手当" value={settings.qualification_allowance} onChange={(v) => upd("qualification_allowance", v)} />
-                    <div className="space-y-1">
-                      <YenInput
-                        label={`勤続手当${settings.tenure_allowance_auto ? " (自動計算)" : ""}`}
-                        value={settings.tenure_allowance}
-                        onChange={(v) => upd("tenure_allowance", v)}
-                      />
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground pl-1">
-                        <input
-                          type="checkbox"
-                          checked={settings.tenure_allowance_auto}
-                          onChange={(e) => upd("tenure_allowance_auto", e.target.checked)}
-                        />
-                        勤続手当を自動計算する
-                        <span className="text-[10px]">(資格要件: 介護福祉士 / 実務者研修修了者 / 居宅介護支援職員)</span>
-                      </label>
-                    </div>
-                    <Subtotal label="手当計" value={settings.position_allowance + settings.qualification_allowance + settings.tenure_allowance} />
-                  </CardContent>
-                </Card>
-
-                {/* 処遇改善 */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">処遇改善関連</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <YenInput label="処遇改善手当" value={settings.treatment_improvement} onChange={(v) => upd("treatment_improvement", v)} />
-                    <YenInput label="特定処遇改善手当" value={settings.specific_treatment_improvement} onChange={(v) => upd("specific_treatment_improvement", v)} />
-                    <YenInput label="処遇改善補助金手当" value={settings.treatment_subsidy} onChange={(v) => upd("treatment_subsidy", v)} />
-                    <Subtotal label="処遇改善計" value={settings.treatment_improvement + settings.specific_treatment_improvement + settings.treatment_subsidy} />
-                  </CardContent>
-                </Card>
-
-                {/* 残業・報奨金 */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">残業 / 報奨金</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <YenInput label="固定残業代" value={settings.fixed_overtime_pay} onChange={(v) => upd("fixed_overtime_pay", v)} sublabel="毎月固定" />
-                    <YenInput label="特別報奨金" value={settings.special_bonus} onChange={(v) => upd("special_bonus", v)} sublabel="毎月固定" />
-                    <Subtotal label="計" value={settings.fixed_overtime_pay + settings.special_bonus} />
-                  </CardContent>
-                </Card>
-
-                {/* 条件付き */}
-                <Card className="border-dashed">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">条件付き支給</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <YenInput label="報奨金" value={settings.bonus_amount} onChange={(v) => upd("bonus_amount", v)} sublabel="給与計算時に支給 / 不支給を選択" />
-                    <p className="text-xs text-muted-foreground">※ 給与計算画面で月ごとに支給するか選択できます</p>
-                  </CardContent>
-                </Card>
-
-                {/* 変動単価 */}
-                <Card className="border-dashed">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">変動費（単価）</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-                      <div>
-                        <p className="text-sm font-medium">移動費単価</p>
-                        <p className="text-xs text-muted-foreground">移動距離(km) × 単価 = 支給額</p>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          type="number" min={0}
-                          value={settings.travel_unit_price || ""} placeholder="0"
-                          onChange={(e) => upd("travel_unit_price", parseInt(e.target.value, 10) || 0)}
-                          className="pr-14 text-right"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/km</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">※ 出張費・実移動距離は給与計算時に月次入力</p>
-                  </CardContent>
-                </Card>
-
-                {/* 介護超過手当 */}
-                <Card className="border-dashed md:col-span-2">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">介護超過手当（社員のみ）</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-                      <div>
-                        <p className="text-sm font-medium">超過判定 閾値</p>
-                        <p className="text-xs text-muted-foreground">月間サービス時間がこの時間を超えたとき支給。0 = 無効</p>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          type="number" min={0} step={1}
-                          value={settings.care_overtime_threshold_hours || ""} placeholder="0"
-                          onChange={(e) => upd("care_overtime_threshold_hours", parseInt(e.target.value, 10) || 0)}
-                          className="pr-12 text-right"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">時間</span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-                      <div>
-                        <p className="text-sm font-medium">超過単価</p>
-                        <p className="text-xs text-muted-foreground">超過時間 × 単価 = 介護超過手当</p>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          type="number" min={0} step={1}
-                          value={settings.care_overtime_unit_price || ""} placeholder="0"
-                          onChange={(e) => upd("care_overtime_unit_price", parseInt(e.target.value, 10) || 0)}
-                          className="pr-16 text-right"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/時間</span>
-                      </div>
-                    </div>
-                    {settings.care_overtime_threshold_hours > 0 && settings.care_overtime_unit_price > 0 && (
-                      <p className="text-xs text-blue-600 bg-blue-50 rounded px-3 py-1.5">
-                        月間サービス時間が {settings.care_overtime_threshold_hours} 時間を超えた分 × {settings.care_overtime_unit_price.toLocaleString()}円/時間 を支給
-                      </p>
-                    )}
-                    <p className="text-xs text-muted-foreground">※ 給与計算画面で訪問時間が閾値を超えると自動計算されます（社員のみ）</p>
-                  </CardContent>
-                </Card>
-
-                {/* 夜朝手当 */}
-                <Card className="border-dashed md:col-span-2">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">夜朝手当</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-                      <div>
-                        <p className="text-sm font-medium">夜朝手当単価</p>
-                        <p className="text-xs text-muted-foreground">夜朝時間 × 単価 = 夜朝手当（夜朝時間は給与計算時に入力）</p>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          type="number" min={0} step={1}
-                          value={settings.yocho_unit_price || ""} placeholder="0"
-                          onChange={(e) => upd("yocho_unit_price", parseInt(e.target.value, 10) || 0)}
-                          className="pr-16 text-right"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/時間</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">※ 夜朝時間の自動計算方法は後日実装予定。現在は給与計算画面で月次手動入力。</p>
-                  </CardContent>
-                </Card>
-
-                {/* 事務時給 */}
-                <Card className="border-dashed">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">事務時給（事務員のみ）</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-                      <div>
-                        <p className="text-sm font-medium">事務時給</p>
-                        <p className="text-xs text-muted-foreground">出勤簿の出勤時間 × 単価 = 本人給（職員マスタで「事務員」の人だけ）</p>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          type="number" min={0} step={1}
-                          value={settings.office_work_hourly_rate || ""} placeholder="0"
-                          onChange={(e) => upd("office_work_hourly_rate", parseInt(e.target.value, 10) || 0)}
-                          className="pr-16 text-right"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/時間</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 有給休暇手当の単価 (円/日)。年度で変わるので履歴で持つ (2026-09-18) */}
-                <Card className="border-dashed">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">有給休暇手当</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-                      <div>
-                        <p className="text-sm font-medium">1日あたりの単価</p>
-                        <p className="text-xs text-muted-foreground">有給の日数 (半休は 0.5 日) × 単価 = 有給休暇手当。空欄 = 職員マスタの有給手当単価</p>
-                      </div>
-                      <div className="relative">
-                        <Input
-                          type="number" min={0} step={1}
-                          value={settings.paid_leave_unit_price ?? ""} placeholder="職員マスタ"
-                          onChange={(e) => upd("paid_leave_unit_price", e.target.value === "" ? null : (parseFloat(e.target.value) || 0))}
-                          className="pr-12 text-right"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円/日</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 備考 */}
-                <Card className="md:col-span-2">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">備考</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <textarea
-                      className="w-full border rounded px-3 py-2 text-sm bg-background resize-none"
-                      rows={2} placeholder="特記事項があれば入力"
-                      value={settings.note}
-                      onChange={(e) => upd("note", e.target.value)}
-                    />
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* サマリー */}
-              <Card className="mt-4">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">支給項目一覧</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-x-8 text-sm">
-                    <SummaryItem label="本人給" value={settings.base_personal_salary} />
-                    <SummaryItem label="職能給" value={settings.skill_salary} />
-                    <SummaryItem label="役職手当" value={settings.position_allowance} />
-                    <SummaryItem label="資格手当" value={settings.qualification_allowance} />
-                    <SummaryItem label="勤続手当" value={settings.tenure_allowance} />
-                    <SummaryItem label="処遇改善手当" value={settings.treatment_improvement} />
-                    <SummaryItem label="特定処遇改善手当" value={settings.specific_treatment_improvement} />
-                    <SummaryItem label="処遇改善補助金手当" value={settings.treatment_subsidy} />
-                    <SummaryItem label="固定残業代" value={settings.fixed_overtime_pay} />
-                    <SummaryItem label="特別報奨金" value={settings.special_bonus} />
+                </label>
+                <label className="text-xs text-muted-foreground" title="途中で通信費の扱いが変わった人だけ入れる。空 = 職員マスタの値">この月からの通信費
+                  <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm max-w-64" value={settings.communication_fee_type ?? ""} onChange={(e) => upd("communication_fee_type", e.target.value || null)}>
+                    <option value="">職員マスタのまま</option>
+                    <option value="none">標準 (社保加入は0円・未加入は時間で500/1,000円)</option>
+                    <option value="variable">社保加入でも時間で500/1,000円</option>
+                    <option value="lend">スマホ貸与あり (0円)</option>
+                    <option value="lend_fee">貸与要件外で貸与を希望 (-1,700円)</option>
+                  </select>
+                </label>
+                <div className="ml-auto flex items-end gap-4">
+                  <div className="text-right">
+                    <p className="text-xs text-muted-foreground">固定支給合計 (月額)</p>
+                    <p className="text-xl font-bold leading-tight">{fixedTotal(settings).toLocaleString("ja-JP")}円</p>
                   </div>
-                  <div className="mt-3 pt-3 border-t flex justify-between font-bold text-base">
-                    <span>固定支給合計</span>
-                    <span>{fixedTotal(settings).toLocaleString("ja-JP")}円</span>
-                  </div>
-                  {settings.bonus_amount > 0 && (
-                    <div className="mt-1 flex justify-between text-sm text-muted-foreground">
-                      <span>報奨金（条件付き）</span>
-                      <span>+{settings.bonus_amount.toLocaleString("ja-JP")}円</span>
-                    </div>
-                  )}
-                  {settings.travel_unit_price > 0 && (
-                    <div className="mt-1 flex justify-between text-sm text-muted-foreground">
-                      <span>移動費単価</span>
-                      <span>{settings.travel_unit_price.toLocaleString("ja-JP")}円/km</span>
-                    </div>
-                  )}
-                  {settings.care_overtime_threshold_hours > 0 && (
-                    <div className="mt-1 flex justify-between text-sm text-muted-foreground">
-                      <span>介護超過手当</span>
-                      <span>{settings.care_overtime_threshold_hours}時間超 × {settings.care_overtime_unit_price.toLocaleString("ja-JP")}円/時間</span>
-                    </div>
-                  )}
-                  {settings.yocho_unit_price > 0 && (
-                    <div className="mt-1 flex justify-between text-sm text-muted-foreground">
-                      <span>夜朝手当単価</span>
-                      <span>{settings.yocho_unit_price.toLocaleString("ja-JP")}円/時間</span>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <div className="flex justify-end mt-4">
-                <Button onClick={handleSave} disabled={saving} size="lg">
-                  {saving ? "保存中…" : "💾 保存する"}
-                </Button>
+                  <Button onClick={handleSave} disabled={saving}>{saving ? "保存中…" : "保存"}</Button>
+                </div>
               </div>
-            </>
+            )}
+            {!loading && settings && (
+              <p className="text-[11px] text-muted-foreground mt-1.5">保存すると この月からの新しい履歴行ができ、前の値は履歴として残ります。</p>
+            )}
+          </div>
+
+          {loading && <p className="text-center py-10 text-muted-foreground">読み込み中…</p>}
+
+          {!loading && settings && (
+            <div className="px-5 py-4 space-y-4">
+              {/* 毎月の固定支給: 4 つのまとまりを横に並べる */}
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Section title="基本給" total={settings.base_personal_salary + settings.skill_salary}>
+                  <Field label="本人給" value={settings.base_personal_salary} onChange={(v) => upd("base_personal_salary", v ?? 0)} />
+                  <Field label="職能給" value={settings.skill_salary} onChange={(v) => upd("skill_salary", v ?? 0)} />
+                </Section>
+                <Section title="手当" total={settings.position_allowance + settings.qualification_allowance + settings.tenure_allowance}>
+                  <Field label="役職手当" value={settings.position_allowance} onChange={(v) => upd("position_allowance", v ?? 0)} />
+                  <Field label="資格手当" value={settings.qualification_allowance} onChange={(v) => upd("qualification_allowance", v ?? 0)} />
+                  <Field label={settings.tenure_allowance_auto ? "勤続手当 (自動)" : "勤続手当"} value={settings.tenure_allowance} onChange={(v) => upd("tenure_allowance", v ?? 0)} />
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title="資格要件: 介護福祉士 / 実務者研修修了者 / 居宅介護支援職員">
+                    <input type="checkbox" checked={settings.tenure_allowance_auto} onChange={(e) => upd("tenure_allowance_auto", e.target.checked)} />
+                    勤続手当を自動計算する
+                  </label>
+                </Section>
+                <Section title="処遇改善" total={settings.treatment_improvement + settings.specific_treatment_improvement + settings.treatment_subsidy}>
+                  <Field label="処遇改善手当" value={settings.treatment_improvement} onChange={(v) => upd("treatment_improvement", v ?? 0)} />
+                  <Field label="特定処遇改善" value={settings.specific_treatment_improvement} onChange={(v) => upd("specific_treatment_improvement", v ?? 0)} />
+                  <Field label="処遇改善補助金" value={settings.treatment_subsidy} onChange={(v) => upd("treatment_subsidy", v ?? 0)} />
+                </Section>
+                <Section title="残業・特別報奨金" total={settings.fixed_overtime_pay + settings.special_bonus}>
+                  <Field label="固定残業代" value={settings.fixed_overtime_pay} onChange={(v) => upd("fixed_overtime_pay", v ?? 0)} />
+                  <Field label="特別報奨金" hint="毎月固定で払う分" value={settings.special_bonus} onChange={(v) => upd("special_bonus", v ?? 0)} />
+                </Section>
+              </div>
+
+              {/* 単価・条件付き: 計算に使う単価。固定支給合計には入らない */}
+              <div className="rounded-lg border border-dashed p-3">
+                <p className="text-xs font-semibold text-muted-foreground mb-2">単価・条件付き (固定支給合計には入らない)</p>
+                <div className="grid gap-x-6 gap-y-2 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label="報奨金" hint="支給する月は「報奨金の支給」画面で選ぶ" value={settings.bonus_amount} onChange={(v) => upd("bonus_amount", v ?? 0)} />
+                  <Field label="移動費単価" unit="円/km" hint="移動距離 × 単価" value={settings.travel_unit_price} onChange={(v) => upd("travel_unit_price", v ?? 0)} />
+                  <Field label="夜朝手当単価" unit="円/時" hint="夜朝時間 × 単価" value={settings.yocho_unit_price} onChange={(v) => upd("yocho_unit_price", v ?? 0)} />
+                  <Field label="介護超過 閾値" unit="時間" hint="月のサービス時間がこれを超えた分に払う (社員)。0 = 無効" value={settings.care_overtime_threshold_hours} onChange={(v) => upd("care_overtime_threshold_hours", v ?? 0)} />
+                  <Field label="介護超過 単価" unit="円/時" hint="超過時間 × 単価" value={settings.care_overtime_unit_price} onChange={(v) => upd("care_overtime_unit_price", v ?? 0)} />
+                  <Field label="事務時給" unit="円/時" hint="出勤時間 × 単価 = 本人給 (事務員)" value={settings.office_work_hourly_rate} onChange={(v) => upd("office_work_hourly_rate", v ?? 0)} />
+                  <Field label="有給 1日単価" unit="円/日" hint="空欄 = 職員マスタの単価" nullable placeholder="職員マスタ"
+                    value={settings.paid_leave_unit_price ?? null} onChange={(v) => upd("paid_leave_unit_price", v)} />
+                </div>
+              </div>
+
+              <label className="block text-xs text-muted-foreground">備考
+                <textarea className="mt-0.5 w-full border rounded px-3 py-1.5 text-sm bg-background resize-none" rows={2} placeholder="特記事項があれば入力"
+                  value={settings.note} onChange={(e) => upd("note", e.target.value)} />
+              </label>
+            </div>
           )}
         </DialogContent>
       </Dialog>

@@ -104,7 +104,7 @@ type AttendanceRecord = OfficeAttendanceRecord;
 // OfficeFormRecord は src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
-type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number };
+type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number; effective_from?: string | null };
 type Office              = { id: string; office_number: string; name: string; short_name: string; office_type: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
 type ServiceCategory     = { id: string; name: string };
 
@@ -323,7 +323,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
-        supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate"),
+        supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
         supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
           .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
@@ -377,12 +377,22 @@ export default function PayrollPage() {
       const officeRows        = flattenOfficeMaster(officeRes.data as never) as unknown as Office[];
       const officeMap         = new Map(officeRows.map((o: Office) => [o.office_number, o.id]));
       const officeByIdMap     = new Map(officeRows.map((o: Office) => [o.id, o]));
-      const rateMap    = new Map((rateRes.data ?? []).map((r: CategoryHourlyRate) => [`${r.office_id}:${r.category_id}`, r.hourly_rate]));
       const employeesRaw = (empRes.data ?? []) as Employee[];
       // 履歴化方式: 対象月 (selectedMonth = YYYYMM) で active な salary row を選ぶ。
       // effective_from <= 対象月 のうち最新を per-employee で 1 row 抽出。
       // 履歴がまだ無い employee は default '1970-01-01' の backfill row が当たる。
       const _monthStart = selectedMonthToMonthStart(selectedMonth);
+      // 時給 (事業所 × 類型) は履歴で持つ (2026-09-22)。対象月の月初以前で最新の行を使う
+      const rateMap = new Map<string, number>();
+      {
+        const fromOf = new Map<string, string>();
+        for (const r of (rateRes.data ?? []) as CategoryHourlyRate[]) {
+          const from = r.effective_from ?? "2000-01-01";
+          if (from > _monthStart) continue;
+          const k = `${r.office_id}:${r.category_id}`;
+          if ((fromOf.get(k) ?? "") <= from) { fromOf.set(k, from); rateMap.set(k, r.hourly_rate); }
+        }
+      }
       const salMap     = buildActiveSalaryMap<SalarySettings>(
         (salRes.data ?? []) as SalarySettings[],
         _monthStart,
@@ -390,6 +400,9 @@ export default function PayrollPage() {
       // 給与形態・役職は その月で有効な給与設定の行から決める (無ければ職員マスタ)。
       // 月の途中で時給 ↔ 月給が切り替わった人の過去月を、その月の形態で計算するため (2026-09-18)
       const employees = employeesRaw.map((e) => ({ ...e, ...resolveEmploymentType(e, salMap.get(e.id)),
+        // 通信費タイプも その月の給与設定の行にあればそれ (その月から有効なので 職員マスタの開始日は見ない) (2026-09-22)
+        ...(salMap.get(e.id)?.communication_fee_type
+          ? { communication_fee_type: salMap.get(e.id)!.communication_fee_type!, communication_fee_from: null } : {}),
         // 有給単価 (円/日) も その月の給与設定の行 → 無ければ職員マスタ (2026-09-18)
         paid_leave_unit_price: resolvePaidLeaveUnitPriceFromHistory(e, (salRes.data ?? []) as SalarySettings[], _monthStart) }));
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、

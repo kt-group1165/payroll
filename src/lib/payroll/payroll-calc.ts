@@ -60,6 +60,8 @@ export type SalarySettings = {
   role_type?: string | null;
   /** この適用開始月からの有給休暇手当の単価 (円/日)。NULL = 職員マスタ */
   paid_leave_unit_price?: number | null;
+  /** この適用開始月からの通信費タイプ (none/variable/lend/lend_fee)。NULL = 職員マスタの値 (2026-09-22) */
+  communication_fee_type?: string | null;
 };
 
 export type AttendanceSummary = {
