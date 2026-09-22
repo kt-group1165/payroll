@@ -50,6 +50,9 @@ function DialogContent({
   /** "right" = 画面の右に縦長のパネルで出す。後ろの一覧をぼかさず見えるままにする (2026-09-22 user) */
   side?: "center" | "right"
 }) {
+  // 呼び出し側が幅 (max-w-*) を指定したら 既定の sm:max-w-sm/md を付けない。
+  // 付けると sm 以上で既定が勝ち、max-w-5xl 等を指定しても 384px の細長いダイアログになる (2026-09-22 給与設定で発覚)
+  const customWidth = /(^|\s)(sm:|md:|lg:)?max-w-/.test(typeof className === "string" ? className : "")
   return (
     <DialogPortal>
       <DialogOverlay className={side === "right" ? "bg-transparent supports-backdrop-filter:backdrop-blur-none" : undefined} />
@@ -57,8 +60,8 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           side === "right"
-            ? "fixed top-0 right-0 z-50 grid h-dvh w-full max-w-[calc(100%-2rem)] content-start gap-4 overflow-y-auto border-l bg-popover p-4 text-sm text-popover-foreground shadow-xl duration-150 outline-none sm:max-w-md data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right"
-            : "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+            ? `fixed top-0 right-0 z-50 grid h-dvh w-full max-w-[calc(100%-2rem)] content-start gap-4 overflow-y-auto border-l bg-popover p-4 text-sm text-popover-foreground shadow-xl duration-150 outline-none ${customWidth ? "" : "sm:max-w-md"} data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right`
+            : `fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none ${customWidth ? "" : "sm:max-w-sm"} data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95`,
           className
         )}
         {...props}
