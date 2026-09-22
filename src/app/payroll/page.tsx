@@ -814,14 +814,14 @@ export default function PayrollPage() {
       //   2026-03〜07 を実測: 当方の推定は 総括表の移動手当と ¥676,520 ずれていたが、旧システムの値なら 94.5% 一致する。
       //   1行 = 1職員×1日。travel_paid_min = 移動手当の対象時間 / travel_full_min = 移動の全量 (出勤時間に乗る分)。
       //   ⚠ 通勤費・出張費の距離は この CSV に無いので 従来どおり Google の距離を使う。
-      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number; otMin: number; svcTotalMin: number; hourly: boolean }>();
+      const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number; otMin: number; svcTotalMin: number; allowance: number; hourly: boolean }>();
       if (useLegacyRes.enabled) {
         const PAGE = 1000;
         let lFrom = 0;
         while (true) {
           const { data, error } = await supabase
             .from("payroll_legacy_travel_daily")
-            .select("work_date,employee_number,pay_type,travel_paid_min,travel_full_min,ot_service_min,ot_travel_min,service_total_min")
+            .select("work_date,employee_number,pay_type,travel_paid_min,travel_full_min,ot_service_min,ot_travel_min,service_total_min,travel_allowance")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id").range(lFrom, lFrom + PAGE - 1);
@@ -829,7 +829,7 @@ export default function PayrollPage() {
           if (!data || data.length === 0) break;
           for (const r of data) {
             const num = normEmp(r.employee_number);
-            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0, otMin: 0, svcTotalMin: 0, hourly: true });
+            if (!legacyTravel.has(num)) legacyTravel.set(num, { paidSecByDay: new Map(), paidSec: 0, fullSec: 0, otMin: 0, svcTotalMin: 0, allowance: 0, hourly: true });
             const x = legacyTravel.get(num)!;
             const date = String(r.work_date).replace(/-/g, "/"); // 実績側は "2026/06/01" 形式
             const sec = (r.travel_paid_min ?? 0) * 60;
@@ -838,6 +838,9 @@ export default function PayrollPage() {
             x.fullSec += (r.travel_full_min ?? 0) * 60;
             x.otMin += (r.ot_service_min ?? 0) + (r.ot_travel_min ?? 0);
             x.svcTotalMin += r.service_total_min ?? 0;
+            // 旧システムの「移動手当」(円)。対象時間 × 20 に 残業中の移動の割増が乗っている (中央 SYED 3/7: 6分 + 残業17分 → 540円)。
+            //   3〜7月の時給者 1,914人月で総括表と突合: 分×20 は 1,723 一致 / この列の合計は 1,755 一致 (悪くなる人は 0)。2026-09-23
+            x.allowance += r.travel_allowance ?? 0;
             // ⚠ 旧システムの「移動」は 時給者は手当の対象時間 / 月給者は移動の全量 (手当は付かない)。
             //   当方が時給扱いでも 旧が月給なら ×20 して手当にしてはいけない
             //   (さつきが丘 米倉 2026-03: 613分 → ¥12,260 になるが 総括表は ¥540)
@@ -1202,7 +1205,7 @@ export default function PayrollPage() {
               };
               const adjustedDistanceM = adjustedCommuteDistanceM(totalCommuteM, empOffice?.distance_adjustment_rate ?? 100);
               entry.travel_time_sec = totalSec;
-              entry.travel_allowance = travelAllowanceAmount(totalSec, rate);
+              entry.travel_allowance = legacy && legacy.hourly ? legacy.allowance : travelAllowanceAmount(totalSec, rate);
               entry.commute_distance_m = adjustedDistanceM;
               // 出張費は事業所書式の出張km で計算済み (地図の距離では上書きしない)
             }
