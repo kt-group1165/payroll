@@ -521,11 +521,21 @@ export default function PayrollPage() {
       {
         const normName = (x: string) => x.normalize("NFKC").replace(/[\s　]/g, "");
         const target = normName(selectedOffice.name ?? "");
-        const { data, error } = await supabase
-          .from("payroll_legacy_employee")
-          .select("office_name,employee_number,group_tenure_months,tenure_as_of,hire_date");
+        // ⚠ 1,656 行あるので必ずページングする。以前は 1 回の select で 先頭 1,000 行しか読めておらず、
+        //   残りの人は 勤続月数・入社日が引けないまま 従来の月数で計算されていた (2026-09-22 判明)
+        const data: { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[] = [];
+        let error: { message: string } | null = null;
+        for (let from = 0; ; from += 1000) {
+          const res = await supabase
+            .from("payroll_legacy_employee")
+            .select("office_name,employee_number,group_tenure_months,tenure_as_of,hire_date")
+            .order("id").range(from, from + 999);
+          if (res.error) { error = res.error; break; }
+          data.push(...((res.data ?? []) as typeof data));
+          if ((res.data ?? []).length < 1000) break;
+        }
         if (error) console.warn("[payroll] 旧システムの従業員データを読めませんでした (従来の勤続月数で計算します):", error.message);
-        for (const r of (data ?? []) as { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[]) {
+        for (const r of data as { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[]) {
           if (r.group_tenure_months == null || normName(r.office_name) !== target) continue;
           if (r.hire_date) legacyHireDate.set(normEmp(r.employee_number), r.hire_date);
           const asOf = Number(r.tenure_as_of.slice(0, 4)) * 12 + Number(r.tenure_as_of.slice(4, 6));
