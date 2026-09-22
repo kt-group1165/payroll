@@ -10,6 +10,8 @@
  *   B 書式の距離 × 単価 ≒ 出張費 → 書式が正 (総括表の距離欄の打ち間違い)。触らない  例) 高品 櫻井 6月 総括 13,974
  *   C どちらでも出張費にならない (単価が月で違う等) → 触らない。一覧に出す
  * 「≒」は ±1 円。
+ * パート (時給) のシートも見る (2026-09-23 追加)。時給の出張費は 切り上げ (hourlyBusinessTripFeeAmount)。
+ *   パートのシートは 距離 の列が空のことがある → 払った出張費から 0.1km 単位で 同じ額になる距離を割り戻して使う。
  *
  *   SP=<scratchpad> node migrations/set_business_km_paid_from_soukatsu.mjs            # DRY RUN
  *   SP=<scratchpad> node migrations/set_business_km_paid_from_soukatsu.mjs --execute
@@ -52,8 +54,10 @@ for (const m of MONTHS) {
   const y = Number(m.slice(0, 4)), mo = Number(m.slice(4));
   for (const f of JSON.parse(readFileSync(`${SP}/soukatsu${m}/extract.json`, "utf8"))) {
     const on = OFF[f.office];
-    if (!on || f.kind === "part") continue;
-    const rows = f.rows.filter((r) => num(r["距離(出)"]) > 0 && !String(r._code).includes("合計"));
+    if (!on) continue;
+    const isPart = f.kind === "part";
+    const kmCol = (r) => num(r["距離(出)"] ?? r["距離"]);
+    const rows = f.rows.filter((r) => (kmCol(r) > 0 || num(r["出張費"]) > 0) && !String(r._code).includes("合計") && !String(r["氏名"] ?? "").includes("合計"));
     if (rows.length === 0) continue;
     const unit = unitOf.get(on) ?? 0;
     const [ofRecs, attRecs, existing] = await Promise.all([
@@ -68,13 +72,21 @@ for (const m of MONTHS) {
     for (const r of rows) {
       const code = nn(r._code);
       if (seen.has(code)) continue; seen.add(code);
-      const sk = r1(num(r["距離(出)"])), fee = num(r["出張費"]);
+      const fee = num(r["出張費"]);
+      const fOf = (km) => (isPart ? Math.ceil(km * unit - 1e-6) : feeOf(km, unit));
+      // 距離の列が空 (パート) なら 払った額から割り戻す: fOf(km) === fee になる 0.1km 単位の距離
+      let sk = r1(kmCol(r));
+      if (sk <= 0 && fee > 0 && unit > 0) {
+        const base = Math.floor((fee / unit) * 10) / 10;
+        sk = [base - 0.1, base, base + 0.1].map(r1).find((k) => k > 0 && fOf(k) === fee) ?? 0;
+        if (sk <= 0) { unknownC.push(`${f.office} ${m} ${code} ${r["氏名"]}: 距離が空で 出張費 ${fee} から割り戻せない`); continue; }
+      }
       const o = ofKm.get(code) ?? 0, a = attKm.get(code) ?? 0;
       const src = o > 0 ? o : a;
       if (src <= 0) continue;                 // 元が無い人は set_business_km_from_soukatsu.mjs の範囲
       if (Math.abs(src - sk) <= 0.05) continue; // 一致
       const label = `${f.office} ${m} ${code} ${r["氏名"]}: 総括 ${sk} / ${o > 0 ? "書式" : "出勤簿"} ${r1(src)} / 出張費 ${fee} (単価 ${unit})`;
-      const skOk = Math.abs(feeOf(sk, unit) - fee) <= 1, srcOk = Math.abs(feeOf(src, unit) - fee) <= 1;
+      const skOk = Math.abs(fOf(sk) - fee) <= 1, srcOk = Math.abs(fOf(src) - fee) <= 1;
       if (srcOk) { keepB.push(label); continue; }
       if (!skOk) { unknownC.push(label); continue; }
       const ex = exist.get(code);
