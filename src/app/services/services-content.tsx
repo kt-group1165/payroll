@@ -638,11 +638,15 @@ function MappingsTab({
 // ====================
 // 時給設定タブ
 // ====================
-// 事業所 (行) × 類型 (列) の表で、選んだ月に有効な時給を出す。
-// 時給は履歴で持つ (2026-09-22 user「類型と時給の結びつき (事業所ごと) と 月次の変更の履歴」):
-//   セルを変えると「表示している月の 1 日から」の新しい行を作る (その月の行が既にあれば上書き)。前の月は元の時給のまま。
-//   2000-01-01 の行 = 履歴を持つ前からの値。
+// 事業所ごとに「時給が同じ時期」を 1 行にまとめて出す (2026-09-22 user「変更履歴みたいな表示にして、変更がない時期はひとまとまりに」)。
+//   例)  〜2026年3月 | 身体 2,000 | 生活 1,700 …
+//        2026年4月〜 | 身体 2,100 | 生活 1,800 …
+// 時給は履歴で持つ (payroll_category_hourly_rates.effective_from)。時期の区切り = その事業所の行の 適用開始日。
+// 2000-01-01 = 履歴を持つ前からの値 (= 最初から)。
+// 新しい時期を足すと 直前の時期の時給を全部コピーした行を作るので、各時期は全類型の行を持つ (前の時期を直しても後ろの時期に波及しない)。
 const BASE_FROM = "2000-01-01";
+const ymLabel = (d: string) => `${d.slice(0, 4)}年${Number(d.slice(5, 7))}月`;
+const prevMonthLabel = (d: string) => { const y = Number(d.slice(0, 4)), m = Number(d.slice(5, 7)); return m === 1 ? `${y - 1}年12月` : `${y}年${m - 1}月`; };
 const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
 
 function RatesTab({
@@ -657,10 +661,12 @@ function RatesTab({
   const router = useRouter();
   const rates = initialRates;
   const categories = initialCategories.slice().sort((a, b) => a.sort_order - b.sort_order);
-  const [month, setMonth] = useState(thisMonth());
+  const [officeFilter, setOfficeFilter] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addFor, setAddFor] = useState<string | null>(null);   // 新しい時期を足している事業所
+  const [addMonth, setAddMonth] = useState(thisMonth());
+  const [importMonth, setImportMonth] = useState(thisMonth());
   const importRef = useRef<HTMLInputElement>(null);
-  const monthStart = `${month}-01`;
   const fetchData = useCallback(() => router.refresh(), [router]);
 
   const officesWithRates = new Set(rates.map((r) => r.office_id));
@@ -668,69 +674,93 @@ function RatesTab({
     .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id))
     .slice().sort((a, b) => (a.short_name || a.name).localeCompare(b.short_name || b.name, "ja"));
   const officeName = (o: Office) => o.short_name || o.name;
+  const shown = officeFilter ? offices.filter((o) => o.id === officeFilter) : offices;
 
-  // その月に有効な行 (適用開始 ≦ 月初 の最新) と、その月より後に予定されている変更
-  const activeOf = new Map<string, CategoryHourlyRate>();
-  const laterOf = new Map<string, CategoryHourlyRate[]>();
-  for (const r of rates) {
-    const k = `${r.office_id}|${r.category_id}`;
-    const from = r.effective_from ?? BASE_FROM;
-    if (from <= monthStart) {
-      const cur = activeOf.get(k);
-      if (!cur || (cur.effective_from ?? BASE_FROM) <= from) activeOf.set(k, r);
-    } else {
-      laterOf.set(k, [...(laterOf.get(k) ?? []), r]);
-    }
-  }
-  const history = rates
-    .filter((r) => (r.effective_from ?? BASE_FROM) > BASE_FROM)
-    .slice().sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? ""));
-  const catName = (id: string) => categories.find((c) => c.id === id)?.name ?? "?";
-  const offName = (id: string) => { const o = initialOffices.find((x) => x.id === id); return o ? officeName(o) : "?"; };
+  // 事業所ごとの 時期 (区切り = 行の適用開始日) と、各時期の 類型 → 行 (その時期の頭で有効な行)
+  const periodsOf = (officeId: string) => {
+    const rows = rates.filter((r) => r.office_id === officeId);
+    const starts = [...new Set(rows.map((r) => r.effective_from ?? BASE_FROM))].sort();
+    return starts.map((start, i) => {
+      const byCat = new Map<string, CategoryHourlyRate>();
+      for (const r of rows) {
+        const f = r.effective_from ?? BASE_FROM;
+        if (f > start) continue;
+        const cur = byCat.get(r.category_id);
+        if (!cur || (cur.effective_from ?? BASE_FROM) <= f) byCat.set(r.category_id, r);
+      }
+      const next = starts[i + 1];
+      const label = start === BASE_FROM
+        ? (next ? `〜${prevMonthLabel(next)}` : "ずっと")
+        : (next ? `${ymLabel(start)}〜${prevMonthLabel(next)}` : `${ymLabel(start)}〜`);
+      return { start, label, byCat, isLast: !next };
+    });
+  };
+  const nowStart = `${thisMonth()}-01`;
 
-  // セルの時給を変える = この月の 1 日からの行を作る / 上書きする
-  const saveCell = async (officeId: string, categoryId: string, raw: string) => {
-    const k = `${officeId}|${categoryId}`;
-    const cur = activeOf.get(k);
-    const rate = raw.trim() === "" ? null : parseInt(raw, 10);
-    if (rate === null) return; // 空にしただけでは消さない (消すのは 下の履歴から)
+  // その時期の時給を直す = その時期の頭 (start) の行を作る / 上書きする
+  const saveCell = async (officeId: string, categoryId: string, start: string, current: number | undefined, raw: string) => {
+    if (raw.trim() === "") return; // 空にしただけでは消さない
+    const rate = parseInt(raw, 10);
     if (isNaN(rate) || rate <= 0) { toast.error("時給は 1 以上の数字で入れてください"); return; }
-    if (cur && cur.hourly_rate === rate) return;
+    if (current === rate) return;
     setSaving(true);
     const { error } = await supabase.from("payroll_category_hourly_rates").upsert(
-      { office_id: officeId, category_id: categoryId, hourly_rate: rate, effective_from: monthStart, updated_at: new Date().toISOString() },
+      { office_id: officeId, category_id: categoryId, hourly_rate: rate, effective_from: start, updated_at: new Date().toISOString() },
       { onConflict: "office_id,category_id,effective_from" });
     setSaving(false);
     if (error) { toast.error(`保存に失敗: ${error.message}`); return; }
-    toast.success(`${offName(officeId)} ${catName(categoryId)}: ${month.replace("-", "年")}月から ${rate.toLocaleString()}円 にしました`);
+    toast.success("保存しました。給与計算をやり直すと反映されます");
     fetchData();
   };
 
-  const handleDelete = async (r: CategoryHourlyRate) => {
-    const from = r.effective_from ?? BASE_FROM;
-    const label = from === BASE_FROM ? "最初からの時給" : `${from.slice(0, 7).replace("-", "年")}月からの時給`;
-    if (!confirm(`${offName(r.office_id)} ${catName(r.category_id)} の ${label} (${r.hourly_rate.toLocaleString()}円) を消しますか？\n消すと その月からは 1 つ前の時給に戻ります。`)) return;
-    const { error } = await supabase.from("payroll_category_hourly_rates").delete().eq("id", r.id);
+  // 新しい時期を足す: 直前の時期の時給を全部コピーした行を 指定月の 1 日で作る。あとは セルで直す
+  const addPeriod = async (officeId: string) => {
+    const start = `${addMonth}-01`;
+    const periods = periodsOf(officeId);
+    if (periods.some((p) => p.start === start)) { toast.error(`${ymLabel(start)}から の時期は もうあります`); return; }
+    const before = periods.filter((p) => p.start < start).at(-1);
+    const rows = before ? [...before.byCat.values()].map((r) => ({ office_id: officeId, category_id: r.category_id, hourly_rate: r.hourly_rate, effective_from: start })) : [];
+    if (rows.length === 0) { toast.error("コピー元の時給がありません。先に時給を入れてください"); return; }
+    setSaving(true);
+    const { error } = await supabase.from("payroll_category_hourly_rates").insert(rows);
+    setSaving(false);
+    if (error) { toast.error(`追加に失敗: ${error.message}`); return; }
+    toast.success(`${ymLabel(start)}からの時期を足しました。変わる類型の時給を書き換えてください`);
+    setAddFor(null);
+    fetchData();
+  };
+
+  // 時期を消す: その時期の頭の行を全部消す (前の時期がそのまま続く)。最初の時期は消さない
+  const deletePeriod = async (officeId: string, start: string, label: string) => {
+    if (!confirm(`${offName(officeId)} の「${label}」の時期を消しますか？\n消すと 1 つ前の時期の時給がそのまま続きます。`)) return;
+    setSaving(true);
+    const { error } = await supabase.from("payroll_category_hourly_rates").delete().eq("office_id", officeId).eq("effective_from", start);
+    setSaving(false);
     if (error) { toast.error(`削除に失敗: ${error.message}`); return; }
     toast.success("消しました");
     fetchData();
   };
+  const offName = (id: string) => { const o = initialOffices.find((x) => x.id === id); return o ? officeName(o) : "?"; };
 
-  // 表示している月の時給を 事業所 × 類型 で出す
+  // 今月に使われる時給を 事業所 × 類型 で出す
   const handleExport = () => {
     const rows: string[][] = [["事業所番号", "事業所名", "類型", "時給"]];
-    for (const o of offices) for (const c of categories) {
-      const r = activeOf.get(`${o.id}|${c.id}`);
-      rows.push([o.office_number, officeName(o), c.name, r ? String(r.hourly_rate) : ""]);
+    for (const o of offices) {
+      const p = periodsOf(o.id).filter((x) => x.start <= nowStart).at(-1);
+      for (const c of categories) {
+        const r = p?.byCat.get(c.id);
+        rows.push([o.office_number, officeName(o), c.name, r ? String(r.hourly_rate) : ""]);
+      }
     }
-    downloadCsv(`時給設定_${month}.csv`, rows);
-    toast.success(`${month.replace("-", "年")}月の時給を ${rows.length - 1} 件出力しました`);
+    downloadCsv(`時給設定_${thisMonth()}.csv`, rows);
+    toast.success(`今月の時給を ${rows.length - 1} 件出力しました`);
   };
 
-  // 取り込んだ時給は 表示している月の 1 日からの時給として入れる (違う値のものだけ)
+  // 取り込んだ時給は 「取り込みの適用開始月」からの時給として入れる (今と違う値のものだけ)
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const start = `${importMonth}-01`;
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const clear = () => { if (importRef.current) importRef.current.value = ""; };
@@ -757,13 +787,14 @@ function RatesTab({
         if (!c) { errors.push(`行${i + 1}: 類型「${cn}」が未登録`); continue; }
         const rate = parseInt(rs, 10);
         if (isNaN(rate)) { errors.push(`行${i + 1}: 時給「${rs}」が数値ではありません`); continue; }
-        if (rate <= 0 || activeOf.get(`${o.id}|${c.id}`)?.hourly_rate === rate) continue; // 変わらないものは入れない
-        upsertMap.set(`${o.id}|${c.id}`, { office_id: o.id, category_id: c.id, hourly_rate: rate, effective_from: monthStart });
+        const cur = periodsOf(o.id).filter((x) => x.start <= start).at(-1)?.byCat.get(c.id)?.hourly_rate;
+        if (rate <= 0 || cur === rate) continue;
+        upsertMap.set(`${o.id}|${c.id}`, { office_id: o.id, category_id: c.id, hourly_rate: rate, effective_from: start });
       }
       if (errors.length > 0) { toast.error(errors.slice(0, 5).join("\n")); clear(); return; }
       const rows = [...upsertMap.values()];
       if (rows.length === 0) { toast.message("今の時給と違うものはありませんでした"); clear(); return; }
-      if (!confirm(`${rows.length} 件を ${month.replace("-", "年")}月からの時給として入れますか？ (前の月は元の時給のまま)`)) { clear(); return; }
+      if (!confirm(`${rows.length} 件を ${ymLabel(start)}からの時給として入れますか？ (それより前は元の時給のまま)`)) { clear(); return; }
       const { error } = await supabase.from("payroll_category_hourly_rates").upsert(rows, { onConflict: "office_id,category_id,effective_from" });
       if (error) { toast.error(`取り込みに失敗: ${error.message}`); clear(); return; }
       toast.success(`${rows.length} 件を取り込みました`);
@@ -775,81 +806,105 @@ function RatesTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-4">
-        <label className="text-sm">表示する月
-          <Input type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} className="mt-1 h-9 w-40" />
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-sm">事業所
+          <select className="block mt-1 h-9 rounded-md border bg-background px-2 text-sm" value={officeFilter} onChange={(e) => setOfficeFilter(e.target.value)}>
+            <option value="">すべて ({offices.length})</option>
+            {offices.map((o) => <option key={o.id} value={o.id}>{officeName(o)}</option>)}
+          </select>
         </label>
         <p className="text-sm text-muted-foreground flex-1 min-w-[260px]">
-          表の値は <b>{month.replace("-", "年")}月</b> に使われる時給です。セルを書き換えると <b>{month.replace("-", "年")}月から</b> の時給になり、それより前の月は元の時給のままです。
-          <span className="text-amber-700"> 色付きのセル</span> = この月から変わった時給。
+          時給が同じ時期を 1 行にまとめています。時給が変わるときは「＋ 時給が変わる月を追加」で新しい時期を作り、変わる類型だけ書き換えます。
         </p>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExport}>📥 CSV出力</Button>
+        <div className="flex items-end gap-2">
+          <Button variant="outline" onClick={handleExport}>📥 CSV出力 (今月)</Button>
+          <label className="text-xs text-muted-foreground">取り込みの適用開始月
+            <Input type="month" value={importMonth} onChange={(e) => e.target.value && setImportMonth(e.target.value)} className="mt-0.5 h-9 w-36" />
+          </label>
           <Button variant="outline" onClick={() => importRef.current?.click()}>📤 CSV取り込み</Button>
           <input ref={importRef} type="file" accept=".csv" onChange={handleImport} className="hidden" />
         </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
-        <table className="text-sm border-collapse">
-          <thead className="bg-muted/60">
+        <table className="text-sm border-collapse w-full">
+          <thead className="bg-muted/60 sticky top-0 z-10">
             <tr>
-              <th className="sticky left-0 bg-muted px-3 py-2 text-left font-medium min-w-44">事業所</th>
-              {categories.map((c) => <th key={c.id} className="px-2 py-2 text-center font-medium whitespace-nowrap min-w-24">{c.name}</th>)}
+              <th className="sticky left-0 bg-muted px-3 py-2 text-left font-medium min-w-52">事業所 / 時期</th>
+              {categories.map((c) => <th key={c.id} className="px-2 py-2 text-center font-medium whitespace-nowrap">{c.name}</th>)}
+              <th className="px-2 py-2" />
             </tr>
           </thead>
           <tbody>
-            {offices.map((o) => (
-              <tr key={o.id} className="border-t hover:bg-muted/30">
-                <td className="sticky left-0 bg-background px-3 py-1 whitespace-nowrap">{officeName(o)}</td>
-                {categories.map((c) => {
-                  const k = `${o.id}|${c.id}`;
-                  const r = activeOf.get(k);
-                  const changedHere = r && (r.effective_from ?? BASE_FROM) === monthStart;
-                  const later = laterOf.get(k) ?? [];
-                  const tip = [r ? `${(r.effective_from ?? BASE_FROM) === BASE_FROM ? "最初から" : `${r.effective_from!.slice(0, 7)} から`} ${r.hourly_rate}円` : "未設定",
-                    ...later.map((x) => `${x.effective_from!.slice(0, 7)} から ${x.hourly_rate}円 (予定)`)].join("\n");
+            {shown.map((o) => {
+              const periods = periodsOf(o.id);
+              return [
+                <tr key={`${o.id}-h`} className="border-t-2 bg-muted/20">
+                  <td className="sticky left-0 bg-muted/40 px-3 py-1.5 font-medium whitespace-nowrap" colSpan={1}>{officeName(o)}</td>
+                  <td colSpan={categories.length + 1} className="px-2 py-1 text-right">
+                    {addFor === o.id ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Input type="month" value={addMonth} onChange={(e) => e.target.value && setAddMonth(e.target.value)} className="h-7 w-36" />
+                        <span className="text-xs">から時給が変わる</span>
+                        <Button size="sm" disabled={saving} onClick={() => addPeriod(o.id)}>追加</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAddFor(null)}>やめる</Button>
+                      </span>
+                    ) : (
+                      periods.length > 0 && <Button size="sm" variant="ghost" onClick={() => { setAddFor(o.id); setAddMonth(thisMonth()); }}>＋ 時給が変わる月を追加</Button>
+                    )}
+                  </td>
+                </tr>,
+                ...(periods.length === 0 ? [
+                  <tr key={`${o.id}-none`}>
+                    <td className="sticky left-0 bg-background px-3 py-1 pl-6 text-muted-foreground">時給が未設定</td>
+                    {categories.map((c) => (
+                      <td key={c.id} className="px-1 py-1">
+                        <Input type="number" min={1} disabled={saving} placeholder="—" className="h-8 w-24 text-right"
+                          onBlur={(e) => saveCell(o.id, c.id, BASE_FROM, undefined, e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                      </td>
+                    ))}
+                    <td />
+                  </tr>,
+                ] : periods.map((p, i) => {
+                  const current = p.start <= nowStart && (p.isLast || periods[i + 1].start > nowStart);
+                  const prev = periods[i - 1];
                   return (
-                    <td key={`${k}|${month}|${r?.id ?? ""}|${r?.hourly_rate ?? ""}`} className="px-1 py-1" title={tip}>
-                      <Input
-                        type="number" min={1} step={1} disabled={saving}
-                        defaultValue={r?.hourly_rate ?? ""} placeholder="—"
-                        onBlur={(e) => saveCell(o.id, c.id, e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                        className={`h-8 w-24 text-right ${changedHere ? "bg-amber-50 border-amber-300" : ""} ${later.length ? "underline decoration-dotted" : ""}`}
-                      />
-                    </td>
+                    <tr key={`${o.id}-${p.start}`} className={`border-t ${current ? "" : "text-muted-foreground"}`}>
+                      <td className="sticky left-0 bg-background px-3 py-1 pl-6 whitespace-nowrap">
+                        {p.label}
+                        {current && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">今</span>}
+                      </td>
+                      {categories.map((c) => {
+                        const r = p.byCat.get(c.id);
+                        const changed = prev && r && prev.byCat.get(c.id)?.hourly_rate !== r.hourly_rate;
+                        return (
+                          <td key={`${c.id}|${r?.id ?? ""}|${r?.hourly_rate ?? ""}`} className="px-1 py-1">
+                            <Input
+                              type="number" min={1} step={1} disabled={saving}
+                              defaultValue={r?.hourly_rate ?? ""} placeholder="—"
+                              onBlur={(e) => saveCell(o.id, c.id, p.start, r?.hourly_rate, e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              title={changed ? `前の時期 ${prev.byCat.get(c.id)?.hourly_rate ?? "未設定"}円 から変更` : undefined}
+                              className={`h-8 w-24 text-right ${changed ? "bg-amber-50 border-amber-300 font-medium text-foreground" : ""}`}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 text-right">
+                        {p.start !== BASE_FROM && (
+                          <Button size="sm" variant="ghost" disabled={saving} onClick={() => deletePeriod(o.id, p.start, p.label)}>消す</Button>
+                        )}
+                      </td>
+                    </tr>
                   );
-                })}
-              </tr>
-            ))}
+                })),
+              ];
+            })}
           </tbody>
         </table>
       </div>
-
-      <div>
-        <h4 className="text-sm font-medium mb-2">時給の変更履歴 ({history.length} 件)</h4>
-        {history.length === 0 ? (
-          <p className="text-sm text-muted-foreground">まだ変更はありません (全部 最初からの時給です)。</p>
-        ) : (
-          <table className="text-sm">
-            <thead className="text-muted-foreground">
-              <tr><th className="text-left pr-6 py-1 font-normal">適用開始</th><th className="text-left pr-6 font-normal">事業所</th><th className="text-left pr-6 font-normal">類型</th><th className="text-right pr-6 font-normal">時給</th><th /></tr>
-            </thead>
-            <tbody>
-              {history.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="pr-6 py-1">{r.effective_from!.slice(0, 7).replace("-", "年")}月から</td>
-                  <td className="pr-6">{offName(r.office_id)}</td>
-                  <td className="pr-6">{catName(r.category_id)}</td>
-                  <td className="pr-6 text-right">{r.hourly_rate.toLocaleString()}円</td>
-                  <td><Button variant="ghost" size="sm" onClick={() => handleDelete(r)}>消す</Button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <p className="text-xs text-muted-foreground"><span className="px-1 bg-amber-50 border border-amber-300 rounded">色付き</span> = 前の時期から変わった時給。給与計算は その月が入る時期の時給を使います。</p>
     </div>
   );
 }
