@@ -3,6 +3,13 @@
 // 総括表で本社が手入力している数字のうち、実績・出勤簿・事業所書式に元が無いもの。
 // 取込では消さない。給与計算 (page.tsx) は計算のたびに読む。
 
+/**
+ * 報奨金を その月に支給するか (payroll_monthly_inputs item_key。numeric_value 1 = 支給)。2026-09-22
+ * 金額は 給与設定の 報奨金 (bonus_amount、変更しない限り続く)。支給する / しないは /bonus-payments で月ごとに決める。
+ * 月ごとの手入力の画面 (MONTHLY_INPUT_ITEMS) には出さない。
+ */
+export const BONUS_PAID_KEY = "bonus_paid";
+
 export const MONTHLY_INPUT_ITEMS = [
   {
     key: "bath_visit_count",

@@ -169,12 +169,14 @@ const roleOfKubun = (kubun: unknown) => kubun === 3 || kubun === 1 ? "提責" : 
 for (const c of switchers) notes.push(`${c}: 給与形態が月で変わる ${kindRuns(c).map((r) => `${r.start}〜${r.kind === "part" ? "時給" : "月給"}`).join(" / ")} → 給与設定の履歴に形態を入れる`);
 
 // ── 月給 ──────────────────────────────────────────────────────
-// 列名は事業所で揺れる (特別処遇改善手当 / 特別処遇改善 / 特定処遇改善手当 / 特定処遇改善)。報奨金 + 特別報奨金 は special_bonus (固定給に含まれる)
+// 列名は事業所で揺れる (特別処遇改善手当 / 特別処遇改善 / 特定処遇改善手当 / 特定処遇改善)。特別報奨金 は special_bonus (毎月固定)。
+// ⚠ 報奨金 は入れない (2026-09-22 user): 金額は給与設定の bonus_amount、支給する/しないは /bonus-payments (payroll_monthly_inputs bonus_paid)。
+//   以前は 報奨金 も special_bonus に月ごとの履歴行で入れていた → migrations/migrate_bonus_to_bonus_amount.mjs で移した
 const FIXED: [string[], string][] = [
   [["本人給"], "base_personal_salary"], [["職能給"], "skill_salary"], [["役職手当"], "position_allowance"], [["資格手当"], "qualification_allowance"],
   [["勤続手当"], "tenure_allowance"], [["処遇改善手当"], "treatment_improvement"],
   [["特別処遇改善手当", "特別処遇改善", "特定処遇改善手当", "特定処遇改善"], "specific_treatment_improvement"],
-  [["処遇改善補助金手当"], "treatment_subsidy"], [["固定残業代"], "fixed_overtime_pay"], [["報奨金", "特別報奨金"], "special_bonus"],
+  [["処遇改善補助金手当"], "treatment_subsidy"], [["固定残業代"], "fixed_overtime_pay"], [["特別報奨金"], "special_bonus"],
 ];
 const fixedValue = (r: SRow, keys: string[], col: string) => col === "special_bonus" ? keys.reduce((s, k) => s + num(r[k]), 0) : num(r[keys.find((k) => r[k] != null) ?? keys[0]]);
 const shaCodes = new Set(MONTHS.flatMap((m) => byMonth.get(m)!.shaseki.map((r) => r._code)));

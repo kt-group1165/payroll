@@ -11,7 +11,8 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
+import { bathVisitCareMinutes, BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
+import Link from "next/link";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
@@ -763,15 +764,18 @@ export default function PayrollPage() {
       const adjustmentByNum = new Map<string, number>();
       // 社会保険 (処遇改善補助金・通信手当の判定) の月ごとの値。無ければ職員マスタの今の値 (2026-09-19)
       const socialInsuranceByNum = new Map<string, boolean>();
+      // 報奨金をこの月に支給する人 (/bonus-payments で決める。金額は給与設定の bonus_amount)。2026-09-22
+      const bonusPaidNums = new Set<string>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
           if (r.item_key === "social_insurance") socialInsuranceByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0) > 0);
+          if (r.item_key === BONUS_PAID_KEY && Number(r.numeric_value ?? 0) > 0) bonusPaidNums.add(normEmp(r.employee_number));
         }
       }
 
@@ -1049,12 +1053,22 @@ export default function PayrollPage() {
             if (dayMap.size > 0) byEmpNum.set(normNum, { address: emp.address ?? "", dayMap });
           }
 
+          // 旧システムの移動データで置き換えられる人は Google に距離を取りに行かない (2026-09-22)。
+          //   Google の距離は その人については 画面の通勤距離の表示にしか使っておらず、金額 (移動手当・出勤時間・残業) は旧データで決まる。
+          //   以前は全員の全区間を先に取りに行っていて、旧データのある 3〜8 月の再計算で 月の API 上限 (20,000件) を使い切った
+          const coveredByLegacy = (normNum: string) => {
+            const legacy = legacyTravel.get(normNum);
+            if (!legacy) return false;
+            return hourlyEmpMap.has(normNum) ? legacy.hourly : true;
+          };
           const allPairs: { origin: string; destination: string }[] = [];
-          for (const { address, dayMap } of byEmpNum.values()) {
+          for (const [normNum, { address, dayMap }] of byEmpNum) {
+            if (coveredByLegacy(normNum)) continue;
             allPairs.push(...collectAddressPairs(address, dayMap));
           }
 
-          if (allPairs.length > 0) {
+          // ⚠ 区間が 0 件 (全員が旧データで置き換わる) でも 下の人ごとの処理は必ず通す。if (allPairs.length > 0) にすると旧データの差し替えごと飛ぶ
+          {
             // 1 回の /api/distance で投げる区間数。1 事業所 600 区間で 50 ずつだと 12 往復 = 約 60 秒かかる。
             //   中でやるのは payroll_distance_cache の .in(origin) 照会なので 200 でも重くならない
             //   (.in() は 350 件を超えると seq scan に落ちるので それより十分小さく取る。2026-09-21)
@@ -1292,7 +1306,7 @@ export default function PayrollPage() {
             job_type: e.job_type ?? "",
             auth_user_id: e.auth_user_id ?? null,
             settings: settingsWithTenure,
-            bonus_paid: false,
+            bonus_paid: bonusPaidNums.has(normEmp(e.employee_number)),
             travel_km: 0,
             travel_km_auto: travelKmAuto,
             office_travel_unit_price: office?.travel_unit_price ?? 0,
@@ -2437,15 +2451,10 @@ export default function PayrollPage() {
                                       <div className="space-y-3">
                                         {/* 報奨金 */}
                                         {s && s.bonus_amount > 0 && (
-                                          <label className="flex items-center gap-3 cursor-pointer">
-                                            <input
-                                              type="checkbox"
-                                              checked={p.bonus_paid}
-                                              onChange={(e) => updateMonthly(p.employee_id, { bonus_paid: e.target.checked })}
-                                              onClick={(e) => e.stopPropagation()}
-                                            />
-                                            <span>報奨金を支給　<span className="font-medium">{yen(s.bonus_amount)}</span></span>
-                                          </label>
+                                          <p className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                                            <span>報奨金 {yen(s.bonus_amount)}: <span className="font-medium">{p.bonus_paid ? "支給する" : "支給しない"}</span></span>
+                                            <Link href="/bonus-payments" className="text-xs text-blue-700 underline">報奨金の支給で変える</Link>
+                                          </p>
                                         )}
                                         {/* 夜朝時間 */}
                                         {s && s.yocho_unit_price > 0 && (
