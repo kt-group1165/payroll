@@ -191,7 +191,10 @@ export function ClientsList({
     router.refresh();
   };
 
-  const handleEdit = (client: Client) => {
+  // 一覧は一部の列しか持たないので、編集を開くときに 1 件ぶんの全列を読む
+  const handleEdit = async (listed: Client) => {
+    const { data: client, error } = await supabase.from("payroll_clients").select("*").eq("id", listed.id).single<Client>();
+    if (error || !client) { toast.error(`利用者の読み込みに失敗: ${error?.message ?? "見つかりません"}`); return; }
     setForm({
       client_number: client.client_number,
       name: client.name,
@@ -230,12 +233,21 @@ export function ClientsList({
   // ─── CSV 出力 ─────────────────────────────────────────
   const importRef = useRef<HTMLInputElement>(null);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const officeById = new Map(offices.map((o) => [o.id, o]));
     // フィルタ反映: 事業所フィルタ・検索条件を適用
     const q = searchQuery.trim().toLowerCase();
-    const targets = clients
-      .filter((c) => !filterOfficeId || c.office_id === filterOfficeId)
+    // 一覧は一部の列しか持たないので、出力のときに全列を読む (事業所で絞れるときは絞って読む)
+    const full: Client[] = [];
+    for (let from = 0; ; from += 1000) {
+      let qb = supabase.from("payroll_clients").select("*").order("client_number").order("id").range(from, from + 999);
+      if (filterOfficeId) qb = qb.eq("office_id", filterOfficeId);
+      const { data, error } = await qb;
+      if (error) { toast.error(`出力用の読み込みに失敗: ${error.message}`); return; }
+      full.push(...((data ?? []) as Client[]));
+      if (!data || data.length < 1000) break;
+    }
+    const targets = full
       .filter((c) => !q || c.client_number.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
 
     const rows: string[][] = [CSV_HEADERS.slice()];
