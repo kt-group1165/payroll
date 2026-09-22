@@ -694,7 +694,7 @@ export function EmployeesList({
 
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger render={<Button variant="outline" />}>手動追加</DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogContent side="right" className="sm:max-w-lg">
               <DialogHeader>
                 <DialogTitle>{editingId ? "職員を編集" : "職員を登録"}</DialogTitle>
               </DialogHeader>
