@@ -1190,14 +1190,32 @@ export default function PayrollPage() {
           );
           // 手入力の勤続手当は 基準の月 (既定 202607) の額。それより後の月は 節目を越えた分だけ上げる (user 2026-09-22)
           const manualTenure = sal && (sal as SalarySettings & { tenure_allowance_auto?: boolean }).tenure_allowance_auto === false;
-          const resolvedTenure = manualTenure && selectedMonth > tenureBaseRes.month
+          // 自動計算の人も 資格フラグが false だと常に 0 円になる。基準の月に 1 年未満だった人は 資格ありとみなして
+          // 入社日からの月数も使って出す (市原 石川 2026-08: 入社 2025-08 → 1 年で 1,000円)。基準の月以前は変えない
+          const autoFirstYear = !manualTenure && !qualifiedInMonth(e) && selectedMonth > tenureBaseRes.month
             ? (() => {
                 const num = normEmp(e.employee_number);
                 const offset = (year * 12 + month) - (Number(tenureBaseRes.month.slice(0, 4)) * 12 + Number(tenureBaseRes.month.slice(4, 6)));
                 const g = tenureMonthsOf(e);
-                const now = computeTenureAllowance(qualifiedInMonth(e), tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth), "月給", e.job_type ?? "", 0, 0, 0);
-                const atBase = computeTenureAllowance(qualifiedInMonth(e), tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month), "月給", e.job_type ?? "", 0, 0, 0);
-                return manualTenureWithSteps(sal!.tenure_allowance ?? 0, now, atBase);
+                if (tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month) >= 12) return null;
+                return computeTenureAllowance(true, tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth), "月給", e.job_type ?? "", 0, 0, 0);
+              })()
+            : null;
+          const resolvedTenure = autoFirstYear !== null ? autoFirstYear : manualTenure && selectedMonth > tenureBaseRes.month
+            ? (() => {
+                const num = normEmp(e.employee_number);
+                const offset = (year * 12 + month) - (Number(tenureBaseRes.month.slice(0, 4)) * 12 + Number(tenureBaseRes.month.slice(4, 6)));
+                const g = tenureMonthsOf(e);
+                const stored = sal!.tenure_allowance ?? 0;
+                const monthsNow = tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth);
+                const monthsBase = tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month);
+                // ⚠ 月給者の資格フラグ (has_care_qualification) は 366 名中 363 名が false で使えない (2026-09-22 実測)。
+                //   手入力が 0 円より大きい = 勤続手当が出ている = 資格あり。0 円でも 基準の月に 1 年未満なら 0 円の理由は年数なので資格ありとみなす
+                //   (市原 石川・袖ケ浦 坂尾 2026-08: 入社 1 年で 0 → 1,000円)。基準の月に 1 年以上で 0 円の人は 資格なしとみなし上げない
+                const qualified = qualifiedInMonth(e) || stored > 0 || monthsBase < 12;
+                const now = computeTenureAllowance(qualified, monthsNow, "月給", e.job_type ?? "", 0, 0, 0);
+                const atBase = computeTenureAllowance(qualified, monthsBase, "月給", e.job_type ?? "", 0, 0, 0);
+                return manualTenureWithSteps(stored, now, atBase);
               })()
             : resolveTenureAllowance(sal, computedTenure);
           const settingsFull = sal ? { ...sal, tenure_allowance: resolvedTenure } : null;
