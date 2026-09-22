@@ -30,9 +30,11 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getUser() は毎回 Supabase Auth に問い合わせるので、左メニューの移動 (と Link の先読み) のたびに往復が 1 回増えていた。
+  // getClaims() は JWT の署名をこの場で検証する (このプロジェクトの鍵は ES256 = 公開鍵で検証できる。鍵は cache される)。
+  // 期限切れなら内部で refresh するので ログインの扱いは変わらない (2026-09-22「メニューの遷移をサクサクに」)
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const user = claimsData?.claims?.sub ? claimsData.claims : null;
 
   const { pathname } = request.nextUrl;
 

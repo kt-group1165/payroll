@@ -27,16 +27,21 @@ export default async function ServicesPage() {
     supabase.from("payroll_service_categories").select("*").order("sort_order"),
     supabase
       .from("payroll_service_type_mappings")
-      .select("*, service_categories(name)")
+      .select("*, service_categories:payroll_service_categories(name)")
       .order("service_code"),
     supabase
       .from("payroll_category_hourly_rates")
-      .select("*, offices:payroll_offices!office_id(short_name, master:offices!office_id(name)), service_categories(name)")
+      .select("*, offices:payroll_offices!office_id(short_name, master:offices!office_id(name)), service_categories:payroll_service_categories(name)")
       .order("created_at"),
     supabase
       .from("payroll_offices")
       .select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`),
   ]);
+
+  // 読み込みの失敗を「0 件」として出さない (2026-09-22: 表名の変更で マッピング・時給設定 が黙って空になっていた)
+  for (const [label, res] of [["類型", catRes], ["マッピング", mapRes], ["時給設定", rateRes], ["事業所", offRes]] as const) {
+    if (res.error) throw new Error(`${label}の読み込みに失敗しました: ${res.error.message}`);
+  }
 
   const categories: ServiceCategory[] = (catRes.data ?? []) as ServiceCategory[];
   const mappings: ServiceTypeMapping[] = (mapRes.data ?? []) as ServiceTypeMapping[];
