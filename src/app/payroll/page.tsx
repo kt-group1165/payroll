@@ -518,28 +518,32 @@ export default function PayrollPage() {
       const legacyTenureMonths = new Map<string, number>();
       // 入社日 (月給の勤続手当の節目判定。tenureMonthsForStep)
       const legacyHireDate = new Map<string, string>();
+      // 節目判定用の月数 = グループ勤続 と 会社勤続 の長い方 (KT姉崎 佐々木 2026-05: 会社 252 か月で 21 年目 / グループ 237。
+      //   総括表 2026-03〜08 月給 1,004 人月: 入社日との長い方で グループのみ 902 → 会社も入れて 916)。時給者の勤続手当は グループのまま
+      const legacyStepMonths = new Map<string, number>();
       {
         const normName = (x: string) => x.normalize("NFKC").replace(/[\s　]/g, "");
         const target = normName(selectedOffice.name ?? "");
         // ⚠ 1,656 行あるので必ずページングする。以前は 1 回の select で 先頭 1,000 行しか読めておらず、
         //   残りの人は 勤続月数・入社日が引けないまま 従来の月数で計算されていた (2026-09-22 判明)
-        const data: { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[] = [];
+        const data: { office_name: string; employee_number: string; group_tenure_months: number | null; company_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[] = [];
         let error: { message: string } | null = null;
         for (let from = 0; ; from += 1000) {
           const res = await supabase
             .from("payroll_legacy_employee")
-            .select("office_name,employee_number,group_tenure_months,tenure_as_of,hire_date")
+            .select("office_name,employee_number,group_tenure_months,company_tenure_months,tenure_as_of,hire_date")
             .order("id").range(from, from + 999);
           if (res.error) { error = res.error; break; }
           data.push(...((res.data ?? []) as typeof data));
           if ((res.data ?? []).length < 1000) break;
         }
         if (error) console.warn("[payroll] 旧システムの従業員データを読めませんでした (従来の勤続月数で計算します):", error.message);
-        for (const r of data as { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[]) {
+        for (const r of data) {
           if (r.group_tenure_months == null || normName(r.office_name) !== target) continue;
           if (r.hire_date) legacyHireDate.set(normEmp(r.employee_number), r.hire_date);
           const asOf = Number(r.tenure_as_of.slice(0, 4)) * 12 + Number(r.tenure_as_of.slice(4, 6));
           legacyTenureMonths.set(normEmp(r.employee_number), Math.max(0, r.group_tenure_months - (asOf - (year * 12 + month))));
+          legacyStepMonths.set(normEmp(r.employee_number), Math.max(0, Math.max(r.group_tenure_months, r.company_tenure_months ?? 0) - (asOf - (year * 12 + month))));
         }
       }
       const tenureMonthsOf = (e: { employee_number: string | number; effective_service_months?: number | null }) => {
@@ -1206,7 +1210,7 @@ export default function PayrollPage() {
             ? (() => {
                 const num = normEmp(e.employee_number);
                 const offset = (year * 12 + month) - (Number(tenureBaseRes.month.slice(0, 4)) * 12 + Number(tenureBaseRes.month.slice(4, 6)));
-                const g = tenureMonthsOf(e);
+                const g = legacyStepMonths.get(num) ?? tenureMonthsOf(e);
                 if (tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month) >= 12) return null;
                 return computeTenureAllowance(true, tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth), "月給", e.job_type ?? "", 0, 0, 0);
               })()
@@ -1215,7 +1219,7 @@ export default function PayrollPage() {
             ? (() => {
                 const num = normEmp(e.employee_number);
                 const offset = (year * 12 + month) - (Number(tenureBaseRes.month.slice(0, 4)) * 12 + Number(tenureBaseRes.month.slice(4, 6)));
-                const g = tenureMonthsOf(e);
+                const g = legacyStepMonths.get(num) ?? tenureMonthsOf(e);
                 const stored = sal!.tenure_allowance ?? 0;
                 const monthsNow = tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth);
                 const monthsBase = tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month);
