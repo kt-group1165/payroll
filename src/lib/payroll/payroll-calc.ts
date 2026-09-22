@@ -152,6 +152,8 @@ export type MonthlyPayroll = {
   tokubi_allowance?: number;
   /** 旧システムのデータを使った項目 (例 "移動時間" "出勤時間")。use_legacy_data の切り替えまで。2026-09-22 */
   legacy_used?: string[];
+  /** 事務員の訪問分 (介護) = 時給者と同じ訪問ごとの金額 + 土日祝手当。office_worker_care_pay に載っている事務員だけ。monthlyGrandTotal に含める */
+  office_worker_care_pay?: number;
   employee_id: string;
   employee_number: string;
   employee_name: string;
@@ -506,7 +508,8 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     yochoAllowance(p) +
     monthlyPaidLeaveAllowance(p) +
     overtimeExcessPay(p, otSettings) +
-    (p.tokubi_allowance ?? 0) -
+    (p.tokubi_allowance ?? 0) +
+    (p.office_worker_care_pay ?? 0) -
     absenceDeduction(p) +
     (p.adjustment ?? 0)
   );

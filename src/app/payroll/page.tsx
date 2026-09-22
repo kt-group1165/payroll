@@ -13,7 +13,7 @@ import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType,
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes, BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
 import Link from "next/link";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -407,6 +407,8 @@ export default function PayrollPage() {
       const tenureBaseRes = await getMonthlyTenureManualBase(supabase);
       // 旧システムのデータ (移動の日計・日別の出勤時間) を使うか。切り替えるまでは使う (user 2026-09-22)
       const useLegacyRes = await getUseLegacyData(supabase);
+      const officeWorkerCareRes = await getOfficeWorkerCarePay(supabase);
+      if (officeWorkerCareRes.error) throw new Error(`事務員の介護分の設定の読み込みに失敗: ${officeWorkerCareRes.error}`);
       if (useLegacyRes.error) throw new Error(`旧システムのデータを使うかの設定の読み込みに失敗: ${useLegacyRes.error}`);
       if (tenureBaseRes.error) throw new Error(`勤続手当の基準の月の設定の読み込みに失敗: ${tenureBaseRes.error}`);
       if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
@@ -966,10 +968,8 @@ export default function PayrollPage() {
 
       // 1.5時間を超えた分の時給 = その事業所の 生活援助 の時給 (visitPayAmount)
       const lifeSupportCategoryId = [...categoryMap.entries()].find(([, name]) => name === "生活援助")?.[0] ?? null;
-      for (const rec of records) {
-        const emp = hourlyEmpMap.get(rec.employee_number);
-        if (!emp) continue;
-        if (!isHourlySide(normEmp(rec.employee_number), ymdOf(rec.service_date))) continue;
+      // 訪問 1 件の本人給。時給者と「訪問分を払う事務員 (月給)」の両方で使う (2026-09-22 事務員の介護分)
+      const recordPayOf = (rec: ServiceRecord) => {
         const minutes    = parseDurationMinutes(rec.calc_duration);
         const categoryId = mappingMap.get(rec.service_code) ?? null;
         const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
@@ -988,6 +988,13 @@ export default function PayrollPage() {
         // 本人給は 1 回の訪問時間を 5 分単位に切り上げて払う (2026-09-19。姉ム 竹内 44分→45分 ×3件 = 78円 / 姉ム 小岩 59→60 = 35円 /
         //   おゆみ野 澤木 72→75 = 131円 が 総括表の差と一致)。時間の集計 (介護超過・残業など) は切り上げない
         const pay        = visitPayAmount(payMinutesOf(minutes), hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
+        return { minutes, catName, hourlyRate, pay };
+      };
+      for (const rec of records) {
+        const emp = hourlyEmpMap.get(rec.employee_number);
+        if (!emp) continue;
+        if (!isHourlySide(normEmp(rec.employee_number), ymdOf(rec.service_date))) continue;
+        const { minutes, catName, hourlyRate, pay } = recordPayOf(rec);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
@@ -1328,6 +1335,17 @@ export default function PayrollPage() {
             yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,
             overtime_excess_paid: overtimeExcessPaidRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`),
+            // 事務員の訪問分 (介護): 時給者と同じ訪問ごとの金額 + 土日祝手当 (事業所の時給・日祝のみ の設定どおり)。2026-09-22
+            office_worker_care_pay: officeWorkerCareRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`)
+              ? (() => {
+                  const recs = recsByEmpM.get(normEmp(e.employee_number)) ?? [];
+                  const visitPay = recs.reduce((s, r) => s + (recordPayOf(r).pay ?? 0), 0);
+                  const weekend = weekendHolidayAllowanceAmount(
+                    weekendAllowanceMinutes({ summary, weekend_holiday_sunday_only: weekendRatesRes.sundayHolidayOnly.has(selectedOffice.office_number) }),
+                    weekendRates[selectedOffice.office_number] ?? DEFAULT_WEEKEND_HOLIDAY_RATE);
+                  return visitPay + weekend;
+                })()
+              : 0,
             overtime_offset_full_care: offsetFullCareRes.offices.has(selectedOffice.office_number),
             shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 特日手当: Hana系 (0.75 掛けの事業所) は 介護時間と同じく 0.75 掛け対象を ×0.75 した時間で払う (おゆみ野 峯島 2026-08 960分 → 2,400円)
@@ -2468,6 +2486,7 @@ export default function PayrollPage() {
                                           {(p.adjustment ?? 0) !== 0 && <DetailLine label="調整手当・過誤 (手入力)" v={p.adjustment ?? 0} />}
                                           <DetailLine label="特別報奨金" v={s.special_bonus} />
                                           {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}
+                                          {(p.office_worker_care_pay ?? 0) > 0 && <DetailLine label="介護 (事務員の訪問分)" v={p.office_worker_care_pay ?? 0} />}
                                           {travelFeeAmount(p) > 0 && <DetailLine label={`移動費(${effectiveTravelKm(p)}km)`} v={travelFeeAmount(p)} />}
                                           {p.business_trip_fee > 0 && <DetailLine label="出張費" v={p.business_trip_fee} />}
                                           {yocho > 0 && <DetailLine label={`夜朝手当(${p.yocho_hours}h)`} v={yocho} />}

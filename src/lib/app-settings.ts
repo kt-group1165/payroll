@@ -217,3 +217,24 @@ export async function getOvertimeOffsetFullCareOffices(supabase: SupabaseClient)
   if (error) return { offices: new Set(), error: error.message };
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
+
+/**
+ * 事務員 (月給) の訪問分を「介護」として払うか (2026-09-22 user「事務員は介護分を出すか出さないかのステータス」)。
+ * { "<事業所番号>": ["<職員番号>", …] }。載っている事務員は その月の訪問を 時給者と同じ計算 (同行は割増なし) + 土日祝手当 で払う。
+ * 根拠: やわた 熊谷明日香 2026-08 = 訪問ごとの金額 40,752 + 土日祝 100 (8/11) = 総括表「介護」40,852 (旧システムの実績確認画面と一致)。
+ * 画面 /office-worker-care で切り替える。
+ */
+export const OFFICE_WORKER_CARE_PAY_KEY = "office_worker_care_pay";
+
+export async function getOfficeWorkerCarePay(supabase: SupabaseClient): Promise<{ byOffice: Record<string, string[]>; keys: Set<string>; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", OFFICE_WORKER_CARE_PAY_KEY).maybeSingle();
+  if (error) return { byOffice: {}, keys: new Set(), error: error.message };
+  const v = (data?.value as Record<string, string[]> | null) ?? {};
+  return { byOffice: v, keys: new Set(Object.entries(v).flatMap(([off, nums]) => nums.map((n) => `${off}|${String(n).replace(/^0+/, "")}`))), error: null };
+}
+
+/** 成功時 null、失敗時 error message */
+export async function setOfficeWorkerCarePay(supabase: SupabaseClient, byOffice: Record<string, string[]>): Promise<string | null> {
+  const { error } = await supabase.from("payroll_app_settings").upsert({ key: OFFICE_WORKER_CARE_PAY_KEY, value: byOffice, updated_at: new Date().toISOString() });
+  return error ? error.message : null;
+}
