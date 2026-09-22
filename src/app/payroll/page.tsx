@@ -784,18 +784,31 @@ export default function PayrollPage() {
       const socialInsuranceByNum = new Map<string, boolean>();
       // 報奨金をこの月に支給する人 (/bonus-payments で決める。金額は給与設定の bonus_amount)。2026-09-22
       const bonusPaidNums = new Set<string>();
+      // 出張km の手入力 (交通費精算書の合計)。入っていれば 事業所書式・出勤簿より優先 (2026-09-23 八千代 社員の書式入力漏れ)
+      const manualTripKmByNum = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
           if (r.item_key === "social_insurance") socialInsuranceByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0) > 0);
           if (r.item_key === BONUS_PAID_KEY && Number(r.numeric_value ?? 0) > 0) bonusPaidNums.add(normEmp(r.employee_number));
+          if (r.item_key === "business_km" && Number(r.numeric_value ?? 0) > 0) manualTripKmByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
+
+      // 出張km の決め方: 手入力 (精算書) > 事業所書式 > 出勤簿。地図の距離は使わない (出張は自宅からも含む = 移動距離とは別物)
+      const tripKmOf = (empNum: string, attendanceKm: number) => {
+        const manual = manualTripKmByNum.get(normEmp(empNum));
+        if (manual !== undefined) return manual;
+        const of = (ofByEmp.get(normEmp(empNum)) ?? [])
+          .filter((r) => r.record_type === "km" && r.item_name === "出張km")
+          .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
+        return of > 0 ? of : attendanceKm;
+      };
 
       // 旧システムの確定値 (payroll_legacy_travel_daily)。あればこれを使い、Google の推定は使わない。
       //   2026-03〜07 を実測: 当方の推定は 総括表の移動手当と ¥676,520 ずれていたが、旧システムの値なら 94.5% 一致する。
@@ -927,14 +940,11 @@ export default function PayrollPage() {
         const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
-        // 出張距離: 事業所書式の「出張km」を優先 (無ければ出勤簿の出張km)。2026-09-17 user 方針: 地図の距離は使わない
-        const ofTripKm = (ofByEmp.get(empNum) ?? [])
-          .filter((r) => r.record_type === "km" && r.item_name === "出張km")
-          .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
+        // 出張距離: 手入力 (精算書) > 事業所書式 > 出勤簿 (tripKmOf)。2026-09-17 user 方針: 地図の距離は使わない
         // ⚠ 出張費単価は 従業員契約情報 にも入っているが そちらは「今 (2026-09) の値」で、
         //   ガソリン単価に連動して月ごとに変わる (事業所 12.3〜12.7 に対し 契約は 12.0〜12.1)。
         //   過去月に当てると壊れるので 事業所の単価 (総括表 3〜7月に合わせた値) を使う。2026-09-21
-        const businessTripFee = hourlyBusinessTripFeeAmount(ofTripKm > 0 ? ofTripKm : empSummary.businessKmTotal, empOffice?.travel_unit_price ?? 0);
+        const businessTripFee = hourlyBusinessTripFeeAmount(tripKmOf(empNum, empSummary.businessKmTotal), empOffice?.travel_unit_price ?? 0);
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
           ? 0
@@ -1321,12 +1331,9 @@ export default function PayrollPage() {
               ? { overtimeMinutes: hourlyOvertimeMinutes(recsByEmpM.get(normEmp(e.employee_number)) ?? [], monthlyTravelSecByDay.get(normEmp(e.employee_number)), trainingMinutesByDay(ofByEmp.get(normEmp(e.employee_number)) ?? [], selectedMonth)) }
               : {}),
           };
-          // 出張km: 事業所書式 > 出勤簿
+          // 出張km: 手入力 (精算書) > 事業所書式 > 出勤簿
           const empOfRecs = ofByEmp.get(normEmp(e.employee_number)) ?? [];
-          const ofTravelKm = empOfRecs
-            .filter((r) => r.record_type === "km" && r.item_name === "出張km")
-            .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
-          const travelKmAuto = ofTravelKm > 0 ? ofTravelKm : summary.businessKmTotal;
+          const travelKmAuto = tripKmOf(e.employee_number, summary.businessKmTotal);
           const office = officeByIdMap.get(e.office_id);
 
           return {
@@ -1411,10 +1418,7 @@ export default function PayrollPage() {
         const linesRes = await getKmAnomalyLines(supabase);
         if (linesRes.error) throw new Error(`距離の確認ラインの読み込みに失敗: ${linesRes.error}`);
         const line = linesRes.lines[selectedOffice.office_number] ?? DEFAULT_KM_LINE;
-        const tripKmOfHourly = (empNum: string, s: AttendanceSummary) => {
-          const of = (ofByEmp.get(normEmp(empNum)) ?? []).filter((r) => r.record_type === "km" && r.item_name === "出張km").reduce((a, r) => a + (r.numeric_value ?? 0), 0);
-          return of > 0 ? of : s.businessKmTotal;
-        };
+        const tripKmOfHourly = (empNum: string, s: AttendanceSummary) => tripKmOf(empNum, s.businessKmTotal);
         setKmWarnings(findKmAnomalies([
           ...hourlySorted.map((e) => ({ employee_number: e.employee_number, employee_name: e.employee_name, commute_km: e.summary.commuteKmTotal, trip_km: tripKmOfHourly(e.employee_number, e.summary), work_days: e.summary.workDays })),
           ...monthlySorted.map((p) => ({ employee_number: String(p.employee_number), employee_name: p.employee_name, commute_km: p.summary.commuteKmTotal, trip_km: effectiveTravelKm(p), work_days: p.summary.workDays })),

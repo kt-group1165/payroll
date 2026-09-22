@@ -26,6 +26,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "business_km",
+    label: "出張km (精算書)",
+    unit: "km",
+    help: "交通費精算書の走行距離合計 (自宅からの移動を含む)。入れた月は 事業所書式・出勤簿の出張km より優先 (書式の入力漏れ用。八千代 社員など)",
+    allowNegative: false,
+  },
+  {
     key: "adjustment",
     label: "調整手当・過誤",
     unit: "円",
