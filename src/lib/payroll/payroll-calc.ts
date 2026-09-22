@@ -121,6 +121,8 @@ export type HourlyPayroll = {
   training_pay: number;
   /** 特日手当 (tokubiAllowanceAmount)。hourlyTotalPay に含める */
   tokubi_allowance?: number;
+  /** 旧システムのデータを使った項目 (例 "移動時間" "出勤時間")。use_legacy_data の切り替えまで。2026-09-22 */
+  legacy_used?: string[];
   /** 土日祝手当の時給 (事業所ごと。未設定は 50円) */
   weekend_holiday_rate?: number;
   /** true なら土日祝手当を 日祭・休日 (実績の休日区分) の時間だけで払う (土曜を含まない) */
@@ -148,6 +150,8 @@ export type HourlyPayroll = {
 export type MonthlyPayroll = {
   /** 特日手当 (tokubiAllowanceAmount)。monthlyGrandTotal に含める */
   tokubi_allowance?: number;
+  /** 旧システムのデータを使った項目 (例 "移動時間" "出勤時間")。use_legacy_data の切り替えまで。2026-09-22 */
+  legacy_used?: string[];
   employee_id: string;
   employee_number: string;
   employee_name: string;

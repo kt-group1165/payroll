@@ -13,7 +13,7 @@ import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType,
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes, BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
 import Link from "next/link";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -405,6 +405,9 @@ export default function PayrollPage() {
       if (juhoShortRes.error) throw new Error(`重度訪問の短時間の時給の読み込みに失敗: ${juhoShortRes.error}`);
       const care075Res = await getCare075Offices(supabase);
       const tenureBaseRes = await getMonthlyTenureManualBase(supabase);
+      // 旧システムのデータ (移動の日計・日別の出勤時間) を使うか。切り替えるまでは使う (user 2026-09-22)
+      const useLegacyRes = await getUseLegacyData(supabase);
+      if (useLegacyRes.error) throw new Error(`旧システムのデータを使うかの設定の読み込みに失敗: ${useLegacyRes.error}`);
       if (tenureBaseRes.error) throw new Error(`勤続手当の基準の月の設定の読み込みに失敗: ${tenureBaseRes.error}`);
       if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
       // 特日 (会社休日: お盆・年末年始)。特日手当を払い、その日は土日祝手当の対象から外す (総括表 2026-08、2026-09-22)
@@ -784,7 +787,7 @@ export default function PayrollPage() {
       //   1行 = 1職員×1日。travel_paid_min = 移動手当の対象時間 / travel_full_min = 移動の全量 (出勤時間に乗る分)。
       //   ⚠ 通勤費・出張費の距離は この CSV に無いので 従来どおり Google の距離を使う。
       const legacyTravel = new Map<string, { paidSecByDay: Map<string, number>; paidSec: number; fullSec: number; otMin: number; svcTotalMin: number; hourly: boolean }>();
-      {
+      if (useLegacyRes.enabled) {
         const PAGE = 1000;
         let lFrom = 0;
         while (true) {
@@ -823,7 +826,7 @@ export default function PayrollPage() {
       //   実測 (2026-03〜07・総括表の「出勤」と突合): パート 90.4% 一致
       //   (当方の推定 サービス+移動 は 69.7%)。月給者は 50.7% (推定 35.4%)。
       const legacyDailyWorkMin = new Map<string, number>();
-      {
+      if (useLegacyRes.enabled) {
         const PAGE = 1000;
         let dFrom = 0;
         while (true) {
@@ -1178,6 +1181,14 @@ export default function PayrollPage() {
       }
 
       const hourlySorted = [...hourlyEmpMap.values()].sort((a, b) => a.employee_name.localeCompare(b.employee_name, "ja"));
+      // 旧システムのデータを使った項目を残す (流用した結果だと分かるように。user 2026-09-22)
+      for (const e of hourlySorted) {
+        const num = normEmp(e.employee_number);
+        const used: string[] = [];
+        if (legacyTravel.get(num)?.hourly) used.push("移動時間");
+        if ((attByEmpH.get(num) ?? []).length === 0 && legacyWorkMinOf(num) != null) used.push("出勤時間");
+        if (used.length) e.legacy_used = used;
+      }
       setHourlyResults(hourlySorted);
 
       setProgress({ pct: 92, label: "月給者を計算中" });
@@ -1355,6 +1366,13 @@ export default function PayrollPage() {
             summary,
           };
         });
+      for (const p of monthlySorted) {
+        const num = normEmp(p.employee_number);
+        const used: string[] = [];
+        if (legacyTravel.has(num) && !legacyTravel.get(num)!.hourly) used.push("移動時間");
+        if ((attByEmpM.get(num) ?? []).length === 0 && legacyWorkMinOf(num) != null) used.push("出勤時間");
+        if (used.length) (p as { legacy_used?: string[] }).legacy_used = used;
+      }
       setMonthlyResults(monthlySorted);
 
       // 距離の確認: 1 日あたりの通勤km・出張km が 事業所の確認ラインを超えた人を出す (計算は止めない)
@@ -1383,6 +1401,12 @@ export default function PayrollPage() {
         hourly: hourlySorted.map((e) => ({ ...e, grand_total: hourlyTotalPay(e) })),
         monthly: monthlySorted.map((p) => ({ ...p, grand_total: monthlyGrandTotal(p, otMap) })),
         overtime_settings: [...otMap.values()],
+        // 旧システムのデータを使ったか (切り替えの前後を後から見分けるため)
+        legacy_data: {
+          enabled: useLegacyRes.enabled,
+          hourly: hourlySorted.filter((e) => e.legacy_used?.length).length,
+          monthly: monthlySorted.filter((p) => (p as { legacy_used?: string[] }).legacy_used?.length).length,
+        },
       };
       // DB に保存 (2026-09-17)。別 PC からも総括表が見え、Excel との突合にも使う
       setProgress({ pct: 97, label: "計算結果を保存中" });
@@ -1778,6 +1802,16 @@ export default function PayrollPage() {
       {distanceWarning && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">⚠ {distanceWarning}</div>
       )}
+      {(() => {
+        const h = hourlyResults.filter((e) => e.legacy_used?.length).length;
+        const m = monthlyResults.filter((p) => p.legacy_used?.length).length;
+        return h + m > 0 ? (
+          <div className="mb-4 p-3 bg-sky-50 border border-sky-200 text-sky-900 rounded text-sm">
+            旧システムのデータ (移動時間・出勤時間) を使った人: 時給 {h} 名 / 月給 {m} 名。名前の横の「旧」で分かります。
+            本格稼働の前に 設定 use_legacy_data を切り替えると 当システムだけで計算します。
+          </div>
+        ) : null;
+      })()}
 
       {(hourlyResults.length > 0 || monthlyResults.length > 0) && (
         <>
@@ -2015,6 +2049,7 @@ export default function PayrollPage() {
                                 <div className="flex flex-col">
                                   <span className="font-mono text-xs text-muted-foreground">{emp.employee_number}</span>
                                   <span className="font-medium">{emp.employee_name}</span>
+                                  {emp.legacy_used?.length ? <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={`旧システムのデータを使用: ${emp.legacy_used.join("・")}`}>旧</span> : null}
                                 </div>
                               </td>
                               <td className="px-3 py-2"><RoleBadge role={emp.role_type} /></td>
@@ -2347,6 +2382,7 @@ export default function PayrollPage() {
                                 <div className="flex flex-col">
                                   <span className="font-mono text-xs text-muted-foreground">{p.employee_number}</span>
                                   <span className="font-medium">{p.employee_name}</span>
+                                  {p.legacy_used?.length ? <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={`旧システムのデータを使用: ${p.legacy_used.join("・")}`}>旧</span> : null}
                                 </div>
                               </td>
                               <td className="px-3 py-2"><RoleBadge role={p.role_type} /></td>
