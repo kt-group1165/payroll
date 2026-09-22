@@ -86,6 +86,21 @@ export async function getKmAnomalyLines(supabase: SupabaseClient): Promise<{ lin
  */
 export const CARE_075_OFFICES_KEY = "care_075_offices";
 
+/**
+ * 月給者の勤続手当を「手入力の固定額」(給与設定 tenure_allowance_auto=false) で持っている人の 基準の月 (YYYYMM)。
+ * 手入力の額は この月の勤続手当として扱い、これより後の月は 勤続年数の節目を越えた分だけ自動で上げる (user 2026-09-22)。
+ * 既定 202607 = 手入力の額を総括表から写して一致を確かめた月。{ "month": "YYYYMM" }
+ */
+export const MONTHLY_TENURE_MANUAL_BASE_KEY = "monthly_tenure_manual_base_month";
+export const DEFAULT_MONTHLY_TENURE_MANUAL_BASE = "202607";
+
+export async function getMonthlyTenureManualBase(supabase: SupabaseClient): Promise<{ month: string; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MONTHLY_TENURE_MANUAL_BASE_KEY).maybeSingle();
+  if (error) return { month: DEFAULT_MONTHLY_TENURE_MANUAL_BASE, error: error.message };
+  const m = (data?.value as { month?: string } | null)?.month;
+  return { month: m && /^\d{6}$/.test(m) ? m : DEFAULT_MONTHLY_TENURE_MANUAL_BASE, error: null };
+}
+
 export async function getCare075Offices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
   const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", CARE_075_OFFICES_KEY).maybeSingle();
   if (error) return { offices: new Set(), error: error.message };

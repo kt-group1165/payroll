@@ -12,7 +12,7 @@ import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-da
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { bathVisitCareMinutes } from "@/lib/payroll/monthly-inputs";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -60,6 +60,8 @@ import {
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
+  tenureMonthsForStep,
+  manualTenureWithSteps,
   tokubiAllowanceAmount,
   isSpecialDay,
   allTrainingMinutes,
@@ -401,6 +403,8 @@ export default function PayrollPage() {
       const juhoShortRes = await getJuhoShortVisitRates(supabase);
       if (juhoShortRes.error) throw new Error(`重度訪問の短時間の時給の読み込みに失敗: ${juhoShortRes.error}`);
       const care075Res = await getCare075Offices(supabase);
+      const tenureBaseRes = await getMonthlyTenureManualBase(supabase);
+      if (tenureBaseRes.error) throw new Error(`勤続手当の基準の月の設定の読み込みに失敗: ${tenureBaseRes.error}`);
       if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
       // 特日 (会社休日: お盆・年末年始)。特日手当を払い、その日は土日祝手当の対象から外す (総括表 2026-08、2026-09-22)
       const specialDays = new Set<string>();
@@ -512,15 +516,18 @@ export default function PayrollPage() {
       //     (東郷 細谷靖子 入社2015/12 → 暦月129ヶ月 だが グループ勤続 95ヶ月)
       //   ⚠ 社員No は事業所をまたぐと重複するので 所属名 と対で引く
       const legacyTenureMonths = new Map<string, number>();
+      // 入社日 (月給の勤続手当の節目判定。tenureMonthsForStep)
+      const legacyHireDate = new Map<string, string>();
       {
         const normName = (x: string) => x.normalize("NFKC").replace(/[\s　]/g, "");
         const target = normName(selectedOffice.name ?? "");
         const { data, error } = await supabase
           .from("payroll_legacy_employee")
-          .select("office_name,employee_number,group_tenure_months,tenure_as_of");
+          .select("office_name,employee_number,group_tenure_months,tenure_as_of,hire_date");
         if (error) console.warn("[payroll] 旧システムの従業員データを読めませんでした (従来の勤続月数で計算します):", error.message);
-        for (const r of (data ?? []) as { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string }[]) {
+        for (const r of (data ?? []) as { office_name: string; employee_number: string; group_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[]) {
           if (r.group_tenure_months == null || normName(r.office_name) !== target) continue;
+          if (r.hire_date) legacyHireDate.set(normEmp(r.employee_number), r.hire_date);
           const asOf = Number(r.tenure_as_of.slice(0, 4)) * 12 + Number(r.tenure_as_of.slice(4, 6));
           legacyTenureMonths.set(normEmp(r.employee_number), Math.max(0, r.group_tenure_months - (asOf - (year * 12 + month))));
         }
@@ -1181,7 +1188,18 @@ export default function PayrollPage() {
             e.job_type ?? "",
             0, 0, 0
           );
-          const resolvedTenure = resolveTenureAllowance(sal, computedTenure);
+          // 手入力の勤続手当は 基準の月 (既定 202607) の額。それより後の月は 節目を越えた分だけ上げる (user 2026-09-22)
+          const manualTenure = sal && (sal as SalarySettings & { tenure_allowance_auto?: boolean }).tenure_allowance_auto === false;
+          const resolvedTenure = manualTenure && selectedMonth > tenureBaseRes.month
+            ? (() => {
+                const num = normEmp(e.employee_number);
+                const offset = (year * 12 + month) - (Number(tenureBaseRes.month.slice(0, 4)) * 12 + Number(tenureBaseRes.month.slice(4, 6)));
+                const g = tenureMonthsOf(e);
+                const now = computeTenureAllowance(qualifiedInMonth(e), tenureMonthsForStep(g, legacyHireDate.get(num), selectedMonth), "月給", e.job_type ?? "", 0, 0, 0);
+                const atBase = computeTenureAllowance(qualifiedInMonth(e), tenureMonthsForStep(Math.max(0, g - offset), legacyHireDate.get(num), tenureBaseRes.month), "月給", e.job_type ?? "", 0, 0, 0);
+                return manualTenureWithSteps(sal!.tenure_allowance ?? 0, now, atBase);
+              })()
+            : resolveTenureAllowance(sal, computedTenure);
           const settingsFull = sal ? { ...sal, tenure_allowance: resolvedTenure } : null;
           // 月の途中で切り替わった人は 月給の側で勤務した日数で日割り (payroll-calc の prorateMonthlyFixed)
           const settingsWithTenure = settingsFull && sw

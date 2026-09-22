@@ -83,6 +83,8 @@ import {
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
+  tenureMonthsForStep,
+  manualTenureWithSteps,
   tokubiAllowanceAmount,
   allTrainingMinutes,
   computeSummary,
@@ -346,6 +348,16 @@ eq("時給者の勤続手当: visitMinutesExcludingAccompanied を使う (visitM
 // 期待値は総括表 (さつきが丘 2026-07 福島可奈) の実額: 出勤時間 126:30 (7,590分) × 事務時給 1,150円 = 本人給 145,475円
 eq("事務本人給: 福島可奈 2026-07 実額 7,590分×1,150円 = 145,475円", officeWorkPayAmount(true, 7590, 1150), 145475);
 // ── 社員の出勤時間 (employeeWorkMinutes) (2026-09-17 追加) ──
+// ── 月給の手入力の勤続手当を 節目で上げる (2026-09-22) ──
+eq("★ 節目の月数: 入社日が1日なら その月で満了 (五位渕 2024-08-01 → 2026-08 は 24か月)", tenureMonthsForStep(23, "2024-08-01", "202608"), 24);
+eq("★ 節目の月数: 入社日が2日以降なら 1か月引く (濱野 2024-07-22 → 2026-07 は 23か月 / 2026-08 は 24か月)", [tenureMonthsForStep(0, "2024-07-22", "202607"), tenureMonthsForStep(0, "2024-07-22", "202608")], [23, 24]);
+eq("節目の月数: グループ勤続が長ければそちら (千葉 グループ216 / 入社2009-12 → 200)", tenureMonthsForStep(216, "2009-12-01", "202608"), 216);
+eq("節目の月数: 入社日が無ければグループ勤続", tenureMonthsForStep(40, null, "202608"), 40);
+eq("★ 手入力 + 節目: 1年越えたら +500 (1,000 → 1,500)", manualTenureWithSteps(1000, 1500, 1000), 1500);
+eq("★ 手入力 + 節目: 初めて1年を越えたら +1,000 (0 → 1,000)", manualTenureWithSteps(0, 1000, 0), 1000);
+eq("手入力 + 節目: 節目を越えていなければ手入力のまま (総括表と違う手入力値も保つ)", manualTenureWithSteps(10500, 5500, 5500), 10500);
+eq("手入力 + 節目: 資格が無く自動計算0なら上げない", manualTenureWithSteps(0, 0, 0), 0);
+eq("手入力 + 節目: 自動計算が下がっても手入力は下げない", manualTenureWithSteps(3000, 1000, 1500), 3000);
 eq("出勤時間: 出勤簿があれば出勤簿の合計 (訪問・移動は見ない)", employeeWorkMinutes(22, 10970, 4065, 999999), 10970);
 eq("出勤時間: 出勤簿が無ければ 訪問 + 移動全量 (米倉靖子 2026-07: 7,345 + 1,093分)", employeeWorkMinutes(0, 0, 7345, 1093 * 60), 8438);
 eq("出勤時間: 出勤簿があれば研修は足さない (出勤簿に含まれる)", employeeWorkMinutes(22, 10970, 4065, 0, null, 120), 10970);

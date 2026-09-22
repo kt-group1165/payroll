@@ -287,6 +287,30 @@ export function resolveTenureAllowance(
   return computed;
 }
 
+/**
+ * 勤続手当の月数 = グループ勤続月数 と 入社日からの月数 の 長い方 (月給の節目判定用、2026-09-22)。
+ * 入社日からの月数 = その月 − 入社月、入社日が 1 日でなければ さらに 1 か月引く
+ *   (総括表 2026-08: 五井 濱野 入社 2024-07-22 → 7月 1年 / 8月 2年、KT姉崎 五位渕 入社 2024-08-01 → 8月 2年)。
+ * 総括表 2026-03〜08 の月給 1,004 人月で: グループのみ 806 / 入社日のみ 785 / 長い方 902。
+ */
+export function tenureMonthsForStep(groupMonths: number, hireDate: string | null | undefined, yyyymm: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(hireDate ?? "");
+  if (!m) return groupMonths;
+  const ym = Number(yyyymm.slice(0, 4)) * 12 + Number(yyyymm.slice(4, 6));
+  const hire = ym - (Number(m[1]) * 12 + Number(m[2])) - (Number(m[3]) > 1 ? 1 : 0);
+  return Math.max(groupMonths, hire);
+}
+
+/**
+ * 手入力の勤続手当に 節目の上げ幅を足す (user 2026-09-22「節目で自動で上げる方式」)。
+ * 手入力の額は 基準の月 の額として扱い、今月の自動計算額 − 基準の月の自動計算額 (マイナスにはしない) を足す。
+ * 上げ幅は勤続手当の表どおり (1年目で 1,000円、以降 1年ごとに 500円)。資格が無く自動計算が 0 の人は上がらない。
+ * 総括表 2026-08: 18 名 (500円 16 名・0→1,000円 2 名) がこの方式で一致。
+ */
+export function manualTenureWithSteps(stored: number, computedNow: number, computedAtBase: number): number {
+  return stored + Math.max(0, computedNow - computedAtBase);
+}
+
 // ─── 月給者 ──────────────────────────────────────────────────────────────
 
 export function fixedTotal(s: SalarySettings): number {
