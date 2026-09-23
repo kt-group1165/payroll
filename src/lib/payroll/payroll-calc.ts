@@ -1248,6 +1248,9 @@ export function listedDateCount(itemDate: string | null | undefined): number {
   return Math.max(1, n);
 }
 
+/** 週の法定労働時間 (分)。40 時間 */
+export const WEEKLY_WORK_MINUTES = 2400;
+
 export function computeSummary(
   empRecs: VisitServiceRecord[],
   attDays: OfficeAttendanceRecord[],
@@ -1256,6 +1259,8 @@ export function computeSummary(
   commuteSource: "office_form_first" | "attendance_first" = "attendance_first",
   /** 特日 (会社休日) "YYYYMMDD"。特日の日は 土日祝・日祝の時間に数えず tokubiMinutes に数える (総括表 2026-08) */
   specialDays: ReadonlySet<string> = new Set(),
+  /** 対象月 (YYYYMM)。渡すと 週40時間超 (日曜起算) も残業に数える (2026-09-23 user 了承) */
+  yearMonth?: string,
 ): AttendanceSummary {
   // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
   const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -1310,12 +1315,33 @@ export function computeSummary(
   //   = 週残業が丸ごと未払い。実データで 小原奈保子 2026-02-07 に
   //     overtime_weekly="08:00" が実在し、13,333円 が 0円 になっていた。
   //   日残業(1日8h超) と 週残業(週40h超) は排他なので単純加算でよい。
-  const overtimeMinutes = attDays.reduce((s, r) => {
-    const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
-    const ow = parseWorkHoursMinutes(r.overtime_weekly ?? "");
-    if (od > 0 || ow > 0) return s + od + ow;
-    return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
-  }, 0);
+  const overtimeMinutes = (() => {
+    const daily = attDays.reduce((s, r) => {
+      const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
+      const ow = parseWorkHoursMinutes(r.overtime_weekly ?? "");
+      if (od > 0 || ow > 0) return s + od + ow;
+      return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
+    }, 0);
+    // 週40時間超 (日曜起算)。出勤簿に残業の欄が入っている書式 (Format B) は その値に週分が入っているので足さない。
+    //   旧システムの日別データ 618人月で検算: 日8h超 + 週40h超 (日曜起算) で 569 件一致 (2026-09-23)。
+    //   例) 高品 長谷川 8/22 (土): 移動0分・勤務8時間だが 月〜金で34.5時間 → 土曜の残り 150分が残業
+    const hasOtColumns = attDays.some((r) =>
+      parseWorkHoursMinutes(r.overtime_daily ?? "") > 0 || parseWorkHoursMinutes(r.overtime_weekly ?? "") > 0);
+    if (!yearMonth || hasOtColumns) return daily;
+    const y = Number(yearMonth.slice(0, 4)), mo = Number(yearMonth.slice(4, 6));
+    if (!y || !mo) return daily;
+    const byWeek = new Map<number, number>();
+    for (const r of attDays) {
+      const w = parseWorkHoursMinutes(r.work_hours);
+      if (w <= 0) continue;
+      const d = new Date(y, mo - 1, r.day);
+      const weekKey = Math.floor(d.getTime() / 86400000) - d.getDay();   // 日曜起算
+      byWeek.set(weekKey, (byWeek.get(weekKey) ?? 0) + Math.min(w, 480)); // 日8h超は上で数えている
+    }
+    let weekly = 0;
+    for (const v of byWeek.values()) weekly += Math.max(0, v - WEEKLY_WORK_MINUTES);
+    return daily + weekly;
+  })();
   const recordCount = empRecs.length;
   const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
   const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);

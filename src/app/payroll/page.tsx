@@ -628,7 +628,7 @@ export default function PayrollPage() {
       const officeWorkerNums = new Set(employees.filter((e) => e.role_type === "事務員" || e.is_office_worker).map((e) => normEmp(e.employee_number)));
       const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[], att?: AttendanceRecord[]): AttendanceSummary =>
         computeSummary(withAccompanyByCode(empRecs), att ?? attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
-          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first", specialDays);
+          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first", specialDays, selectedMonth);
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
