@@ -451,8 +451,12 @@ export default function PayrollPage() {
         }
         const merged = mergeOfficeFormSources(allOfRecords, webRecs);
         webWonKeys = merged.webWonKeys;
+        // ⚠ merged.records が allOfRecords **自身**のことがある (Web 入力 0 行のとき)。
+        //   先にコピーを取らずに length = 0 すると 自分を空にしてから空を push することになり、
+        //   事業所書式が丸ごと消えて 出張費・会議費が全員 0 円になる (2026-09-24 に実際に踏んだ)。
+        const mergedRecords = [...merged.records];
         allOfRecords.length = 0;
-        allOfRecords.push(...merged.records);
+        allOfRecords.push(...mergedRecords);
         if (webRecs.length > 0) {
           console.info(`事業所書式: Web 入力 ${webRecs.length} 行を採用 (職員×項目 ${merged.webWonKeys.length} 組 / CSV ${merged.csvDropped} 行を差し替え)`);
         }

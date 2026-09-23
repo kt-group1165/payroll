@@ -148,7 +148,9 @@ export function mergeOfficeFormSources(
   webRecords: OfficeFormRecord[],
 ): MergeResult {
   if (webRecords.length === 0) {
-    return { records: csvRecords, webWonKeys: [], csvDropped: 0 };
+    // ⚠ csvRecords を **そのまま**返さない。呼出側が返り値で元の配列を入れ替えると
+    //   自分自身を空にしてしまう (2026-09-24 に給与計算で踏んだ)。必ず新しい配列にする
+    return { records: [...csvRecords], webWonKeys: [], csvDropped: 0 };
   }
   const webKeys = new Set(webRecords.map(mergeKeyOf));
   const kept = csvRecords.filter((r) => !webKeys.has(mergeKeyOf(r)));

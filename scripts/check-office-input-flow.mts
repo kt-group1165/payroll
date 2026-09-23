@@ -158,7 +158,20 @@ console.log("\n-- 段2 合流 (fixture): (職員 x 項目) 単位で Web が CSV
   expect(normEmp("0100") === normEmp("100"), `先頭ゼロの職員番号も同一視される`);
 
   const none = mergeOfficeFormSources(csv, []);
-  expect(none.records === csv, `Web が 0 行なら CSV の配列をそのまま返す (= 現行と完全に同じ)`);
+  expect(none.records.length === csv.length && none.records.every((r, i) => r === csv[i]),
+    `Web が 0 行なら CSV と同じ中身が返る (= 現行と完全に同じ)`);
+  // ⚠ 2026-09-24 に踏んだ事故。呼出側が `allOfRecords.length = 0; push(...merged.records)` と書いており、
+  //   返り値が **入力の配列そのもの** だと 自分を空にしてから空を push することになる。
+  //   事業所書式が丸ごと消えて 出張費・会議費が全社 0 円になった。必ず新しい配列を返すこと
+  expect(none.records !== csv, `Web が 0 行でも 入力の配列そのものを返さない (呼出側が入れ替えても壊れない)`);
+  {
+    const self = mergeOfficeFormSources(csv, []);
+    const copy = [...self.records];
+    csv.length = 0;                       // 呼出側と同じことをする
+    csv.push(...copy);
+    expect(csv.length === copy.length && copy.length > 0,
+      `返り値をコピーしてから入れ替えれば 行が消えない (呼出側の書き方の再現)`);
+  }
 }
 
 // === 段4 カタログ (段3 より先に出す。DB 無しでも出せるので) ===============
