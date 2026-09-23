@@ -1174,13 +1174,17 @@ export function parseDurationMinutes(str: string): number {
  *   (KT姉崎 髙木忍 2026-03-10・03-31 は 欄が #VALUE! で 計 1,120 分が丸ごと欠けていた)。
  */
 export function attendanceWorkMinutes(r: OfficeAttendanceRecord): number {
-  const st = parseClockMinutes(r.start_time_1), en = parseClockMinutes(r.end_time_1 ?? "");
-  if (st != null && en != null) {
-    const span = (en >= st ? en : en + 1440) - st;               // 終了が 0:15 や 24:00 = 翌日
-    const br = parseWorkHoursMinutes(r.break_time ?? "");
-    return Math.max(0, span - br);
+  // 1 日に最大 5 つの時間帯を書ける (午前・午後で分けて書く人がいる)。全部足す
+  let span = 0, found = false;
+  for (const i of [1, 2, 3, 4, 5]) {
+    const st = parseClockMinutes((r as unknown as Record<string, string>)[`start_time_${i}`] ?? "");
+    const en = parseClockMinutes((r as unknown as Record<string, string>)[`end_time_${i}`] ?? "");
+    if (st == null || en == null) continue;
+    span += (en >= st ? en : en + 1440) - st;                    // 終了が 0:15 や 24:00 = 翌日
+    found = true;
   }
-  return parseWorkHoursMinutes(r.work_hours);
+  if (!found) return parseWorkHoursMinutes(r.work_hours);
+  return Math.max(0, span - parseWorkHoursMinutes(r.break_time ?? ""));
 }
 
 /** "9:00" / "9::00" / "24:00:00" のような時刻を 0:00 からの分に直す。読めなければ null */
@@ -1248,6 +1252,14 @@ export type OfficeAttendanceRecord = {
   work_note_5: string;
   start_time_1: string;
   end_time_1?: string;
+  start_time_2?: string;
+  end_time_2?: string;
+  start_time_3?: string;
+  end_time_3?: string;
+  start_time_4?: string;
+  end_time_4?: string;
+  start_time_5?: string;
+  end_time_5?: string;
   break_time?: string;
   work_hours: string;
   overtime_daily: string;
