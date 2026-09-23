@@ -195,3 +195,49 @@ export async function listEmployeesByOffice(
 
   return (data ?? []) as Employee[];
 }
+
+/**
+ * 指定スタッフ群 × 月「範囲」のエントリを取得 (給与計算が読む用)。
+ *
+ * 給与計算は当月だけでなく「付与日〜当月」の有給も読む (= usedBefore の計算) ので、
+ * 月を範囲で取れるようにしてある。範囲は両端を含む 'YYYY-MM'。
+ */
+export async function getEntriesByEmployeesMonthRange(
+  employeeIds: string[],
+  fromBillingMonth: string,
+  toBillingMonth: string,
+): Promise<OfficeInputEntry[]> {
+  if (employeeIds.length === 0) return [];
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < employeeIds.length; i += IN_CHUNK) {
+    chunks.push(employeeIds.slice(i, i + IN_CHUNK));
+  }
+
+  const results = await Promise.all(
+    chunks.map(async (ids) => {
+      const rows: OfficeInputEntry[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("payroll_office_input_entries")
+          .select("*")
+          .in("employee_id", ids)
+          .gte("billing_month", fromBillingMonth)
+          .lte("billing_month", toBillingMonth)
+          .order("id")
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) {
+          console.error("getEntriesByEmployeesMonthRange failed:", error.message);
+          throw new Error(`事業所書式入力の取得に失敗: ${error.message}`);
+        }
+        const page = (data ?? []) as OfficeInputEntry[];
+        rows.push(...page);
+        if (page.length < PAGE_SIZE) break;
+      }
+      return rows;
+    }),
+  );
+
+  return results.flat();
+}
