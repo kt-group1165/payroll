@@ -56,6 +56,8 @@ import {
   monthlyPaidLeaveAllowance,
   absenceDeduction,
   hourlyOvertimePayAmount,
+  legalHolidaySaturdays,
+  legalHolidayPremiumAmount,
   shoninshaTrainingMinutes,
   trainingPayAmount,
   TRAINING_RATE_PER_HOUR,
@@ -277,6 +279,34 @@ export default function PayrollPage() {
           if (!data || data.length === 0) break;
           allServiceRecords.push(...(data as ServiceRecord[]));
           setProgress({ pct: Math.min(14, 2 + Math.floor(allServiceRecords.length / 1000) * 2), label: `実績データを読み込み中 (${allServiceRecords.length.toLocaleString()}件)` });
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
+      }
+
+      // 前月の稼働日 (法定休日の判定用)。月初の土曜は 前月の日曜から始まる週になるので
+      // その週の日〜金が埋まっているかを見るには 前月ぶんの日付が要る
+      // (さつき 滝下恵子 2026-06-06 は 5/31(日) からの週)。日付だけあればよいので軽い。
+      const prevMonthDatesByEmp = new Map<string, Set<string>>();
+      {
+        const pm = month === 1 ? `${year - 1}12` : `${year}${String(month - 1).padStart(2, "0")}`;
+        const pageSize = 1000;
+        let from = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from("payroll_service_records")
+            .select("employee_number,service_date")
+            .eq("processing_month", pm)
+            .eq("office_number", selectedOffice.office_number)
+            .order("id")
+            .range(from, from + pageSize - 1);
+          if (error) throw new Error(`前月の稼働日の読み込みに失敗しました: ${error.message}`);
+          if (!data || data.length === 0) break;
+          for (const r of data as { employee_number: string; service_date: string }[]) {
+            const k = String(r.employee_number ?? "").replace(/^0+/, "");
+            if (!prevMonthDatesByEmp.has(k)) prevMonthDatesByEmp.set(k, new Set());
+            prevMonthDatesByEmp.get(k)!.add(String(r.service_date).replace(/\//g, "-").slice(0, 10));
+          }
           if (data.length < pageSize) break;
           from += pageSize;
         }
@@ -1038,6 +1068,16 @@ export default function PayrollPage() {
         if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
       }
 
+      // ── 法定休日労働の割増 (日曜起算で 7 日連続勤務した週の土曜 × 0.35) ──
+      //   総括表① の「法定休日残業手当」と 2026-03〜07 全社 7 人月中 6 件が 1 円まで一致 (2026-09-23)
+      for (const emp of hourlyEmpMap.values()) {
+        const dates = new Set<string>(prevMonthDatesByEmp.get(normEmp(emp.employee_number)) ?? []);
+        for (const r of emp.records) dates.add(String(r.service_date).replace(/\//g, "-").slice(0, 10));
+        const hol = legalHolidaySaturdays(dates);
+        emp.legal_holiday_dates = hol;
+        emp.legal_holiday_pay = legalHolidayPremiumAmount(emp.records, hol);
+      }
+
       // ── 移動手当計算（訪問介護・時給者） + 社員の移動時間（月給・出勤簿なし） ──
       // 社員の出勤時間 = サービス時間 + 訪問間の移動時間の全量 (employeeWorkMinutes)。月給者のループで使う
       const monthlyTravelFullSec = new Map<string, number>();
@@ -1543,7 +1583,9 @@ export default function PayrollPage() {
         String(e.paid_leave_allowance), "0", "0", String(e.training_pay), String(e.meeting_fee), String(e.childcare_allowance), "0",
         String(e.communication_fee),
         String(weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate)),
-        String(e.cancel_allowance), String(e.tokubi_allowance ?? 0), "0", "0", "0",
+        String(e.cancel_allowance), String(e.tokubi_allowance ?? 0),
+        // 残業(円) / 休日(円) / 残業総額(円) — ① の 残業手当_パート / 法定休日残業手当 / 残業手当総額_パート に対応
+        String(e.overtime_pay ?? 0), String(e.legal_holiday_pay ?? 0), String((e.overtime_pay ?? 0) + (e.legal_holiday_pay ?? 0)),
         String(e.commute_fee), `${(e.commute_distance_m / 1000).toFixed(1)}`, String(e.business_trip_fee), String(total),
       ]);
     }
@@ -2062,6 +2104,7 @@ export default function PayrollPage() {
                         <th className="text-right px-3 py-3 font-medium">ドタキャン</th>
                         <th className="text-right px-3 py-3 font-medium">特日</th>
                         <th className="text-right px-3 py-3 font-medium">土日祝</th>
+                        <th className="text-right px-3 py-3 font-medium" title="日曜起算で7日連続勤務した週の土曜 × 0.35 (法定休日労働の割増)">法定休日</th>
                         <th className="text-right px-3 py-3 font-medium">初任者研修調整費</th>
                         <th className="text-right px-3 py-3 font-medium">過誤(手入力)</th>
                         <th className="text-right px-3 py-3 font-medium">初任者研修費</th>
@@ -2134,6 +2177,9 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{emp.cancel_allowance > 0 ? yen(emp.cancel_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{(emp.tokubi_allowance ?? 0) > 0 ? yen(emp.tokubi_allowance ?? 0) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{weekendAllowanceMinutes(emp) > 0 ? yen(weekendHolidayAllowanceAmount(weekendAllowanceMinutes(emp), emp.weekend_holiday_rate)) : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{(emp.legal_holiday_pay ?? 0) > 0
+                                ? <span title={`法定休日 ${(emp.legal_holiday_dates ?? []).join(" / ")}`}>{yen(emp.legal_holiday_pay ?? 0)}</span>
+                                : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right text-muted-foreground text-xs">—</td>
                               <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                                 <Input
@@ -2277,6 +2323,8 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + (e.tokubi_allowance ?? 0), 0))}</td>
                         {/* 土日祝 */}
                         <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate), 0))}</td>
+                        {/* 法定休日 */}
+                        <td className="px-3 py-2 text-right">{yen(hourlyResults.reduce((s, e) => s + (e.legal_holiday_pay ?? 0), 0))}</td>
                         {/* 初任者研修調整費 */}
                         <td></td>
                         {/* 過誤 */}

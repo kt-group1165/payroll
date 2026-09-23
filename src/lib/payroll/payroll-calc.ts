@@ -132,6 +132,10 @@ export type HourlyPayroll = {
   /** 時給者の残業 (日8h超 + 週40h超) の分と金額。hourlyOvertimeMinutes / hourlyOvertimePayAmount */
   overtime_minutes?: number;
   overtime_pay?: number;
+  /** 法定休日労働の割増 (legalHolidayPremiumAmount)。日曜起算で 7 日連続勤務した週の土曜 × 0.35 */
+  legal_holiday_pay?: number;
+  /** 法定休日になった土曜 (YYYY-MM-DD)。画面の説明用 */
+  legal_holiday_dates?: string[];
   childcare_allowance: number;
   commute_fee: number;
   commute_distance_m: number;
@@ -592,6 +596,7 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
     e.meeting_fee +
     e.training_pay +
     (e.overtime_pay ?? 0) +
+    (e.legal_holiday_pay ?? 0) +
     e.childcare_allowance +
     e.commute_fee +
     e.business_trip_fee +
@@ -1076,6 +1081,62 @@ export function hourlyOvertimeMinutes(records: { service_date: string; calc_dura
 /** 時給者の残業代 = 残業分 × 10円 (総括表 全事業所 2026-05〜07 の 35 件すべてで 残業 = 内残業 × 10) */
 export function hourlyOvertimePayAmount(minutes: number): number {
   return Math.max(0, minutes) * 10;
+}
+
+// ─── 法定休日労働 ────────────────────────────────────────────────────────
+
+/** 法定休日労働の割増率。1.35 倍のうち 上乗せぶん */
+export const LEGAL_HOLIDAY_PREMIUM_RATE = 0.35;
+
+/**
+ * 法定休日になった土曜を返す (user 2026-09-23「日曜起算で 7 日連続勤務の土曜」)。
+ * 週の起算は日曜。日〜金の 6 日すべてに稼働があり かつ 土曜にも稼働がある週の、その土曜。
+ *
+ * ⚠ `workedDates` には **前月の稼働日も入れる**こと。月初の土曜は 前月の日曜から始まる週になる
+ *   (さつき 滝下恵子 2026-06-06 は 5/31(日) からの週)。
+ *
+ * 総括表① の「法定休日残業手当」と突合 (2026-03〜07 全社の 7 人月):
+ * ```
+ * さつき 滝下恵子 202606   6/6      420分 本体13,050 ×0.35 = 4,568 = ①
+ * 東郷 鈴木順子 202606     6/6      170分 本体 5,400 ×0.35 = 1,890 = ①
+ * 木更津 早坂結花 202603   3/7+3/14 の2日 合計 4,975 ×0.35 = 1,741 = ①
+ * 木更津 重田あゆみ 202606 6/27     240分 本体 7,700 ×0.35 = 2,695 = ①
+ * 東郷 古山ひろ美 202605   5/30     120分 本体 3,500 ×0.35 = 1,225 = ①
+ * 木更津 中村みどり 202606 6/20+6/27 の2日 合計 4,200 ×0.35 = 1,470 = ①
+ * → 6/7 が 1 円まで一致。土曜が 2 日ある月は 合算で一致する
+ * ```
+ * ⚠ 残る 1 件 おゆみ野 松本松代 202605 (① 1,103 円) だけ説明がつかない。
+ *   彼女は 5/21(木) の本体 3,150 × 0.35 = 1,103 になるが 7 日連続勤務は 1 度も無い (火水木金のみ)。
+ */
+export function legalHolidaySaturdays(workedDates: Iterable<string>): string[] {
+  const set = new Set<string>();
+  for (const d of workedDates) set.add(String(d).replace(/\//g, "-").slice(0, 10));
+  const out: string[] = [];
+  for (const d of set) {
+    const [y, m, day] = d.split("-").map(Number);
+    const t = Date.UTC(y, m - 1, day);
+    if (new Date(t).getUTCDay() !== 6) continue;            // 土曜だけ
+    let all = true;
+    for (let i = 1; i <= 6; i++) {
+      if (!set.has(new Date(t - i * 86400000).toISOString().slice(0, 10))) { all = false; break; }
+    }
+    if (all) out.push(d);
+  }
+  return out.sort();
+}
+
+/** 法定休日労働の割増 = その土曜の訪問の本体額 × 0.35 */
+export function legalHolidayPremiumAmount(
+  records: { service_date: string; pay: number | null }[],
+  legalHolidays: Iterable<string>,
+): number {
+  const days = new Set<string>();
+  for (const d of legalHolidays) days.add(String(d).replace(/\//g, "-").slice(0, 10));
+  if (days.size === 0) return 0;
+  const base = records
+    .filter((r) => days.has(String(r.service_date).replace(/\//g, "-").slice(0, 10)))
+    .reduce((s, r) => s + (r.pay ?? 0), 0);
+  return Math.round(base * LEGAL_HOLIDAY_PREMIUM_RATE);
 }
 
 export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null; service_code?: string }[], isHours075?: (code: string) => boolean): number {
