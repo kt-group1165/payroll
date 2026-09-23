@@ -845,11 +845,13 @@ export default function PayrollPage() {
       const manualTripKmByNum = new Map<string, number>();
       // 研修・会議の時間の手入力 (分)。事業所書式に無い分を補う。本稼働後は書式が唯一の元 (2026-09-23 user)
       const manualTrainingMinByNum = new Map<string, number>();
+      // 育児手当の手入力 (円)。事業所書式に保育料が無い月を補う。入っていれば 書式からの計算より優先 (2026-09-23 user)
+      const manualChildcareByNum = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -857,6 +859,7 @@ export default function PayrollPage() {
           if (r.item_key === BONUS_PAID_KEY && Number(r.numeric_value ?? 0) > 0) bonusPaidNums.add(normEmp(r.employee_number));
           if (r.item_key === "business_km" && Number(r.numeric_value ?? 0) > 0) manualTripKmByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "training_minutes" && Number(r.numeric_value ?? 0) > 0) manualTrainingMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "childcare_allowance" && Number(r.numeric_value ?? 0) > 0) manualChildcareByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
 
@@ -1045,7 +1048,7 @@ export default function PayrollPage() {
           meeting_fee: meetingFee,
           training_pay: trainingPay,
           ...(() => { const m = (attByEmpH.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
-          childcare_allowance: computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth, { limit: contractOf.get(empNum)?.childcare_limit, ratePct: contractOf.get(empNum)?.childcare_rate_pct, method: contractOf.get(empNum)?.childcare_method }),
+          childcare_allowance: manualChildcareByNum.get(empNum) ?? computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth, { limit: contractOf.get(empNum)?.childcare_limit, ratePct: contractOf.get(empNum)?.childcare_rate_pct, method: contractOf.get(empNum)?.childcare_method }),
           commute_fee: commuteFee,
           commute_distance_m: 0,
           business_trip_fee: businessTripFee,
@@ -1456,7 +1459,7 @@ export default function PayrollPage() {
             office_travel_unit_price: office?.travel_unit_price ?? 0,
             office_commute_unit_price: office?.commute_unit_price ?? 0,
             business_trip_fee: 0,
-            childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
+            childcare_allowance: manualChildcareByNum.get(normEmp(e.employee_number)) ?? computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
             yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [], isCareHours075),
             adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,

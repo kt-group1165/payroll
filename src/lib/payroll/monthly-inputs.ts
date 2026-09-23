@@ -40,6 +40,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "childcare_allowance",
+    label: "育児手当 (書式にない分)",
+    unit: "円",
+    help: "事業所書式に保育料が書かれていない月の育児手当。入れた月は 書式からの計算より優先する (書式の入力漏れ用)。本稼働後は書式に入れてもらう (2026-09-23 user)",
+    allowNegative: false,
+  },
+  {
     key: "adjustment",
     label: "調整手当・過誤",
     unit: "円",
