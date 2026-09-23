@@ -449,6 +449,20 @@ export default function PayrollSummaryPage() {
     [summary]
   );
 
+  // 月の途中で 時給 ↔ 月給 が変わった人は 計算は期間ごとに分けるが、支払いは 1 人 (2026-09-23 user)。
+  //   人数は 1 名で数え、画面に内訳を出す (ちはら台 狩野直子 2026-03: 3/1-19 時給 / 3/20-31 月給)
+  const switched = useMemo(() => {
+    if (!summary) return [] as { employee_number: string; employee_name: string; hourly: number; monthly: number }[];
+    const mm = new Map(summary.monthly.map((m) => [String(m.employee_number), m]));
+    return summary.hourly
+      .filter((h) => mm.has(String(h.employee_number)))
+      .map((h) => {
+        const m = mm.get(String(h.employee_number))!;
+        return { employee_number: String(h.employee_number), employee_name: h.employee_name, hourly: sumHourlyPay(h), monthly: sumMonthlyPay(m) };
+      });
+  }, [summary]);
+  const headCount = (summary ? summary.hourly.length + summary.monthly.length : 0) - switched.length;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -615,9 +629,26 @@ export default function PayrollSummaryPage() {
                   <div className="border rounded-md p-4 bg-primary/5">
                     <p className="text-xs text-muted-foreground">総合計</p>
                     <p className="text-2xl font-bold text-primary">{(hourlyTotal + monthlyTotal).toLocaleString("ja-JP")}円</p>
-                    <p className="text-xs text-muted-foreground mt-1">{summary.hourly.length + summary.monthly.length}名</p>
+                    <p className="text-xs text-muted-foreground mt-1">{headCount}名</p>
                   </div>
                 </div>
+
+                {switched.length > 0 && (
+                  <div className="border rounded-md p-3 mb-6 bg-amber-50 text-sm">
+                    <p className="font-medium mb-1">月の途中で給与形態が変わった人 ({switched.length}名)</p>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      計算は期間ごとに分けています (時給の期間は訪問ごと、月給の期間は固定給)。支払いは合算した額です。
+                      下の表には時給者・月給者の両方に出ますが、人数は 1 名で数えています。
+                    </p>
+                    <ul className="text-xs space-y-0.5">
+                      {switched.map((x) => (
+                        <li key={x.employee_number}>
+                          {x.employee_name} ({x.employee_number}) — 時給の期間 {x.hourly.toLocaleString("ja-JP")}円 ＋ 月給の期間 {x.monthly.toLocaleString("ja-JP")}円 ＝ <b>{(x.hourly + x.monthly).toLocaleString("ja-JP")}円</b>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {/* 時給者テーブル */}
                 <div className="border rounded-md overflow-hidden mb-6">
