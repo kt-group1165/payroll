@@ -22,6 +22,14 @@ import {
 
 // ─── 型定義 ──────────────────────────────────────────────────
 
+/** 通信費タイプの表示名 (履歴一覧用。編集の select と同じ並び) */
+const COMM_FEE_LABEL: Record<string, string> = {
+  none: "標準",
+  variable: "時間で500/1,000",
+  lend: "貸与あり (0円)",
+  lend_fee: "貸与希望 (-1,700円)",
+};
+
 type SalarySettings = {
   id?: string;
   employee_id: string;
@@ -1271,9 +1279,11 @@ function SalaryHistoryDialog({
               <thead>
                 <tr className="bg-muted/50 border-b">
                   <th className="text-left px-2 py-1.5 font-medium">適用開始月</th>
+                  <th className="text-left px-2 py-1.5 font-medium">給与形態</th>
+                  <th className="text-left px-2 py-1.5 font-medium">役職</th>
                   <th className="text-right px-2 py-1.5 font-medium">本人給</th>
                   <th className="text-right px-2 py-1.5 font-medium">職能給</th>
-                  <th className="text-right px-2 py-1.5 font-medium">役職</th>
+                  <th className="text-right px-2 py-1.5 font-medium">役職手当</th>
                   <th className="text-right px-2 py-1.5 font-medium">資格</th>
                   <th className="text-right px-2 py-1.5 font-medium">勤続</th>
                   <th className="text-right px-2 py-1.5 font-medium">処遇改善</th>
@@ -1282,6 +1292,13 @@ function SalaryHistoryDialog({
                   <th className="text-right px-2 py-1.5 font-medium">固定残業</th>
                   <th className="text-right px-2 py-1.5 font-medium">特別報奨</th>
                   <th className="text-right px-2 py-1.5 font-medium">固定合計</th>
+                  <th className="text-right px-2 py-1.5 font-medium" title="介護超過手当の 閾値(時間) と 単価(円/時)">介護超過</th>
+                  <th className="text-right px-2 py-1.5 font-medium" title="夜朝手当の単価 (円/時)。0 = 対象外">夜朝</th>
+                  <th className="text-right px-2 py-1.5 font-medium" title="事務時給 (円/時)">事務時給</th>
+                  <th className="text-right px-2 py-1.5 font-medium" title="有給休暇手当の単価 (円/日)">有給単価</th>
+                  <th className="text-left px-2 py-1.5 font-medium">通信費</th>
+                  <th className="text-right px-2 py-1.5 font-medium" title="出張手当の単価 (円/km)">出張単価</th>
+                  <th className="text-right px-2 py-1.5 font-medium" title="報奨金 (支給する月だけ 月ごとの手入力で「報奨金あり」にする)">報奨金</th>
                   <th className="text-center px-2 py-1.5 font-medium">操作</th>
                 </tr>
               </thead>
@@ -1289,6 +1306,8 @@ function SalaryHistoryDialog({
                 {sortedRows.map((r) => (
                   <tr key={r.id ?? r.effective_from} className="border-b hover:bg-muted/20">
                     <td className="px-2 py-1.5 font-mono">{r.effective_from}</td>
+                    <td className="px-2 py-1.5">{r.salary_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className="px-2 py-1.5">{r.role_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
                     <td className="px-2 py-1.5 text-right">{r.base_personal_salary.toLocaleString()}</td>
                     <td className="px-2 py-1.5 text-right">{r.skill_salary.toLocaleString()}</td>
                     <td className="px-2 py-1.5 text-right">{r.position_allowance.toLocaleString()}</td>
@@ -1300,6 +1319,15 @@ function SalaryHistoryDialog({
                     <td className="px-2 py-1.5 text-right">{r.fixed_overtime_pay.toLocaleString()}</td>
                     <td className="px-2 py-1.5 text-right">{r.special_bonus.toLocaleString()}</td>
                     <td className="px-2 py-1.5 text-right font-semibold">{fixedTotal(r).toLocaleString()}</td>
+                    <td className="px-2 py-1.5 text-right">{r.care_overtime_threshold_hours > 0 || r.care_overtime_unit_price > 0
+                      ? `${r.care_overtime_threshold_hours}h / ${r.care_overtime_unit_price.toLocaleString()}`
+                      : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className="px-2 py-1.5 text-right">{r.yocho_unit_price > 0 ? r.yocho_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className="px-2 py-1.5 text-right">{r.office_work_hourly_rate > 0 ? r.office_work_hourly_rate.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className="px-2 py-1.5 text-right">{r.paid_leave_unit_price ? r.paid_leave_unit_price.toLocaleString() : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className="px-2 py-1.5">{r.communication_fee_type ? COMM_FEE_LABEL[r.communication_fee_type] ?? r.communication_fee_type : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className="px-2 py-1.5 text-right">{r.travel_unit_price > 0 ? r.travel_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className="px-2 py-1.5 text-right">{r.bonus_amount > 0 ? r.bonus_amount.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
                     <td className="px-2 py-1.5 text-center">
                       {r.id ? (
                         <button
