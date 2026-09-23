@@ -18,6 +18,8 @@ import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidO
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
+import { getEntriesByEmployeesMonthRange } from "@/lib/office-input/queries";
+import { mergeOfficeFormSources, officeInputEntriesToFormRecords, officeInputEntryToFormRecord, normEmp, processingToBillingMonth } from "@/lib/office-input/to-form-records";
 import {
   computeTenureAllowance,
   computeTenureRate,
@@ -427,6 +429,36 @@ export default function PayrollPage() {
         }
       }
 
+      // ── 事業所書式「Web 入力」(/office-input) を同じ形にして合流 ────────────
+      //   payroll_office_input_entries は 1 行 = 職員 × 月 × 項目 × 値。
+      //   (職員 × 項目) 単位で Web 入力が CSV 取込に勝つ。Web に 1 行も無ければ
+      //   出力は CSV そのまま (= 現行と完全に同じ) になる。
+      //   ⚠ employee_id → 職員番号 が引けない行は 黙って捨てず 警告に出す。
+      const empNumById = new Map(
+        ((empRes.data ?? []) as Employee[]).map((e) => [e.id, e.employee_number]),
+      );
+      let webWonKeys: string[] = [];
+      {
+        const webEntries = await getEntriesByEmployeesMonthRange(
+          [...empNumById.keys()],
+          processingToBillingMonth(selectedMonth),
+          processingToBillingMonth(selectedMonth),
+        );
+        const { records: webRecs, unresolved } = officeInputEntriesToFormRecords(webEntries, empNumById);
+        if (unresolved.length > 0) {
+          console.warn("事業所書式入力: 職員が引けない行", unresolved.length, unresolved.slice(0, 5));
+          toast.warning(`事業所書式入力 ${unresolved.length} 件の職員が引けませんでした (計算から除外)`);
+        }
+        const merged = mergeOfficeFormSources(allOfRecords, webRecs);
+        webWonKeys = merged.webWonKeys;
+        allOfRecords.length = 0;
+        allOfRecords.push(...merged.records);
+        if (webRecs.length > 0) {
+          console.info(`事業所書式: Web 入力 ${webRecs.length} 行を採用 (職員×項目 ${merged.webWonKeys.length} 組 / CSV ${merged.csvDropped} 行を差し替え)`);
+        }
+      }
+      void webWonKeys;
+
       setProgress({ pct: 30, label: "時給者を計算中" });
       const records    = allServiceRecords;
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
@@ -519,8 +551,8 @@ export default function PayrollPage() {
       setOtSettings(otMap);
 
       // 出勤簿・実績・事業所書式を職員番号でグループ化
-      // 先頭ゼロを除去して正規化（"0048" と "48" を同一視）
-      const normEmp = (n: string | number) => String(n).replace(/^0+/, "") || "0";
+      // 先頭ゼロを除去して正規化（"0048" と "48" を同一視）。
+      // ⚠ 事業所書式入力の合流 (to-form-records.ts) と同じ関数を使う (逐語コピーは乖離源)
 
       const attByEmp = new Map<string, AttendanceRecord[]>();
       for (const ar of attRecords) {
@@ -811,6 +843,43 @@ export default function PayrollPage() {
             prevRecs.push(...((data ?? []) as unknown as OfficeFormRecord[]));
             if (!data || data.length < 1000) break;
           }
+          // 前月までの有給にも Web 入力を合流させる (= 有給単価の繰越判定 usedBefore に効く)。
+          //   ⚠ 合流は **月ごと** に行う。月をまたいで (職員 × 項目) で畳むと
+          //     「6月だけ Web に直したら 4月5月の CSV まで消える」ことになる。
+          {
+            // 上限は当月。実際に使う月は下の pm フィルタで [firstMonth, selectedMonth) に絞る
+            const webPrev = await getEntriesByEmployeesMonthRange(
+              [...empNumById.keys()],
+              processingToBillingMonth(firstMonth),
+              processingToBillingMonth(selectedMonth),
+            );
+            const byMonth = new Map<string, (OfficeFormRecord & { processing_month: string })[]>();
+            let prevUnresolved = 0;
+            for (const x of webPrev) {
+              if (!x.item_name.includes("有給")) continue;
+              const pm = x.billing_month.replace("-", "");
+              if (pm < firstMonth || pm >= selectedMonth) continue;
+              const num = empNumById.get(x.employee_id);
+              // 職員が引けない行は黙って捨てない (= 有給の繰越が静かに減る事故を防ぐ)
+              if (num === undefined) { prevUnresolved++; continue; }
+              const rec = officeInputEntryToFormRecord(x, num);
+              byMonth.set(pm, [...(byMonth.get(pm) ?? []), { ...rec, processing_month: pm }]);
+            }
+            if (prevUnresolved > 0) console.warn("前月までの有給: 職員が引けない Web 入力", prevUnresolved);
+            if (byMonth.size > 0) {
+              const csvByMonth = new Map<string, (OfficeFormRecord & { processing_month: string })[]>();
+              for (const r of prevRecs as (OfficeFormRecord & { processing_month: string })[]) {
+                csvByMonth.set(r.processing_month, [...(csvByMonth.get(r.processing_month) ?? []), r]);
+              }
+              const merged: (OfficeFormRecord & { processing_month: string })[] = [];
+              for (const pm of new Set([...csvByMonth.keys(), ...byMonth.keys()])) {
+                merged.push(...mergeOfficeFormSources(csvByMonth.get(pm) ?? [], byMonth.get(pm) ?? [])
+                  .records as (OfficeFormRecord & { processing_month: string })[]);
+              }
+              prevRecs.length = 0;
+              prevRecs.push(...merged);
+            }
+          }
           for (const e of employees) {
             const g = grantByEmpId.get(e.id);
             if (!g) continue;
@@ -993,7 +1062,9 @@ export default function PayrollPage() {
         // 出勤簿の無い時給者の出勤時間 = 訪問時間 (+ 移動時間は経路計算の後で足す)。2026-09-17
         const empSummary = {
           ...baseEmpSummary,
-          workHoursMin: employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0, legacyWorkMinOf(empNum), allTrainingMinutes(ofByEmp.get(empNum) ?? [])),
+          // 出勤簿が CSV で取り込めない人は 手入力の勤務時間をそのまま出勤時間にする (スキャンPDFしか無い事務員)
+          workHoursMin: manualOfficeWorkMinByNum.get(empNum)
+            ?? employeeWorkMinutes((attByEmpH.get(empNum) ?? []).length, baseEmpSummary.workHoursMin, baseEmpSummary.visitMinutes, 0, legacyWorkMinOf(empNum), allTrainingMinutes(ofByEmp.get(empNum) ?? [])),
         };
         const empOffice = officeByIdMap.get(info?.officeId ?? "");
         const isVisitCare = info?.jobType === "訪問介護";
@@ -1306,7 +1377,8 @@ export default function PayrollPage() {
               // 出勤簿の無い時給者は 出勤時間 = 訪問 + 移動の全量 (社員と同じ。さつきが丘 2026-07 で総括表と照合)
               entry.summary = {
                 ...entry.summary,
-                workHoursMin: employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec, legacyWorkMinOf(normNum), allTrainingMinutes(ofByEmp.get(normNum) ?? [])),
+                workHoursMin: manualOfficeWorkMinByNum.get(normNum)
+                  ?? employeeWorkMinutes((attByEmpH.get(normNum) ?? []).length, entry.summary.workHoursMin, entry.summary.visitMinutes, totalFullSec, legacyWorkMinOf(normNum), allTrainingMinutes(ofByEmp.get(normNum) ?? [])),
               };
               const adjustedDistanceM = adjustedCommuteDistanceM(totalCommuteM, empOffice?.distance_adjustment_rate ?? 100);
               entry.travel_time_sec = totalSec;
@@ -1424,14 +1496,16 @@ export default function PayrollPage() {
           const baseSummary = computeSummaryOf(String(e.employee_number), recsByEmpM.get(normEmp(e.employee_number)) ?? [], attByEmpM.get(normEmp(e.employee_number)) ?? []);
           const summary = {
             ...baseSummary,
-            workHoursMin: employeeWorkMinutes(
-              (attByEmpM.get(normEmp(e.employee_number)) ?? []).length,
-              baseSummary.workHoursMin,
-              baseSummary.visitMinutes,
-              monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
-              legacyWorkMinOf(normEmp(e.employee_number)),
-              allTrainingMinutes(ofByEmp.get(normEmp(e.employee_number)) ?? []),
-            ),
+            // 出勤簿が CSV で取り込めない人は 手入力の勤務時間をそのまま出勤時間にする (スキャンPDFしか無い事務員)
+            workHoursMin: manualOfficeWorkMinByNum.get(normEmp(e.employee_number))
+              ?? employeeWorkMinutes(
+                (attByEmpM.get(normEmp(e.employee_number)) ?? []).length,
+                baseSummary.workHoursMin,
+                baseSummary.visitMinutes,
+                monthlyTravelFullSec.get(normEmp(e.employee_number)) ?? 0,
+                legacyWorkMinOf(normEmp(e.employee_number)),
+                allTrainingMinutes(ofByEmp.get(normEmp(e.employee_number)) ?? []),
+              ),
             // 出勤簿の無い社員の残業 (分) = 日ごとの (訪問 + 移動の全量) で 日8h超 + 週40h超 (日曜始まり)。2026-09-19
             //   総括表データ (提責_社員 の 残業時間合計) と 7月 社員100名で突合: 訪問 + 移動全量 誤差計 8,469分 /
             //   訪問のみ 21,065分 / 移動15分超過分のみ 19,584分 (中島 -2 / 東條 -1 / 緑川 0 / 赤間 -3)。
