@@ -367,9 +367,18 @@ export function yochoAllowance(p: MonthlyPayroll): number {
 /** 社員の深夜手当 (円/時)。総括表 2026-03〜07 の 18 件すべて 500 円 */
 export const SHINYA_UNIT_PRICE = 500;
 
-/** 深夜の時間 (時間単位) = 時間帯が深夜の訪問の算定時間の合計 */
-export function shinyaHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
-  return records.filter((r) => (r.time_period ?? "").includes("深夜")).reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0) / 60;
+/**
+ * 深夜の時間 (時間単位) = 時間帯が深夜の訪問の算定時間の合計。**0.75 掛け対象は ×0.75** する。
+ * 総括表① で検算 (2026-09-23): 深夜訪介 = 深夜介護 + 深夜重度×0.75 が 全件一致 (5/5)。
+ * 深夜手当 = 深夜訪介 × 500 円/時 も 20/20 一致 (おゆみ野 峯島 2026-03 深夜重度36:00 → 27:00 × 500 = 13,500)。
+ */
+export function shinyaHoursFromRecords(records: { calc_duration: string; time_period?: string | null; service_code?: string }[], isHours075?: (code: string) => boolean): number {
+  return records
+    .filter((r) => (r.time_period ?? "").includes("深夜"))
+    .reduce((s, r) => {
+      const m = parseDurationMinutes(r.calc_duration);
+      return s + (isHours075 && isHours075(r.service_code ?? "") ? m * 0.75 : m);
+    }, 0) / 60;
 }
 
 /** 月間時間外 60 時間 (分)。これを超えた分は 50% 割増 (労基法37条1項但書) */
@@ -1024,8 +1033,10 @@ export const VISIT_PAY_TIERED_CATEGORIES = new Set(["身体介護", "同行援�
 export const VISIT_PAY_TIER_HOURS = 1.5;
 /**
  * 夜朝の時間 (時間単位) = 時間帯が早朝・夜間の訪問の算定時間の合計。月給者の夜朝手当 (yochoAllowance) に使う。
+ * **0.75 掛け対象は ×0.75** する (総括表① で検算 2026-09-23: 夜朝訪介 = 夜朝介護 + 夜朝重度×0.75 が 350/350 一致)。
+ * 単価は 全 20 事業所 一律 200 円/時 (夜朝(円) ÷ 夜朝訪介 が 350/350 で 200)。
  * 実データ (さつきが丘 × 200円/時): 大治浅美 2026-06 510分→1,700円 / 2026-07 480分→1,600円、米倉靖子 90分→300円 / 120分→400円 が総括表と一致。
- * ⚠ 深夜を含めるかは未確認 (深夜の実績が無かった) → 含めていない
+ * 深夜は含めない (別に shinyaHoursFromRecords で 500 円/時)。
  */
 /**
  * 時給者 (出勤簿なし) の残業時間 = 日ごとの訪問時間の 8時間超 + 週 (日曜始まり・月内) の 8時間以内分の 40時間超。
@@ -1061,10 +1072,13 @@ export function hourlyOvertimePayAmount(minutes: number): number {
   return Math.max(0, minutes) * 10;
 }
 
-export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
+export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null; service_code?: string }[], isHours075?: (code: string) => boolean): number {
   const min = records
     .filter((r) => { const t = (r.time_period ?? "").trim(); return !t.includes("深夜") && /夜朝|夜間|早朝/.test(t); })
-    .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+    .reduce((s, r) => {
+      const m = parseDurationMinutes(r.calc_duration);
+      return s + (isHours075 && isHours075(r.service_code ?? "") ? m * 0.75 : m);
+    }, 0);
   return min / 60;
 }
 

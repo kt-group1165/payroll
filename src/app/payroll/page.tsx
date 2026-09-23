@@ -1371,7 +1371,7 @@ export default function PayrollPage() {
             business_trip_fee: 0,
             childcare_allowance: computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
-            yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
+            yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [], isCareHours075),
             adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,
             overtime_excess_paid: overtimeExcessPaidRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`),
             // 事務員の訪問分 (介護): 時給者と同じ訪問ごとの金額 + 土日祝手当 (事業所の時給・日祝のみ の設定どおり)。2026-09-22
@@ -1386,7 +1386,7 @@ export default function PayrollPage() {
                 })()
               : 0,
             overtime_offset_full_care: offsetFullCareRes.offices.has(selectedOffice.office_number),
-            shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
+            shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [], isCareHours075),
             // 特日手当: Hana系 (0.75 掛けの事業所) は 介護時間と同じく 0.75 掛け対象を ×0.75 した時間で払う (おゆみ野 峯島 2026-08 960分 → 2,400円)
             tokubi_allowance: tokubiAllowanceAmount(care075Res.offices.has(selectedOffice.office_number)
               ? careMinutesFromRecords(withAccompanyByCode(recsByEmpM.get(normEmp(e.employee_number)) ?? [])
