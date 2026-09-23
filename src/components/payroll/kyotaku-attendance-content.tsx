@@ -1692,65 +1692,33 @@ export function KyotakuAttendanceContent() {
                   })}
                 </TableBody>
               </Table>
-              <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                <span>
-                  実労働{" "}
-                  <span className="font-semibold tabular-nums">
-                    {formatHM(monthSummary.total_work)}
-                  </span>
-                </span>
-                <span>
-                  日次残業{" "}
-                  <span className="font-semibold tabular-nums">
-                    {formatHM(monthSummary.total_daily_overtime)}
-                  </span>
-                </span>
-                <span>
-                  週次残業{" "}
-                  <span className="font-semibold tabular-nums">
-                    {formatHM(monthSummary.total_weekly_overtime)}
-                  </span>
-                </span>
-                <span>
-                  深夜{" "}
-                  <span className="font-semibold tabular-nums">
-                    {formatHM(monthSummary.total_midnight)}
-                  </span>
-                </span>
-                <span>
-                  法定休日{" "}
-                  <span className="font-semibold tabular-nums">
-                    {formatHM(monthSummary.total_holiday)}
-                  </span>
-                </span>
-                <span>
-                  有給{" "}
-                  <span className="font-semibold tabular-nums">
-                    {monthSummary.total_paid_leave_days.toFixed(1).replace(/\.0$/, "")}日
-                  </span>
-                </span>
-                <span>
-                  欠勤{" "}
-                  <span
-                    className={`font-semibold tabular-nums ${monthSummary.total_absence > 0 ? "text-rose-600" : ""}`}
-                  >
-                    {formatHM(monthSummary.total_absence)}
-                  </span>
-                </span>
-                <span>
-                  総距離{" "}
-                  <span className="font-semibold tabular-nums">
-                    {totalBusinessKm.toFixed(1)} km
-                  </span>
-                </span>
-                {!isKyotaku && (
-                  <span>
-                    通勤距離{" "}
-                    <span className="font-semibold tabular-nums">
-                      {totalCommuteKm.toFixed(1)} km
-                    </span>
-                  </span>
-                )}
+              <div className="border-t bg-muted/30">
+                {/* 合計行は 上の表と同じ列幅にそろえる (user 2026-09-23) */}
+                <Table>
+                  <TableBody>
+                    <TableRow className="hover:bg-transparent font-semibold">
+                      <TableCell className="w-10 text-center text-muted-foreground text-xs">合計</TableCell>
+                      <TableCell className="w-10" />
+                      <TableCell className="w-24" />
+                      <TableCell className="w-24" />
+                      <TableCell className="w-20" />
+                      <TableCell className="w-20 text-right tabular-nums" title="実労働">{formatHM(monthSummary.total_work)}</TableCell>
+                      <TableCell className="w-20 text-right tabular-nums" title={`日次残業 ${formatHM(monthSummary.total_daily_overtime)} / 週次残業 ${formatHM(monthSummary.total_weekly_overtime)}`}>
+                        {formatHM(monthSummary.total_daily_overtime + monthSummary.total_weekly_overtime)}
+                      </TableCell>
+                      <TableCell className="w-20 text-right tabular-nums" title="深夜">{formatHM(monthSummary.total_midnight)}</TableCell>
+                      <TableCell className="w-28" />
+                      <TableCell className="w-20 text-right tabular-nums" title="法定休日">{formatHM(monthSummary.total_holiday)}</TableCell>
+                      <TableCell className="w-14 text-center tabular-nums" title="有給">{monthSummary.total_paid_leave_days.toFixed(1).replace(/\.0$/, "")}日</TableCell>
+                      <TableCell className={`w-20 text-right tabular-nums ${monthSummary.total_absence > 0 ? "text-rose-600" : ""}`} title="欠勤">{formatHM(monthSummary.total_absence)}</TableCell>
+                      <TableCell className="w-24 text-right tabular-nums" title="出張距離">{totalBusinessKm.toFixed(1)}</TableCell>
+                      {!isKyotaku && <TableCell className="w-24 text-right tabular-nums" title="通勤距離">{totalCommuteKm.toFixed(1)}</TableCell>}
+                      <TableCell className="text-xs font-normal text-muted-foreground">
+                        残業 = 日次 {formatHM(monthSummary.total_daily_overtime)} + 週次 {formatHM(monthSummary.total_weekly_overtime)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
               </div>
             </div>
           )}
