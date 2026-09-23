@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   diffItems, pickSoukatsu, hasSoukatsuColumn, type DiffContext, type ItemDiff, type DiffVerdict,
 } from "@/lib/payroll/soukatsu-diff";
+import { attendanceWorkMinutes, parseWorkHoursMinutes } from "@/lib/payroll/payroll-calc";
 
 /**
  * /verification 総括表との検証 (移行期だけの画面)
@@ -33,6 +34,14 @@ type CalcPayload = {
 
 const norm = (n: unknown) => String(n ?? "").replace(/^0+/, "");
 const yen = (n: number) => `${Math.round(n).toLocaleString()}円`;
+/** 分で持っている項目 (金額ではない) */
+const MINUTE_ITEMS = new Set(["出勤時間"]);
+const hhmm = (min: number) => {
+  const v = Math.round(min);
+  const sign = v < 0 ? "-" : "";
+  return `${sign}${Math.floor(Math.abs(v) / 60)}:${String(Math.abs(v) % 60).padStart(2, "0")}`;
+};
+const showVal = (item: string, v: number) => (MINUTE_ITEMS.has(item) ? hhmm(v) : yen(v));
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
 /** 当システムの 1 人ぶんの値を 総括表の項目名に合わせて取り出す */
@@ -53,14 +62,27 @@ function ourItems(e: Record<string, unknown>, kind: "part" | "shaseki"): { item:
       { item: "育児手当", ours: num(e.childcare_allowance) },
       { item: "調整手当", ours: num(e.error_adjustment) },
       { item: "処遇改善補助金手当", ours: num(e.treatment_subsidy) },
+      { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
     ];
   }
+  // 提責・社員。固定給は 給与設定 (settings) の値がそのまま出る
+  const st = (e.settings ?? {}) as Record<string, unknown>;
   return [
     { item: "総支給額", ours: num(e.grand_total) },
+    { item: "本人給", ours: num(st.base_personal_salary) },
+    { item: "職能給", ours: num(st.skill_salary) },
+    { item: "役職手当", ours: num(st.position_allowance) },
+    { item: "資格手当", ours: num(st.qualification_allowance) },
+    { item: "勤続手当", ours: num(st.tenure_allowance) },
+    { item: "処遇改善手当", ours: num(st.treatment_improvement) },
+    { item: "特別処遇改善手当", ours: num(st.specific_treatment_improvement) },
+    { item: "処遇改善補助金手当", ours: num(st.treatment_subsidy) },
+    { item: "固定残業代", ours: num(st.fixed_overtime_pay) },
     { item: "通勤費", ours: num(e.commute_fee_amount) },
     { item: "出張費", ours: num(e.business_trip_fee) },
     { item: "育児手当", ours: num(e.childcare_allowance) },
     { item: "特日", ours: num(e.tokubi_allowance) },
+    { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
   ];
 }
 
@@ -94,7 +116,8 @@ export default function VerificationContent() {
         .eq("processing_month", month).eq("office_number", officeNumber),
       supabase.from("payroll_calc_results").select("payload,calculated_at")
         .eq("processing_month", month).eq("office_number", officeNumber).maybeSingle(),
-      supabase.from("payroll_attendance_records").select("employee_number")
+      supabase.from("payroll_attendance_records")
+        .select("employee_number,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5,break_time,work_hours")
         .eq("office_number", officeNumber).eq("year", Number(month.slice(0, 4))).eq("month", Number(month.slice(4))),
       supabase.from("payroll_employees").select("employee_number,role_type,office_id"),
     ]);
@@ -109,7 +132,17 @@ export default function VerificationContent() {
     const payload = (cRes.data?.payload ?? null) as CalcPayload | null;
     if (!payload) { setNote("この事業所・月の給与計算がまだ実行されていません。先に「給与計算」で実行してください"); return; }
 
-    const hasAtt = new Set((aRes.data ?? []).map((r) => norm((r as { employee_number: string }).employee_number)));
+    // 出勤簿の「勤務時間の欄」と「終了−開始−休憩」の食い違い (分)。当システムは時刻を正とするので
+    // 食い違いがある人は 出勤時間・残業のずれが説明できる (user 2026-09-23 の方針)
+    const hasAtt = new Set<string>();
+    const gapByEmp = new Map<string, number>();
+    for (const r of (aRes.data ?? []) as Record<string, unknown>[]) {
+      const n = norm(r.employee_number);
+      hasAtt.add(n);
+      const fromTimes = attendanceWorkMinutes(r as never);
+      const fromColumn = parseWorkHoursMinutes(String(r.work_hours ?? ""));
+      if (fromTimes > 0 && fromTimes !== fromColumn) gapByEmp.set(n, (gapByEmp.get(n) ?? 0) + (fromTimes - fromColumn));
+    }
     const roleOf = new Map((empRes.data ?? []).map((r) => [norm((r as { employee_number: string }).employee_number), String((r as { role_type: string }).role_type ?? "")]));
 
     const sMap = new Map(soukatsu.map((r) => [`${norm(r.employee_number)}|${r.sheet_kind}`, r]));
@@ -126,7 +159,7 @@ export default function VerificationContent() {
         seen.add(key);
         const ctx: DiffContext = {
           roleType: roleOf.get(n) ?? String(e.role_type ?? ""),
-          attendanceGapMinutes: 0,
+          attendanceGapMinutes: gapByEmp.get(n) ?? 0,
           noAttendance: !hasAtt.has(n),
           hasRateGap: num(e.unmappedCount) > 0,
           officeNumber,
@@ -163,7 +196,10 @@ export default function VerificationContent() {
     const c: Record<DiffVerdict, { n: number; yen: number }> = {
       要対応: { n: 0, yen: 0 }, 許容: { n: 0, yen: 0 }, 要確認: { n: 0, yen: 0 },
     };
-    for (const r of rows) for (const d of r.diffs) { c[d.verdict].n++; c[d.verdict].yen += Math.abs(d.diff); }
+    for (const r of rows) for (const d of r.diffs) {
+      c[d.verdict].n++;
+      if (!MINUTE_ITEMS.has(d.item)) c[d.verdict].yen += Math.abs(d.diff);   // 分の項目は金額に足さない
+    }
     return c;
   }, [rows]);
 
@@ -241,10 +277,10 @@ export default function VerificationContent() {
                         {i === 0 ? <span>{r.name} <span className="text-xs text-muted-foreground">({r.num} / {r.kind === "part" ? "パート" : "提責・社員"})</span></span> : ""}
                       </td>
                       <td className="px-3 py-1.5 whitespace-nowrap">{d.item}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{yen(d.ours)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{yen(d.soukatsu)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{showVal(d.item, d.ours)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{showVal(d.item, d.soukatsu)}</td>
                       <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${d.diff > 0 ? "text-red-700" : "text-blue-700"}`}>
-                        {d.diff > 0 ? "+" : ""}{Math.round(d.diff).toLocaleString()}
+                        {d.diff > 0 ? "+" : ""}{MINUTE_ITEMS.has(d.item) ? hhmm(d.diff) : Math.round(d.diff).toLocaleString()}
                       </td>
                       <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-xs ${badge(d.verdict)}`}>{d.verdict}</span></td>
                       <td className="px-3 py-1.5 text-xs text-muted-foreground">{d.reason}</td>
