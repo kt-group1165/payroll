@@ -787,17 +787,20 @@ export default function PayrollPage() {
       const bonusPaidNums = new Set<string>();
       // 出張km の手入力 (交通費精算書の合計)。入っていれば 事業所書式・出勤簿より優先 (2026-09-23 八千代 社員の書式入力漏れ)
       const manualTripKmByNum = new Map<string, number>();
+      // 研修・会議の時間の手入力 (分)。事業所書式に無い分を補う。本稼働後は書式が唯一の元 (2026-09-23 user)
+      const manualTrainingMinByNum = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
           if (r.item_key === "social_insurance") socialInsuranceByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0) > 0);
           if (r.item_key === BONUS_PAID_KEY && Number(r.numeric_value ?? 0) > 0) bonusPaidNums.add(normEmp(r.employee_number));
           if (r.item_key === "business_km" && Number(r.numeric_value ?? 0) > 0) manualTripKmByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "training_minutes" && Number(r.numeric_value ?? 0) > 0) manualTrainingMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
 
@@ -946,7 +949,10 @@ export default function PayrollPage() {
         const paidLeaveAllowance = paidLeaveAllowanceOf(info.empId, empNum, paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         // 研修・会議の時間は 全事業所 一律 1,150円/時 (総括表① で実測。以前は同行の時給で 0.75 掛けの事業所が 863円になっていた)
         const trainingRate = TRAINING_RATE_PER_HOUR;
-        const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
+        const trainingPay = trainingPayAmount(
+          trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? [])
+            + (manualTrainingMinByNum.get(empNum) ?? 0),
+          trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
         // 出張距離: 手入力 (精算書) > 事業所書式 > 出勤簿 (tripKmOf)。2026-09-17 user 方針: 地図の距離は使わない

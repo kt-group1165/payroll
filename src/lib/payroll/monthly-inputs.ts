@@ -26,6 +26,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "training_minutes",
+    label: "研修・会議の時間 (書式にない分)",
+    unit: "分",
+    help: "事業所書式に書かれていない研修・会議の時間。1,150円/時で支払う。本稼働後は書式に入れてもらう (2026-09-23 user)",
+    allowNegative: false,
+  },
+  {
     key: "business_km",
     label: "出張km (精算書)",
     unit: "km",
