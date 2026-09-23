@@ -901,6 +901,14 @@ export function shoninshaTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
 }
 
 /** 研修手当 = 研修時間 × 同行の時給 (さつきが丘 1,150円: 岩田ゆきよ 2026-05 研修2h 2,300円 / 2026-07 HRD2h 2,300円+研修1h 1,150円) */
+/**
+ * 研修・HRD研修・会議の時間に対する単価 (円/時)。全事業所 一律 1,150 円。
+ * 総括表① (旧システムの出力) の 研修費/HRD研修費/会議費 ÷ 時間 を 3〜7月 全事業所で実測: 265件中 255件が 1,150
+ * (残りは端数の丸めで 1,149〜1,153。四街道に 1,900 が 4 件だけ例外)。
+ * ⚠ 以前は「同行の時給」で計算していたため 0.75 掛けの事業所で 863 円になっていた (2026-09-23 是正)。
+ */
+export const TRAINING_RATE_PER_HOUR = 1150;
+
 export function trainingPayAmount(minutes: number, hourlyRate: number | null): number {
   if (!hourlyRate || minutes <= 0) return 0;
   return Math.round((minutes / 60) * hourlyRate);

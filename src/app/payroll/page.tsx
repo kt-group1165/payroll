@@ -58,6 +58,7 @@ import {
   hourlyOvertimePayAmount,
   shoninshaTrainingMinutes,
   trainingPayAmount,
+  TRAINING_RATE_PER_HOUR,
   careMinutesFromRecords,
   officeWorkPayAmount,
   employeeWorkMinutes,
@@ -913,7 +914,6 @@ export default function PayrollPage() {
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
       // 研修手当の時給 = その事業所の 同行 の時給
-      const accompanyCategoryId = [...categoryMap.entries()].find(([, name]) => name === "同行")?.[0] ?? null;
       // 実績・出勤簿が無くても 事業所書式だけある人 (会議費・研修のみ) も対象にする (2026-09-17)
       for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys()])) {
         const info    = roleMap.get(empNum);
@@ -944,7 +944,8 @@ export default function PayrollPage() {
         const cancelCount = cancelRecs.length;
         const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0);
         const paidLeaveAllowance = paidLeaveAllowanceOf(info.empId, empNum, paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
-        const trainingRate = accompanyCategoryId && info?.officeId ? (rateMap.get(`${info.officeId}:${accompanyCategoryId}`) ?? null) : null;
+        // 研修・会議の時間は 全事業所 一律 1,150円/時 (総括表① で実測。以前は同行の時給で 0.75 掛けの事業所が 863円になっていた)
+        const trainingRate = TRAINING_RATE_PER_HOUR;
         const trainingPay = trainingPayAmount(trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
         const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
