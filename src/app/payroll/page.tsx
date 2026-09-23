@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -107,6 +108,20 @@ type AttendanceRecord = OfficeAttendanceRecord;
 // OfficeFormRecord は src/lib/payroll/payroll-calc.ts からimport (2026-09-05 切り出し)
 
 type ServiceTypeMapping = { service_code: string; category_id: string };
+/**
+ * 時給が引けず 0 円で計算された訪問のまとめ (2026-09-23)。
+ *   類型なし = そのサービスコードが どの類型にも結び付いていない
+ *   時給なし = 類型はあるが この事業所の その類型の時給が未設定
+ * ⚠ 無いときに別の類型の時給で代用しない (user 2026-09-23「無かったら別の何かに結びつけるってこと？ダメじゃないそれ」)。
+ *   代用すると 金額は出るが 間違っていても気づけない。0 円のままにして 必ず画面に出す。
+ */
+type RateGap = {
+  cause: "類型なし" | "時給なし";
+  key: string; label: string; count: number; minutes: number;
+  service_code: string;
+  office_id: string | null;
+  category_id: string | null;
+};
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number; effective_from?: string | null };
 type Office              = { id: string; office_number: string; name: string; short_name: string; office_type: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
 type ServiceCategory     = { id: string; name: string };
@@ -205,6 +220,16 @@ export default function PayrollPage() {
   const [distanceWarning, setDistanceWarning] = useState("");
   // 通勤km・出張km が事業所の確認ラインを超えた職員 (km-anomaly.ts)
   const [kmWarnings, setKmWarnings] = useState<KmAnomaly[]>([]);
+  /**
+   * 時給が引けず 0 円で計算された訪問 (2026-09-23)。
+   *   類型なし   = サービスコードが どの類型にも結び付いていない
+   *   時給なし   = 類型はあるが この事業所の その類型の時給が未設定
+   * どちらも 黙って 0 円になるので、計算のたびに出す。
+   * 実際に起きていた: 東郷 × 自費身生 19 件 / 花見川 015110 300分 / 四街道 015124 330分。
+   */
+  const [rateGaps, setRateGaps] = useState<RateGap[]>([]);
+  /** 警告の行から直すための 類型の一覧 (id, name) */
+  const [categoryList, setCategoryList] = useState<{ id: string; name: string }[]>([]);
 
   const [hourlyResults, setHourlyResults] = useState<HourlyPayroll[]>([]);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
@@ -249,6 +274,7 @@ export default function PayrollPage() {
     setProgress({ pct: 0, label: "実績データを読み込み中" });
     setSavedAt(null);
     setHourlyResults([]); setMonthlyResults([]);
+    setRateGaps([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
     try {
@@ -1036,6 +1062,8 @@ export default function PayrollPage() {
 
       // 1.5時間を超えた分の時給 = その事業所の 生活援助 の時給 (visitPayAmount)
       const lifeSupportCategoryId = [...categoryMap.entries()].find(([, name]) => name === "生活援助")?.[0] ?? null;
+      // 0 円になった訪問を ためる (下の setRateGaps で画面に出す)
+      const rateGapAcc = new Map<string, RateGap>();
       // 訪問 1 件の本人給。時給者と「訪問分を払う事務員 (月給)」の両方で使う (2026-09-22 事務員の介護分)
       const recordPayOf = (rec: ServiceRecord) => {
         const minutes    = parseDurationMinutes(rec.calc_duration);
@@ -1056,6 +1084,23 @@ export default function PayrollPage() {
         // 本人給は 1 回の訪問時間を 5 分単位に切り上げて払う (2026-09-19。姉ム 竹内 44分→45分 ×3件 = 78円 / 姉ム 小岩 59→60 = 35円 /
         //   おゆみ野 澤木 72→75 = 131円 が 総括表の差と一致)。時間の集計 (介護超過・残業など) は切り上げない
         const pay        = visitPayAmount(payMinutesOf(minutes), hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
+        // 0 円になった理由を残す (類型が無いのか / 類型はあるが時給が無いのか)
+        if (pay === null || hourlyRate === null) {
+          const cause = categoryId === null ? "類型なし" : "時給なし";
+          const key = cause === "類型なし"
+            ? `類型なし|${rec.service_code}`
+            : `時給なし|${rec.office_number}|${catName}`;
+          const label = cause === "類型なし"
+            ? String(rec.service_code)
+            : `${selectedOffice.name ?? rec.office_number} × ${catName}`;
+          const g = rateGapAcc.get(key) ?? {
+            cause: cause as RateGap["cause"], key, label, count: 0, minutes: 0,
+            service_code: String(rec.service_code),
+            office_id: officeId, category_id: categoryId,
+          };
+          g.count++; g.minutes += minutes;
+          rateGapAcc.set(key, g);
+        }
         return { minutes, catName, hourlyRate, pay };
       };
       for (const rec of records) {
@@ -1274,6 +1319,8 @@ export default function PayrollPage() {
         if ((attByEmpH.get(num) ?? []).length === 0 && legacyWorkMinOf(num) != null) used.push("出勤時間");
         if (used.length) e.legacy_used = used;
       }
+      setCategoryList((catRes.data ?? []).map((c: ServiceCategory) => ({ id: c.id, name: c.name })));
+      setRateGaps([...rateGapAcc.values()].sort((a, b) => b.count - a.count));
       setHourlyResults(hourlySorted);
 
       setProgress({ pct: 92, label: "月給者を計算中" });
@@ -1901,6 +1948,28 @@ export default function PayrollPage() {
       )}
       {distanceWarning && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">⚠ {distanceWarning}</div>
+      )}
+      {rateGaps.length > 0 && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-400 text-red-900 rounded text-sm">
+          <p className="font-medium">
+            ⚠ 時給が引けず <b>0 円</b>で計算された訪問が {rateGaps.reduce((a, g) => a + g.count, 0)} 件あります
+            （{formatMinutes(rateGaps.reduce((a, g) => a + g.minutes, 0))}）
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {rateGaps.map((g) => (
+              <li key={g.key} className="flex flex-wrap items-center gap-2">
+                <span className="inline-block w-16 shrink-0 font-medium">{g.cause}</span>
+                <span className="min-w-56">{g.label}</span>
+                <span className="text-xs text-red-700">{g.count}件 / {formatMinutes(g.minutes)}</span>
+                <RateGapFixer gap={g} categories={categoryList} onFixed={() => setRateGaps((prev) => prev.filter((x) => x.key !== g.key))} />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs">
+            ここで入れたら もう一度「給与計算を実行」すると反映されます。
+            一覧で見直すときは <a href="/services" className="underline">サービスマスタ</a>。
+          </p>
+        </div>
       )}
       {(() => {
         const h = hourlyResults.filter((e) => e.legacy_used?.length).length;
@@ -2729,6 +2798,67 @@ const ROLE_COLORS: Record<string, string> = {
   パート: "bg-orange-100 text-orange-800",
   事務員: "bg-gray-100 text-gray-700",
 };
+/**
+ * 0 円になった訪問を その場で直す入力 (2026-09-23)。
+ *   類型なし → そのサービスコードに類型を付ける (payroll_service_type_mappings)
+ *   時給なし → その事業所 × その類型の時給を入れる (payroll_category_hourly_rates)
+ * 直したら もう一度 給与計算を実行すると反映される (ここでは再計算しない)。
+ */
+function RateGapFixer({ gap, categories, onFixed }: {
+  gap: RateGap;
+  categories: { id: string; name: string }[];
+  onFixed: () => void;
+}) {
+  const [categoryId, setCategoryId] = useState("");
+  const [rate, setRate] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const saveCategory = async () => {
+    if (!categoryId) { toast.error("類型を選んでください"); return; }
+    setSaving(true);
+    const { error } = await supabase.from("payroll_service_type_mappings")
+      .upsert({ service_code: gap.service_code, category_id: categoryId }, { onConflict: "service_code" });
+    setSaving(false);
+    if (error) { toast.error(`類型の登録に失敗: ${error.message}`); return; }
+    toast.success(`${gap.service_code} を登録しました。給与計算を実行し直すと反映されます`);
+    onFixed();
+  };
+
+  const saveRate = async () => {
+    const v = Number(rate);
+    if (!gap.office_id || !gap.category_id) { toast.error("事業所または類型が特定できません"); return; }
+    if (!Number.isFinite(v) || v <= 0) { toast.error("時給を入れてください"); return; }
+    setSaving(true);
+    const { error } = await supabase.from("payroll_category_hourly_rates")
+      .upsert({ office_id: gap.office_id, category_id: gap.category_id, hourly_rate: v, effective_from: "2000-01-01" },
+              { onConflict: "office_id,category_id,effective_from" });
+    setSaving(false);
+    if (error) { toast.error(`時給の登録に失敗: ${error.message}`); return; }
+    toast.success(`${gap.label} を ${v.toLocaleString()}円/時 で登録しました。給与計算を実行し直すと反映されます`);
+    onFixed();
+  };
+
+  if (gap.cause === "類型なし") {
+    return (
+      <span className="flex items-center gap-1">
+        <select className="h-7 rounded border bg-background px-1 text-xs" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+          <option value="">類型を選ぶ…</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={saving} onClick={saveCategory}>登録</Button>
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1">
+      <input type="number" min={0} step={10} placeholder="時給 (円/時)"
+        className="h-7 w-28 rounded border bg-background px-2 text-xs"
+        value={rate} onChange={(e) => setRate(e.target.value)} />
+      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={saving} onClick={saveRate}>登録</Button>
+    </span>
+  );
+}
+
 function RoleBadge({ role }: { role: string }) {
   const c = ROLE_COLORS[role] ?? "bg-gray-100 text-gray-700";
   return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c}`}>{role}</span>;
