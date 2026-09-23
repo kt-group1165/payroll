@@ -305,7 +305,7 @@ export default function PayrollPage() {
         let aFrom = 0;
         while (true) {
           const { data, error } = await supabase.from("payroll_attendance_records")
-            .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,work_hours,overtime_daily,overtime_weekly,commute_km,business_km")
+            .select("employee_number,employee_name,day,work_note_1,work_note_2,work_note_3,work_note_4,work_note_5,start_time_1,end_time_1,break_time,work_hours,overtime_daily,overtime_weekly,commute_km,business_km")
             .eq("year", year).eq("month", month)
             .eq("office_number", selectedOffice.office_number)
             .order("id").range(aFrom, aFrom + 999);

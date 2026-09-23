@@ -1166,6 +1166,33 @@ export function parseDurationMinutes(str: string): number {
   return result >= 1440 ? 0 : result;
 }
 
+/**
+ * その日の勤務時間 (分) = 終了 − 開始 − 休憩 (user 2026-09-23「基本は開始と終了、休憩時間を読む」)。
+ * 開始か終了が読めないときだけ 勤務時間の欄 (work_hours) を使う。
+ *   終了が "0:15" や "24:00" のように翌日になる書き方でも正しく数える (KT姉崎 浦邉・東郷 東間)。
+ *   欄が Excel の #VALUE! や "9::00" の打ち間違いでも 開始・終了から出せる
+ *   (KT姉崎 髙木忍 2026-03-10・03-31 は 欄が #VALUE! で 計 1,120 分が丸ごと欠けていた)。
+ */
+export function attendanceWorkMinutes(r: OfficeAttendanceRecord): number {
+  const st = parseClockMinutes(r.start_time_1), en = parseClockMinutes(r.end_time_1 ?? "");
+  if (st != null && en != null) {
+    const span = (en >= st ? en : en + 1440) - st;               // 終了が 0:15 や 24:00 = 翌日
+    const br = parseWorkHoursMinutes(r.break_time ?? "");
+    return Math.max(0, span - br);
+  }
+  return parseWorkHoursMinutes(r.work_hours);
+}
+
+/** "9:00" / "9::00" / "24:00:00" のような時刻を 0:00 からの分に直す。読めなければ null */
+export function parseClockMinutes(s: string): number | null {
+  if (!s || !s.trim()) return null;
+  const m = /^(\d{1,2}):+(\d{1,2})/.exec(s.trim());
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  if (isNaN(h) || isNaN(mi)) return null;
+  return h * 60 + mi;
+}
+
 export function parseWorkHoursMinutes(s: string): number {
   if (!s || !s.trim()) return 0;
   s = s.trim();
@@ -1220,6 +1247,8 @@ export type OfficeAttendanceRecord = {
   work_note_4: string;
   work_note_5: string;
   start_time_1: string;
+  end_time_1?: string;
+  break_time?: string;
   work_hours: string;
   overtime_daily: string;
   overtime_weekly: string;
@@ -1314,7 +1343,7 @@ export function computeSummary(
   const meetingCount = ofRecs.filter((r) => r.item_name.includes("会議1")).reduce((s, r) =>
     s + (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : 1), 0);
 
-  const workHoursMin = attDays.reduce((s, r) => s + parseWorkHoursMinutes(r.work_hours), 0);
+  const workHoursMin = attDays.reduce((s, r) => s + attendanceWorkMinutes(r), 0);
   // 日残業 + 週残業 (Format B)。どちらも無ければ work_hours - 8h (Format A)。
   //
   // 2026-08-31 監査での是正:
@@ -1328,7 +1357,7 @@ export function computeSummary(
       const od = parseWorkHoursMinutes(r.overtime_daily ?? "");
       const ow = parseWorkHoursMinutes(r.overtime_weekly ?? "");
       if (od > 0 || ow > 0) return s + od + ow;
-      return s + Math.max(0, parseWorkHoursMinutes(r.work_hours) - 480);
+      return s + Math.max(0, attendanceWorkMinutes(r) - 480);
     }, 0);
     // 週40時間超 (日曜起算)。出勤簿に残業の欄が入っている書式 (Format B) は その値に週分が入っているので足さない。
     //   旧システムの日別データ 618人月で検算: 日8h超 + 週40h超 (日曜起算) で 569 件一致 (2026-09-23)。
@@ -1340,7 +1369,7 @@ export function computeSummary(
     if (!y || !mo) return daily;
     const byWeek = new Map<number, number>();
     for (const r of attDays) {
-      const w = parseWorkHoursMinutes(r.work_hours);
+      const w = attendanceWorkMinutes(r);
       if (w <= 0) continue;
       const d = new Date(y, mo - 1, r.day);
       const weekKey = Math.floor(d.getTime() / 86400000) - d.getDay();   // 日曜起算
