@@ -40,6 +40,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "office_work_minutes",
+    label: "事務時間 (出勤簿が取り込めない人)",
+    unit: "分",
+    help: "事務員の出勤簿が CSV で取り込めない人の勤務時間。事務時給 × この時間 を本人給にする (五井 根本カオリ のようにスキャンPDFしか無い人用。本稼働後は出勤簿から)",
+    allowNegative: false,
+  },
+  {
     key: "childcare_allowance",
     label: "育児手当 (書式にない分)",
     unit: "円",

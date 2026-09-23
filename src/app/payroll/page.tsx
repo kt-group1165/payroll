@@ -847,11 +847,13 @@ export default function PayrollPage() {
       const manualTrainingMinByNum = new Map<string, number>();
       // 育児手当の手入力 (円)。事業所書式に保育料が無い月を補う。入っていれば 書式からの計算より優先 (2026-09-23 user)
       const manualChildcareByNum = new Map<string, number>();
+      // 事務時間の手入力 (分)。出勤簿が CSV で取り込めない事務員用 (五井 根本カオリ はスキャンPDFしか無い)
+      const manualOfficeWorkMinByNum = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -860,6 +862,7 @@ export default function PayrollPage() {
           if (r.item_key === "business_km" && Number(r.numeric_value ?? 0) > 0) manualTripKmByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "training_minutes" && Number(r.numeric_value ?? 0) > 0) manualTrainingMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "childcare_allowance" && Number(r.numeric_value ?? 0) > 0) manualChildcareByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "office_work_minutes" && Number(r.numeric_value ?? 0) > 0) manualOfficeWorkMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
 
@@ -1024,7 +1027,8 @@ export default function PayrollPage() {
           ? 0
           : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""))
             + (trainingPayAmount(meetingMinutes(ofByEmp.get(empNum) ?? []), trainingRate) ?? 0);
-        const officeWorkMinutes = info.isOfficeWorker ? empSummary.workHoursMin : 0;
+        // 事務時間: 手入力があればそれ (出勤簿が CSV で取り込めない人)。無ければ出勤簿の出勤時間
+        const officeWorkMinutes = info.isOfficeWorker ? (manualOfficeWorkMinByNum.get(empNum) ?? empSummary.workHoursMin) : 0;
         const officeWorkRate = sal?.office_work_hourly_rate ?? 0;
         hourlyEmpMap.set(empNum, {
           employee_number: empNum,
