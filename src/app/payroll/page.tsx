@@ -1058,7 +1058,8 @@ export default function PayrollPage() {
           business_trip_fee: businessTripFee,
           office_work_minutes: officeWorkMinutes,
           office_work_hourly_rate: officeWorkRate,
-          office_work_pay: officeWorkPayAmount(info.isOfficeWorker, empSummary.workHoursMin, officeWorkRate),
+          // ⚠ 時間は officeWorkMinutes (手入力があればそちら)。empSummary.workHoursMin を直に使わない
+          office_work_pay: officeWorkPayAmount(info.isOfficeWorker, officeWorkMinutes, officeWorkRate),
           records: [],
           totalMinutes: 0,
           totalPay: 0,
