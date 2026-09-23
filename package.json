@@ -15,7 +15,8 @@
     "check:distance-calc": "tsx scripts/verify-distance-calculator.mts",
     "check:distance-usage": "tsx scripts/verify-distance-usage.mts",
     "check:all": "tsx scripts/check-all.mts",
-    "check:attendance-hours-gap": "tsx scripts/check-attendance-hours-gap.mts"
+    "check:attendance-hours-gap": "tsx scripts/check-attendance-hours-gap.mts",
+    "check:legal-holiday": "tsx scripts/verify-legal-holiday.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

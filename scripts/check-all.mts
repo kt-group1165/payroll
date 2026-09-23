@@ -30,6 +30,7 @@ const CHECKS: Check[] = [
   { name: "payroll-sample", script: "check:payroll-sample", why: "DB→集計→残業代 の経路 (手計算の期待値と突合)" },
   { name: "billing-issue", script: "check:billing-issue", why: "請求の発行・調整行ロジック (実データ + fixture)" },
   { name: "distance-calc", script: "check:distance-calc", why: "移動手当の距離・時間算出 calcDayRoute (API/DB非依存の純関数境界値)" },
+  { name: "legal-holiday", script: "check:legal-holiday", why: "法定休日労働の割増 (日曜起算で7日連続勤務した週の土曜 × 0.35)。総括表①と 7/7 一致した規則を固定する" },
   { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)",
     kind: "baseline", knownDiff: 9 }, // 実績0件月の基本給の扱い (既知・B-2y。user判断待ち)
 ];
