@@ -11,7 +11,12 @@
  *
  * ⚠ 保育料そのものではなく **支給額 (円)** を入れる (按分の元になる保育料が分からないため)。
  *   item_key = childcare_allowance。入っている月は 書式からの計算より優先される。
- * ⚠ 書式に行が **ある** のに額が違う人月 (51 件) は触らない。書式が正とみなす。
+ * ⚠ 書式に行が **ある** 人月は **既定では触らない**。`INCLUDE_FORM_ROWS=1` を付けたときだけ
+ *   ② との差が 100 円を超えるものを ② に合わせる (2026-09-23 user「記録だけしておいて」)。
+ *   原因は 書式の金額が null / 「何月分」のずれ (茂原 渡邉美吹 は 2026/5 分が 5月と6月の両方に入っている) /
+ *   ② が 0 円 (書式に保育料があるのに総括表は払っていない 3 件) など、**書式側のデータの問題**。
+ * ⚠ 差 100 円以下 (31 件) は触らない。同じ保育料からの **按分の丸めの差**で、
+ *   ここを上書きすると 当方の式のずれが見えなくなる。
  * 冪等: 既に同じ値なら触らない。
  */
 import { readFileSync } from "node:fs";
@@ -49,6 +54,16 @@ const num = (v) => { const f = parseFloat(String(v ?? "").replace(/,/g, "")); re
 
 const form = await get("payroll_office_form_records?select=office_number,employee_number,processing_month&record_type=eq.childcare");
 const hasForm = new Set(form.map((r) => `${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`));
+// 当システムが今いくら出しているか (書式に行がある人月は 差が 100 円を超えるときだけ合わせる)
+const calc = await get("payroll_calc_results?select=office_number,processing_month,payload");
+const ours = new Map();
+for (const c of calc) {
+  for (const e of c.payload?.hourly ?? []) ours.set(`${c.office_number}|${nn(e.employee_number)}|${c.processing_month}`, Number(e.childcare_allowance ?? 0));
+  for (const e of c.payload?.monthly ?? []) ours.set(`${c.office_number}|${nn(e.employee_number)}|${c.processing_month}`, Number(e.childcare_allowance ?? 0));
+}
+const ROUNDING = 100;
+/** 書式に行がある月も ② に合わせるか。既定 false (調べただけで投入していない) */
+const INCLUDE_FORM_ROWS = process.env.INCLUDE_FORM_ROWS === "1";
 const exist = await get(`payroll_monthly_inputs?select=office_number,employee_number,processing_month,numeric_value&item_key=eq.childcare_allowance`);
 const already = new Map(exist.map((r) => [`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, Number(r.numeric_value ?? 0)]));
 
@@ -66,12 +81,21 @@ for (const M of MONTHS) {
       const amount = num(r["育児手当"]);
       if (amount <= 0) continue;
       const k = `${on}|${code}|${M}`;
-      if (hasForm.has(k)) continue;                    // 書式に行がある月は触らない
+      if (hasForm.has(k)) {
+        // ★ 既定では 書式に行がある月は触らない。INCLUDE_FORM_ROWS=1 のときだけ ② に合わせる
+        //   (2026-09-23 user「記録だけしておいて」= 調べた結果は残すが 投入はしない)
+        if (!INCLUDE_FORM_ROWS) continue;
+        const now = ours.get(k);
+        if (now === undefined) { skipped.push(`${f.office} ${M} ${r["氏名"]}: 当方の計算結果が無い`); continue; }
+        if (Math.abs(now - amount) <= ROUNDING) continue;   // 按分の丸め。触らない
+      }
       if (already.get(k) === amount) continue;         // 冪等
       if (already.has(k)) { skipped.push(`${f.office} ${M} ${r["氏名"]}: 手入力 ${already.get(k)} と ② ${amount} が違う (触らない)`); continue; }
       ops.push({ office_number: on, employee_number: code, processing_month: M, item_key: "childcare_allowance", numeric_value: amount,
-        note: "総括表の育児手当より (事業所書式に保育料の行が無いため。本稼働後は書式に入れる) 2026-09-23",
-        label: `${f.office} ${M} ${r["氏名"]} ${amount.toLocaleString()} 円` });
+        note: hasForm.has(k)
+          ? "総括表の育児手当に合わせた (書式の金額が null / 何月分がずれている 等。本稼働後は書式を直す) 2026-09-23"
+          : "総括表の育児手当より (事業所書式に保育料の行が無いため。本稼働後は書式に入れる) 2026-09-23",
+        label: `${f.office} ${M} ${r["氏名"]} ${amount.toLocaleString()} 円 ${hasForm.has(k) ? `(書式あり・当方 ${(ours.get(k) ?? 0).toLocaleString()} 円)` : "(書式に行なし)"}` });
     }
   }
 }
