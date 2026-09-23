@@ -65,15 +65,17 @@ type Agg = { name: string; days: number; fromTimes: number; fromColumn: number }
 const byEmp = new Map<string, Agg>();
 let changed = 0, unreadable = 0;
 for (const r of rows) {
-  let span = 0, found = false;
+  let span = 0, ranges = 0;
   for (const i of [1, 2]) {
     const st = clock(r[`start_time_${i}` as keyof Row] as string | null);
     const en = clock(r[`end_time_${i}` as keyof Row] as string | null);
     if (st == null || en == null) continue;
     span += (en >= st ? en : en + 1440) - st;
-    found = true;
+    ranges++;
   }
-  const fromTimes = found ? Math.max(0, span - hm(r.break_time)) : 0;
+  const found = ranges > 0;
+  // 時間帯が 2 つ以上の日は その間が休憩なので 休憩欄を引かない (payroll-calc.ts と同じ)
+  const fromTimes = !found ? 0 : ranges >= 2 ? span : Math.max(0, span - hm(r.break_time));
   const fromColumn = hm(r.work_hours);
   if (!found && fromColumn === 0 && String(r.start_time_1 ?? "").trim()) unreadable++;
   if (!found || fromTimes === fromColumn) continue;

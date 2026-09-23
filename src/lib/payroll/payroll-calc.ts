@@ -1175,15 +1175,19 @@ export function parseDurationMinutes(str: string): number {
  */
 export function attendanceWorkMinutes(r: OfficeAttendanceRecord): number {
   // 1 日に最大 5 つの時間帯を書ける (午前・午後で分けて書く人がいる)。全部足す
-  let span = 0, found = false;
+  let span = 0, ranges = 0;
   for (const i of [1, 2, 3, 4, 5]) {
     const st = parseClockMinutes((r as unknown as Record<string, string>)[`start_time_${i}`] ?? "");
     const en = parseClockMinutes((r as unknown as Record<string, string>)[`end_time_${i}`] ?? "");
     if (st == null || en == null) continue;
     span += (en >= st ? en : en + 1440) - st;                    // 終了が 0:15 や 24:00 = 翌日
-    found = true;
+    ranges++;
   }
-  if (!found) return parseWorkHoursMinutes(r.work_hours);
+  if (ranges === 0) return parseWorkHoursMinutes(r.work_hours);
+  // 時間帯を 2 つ以上に分けて書く日は その間が休憩なので 休憩欄を引かない (引くと二重)。
+  //   2026 年の出勤簿で 時間帯が 2 つ以上の日は 113 日。113 日すべて 欄 = 時間帯の合計 (休憩を引かない)
+  //   (さつき 福島可奈 9:00-12:00 / 13:00-16:00 休1:00 → 6 時間。2026-09-23 是正)
+  if (ranges >= 2) return Math.max(0, span);
   return Math.max(0, span - parseWorkHoursMinutes(r.break_time ?? ""));
 }
 
