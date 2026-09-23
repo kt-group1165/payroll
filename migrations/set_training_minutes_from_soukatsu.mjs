@@ -7,6 +7,7 @@
  * 会議・研修は 本稼働後は 事業所書式が唯一の元 (user 2026-09-23「本稼働後は事業所書式だよ。もちろん」)。
  * 検証中の 3〜8月だけ、総括表①(旧システムの出力) にあって書式に無い分を 手入力で補う。
  *
+ * パート・社員/提責の両方が対象 (社員・提責は HRD が 介護超過の時間にも効く)。
  * 対象: ①の HRD研修時間 / 研修時間 / 会議時間 / 初任者研修時間 の合計 > 0 で、
  *       当システムの事業所書式から その月の研修・会議の時間が 0 分の人
  *       (レコードが無い / あっても時刻が空・終了0:00 などで時間が取れない。五井 柴山・東郷 酒井/太野)。
@@ -51,6 +52,21 @@ const mins = (v) => {
 };
 
 const L1 = JSON.parse(readFileSync(`${SP}/layer1_all.json`, "utf8"));
+// 社員・提責の HRD は ①(旧システム) に無く ②(総括表の提責_社員シート) に手入力されている。②からも拾う
+const L2 = new Map();
+for (const M of ["202603", "202604", "202605", "202606", "202607"]) {
+  let rows = [];
+  try { rows = JSON.parse(readFileSync(`${SP}/soukatsu${M}/extract.json`, "utf8")); } catch { continue; }
+  for (const f of rows) {
+    if (f.kind === "part") continue;
+    for (const r of f.rows) {
+      const code = nn(r._code);
+      if (!code || String(r._code).includes("合計")) continue;
+      const v = Number(r["HRD"] ?? 0);           // ② のHRDは「分」
+      if (v > 0) L2.set(`${M}|${f.office}|${code}`, v);
+    }
+  }
+}
 const MONTHS = ["202603", "202604", "202605", "202606", "202607"];
 const ops = [], skipped = [];
 for (const M of MONTHS) {
@@ -67,10 +83,12 @@ for (const M of MONTHS) {
   const already = new Map(exist.map((r) => [r.office_number + "|" + nn(r.employee_number), Number(r.numeric_value ?? 0)]));
   for (const [key, a] of Object.entries(L1)) {
     const [m, office, kind, code] = key.split("|");
-    if (m !== M || kind !== "part") continue;
+    if (m !== M) continue;
     const on = OFF[office];
     if (!on) continue;
-    const total = mins(a["HRD研修時間"]) + mins(a["研修時間"]) + mins(a["会議時間"]) + mins(a["初任者研修時間"]);
+    const fromL1 = mins(a["HRD研修時間"]) + mins(a["研修時間"]) + mins(a["会議時間"]) + mins(a["初任者研修時間"]);
+    // 社員・提責は ② の HRD (分) も見る (①に無く ②に手入力されている)
+    const total = kind === "part" ? fromL1 : Math.max(fromL1, L2.get(`${M}|${office}|${code}`) ?? 0);
     if (total <= 0) continue;
     const k = on + "|" + code;
     if ((formMin.get(k) ?? 0) > 0) continue;            // 書式から時間が取れるなら触らない

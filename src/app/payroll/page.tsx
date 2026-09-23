@@ -1396,6 +1396,9 @@ export default function PayrollPage() {
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],
               care075Res.offices.has(selectedOffice.office_number) ? isCareHours075 : () => false) + hrdTrainingMinutes(empOfRecs)
+              // 研修の手入力 (書式に無い分) も 介護時間に足す。旧システムは HRD を介護超過の時間に入れている
+              //   (おゆみ野 山本純子 2026-04: 訪問144.25 + HRD 1.0 + 重度×0.75 − 重度 − 120 = 18.125h × 2,500 = 45,313円)
+              + (manualTrainingMinByNum.get(normEmp(e.employee_number)) ?? 0)
               + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0)
               + Math.max(0, bathMinutesByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
