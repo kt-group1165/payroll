@@ -111,7 +111,7 @@ export default function VerificationContent() {
   const run = useCallback(async () => {
     if (!officeNumber) return;
     setLoading(true); setNote(""); setRows([]); setMissing({ onlyOurs: [], onlySoukatsu: [] });
-    const [sRes, cRes, aRes, empRes] = await Promise.all([
+    const [sRes, cRes, aRes, empRes, ofRes] = await Promise.all([
       supabase.from("payroll_soukatsu_rows").select("employee_number,employee_name,sheet_kind,row_data")
         .eq("processing_month", month).eq("office_number", officeNumber),
       supabase.from("payroll_calc_results").select("payload,calculated_at")
@@ -120,12 +120,16 @@ export default function VerificationContent() {
         .select("employee_number,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5,break_time,work_hours")
         .eq("office_number", officeNumber).eq("year", Number(month.slice(0, 4))).eq("month", Number(month.slice(4))),
       supabase.from("payroll_employees").select("employee_number,role_type,office_id"),
+      supabase.from("payroll_office_form_records").select("id")
+        .eq("processing_month", month).eq("office_number", officeNumber).limit(1),
     ]);
     setLoading(false);
     if (sRes.error) { toast.error(`総括表の取得に失敗: ${sRes.error.message}`); return; }
     if (cRes.error) { toast.error(`計算結果の取得に失敗: ${cRes.error.message}`); return; }
     if (aRes.error) { toast.error(`出勤簿の取得に失敗: ${aRes.error.message}`); return; }
     if (empRes.error) { toast.error(`職員の取得に失敗: ${empRes.error.message}`); return; }
+    if (ofRes.error) { toast.error(`事業所書式の取得に失敗: ${ofRes.error.message}`); return; }
+    const officeFormEmpty = (ofRes.data ?? []).length === 0;
 
     const soukatsu = (sRes.data ?? []) as SoukatsuRow[];
     if (soukatsu.length === 0) { setNote("この事業所・月の総括表が取り込まれていません (migrations/import_soukatsu_rows.mjs)"); return; }
@@ -163,6 +167,7 @@ export default function VerificationContent() {
           noAttendance: !hasAtt.has(n),
           hasRateGap: num(e.unmappedCount) > 0,
           officeNumber,
+          officeFormEmpty,
         };
         const items = ourItems(e, kind)
           .filter((x) => hasSoukatsuColumn(s.row_data, x.item))

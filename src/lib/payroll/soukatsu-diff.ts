@@ -93,6 +93,12 @@ export type DiffContext = {
   hasRateGap: boolean;
   /** 事業所番号 */
   officeNumber: string;
+  /**
+   * その事業所・月の 事業所書式が 1 行も読めていないか。
+   * 2026-09-24 に 合流処理の自己参照バグで 書式が丸ごと消え、出張費・会議費が全社 0 円になった。
+   * 1 人ずつ「書式の入力漏れ」と読むと 事故に気づけないので 別の理由として出す。
+   */
+  officeFormEmpty: boolean;
 };
 
 /** ① が介護超過を計算していない事業所 (② 側の式で出している)。2026-09-23 実測 */
@@ -147,6 +153,18 @@ const RULES: Rule[] = [
     verdict: "要対応",
     reason: "単価が引けず 0 円で計算された訪問がある。サービスマスタで類型か時給を入れる",
     when: ({ ctx }) => ctx.hasRateGap,
+  },
+  {
+    item: "出張費",
+    verdict: "要対応",
+    reason: "★ 事業所書式が丸ごと読めていない疑い (出張費も会議費も 0)。取込と Web 入力の合流を確かめる",
+    when: ({ ours, ctx }) => ours === 0 && ctx.officeFormEmpty,
+  },
+  {
+    item: "会議+研修",
+    verdict: "要対応",
+    reason: "★ 事業所書式が丸ごと読めていない疑い (出張費も会議費も 0)。取込と Web 入力の合流を確かめる",
+    when: ({ ours, ctx }) => ours === 0 && ctx.officeFormEmpty,
   },
   {
     item: "出張費",
