@@ -359,9 +359,15 @@ export function careOvertimePay(p: MonthlyPayroll): number {
 
 export function yochoAllowance(p: MonthlyPayroll): number {
   const s = p.settings;
-  if (!s || s.yocho_unit_price <= 0) return 0;
-  // 深夜の時間 × 500 円を足す (総括表「・夜朝・深夜」= 夜朝 + 深夜。KT姉崎・袖ケ浦・山武 2026-03〜07 すべて 500 円/時。2026-09-18)
-  return Math.round(Math.max(0, p.yocho_hours) * s.yocho_unit_price) + Math.round(Math.max(0, p.shinya_hours ?? 0) * SHINYA_UNIT_PRICE);
+  if (!s) return 0;
+  // ⚠ 夜朝手当の単価 0 は「未設定」ではなく「夜朝手当の対象外」。
+  //   ① で検算すると 単価が入っている人 (225名) は 夜朝(円) ÷ 夜朝訪介 が 350/350 で 200 円/時、
+  //   単価 0 の人 (721名) は 夜朝の時間があっても ① の夜朝が 0。既定 200 にすると 296 件 過払いになる (2026-09-23 実測)。
+  const yocho = s.yocho_unit_price > 0 ? Math.round(Math.max(0, p.yocho_hours) * s.yocho_unit_price) : 0;
+  // 深夜は 夜朝手当の対象外の人にも付く (① の 深夜手当 ÷ 深夜訪介 が 20/20 で 500 円/時)。
+  //   2026-09-23 まで 夜朝単価 0 で丸ごと 0 にしていた。
+  //   KT姉崎 浦邉ゆう子 2026-03 は 夜朝 0.5h (対象外)・深夜 1h で ① 500 円 = 深夜ぶんだけ
+  return yocho + Math.round(Math.max(0, p.shinya_hours ?? 0) * SHINYA_UNIT_PRICE);
 }
 
 /** 社員の深夜手当 (円/時)。総括表 2026-03〜07 の 18 件すべて 500 円 */
