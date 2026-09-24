@@ -97,6 +97,14 @@ import {
   NON_HOURLY_CATEGORIES,
   resolveGroupTenureMonths,
 } from "@/lib/payroll/payroll-calc";
+import {
+  canOverwriteResult,
+  canRevert,
+  findDiscrepancies,
+  nextManualStatus,
+  type Discrepancy,
+  type MonthlyStatus,
+} from "@/lib/payroll/monthly-status";
 
 // ─── 実勤続月数の基準月 ─────────────────────────────────────
 // effective_service_months の初期データが何月時点の値かを設定する
@@ -220,6 +228,11 @@ export default function PayrollPage() {
   const [loading, setLoading] = useState(false);
   /** 計算中の進捗 (0〜100)。移動距離の取得が一番長いので 40〜90% をそこに割り当てる */
   const [progress, setProgress] = useState<{ pct: number; label: string } | null>(null);
+  /** 事業所 × 月の状態。確定 (ロック) されていると 計算しても上書きしない */
+  const [monthStatus, setMonthStatus] = useState<{ status: MonthlyStatus; confirmed_at: string | null; confirmed_by: string | null } | null>(null);
+  /** 確定した月を計算し直したときの差額 (過誤)。翌月以降で清算する */
+  const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([]);
+  const [statusBusy, setStatusBusy] = useState(false);
   /** 直近の計算結果を DB に保存した時刻 (次の計算を始めるまで表示しておく) */
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -275,6 +288,95 @@ export default function PayrollPage() {
     });
   }, []);
 
+  // ─── 月次ステータスの読み込み (事業所・月が変わるたび) ─────────────
+  const selectedOfficeNumber = offices.find((o) => o.id === selectedOfficeId)?.office_number ?? "";
+  useEffect(() => {
+    if (!selectedOfficeNumber || !selectedMonth) return;
+    let alive = true;
+    supabase.from("payroll_monthly_status")
+      .select("status,confirmed_at,confirmed_by")
+      .eq("office_number", selectedOfficeNumber).eq("processing_month", selectedMonth)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!alive) return;
+        // ⚠ 行が無いのは正常 (まだ何もしていない月)。エラーだけ握りつぶさない
+        if (error && error.code !== "PGRST116") { console.warn("[payroll] 月次ステータスを読めませんでした:", error.message); return; }
+        setMonthStatus(data ? { status: data.status as MonthlyStatus, confirmed_at: data.confirmed_at, confirmed_by: data.confirmed_by } : { status: "未着手", confirmed_at: null, confirmed_by: null });
+        setDiscrepancies([]);
+      });
+    return () => { alive = false; };
+  }, [selectedOfficeNumber, selectedMonth]);
+
+  /** 誰が押したか (確定・解除の記録用) */
+  const whoami = async () => (await supabase.auth.getUser()).data.user?.email ?? null;
+
+  /** 確定する: いまの計算結果を 1 人ぶんずつ固定して、以降は上書きしない */
+  async function confirmMonth() {
+    if (!selectedOfficeNumber || !selectedMonth) return;
+    if (hourlyResults.length === 0 && monthlyResults.length === 0) {
+      toast.error("先に給与計算を実行してください"); return;
+    }
+    setStatusBusy(true);
+    try {
+      const by = await whoami();
+      const now = new Date().toISOString();
+      const rows = [
+        ...hourlyResults.map((e) => ({ office_number: selectedOfficeNumber, processing_month: selectedMonth,
+          employee_number: String(e.employee_number), employee_name: e.employee_name, pay_kind: "part",
+          grand_total: hourlyTotalPay(e), breakdown: null, confirmed_at: now })),
+        ...monthlyResults.map((p) => ({ office_number: selectedOfficeNumber, processing_month: selectedMonth,
+          employee_number: String(p.employee_number), employee_name: p.employee_name, pay_kind: "shaseki",
+          grand_total: monthlyGrandTotal(p, otSettings), breakdown: null, confirmed_at: now })),
+      ];
+      const { error: tErr } = await supabase.from("payroll_confirmed_totals")
+        .upsert(rows, { onConflict: "office_number,processing_month,employee_number" });
+      if (tErr) { toast.error(`確定に失敗しました: ${tErr.message}`); return; }
+      const { error: sErr } = await supabase.from("payroll_monthly_status").upsert({
+        office_number: selectedOfficeNumber, processing_month: selectedMonth,
+        status: "確定", confirmed_at: now, confirmed_by: by, reverted_at: null, reverted_by: null, updated_at: now,
+      }, { onConflict: "office_number,processing_month" });
+      if (sErr) { toast.error(`状態の更新に失敗しました: ${sErr.message}`); return; }
+      setMonthStatus({ status: "確定", confirmed_at: now, confirmed_by: by });
+      setDiscrepancies([]);
+      toast.success(`確定しました (${rows.length} 名)`);
+    } finally { setStatusBusy(false); }
+  }
+
+  /** 状態を 1 つ進める (計算済 → 確認済) */
+  async function advanceStatus() {
+    const next = monthStatus ? nextManualStatus(monthStatus.status) : null;
+    if (!next || next === "確定") return;
+    setStatusBusy(true);
+    try {
+      const { error } = await supabase.from("payroll_monthly_status").upsert({
+        office_number: selectedOfficeNumber, processing_month: selectedMonth,
+        status: next, updated_at: new Date().toISOString(),
+      }, { onConflict: "office_number,processing_month" });
+      if (error) { toast.error(`状態の更新に失敗しました: ${error.message}`); return; }
+      setMonthStatus((s) => (s ? { ...s, status: next } : s));
+      toast.success(`${next} にしました`);
+    } finally { setStatusBusy(false); }
+  }
+
+  /** 確定を解除する。理由は必須 (あとから「なぜ開けたか」が分かるように) */
+  async function revertMonth() {
+    if (!monthStatus || !canRevert(monthStatus.status)) return;
+    const note = window.prompt("確定を解除する理由を入力してください (必須)");
+    if (!note || !note.trim()) { toast.error("理由が無いので解除しませんでした"); return; }
+    setStatusBusy(true);
+    try {
+      const by = await whoami();
+      const now = new Date().toISOString();
+      const { error } = await supabase.from("payroll_monthly_status").upsert({
+        office_number: selectedOfficeNumber, processing_month: selectedMonth,
+        status: "確認済", reverted_at: now, reverted_by: by, note: note.trim(), updated_at: now,
+      }, { onConflict: "office_number,processing_month" });
+      if (error) { toast.error(`解除に失敗しました: ${error.message}`); return; }
+      setMonthStatus({ status: "確認済", confirmed_at: monthStatus.confirmed_at, confirmed_by: monthStatus.confirmed_by });
+      toast.success("確定を解除しました");
+    } finally { setStatusBusy(false); }
+  }
+
   // ─── 給与計算実行 ─────────────────────────────────────────────
 
   async function calculate() {
@@ -285,6 +387,7 @@ export default function PayrollPage() {
     setHourlyResults([]); setMonthlyResults([]);
     setRateGaps([]);
     setDistWarns([]);
+    setDiscrepancies([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
     try {
@@ -1705,6 +1808,29 @@ export default function PayrollPage() {
           monthly: monthlySorted.filter((p) => (p as { legacy_used?: string[] }).legacy_used?.length).length,
         },
       };
+      // ── 確定 (ロック) されている月は 上書きしない (2026-09-24 user) ──────────
+      //   「確定した後に計算しなおして差額が出たら 過誤で翌月や翌々月で清算」
+      //   確定した月の金額は動かさず、差額だけ出して 後の月の 調整手当 に乗せる
+      if (monthStatus && !canOverwriteResult(monthStatus.status)) {
+        setProgress({ pct: 97, label: "確定済みの月なので 差額を確認中" });
+        const { data: confirmedRows, error: cErr } = await supabase
+          .from("payroll_confirmed_totals")
+          .select("employee_number,employee_name,grand_total")
+          .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth);
+        if (cErr) {
+          setError(`確定済みの金額を読めませんでした: ${cErr.message}`);
+        } else {
+          const recalculated = [
+            ...payload.hourly.map((e) => ({ employee_number: String(e.employee_number), employee_name: e.employee_name, grand_total: Number(e.grand_total) })),
+            ...payload.monthly.map((p) => ({ employee_number: String(p.employee_number), employee_name: p.employee_name, grand_total: Number(p.grand_total) })),
+          ];
+          setDiscrepancies(findDiscrepancies(
+            (confirmedRows ?? []).map((r) => ({ employee_number: String(r.employee_number), employee_name: r.employee_name, grand_total: Number(r.grand_total) })),
+            recalculated));
+        }
+        setProgress({ pct: 100, label: "確定済み (上書きしていません)" });
+        return;
+      }
       // DB に保存 (2026-09-17)。別 PC からも総括表が見え、Excel との突合にも使う
       setProgress({ pct: 97, label: "計算結果を保存中" });
       {
@@ -1717,6 +1843,15 @@ export default function PayrollPage() {
         }, { onConflict: "office_number,processing_month" });
         if (!saveErr) {
           setSavedAt(payload.calculated_at);
+          // 状態を 計算済 に上げる (確認済・確定 は下げない)
+          if (!monthStatus || monthStatus.status === "未着手" || monthStatus.status === "取込済") {
+            const { error: stErr } = await supabase.from("payroll_monthly_status").upsert({
+              office_number: selectedOffice.office_number, processing_month: selectedMonth,
+              status: "計算済", updated_at: new Date().toISOString(),
+            }, { onConflict: "office_number,processing_month" });
+            if (stErr) console.warn("[payroll] 月次ステータスを更新できませんでした:", stErr.message);
+            else setMonthStatus({ status: "計算済", confirmed_at: null, confirmed_by: null });
+          }
           // 「DBに保存しました」を一瞬で消さず少しだけ見せる。
           // ⚠ ここを await しない (2026-09-20)。全事業所を続けて回すとき タブが裏に回ると
           //   Chrome の intensive throttling で setTimeout が 1分に引き延ばされ、1事業所あたり 1分 無駄になる
@@ -2100,6 +2235,71 @@ export default function PayrollPage() {
       )}
       {distanceWarning && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">⚠ {distanceWarning}</div>
+      )}
+      {monthStatus && (
+        <div className={`mb-4 p-3 rounded border text-sm ${monthStatus.status === "確定" ? "bg-emerald-50 border-emerald-400 text-emerald-900" : "bg-slate-50 border-slate-300 text-slate-800"}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">この月の状態:</span>
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${monthStatus.status === "確定" ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-800"}`}>
+              {monthStatus.status}
+            </span>
+            {monthStatus.status === "確定" && monthStatus.confirmed_at && (
+              <span className="text-xs">
+                {new Date(monthStatus.confirmed_at).toLocaleString("ja-JP")} {monthStatus.confirmed_by ?? ""} が確定
+              </span>
+            )}
+            <span className="grow" />
+            {monthStatus.status === "計算済" && (
+              <Button size="sm" variant="outline" disabled={statusBusy} onClick={advanceStatus}>確認済にする</Button>
+            )}
+            {monthStatus.status === "確認済" && (
+              <Button size="sm" disabled={statusBusy} onClick={confirmMonth}>確定する</Button>
+            )}
+            {monthStatus.status === "確定" && (
+              <Button size="sm" variant="outline" disabled={statusBusy} onClick={revertMonth}>確定を解除</Button>
+            )}
+          </div>
+          {monthStatus.status === "確定" && (
+            <p className="text-xs mt-1">
+              確定した月の金額は 計算し直しても <b>上書きされません</b>。差額が出た場合は 下に過誤として出ます
+              (翌月以降の「月ごとの手入力」の 調整手当 で清算します)
+            </p>
+          )}
+        </div>
+      )}
+      {discrepancies.length > 0 && (
+        <div className="mb-4 p-3 bg-rose-50 border border-rose-400 text-rose-900 rounded text-sm">
+          <p className="font-medium">
+            ⚠ 確定した金額と 計算し直した金額に差があります — {discrepancies.length} 名 /
+            合計 {yen(discrepancies.reduce((s, d) => s + d.difference, 0))}
+          </p>
+          <p className="text-xs mt-0.5">
+            確定した月は動かしません。この差額を <b>翌月以降の「月ごとの手入力」の 調整手当</b> に入れて清算してください
+            (プラス = 払い足りない / マイナス = 払いすぎ)
+          </p>
+          <table className="mt-2 w-full text-xs">
+            <thead className="text-rose-800">
+              <tr className="text-left">
+                <th className="py-1 pr-3">職員</th><th className="py-1 pr-3">区分</th>
+                <th className="py-1 pr-3 text-right">確定時</th><th className="py-1 pr-3 text-right">計算し直し</th>
+                <th className="py-1 text-right">差額</th>
+              </tr>
+            </thead>
+            <tbody>
+              {discrepancies.map((d) => (
+                <tr key={d.employee_number} className="border-t border-rose-200">
+                  <td className="py-1 pr-3">{d.employee_name ?? d.employee_number}</td>
+                  <td className="py-1 pr-3">{d.kind}</td>
+                  <td className="py-1 pr-3 text-right">{yen(d.confirmed_total)}</td>
+                  <td className="py-1 pr-3 text-right">{yen(d.recalculated_total)}</td>
+                  <td className={`py-1 text-right font-medium ${d.difference > 0 ? "text-rose-700" : "text-blue-700"}`}>
+                    {d.difference > 0 ? "+" : ""}{yen(d.difference)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {distWarns.length > 0 && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-400 text-amber-900 rounded text-sm">
