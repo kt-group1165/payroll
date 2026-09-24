@@ -941,11 +941,25 @@ export const MEETING_COUNT_AS_YEN_THRESHOLD = 100;
  * ⚠ おゆみ野だけは 会議の記録があっても総括表が 0 円 (2026-07 の 3 名で確認)。
  *   事業所ごとの除外は payroll_app_settings の meeting_fee_unpaid_offices で持つ。
  */
-export function meetingMinutes(ofRecs: OfficeFormRecord[]): number {
+/**
+ * 研修・会議の 1 行ぶんの時間 (分) × 日数。
+ * ⚠ **item_date に複数日がカンマで入る行がある。**"6/10,6/17 10:00~12:00" のような
+ *   まとめ書きを 1 回としか数えておらず、時間が半分になっていた (2026-09-24)。
+ *   有給側は前から listedDateCount で日数を数えていたのに 研修・会議側だけ数えていない、という非対称だった。
+ *   実測: record_type='training' の 833 行中 複数日を含むのは 2 行 (四街道 202606 関根絢子・横田沙紀)、
+ *   数え落としは 240 分 = ¥4,600 で 総括表との差と完全に一致。
+ *   ★ /office-input で まとめ書きの運用が広がると 静かに増える。
+ */
+function sessionMinutes(r: OfficeFormRecord): number {
   const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  const one = Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time));
+  return one * listedDateCount(r.item_date);
+}
+
+export function meetingMinutes(ofRecs: OfficeFormRecord[]): number {
   return ofRecs
     .filter((r) => r.record_type === "training" && r.item_name === "会議" && r.start_time && r.end_time)
-    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+    .reduce((s, r) => s + sessionMinutes(r), 0);
 }
 
 
@@ -993,10 +1007,9 @@ export function paidLeaveDays(paidLeave: number, halfLeave: number): number {
  * ⚠ 初任者研修は含めない (総括表の初任者研修時間と記録の時間が合わず、ルール未確認)
  */
 export function trainingMinutes(ofRecs: OfficeFormRecord[]): number {
-  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
   return ofRecs
     .filter((r) => r.record_type === "training" && (r.item_name === "研修" || r.item_name === "HRD研修") && r.start_time && r.end_time)
-    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+    .reduce((s, r) => s + sessionMinutes(r), 0);
 }
 
 /**
@@ -1015,19 +1028,23 @@ export function trainingMinutesByDay(ofRecs: OfficeFormRecord[], processingMonth
   const out = new Map<string, number>();
   for (const r of ofRecs) {
     if (r.record_type !== "training" || !/HRD|研修|会議/.test(r.item_name) || !r.item_date || !r.start_time || !r.end_time) continue;
-    const m = /(\d+)月(\d+)日|(\d+)\/(\d+)/.exec(r.item_date);
-    if (!m) continue;
-    const key = `${processingMonth.slice(0, 4)}/${String(Number(m[1] ?? m[3])).padStart(2, "0")}/${String(Number(m[2] ?? m[4])).padStart(2, "0")}`;
-    out.set(key, (out.get(key) ?? 0) + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)));
+    const one = Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time));
+    // ⚠ "6/10,6/17" のように 複数日が 1 行にまとめられていることがある。
+    //   ★ 列挙された日付すべてにキーを配る (残業の日8h/週40h の判定に効くので ここだけ直し忘れると別方向に壊れる)
+    for (const part of String(r.item_date).split(/[,、，]+/)) {
+      const m = /(\d+)月(\d+)日|(\d+)\/(\d+)/.exec(part.trim());
+      if (!m) continue;
+      const key = `${processingMonth.slice(0, 4)}/${String(Number(m[1] ?? m[3])).padStart(2, "0")}/${String(Number(m[2] ?? m[4])).padStart(2, "0")}`;
+      out.set(key, (out.get(key) ?? 0) + one);
+    }
   }
   return out;
 }
 
 export function hrdTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
-  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
   return ofRecs
     .filter((r) => r.record_type === "training" && r.item_name === "HRD研修" && r.start_time && r.end_time)
-    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+    .reduce((s, r) => s + sessionMinutes(r), 0);
 }
 
 /**
@@ -1037,10 +1054,9 @@ export function hrdTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
  * 介護時間 (社員の介護超過) には足さない。
  */
 export function shoninshaTrainingMinutes(ofRecs: OfficeFormRecord[]): number {
-  const toMin = (t: string | null | undefined) => { const [h, m] = String(t ?? "").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
   return ofRecs
     .filter((r) => r.record_type === "training" && r.item_name === "初任者研修" && r.start_time && r.end_time)
-    .reduce((s, r) => s + Math.max(0, toMin(r.end_time) - toMin(r.start_time) - toMin(r.break_time)), 0);
+    .reduce((s, r) => s + sessionMinutes(r), 0);
 }
 
 /** 研修手当 = 研修時間 × 同行の時給 (さつきが丘 1,150円: 岩田ゆきよ 2026-05 研修2h 2,300円 / 2026-07 HRD2h 2,300円+研修1h 1,150円) */
