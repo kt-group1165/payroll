@@ -172,6 +172,8 @@ export type MonthlyPayroll = {
   travel_km_auto: number;
   office_travel_unit_price: number;
   office_commute_unit_price: number;
+  /** 通勤費の手入力 (円)。出勤簿が当システムに無い職員に使う。0/未設定なら 出勤簿から出す */
+  commute_fee_override?: number | null;
   business_trip_fee: number;
   childcare_allowance: number;
   yocho_hours: number;
@@ -514,6 +516,11 @@ export function travelFeeAmount(p: MonthlyPayroll): number {
  *   切り上げにすると全部消える方向。
  */
 export function commuteFeeAmount(p: MonthlyPayroll): number {
+  // 月ごとの手入力 (commute_yen) があればそれを使う。出勤簿が当システムに無い職員のため (2026-09-24)。
+  // ⚠ km ではなく **円**で持つ。事務員の通勤費は 日額 (例 310円/日 × 出勤日数) で、
+  //   km × 単価 では再現できない (三島由佳 花見川 6,510円 ÷ 21日 = 310円/日。
+  //   事業所の通勤単価 12.3円/km に割り戻すと 25.2km/日 という 作り物の距離になる)
+  if ((p.commute_fee_override ?? 0) > 0) return Math.round(p.commute_fee_override!);
   return Math.ceil(p.summary.commuteKmTotal * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
 }
 

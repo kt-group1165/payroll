@@ -47,6 +47,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "commute_yen",
+    label: "通勤費 (出勤簿が取り込めない人)",
+    unit: "円",
+    help: "出勤簿が当システムに無い職員の通勤費。入れた月は 出勤簿からの計算より優先する。★km ではなく円で持つ (事務員の通勤費は 日額の積み上げで、km × 単価では再現できない。三島由佳 花見川 310円/日 × 21日 = 6,510円)。本稼働後は出勤簿から",
+    allowNegative: false,
+  },
+  {
     key: "childcare_allowance",
     label: "育児手当 (書式にない分)",
     unit: "円",

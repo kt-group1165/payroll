@@ -934,11 +934,13 @@ export default function PayrollPage() {
       const manualChildcareByNum = new Map<string, number>();
       // 事務時間の手入力 (分)。出勤簿が CSV で取り込めない事務員用 (五井 根本カオリ はスキャンPDFしか無い)
       const manualOfficeWorkMinByNum = new Map<string, number>();
+      // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
+      const manualCommuteYenByNum = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -948,6 +950,7 @@ export default function PayrollPage() {
           if (r.item_key === "training_minutes" && Number(r.numeric_value ?? 0) > 0) manualTrainingMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "childcare_allowance" && Number(r.numeric_value ?? 0) > 0) manualChildcareByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "office_work_minutes" && Number(r.numeric_value ?? 0) > 0) manualOfficeWorkMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
 
@@ -1103,7 +1106,8 @@ export default function PayrollPage() {
             + (manualTrainingMinByNum.get(empNum) ?? 0),
           trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
-        const commuteFee = hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
+        const commuteFee = manualCommuteYenByNum.get(normEmp(empNum))
+          ?? hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
         // 出張距離: 手入力 (精算書) > 事業所書式 > 出勤簿 (tripKmOf)。2026-09-17 user 方針: 地図の距離は使わない
         // ⚠ 出張費単価は 従業員契約情報 にも入っているが そちらは「今 (2026-09) の値」で、
         //   ガソリン単価に連動して月ごとに変わる (事業所 12.3〜12.7 に対し 契約は 12.0〜12.1)。
@@ -1558,6 +1562,7 @@ export default function PayrollPage() {
             travel_km_auto: travelKmAuto,
             office_travel_unit_price: office?.travel_unit_price ?? 0,
             office_commute_unit_price: office?.commute_unit_price ?? 0,
+            commute_fee_override: manualCommuteYenByNum.get(normEmp(e.employee_number)) ?? null,
             business_trip_fee: 0,
             childcare_allowance: manualChildcareByNum.get(normEmp(e.employee_number)) ?? computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
