@@ -85,6 +85,12 @@ type Rule = {
 export type DiffContext = {
   /** その職員の役職 (社員 / 提責 / 事務員 / パート) */
   roleType: string;
+  /**
+   * 事務員として扱う人か (payroll_employees.is_office_worker)。
+   * ⚠ 役職が「パート」でも 事務員の人がいる (五井 根本カオリ・市原ムツミ 片岡久美子 など 時給の事務員 17 名)。
+   *   roleType だけで見ると この人たちの穴が 判定から漏れる (2026-09-24)
+   */
+  isOfficeWorker?: boolean;
   /** 出勤簿の「勤務時間の欄」と「終了−開始−休憩」が食い違う分 (分)。0 なら食い違い無し */
   attendanceGapMinutes: number;
   /** 当システムに出勤簿が 1 件も無いか */
@@ -124,19 +130,32 @@ const RULES: Rule[] = [
     when: ({ ctx }) => ctx.attendanceGapMinutes !== 0,
   },
   {
-    item: "介護",
-    verdict: "要確認",
+    item: "本人給",
+    verdict: "許容",
     reason:
-      "総括表の「介護」がマイナス。この列はプラスなら介護超過手当 (499 件中 470 件が当方と一致) だが、" +
-      "マイナスの 50 件は別物で、当方の「残業から差し引く額」(careOvertimeOffsetForOvertime) とも 1 件も合わない (2026-09-24 実測)。" +
-      "列の意味が分かっていないので 許容にしない",
-    when: ({ soukatsu }) => soukatsu < 0,
+      "事務員の本人給 = 出勤簿の時間 × 事務時給。出勤簿の「勤務時間の欄」と 終了−開始−休憩 が食い違う分だけずれる。" +
+      "★ 出勤簿の 1 日の休憩欄が 0:00 のまま (同月の他の日は 1:00) という記入漏れが多い " +
+      "(2026-09-24 実測: 時刻≠欄 120 行のうち 71 行が「1 日」)",
+    when: ({ ctx }) => ctx.attendanceGapMinutes !== 0 && (ctx.roleType === "事務員" || Boolean(ctx.isOfficeWorker)),
   },
   {
     item: "介護",
     verdict: "許容",
-    reason: "提責・事務員には介護超過手当を払わない (総括表の「提責・事務」区分 3 の 12 件すべてで ② は 0)",
-    when: ({ ctx, ours }) => ours === 0 && (ctx.roleType === "提責" || ctx.roleType === "事務員"),
+    reason:
+      "総括表の「介護」は **時間外h × 介護超過単価** をそのまま出した値で、訪問時間が閾値 (120h) に" +
+      "届かない月は マイナスになる。総括表もマイナスの月は支給していない (調整手当に足していない)。" +
+      "当システムは 0 を出す。★これが正 (user 2026-09-24)。" +
+      "実証 (おゆみ野 峯島しおり): 時間外h −4.5 × 2,500 = −11,250 / −9.375 × 2,500 = −23,438 / " +
+      "−2.125 × 2,500 = −5,313 と 総括表の「介護」が一致する",
+    when: ({ soukatsu, ours }) => soukatsu < 0 && ours === 0,
+  },
+  {
+    item: "介護",
+    verdict: "許容",
+    reason: "提責には介護超過手当を払わない (総括表の「提責・事務」区分 3 の 12 件すべてで ② は 0)",
+    // ⚠ **事務員を外した (2026-09-24)。**事務員の「介護」列は 訪問分の給与 (office_worker_care_pay) で、
+    //   許容にしたままだと 本物の設定漏れが隠れる (大網白里 稲葉香織 6 か月 ¥44,596 が実際に不足していた)
+    when: ({ ctx, ours }) => ours === 0 && ctx.roleType === "提責",
   },
   {
     item: "介護",
@@ -208,7 +227,7 @@ const RULES: Rule[] = [
     item: "本人給",
     verdict: "要対応",
     reason: "出勤簿が当システムに 1 件も無い (事務員の本人給 = 出勤簿の時間 × 事務時給)",
-    when: ({ ctx, ours }) => ctx.noAttendance && ours === 0 && ctx.roleType === "事務員",
+    when: ({ ctx, ours }) => ctx.noAttendance && ours === 0 && (ctx.roleType === "事務員" || Boolean(ctx.isOfficeWorker)),
   },
   {
     item: "通勤費",

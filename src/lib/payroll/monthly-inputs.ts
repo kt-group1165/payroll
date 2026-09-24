@@ -54,6 +54,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "overnight_allowance",
+    label: "泊まり手当 (日をまたぐ訪問)",
+    unit: "円",
+    help: "日をまたぐ訪問に対して払う手当。★規則が決まっていないので 計算しない (user 2026-09-24「その時考える」)。画面が候補の回数を出すので 払う額を人が入れる。総括表 おゆみ野 峯島しおり = 1 回 10,000 円 × 4〜5 回/月",
+    allowNegative: false,
+  },
+  {
     key: "childcare_allowance",
     label: "育児手当 (書式にない分)",
     unit: "円",

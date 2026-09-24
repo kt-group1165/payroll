@@ -113,7 +113,10 @@ function ourItems(
     // 出張費 = 距離 × 単価 (travelFeeAmount) + 画面で足した上乗せ (business_trip_fee)
     { item: "出張費", ours: travelFeeAmount(p) + num(e.business_trip_fee) },
     { item: "移動手当", ours: 0 },
-    { item: "介護", ours: careOvertimePay(p) },
+    // ⚠ 総括表の「介護」列は 社員=介護超過手当 / 事務員=訪問分の給与 の **両方**が入る列。
+    //   当方は別フィールドに分けているので 足して比べる (2026-09-24 実測: やわた 熊谷明日香 202608 は
+    //   当方の office_worker_care_pay 40,852 が総括表と 1 円一致していたのに 偽陽性で出ていた)
+    { item: "介護", ours: careOvertimePay(p) + num(e.office_worker_care_pay) },
     { item: "夜朝深夜", ours: yochoAllowance(p) },
     { item: "有給休暇手当", ours: monthlyPaidLeaveAllowance(p) },
     { item: "残業総額", ours: overtimeExcessPay(p, otSettings) },
@@ -157,7 +160,7 @@ export default function VerificationContent() {
       supabase.from("payroll_attendance_records")
         .select("employee_number,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5,break_time,work_hours")
         .eq("office_number", officeNumber).eq("year", Number(month.slice(0, 4))).eq("month", Number(month.slice(4))),
-      supabase.from("payroll_employees").select("employee_number,role_type,office_id"),
+      supabase.from("payroll_employees").select("employee_number,role_type,is_office_worker,office_id"),
       supabase.from("payroll_office_form_records").select("id")
         .eq("processing_month", month).eq("office_number", officeNumber).limit(1),
     ]);
@@ -190,6 +193,10 @@ export default function VerificationContent() {
       if (fromTimes > 0 && fromTimes !== fromColumn) gapByEmp.set(n, (gapByEmp.get(n) ?? 0) + (fromTimes - fromColumn));
     }
     const roleOf = new Map((empRes.data ?? []).map((r) => [norm((r as { employee_number: string }).employee_number), String((r as { role_type: string }).role_type ?? "")]));
+    // ⚠ 役職が「パート」でも 事務員の人がいる (時給の事務員 17 名)。roleType だけで見ると穴が漏れる
+    const officeWorkerOf = new Set((empRes.data ?? [])
+      .filter((r) => (r as { is_office_worker?: boolean }).is_office_worker)
+      .map((r) => norm((r as { employee_number: string }).employee_number)));
 
     const sMap = new Map(soukatsu.map((r) => [`${norm(r.employee_number)}|${r.sheet_kind}`, r]));
     const out: typeof rows = [];
@@ -208,6 +215,7 @@ export default function VerificationContent() {
           attendanceGapMinutes: gapByEmp.get(n) ?? 0,
           noAttendance: !hasAtt.has(n),
           hasRateGap: num(e.unmappedCount) > 0,
+          isOfficeWorker: officeWorkerOf.has(n),
           officeNumber,
           officeFormEmpty,
         };

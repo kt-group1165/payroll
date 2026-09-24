@@ -174,6 +174,8 @@ export type MonthlyPayroll = {
   office_commute_unit_price: number;
   /** 通勤費の手入力 (円)。出勤簿が当システムに無い職員に使う。0/未設定なら 出勤簿から出す */
   commute_fee_override?: number | null;
+  /** 泊まり手当 (円)。月ごとの手入力。★規則が無いので計算せず 人が入れた額をそのまま足す (2026-09-24) */
+  overnight_allowance?: number;
   business_trip_fee: number;
   childcare_allowance: number;
   yocho_hours: number;
@@ -420,12 +422,12 @@ export const SHINYA_UNIT_PRICE = 500;
  * 総括表① で検算 (2026-09-23): 深夜訪介 = 深夜介護 + 深夜重度×0.75 が 全件一致 (5/5)。
  * 深夜手当 = 深夜訪介 × 500 円/時 も 20/20 一致 (おゆみ野 峯島 2026-03 深夜重度36:00 → 27:00 × 500 = 13,500)。
  */
-export function shinyaHoursFromRecords(records: { calc_duration: string; time_period?: string | null; service_code?: string }[], isHours075?: (code: string) => boolean): number {
+export function shinyaHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
   return records
     .filter((r) => (r.time_period ?? "").includes("深夜"))
     .reduce((s, r) => {
       const m = parseDurationMinutes(r.calc_duration);
-      return s + (isHours075 && isHours075(r.service_code ?? "") ? m * 0.75 : m);
+      return s + m;
     }, 0) / 60;
 }
 
@@ -538,6 +540,37 @@ export function commuteFeeAmount(p: MonthlyPayroll): number {
  *   実測 (2026-09-24 / 訪問介護): 欄の間違いは **五井 西川裕美子 202604 の 1 件だけ**
  *   (書式の通勤km 825.3 → 総括表は 距離(出) 825.3 / 通勤費 0 / 出張費 10,482)。
  */
+/**
+ * 日をまたぐ訪問 (= 泊まり) の候補を拾う。**金額は計算しない。**
+ *
+ * user 2026-09-24:「ルールが明確じゃない。金曜23時から土曜9時までやった時に
+ * 同様に1万円出るのかと言ったら、その時考える、みたいなノリ」
+ * → 規則にできないので 候補を出すだけにして、払う額は 月ごとの手入力 (overnight_allowance) で人が決める。
+ *
+ * 実例 (おゆみ野 峯島しおり): 金 17:00-00:00 + 土 00:00-09:00 で 1 回。
+ *   総括表の「・夜朝・深夜」= 回数 × 10,000 円 で 2026-03〜08 の 6 か月すべて一致
+ *   (4 回 → 40,000 / 5 回 → 50,000)。深夜時間も 1 回 6.75h で対応する。
+ * ⚠ ただし **これは峯島の特別ルール**で、他の人に当てはめてよいか分かっていない。
+ *
+ * 拾い方は **終了時刻が開始時刻より前** (= 日をまたいだ) と **00:00 開始**の両方。
+ * 00:00 開始だけを見ると 23:00 開始の泊まりを取りこぼす。
+ */
+export function overnightVisitCandidates(
+  records: { service_date: string; calc_start_time?: string | null; calc_end_time?: string | null; service_type?: string | null }[],
+): { service_date: string; start: string; end: string; service_type: string }[] {
+  const out: { service_date: string; start: string; end: string; service_type: string }[] = [];
+  for (const r of records) {
+    const st = String(r.calc_start_time ?? "").slice(0, 5);
+    const en = String(r.calc_end_time ?? "").slice(0, 5);
+    if (!st || !en) continue;
+    const crossesMidnight = en < st;          // 17:00 → 00:00 など
+    const startsAtMidnight = st === "00:00";  // 00:00 → 09:00 など
+    if (!crossesMidnight && !startsAtMidnight) continue;
+    out.push({ service_date: String(r.service_date), start: st, end: en, service_type: String(r.service_type ?? "") });
+  }
+  return out.sort((a, b) => a.service_date.localeCompare(b.service_date) || a.start.localeCompare(b.start));
+}
+
 export type DistanceWarningKind =
   | "ヘルパーに通勤距離"
   | "ヘルパーに通勤費(円)"
@@ -613,6 +646,7 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     travelFeeAmount(p) +
     commuteFeeAmount(p) +
     p.business_trip_fee +
+    (p.overnight_allowance ?? 0) +
     p.childcare_allowance +
     careOvertimePay(p) +
     yochoAllowance(p) +
@@ -1228,12 +1262,12 @@ export function legalHolidayPremiumAmount(
   return Math.round(base * LEGAL_HOLIDAY_PREMIUM_RATE);
 }
 
-export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null; service_code?: string }[], isHours075?: (code: string) => boolean): number {
+export function yochoHoursFromRecords(records: { calc_duration: string; time_period?: string | null }[]): number {
   const min = records
     .filter((r) => { const t = (r.time_period ?? "").trim(); return !t.includes("深夜") && /夜朝|夜間|早朝/.test(t); })
     .reduce((s, r) => {
       const m = parseDurationMinutes(r.calc_duration);
-      return s + (isHours075 && isHours075(r.service_code ?? "") ? m * 0.75 : m);
+      return s + m;
     }, 0);
   return min / 60;
 }

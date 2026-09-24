@@ -1056,11 +1056,13 @@ export default function PayrollPage() {
       const manualOfficeWorkMinByNum = new Map<string, number>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
       const manualCommuteYenByNum = new Map<string, number>();
+      // 泊まり手当 (円)。★規則が決まっていないので計算せず 人が入れた額をそのまま足す
+      const manualOvernightByNum = new Map<string, number>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -1071,6 +1073,7 @@ export default function PayrollPage() {
           if (r.item_key === "childcare_allowance" && Number(r.numeric_value ?? 0) > 0) manualChildcareByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "office_work_minutes" && Number(r.numeric_value ?? 0) > 0) manualOfficeWorkMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
 
@@ -1188,7 +1191,11 @@ export default function PayrollPage() {
 
       // 研修手当の時給 = その事業所の 同行 の時給
       // 実績・出勤簿が無くても 事業所書式だけある人 (会議費・研修のみ) も対象にする (2026-09-17)
-      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys()])) {
+      // ⚠ 月ごとの手入力 (office_work_minutes) しか無い職員を 落とさない (2026-09-24)。
+      //   実績も出勤簿も事業所書式も無い事務員は ここに入らず、手入力があっても **行ごと消えていた**。
+      //   実証: 五井 根本カオリ 202603 は 手入力 4,562 分があるのに payload に居ない (本人給 0 円・総括表は 87,438 円)。
+      //   202604〜08 に居たのは たまたま 事業所書式に通勤km/出張km の行があって ofByEmp に入っていたから
+      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys(), ...manualOfficeWorkMinByNum.keys()])) {
         const info    = roleMap.get(empNum);
         // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
         if (!info) continue;
@@ -1710,10 +1717,14 @@ export default function PayrollPage() {
             office_travel_unit_price: empTravelRate.get(normEmp(e.employee_number)) ?? office?.travel_unit_price ?? 0,
             office_commute_unit_price: empCommuteRate.get(normEmp(e.employee_number)) ?? office?.commute_unit_price ?? 0,
             commute_fee_override: manualCommuteYenByNum.get(normEmp(e.employee_number)) ?? null,
+            overnight_allowance: manualOvernightByNum.get(normEmp(e.employee_number)) ?? 0,
             business_trip_fee: 0,
             childcare_allowance: manualChildcareByNum.get(normEmp(e.employee_number)) ?? computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
             // 夜朝の時間は実績の時間帯から自動で出す (2026-09-17)。画面で手入力すれば上書きできる
-            yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [], isCareHours075),
+            // ⚠ 夜朝・深夜は **0.75 を掛けない** (user 2026-09-24)。0.75 は 介護超過と特日だけ (Hana系)。
+            //   実測: 土日祝で 0.75 を掛けると Hana系 137 人月が全滅 (0/137)、掛けなければ 136/137 一致。
+            //   夜朝で 0.75 対象を含むのは 857 人月中 20 件 (¥4,363)、深夜は 101 人月中 7 件で全部 峯島しおり
+            yocho_hours: yochoHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             adjustment: adjustmentByNum.get(normEmp(e.employee_number)) ?? 0,
             overtime_excess_paid: overtimeExcessPaidRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`),
             // 事務員の訪問分 (介護): 時給者と同じ訪問ごとの金額 + 土日祝手当 (事業所の時給・日祝のみ の設定どおり)。2026-09-22
@@ -1728,7 +1739,7 @@ export default function PayrollPage() {
                 })()
               : 0,
             overtime_offset_full_care: offsetFullCareRes.offices.has(selectedOffice.office_number),
-            shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [], isCareHours075),
+            shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 特日手当: Hana系 (0.75 掛けの事業所) は 介護時間と同じく 0.75 掛け対象を ×0.75 した時間で払う (おゆみ野 峯島 2026-08 960分 → 2,400円)
             tokubi_allowance: tokubiAllowanceAmount(care075Res.offices.has(selectedOffice.office_number)
               ? careMinutesFromRecords(withAccompanyByCode(recsByEmpM.get(normEmp(e.employee_number)) ?? [])
