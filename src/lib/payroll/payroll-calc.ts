@@ -524,6 +524,52 @@ export function commuteFeeAmount(p: MonthlyPayroll): number {
   return Math.ceil(p.summary.commuteKmTotal * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
 }
 
+/**
+ * 距離の種別のおかしさ (user 2026-09-24 のルール)。
+ *
+ *   ヘルパー (事務員でない)  … 距離は **出張距離**。通勤距離は出ない
+ *   事務員                  … 家と事業所の往復 = **通勤距離**。
+ *                             役所に行った / ヘルパーとして訪問した分だけ 出張距離も出る (= 両方になる)
+ *   これ以外は 片方しか出ない。訪問入浴も同じ (入浴をやりながら一部ヘルパーをしたらその分が出張)。
+ *
+ * ⚠ **直さずに警告する。**強制的に付け替えると 別種まで巻き込む:
+ *   船橋 金子百恵 (提責) は 通勤km 欄に **定期代の円** (月 21,390〜25,668) を入れていて、
+ *   総括表もそれをそのまま通勤費で払っている。6 か月中 5 か月 当方と一致する 正常なケース。
+ *   実測 (2026-09-24 / 訪問介護): 欄の間違いは **五井 西川裕美子 202604 の 1 件だけ**
+ *   (書式の通勤km 825.3 → 総括表は 距離(出) 825.3 / 通勤費 0 / 出張費 10,482)。
+ */
+export type DistanceWarningKind =
+  | "ヘルパーに通勤距離"
+  | "ヘルパーに通勤費(円)"
+  | "事務員に通勤距離が無い"
+  | "事務員に出張距離";
+
+export function distanceKindWarning(p: {
+  isOfficeWorker: boolean;
+  /** km とみなした通勤の分 */
+  commuteKm: number;
+  /** 円 (定期代など) とみなした通勤の分 */
+  commuteYen: number;
+  businessKm: number;
+}): DistanceWarningKind | null {
+  const hasCommute = p.commuteKm > 0 || p.commuteYen > 0;
+  if (!p.isOfficeWorker) {
+    if (p.commuteYen > 0) return "ヘルパーに通勤費(円)";
+    if (p.commuteKm > 0) return "ヘルパーに通勤距離";
+    return null;
+  }
+  if (p.businessKm > 0) return hasCommute ? "事務員に出張距離" : "事務員に通勤距離が無い";
+  return null;
+}
+
+/** その警告をどう読むか (画面に出す一行) */
+export const DISTANCE_WARNING_HINT: Record<DistanceWarningKind, string> = {
+  "ヘルパーに通勤距離": "ヘルパーの距離は出張距離のはず。事業所書式の欄の間違いの可能性 (書式で 通勤km → 出張km に移す)",
+  "ヘルパーに通勤費(円)": "通勤km の欄に 金額 が入っている (定期代)。円のまま通勤費で払う。総括表も同じ扱いなので そのままでよいことが多い",
+  "事務員に通勤距離が無い": "事務員は家と事業所の往復が出るはず。通勤距離の入力漏れの可能性",
+  "事務員に出張距離": "役所に行った / ヘルパーとして訪問した分。正常だが 中身の確認を",
+};
+
 /** 通勤km の欄の値がこれ以上なら km ではなく 金額 (円) の入力ミスとみなす (書式=月の合計 / 出勤簿=1日) */
 export const COMMUTE_KM_AS_YEN_MONTHLY = 2000;
 export const COMMUTE_KM_AS_YEN_DAILY = 200;

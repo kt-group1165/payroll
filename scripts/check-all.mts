@@ -33,6 +33,7 @@ const CHECKS: Check[] = [
   { name: "legal-holiday", script: "check:legal-holiday", why: "法定休日労働の割増 (日曜起算で7日連続勤務した週の土曜 × 0.35)。総括表①と 7/7 一致した規則を固定する" },
   { name: "tenure-rehire", script: "check:tenure-rehire", why: "退職→再入社で グループ勤続がリセットされるか。通算のままだと 勤続手当が過大になる (白石則子 6か月 ¥34,250)" },
   { name: "rate-gap", script: "check:rate-gap", why: "単価が引けず 0 円で計算される訪問 (= 過少支給)。★基準値方式。自費のマスタ設計が決まるまで 0 にはできない" },
+  { name: "distance-kind", script: "check:distance-kind", why: "距離の種別 (通勤/出張)。ヘルパーの距離は出張・事務員は通勤。取り違えると 通勤費と出張費が二重に出る" },
   // 2026-09-24: 職員マスタ未登録 3 組 (2026-08 入社) を登録して 基準値が 0 になったので strict に戻した。
   // 基準値ファイル (check-office-input-flow-baseline.json) 自体は残っているが 期待値は 0 = 増えたら落ちる。
   { name: "office-input-flow", script: "check:office-input-flow", why: "★ 事業所書式 Web 入力 (/office-input) が 給与計算に届く経路。射影・合流・実データ合流 (職員マスタ未登録 0 組が期待値)" },

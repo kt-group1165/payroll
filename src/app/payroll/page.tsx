@@ -91,6 +91,9 @@ import {
   type VisitServiceRecord,
   type OfficeAttendanceRecord,
   type OfficeFormRecord,
+  DISTANCE_WARNING_HINT,
+  distanceKindWarning,
+  type DistanceWarningKind,
   NON_HOURLY_CATEGORIES,
   resolveGroupTenureMonths,
 } from "@/lib/payroll/payroll-calc";
@@ -232,6 +235,8 @@ export default function PayrollPage() {
    * 実際に起きていた: 東郷 × 自費身生 19 件 / 花見川 015110 300分 / 四街道 015124 330分。
    */
   const [rateGaps, setRateGaps] = useState<RateGap[]>([]);
+  // 距離の種別のおかしさ (ヘルパーに通勤距離 / 事務員に出張距離 など)。直さずに気づけるようにするだけ
+  const [distWarns, setDistWarns] = useState<{ kind: DistanceWarningKind; name: string; detail: string }[]>([]);
   /** 警告の行から直すための 類型の一覧 (id, name) */
   const [categoryList, setCategoryList] = useState<{ id: string; name: string }[]>([]);
 
@@ -279,6 +284,7 @@ export default function PayrollPage() {
     setSavedAt(null);
     setHourlyResults([]); setMonthlyResults([]);
     setRateGaps([]);
+    setDistWarns([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
     try {
@@ -1426,6 +1432,29 @@ export default function PayrollPage() {
       }
       setCategoryList((catRes.data ?? []).map((c: ServiceCategory) => ({ id: c.id, name: c.name })));
       setRateGaps([...rateGapAcc.values()].sort((a, b) => b.count - a.count));
+
+      // ── 距離の種別の警告 (user 2026-09-24 のルール) ──────────────────
+      //   総括表の実支給と突き合わせると 4 分類はきれいに対応した (2026-09-24 実測):
+      //     事務員に出張距離 49人月 → 49件すべてに通勤費・45件に出張費あり = 正常
+      //     事務員に通勤距離が無い 8人月 → うち 7 件は総括表が通勤費を払っている = 入力漏れ
+      //     ヘルパーに通勤費(円) 6人月 → 定期代。総括表も同額で払う = 正常
+      //     ヘルパーに通勤距離 1人月 → 総括表の通勤費は 0 で出張費だけ = 欄の間違い
+      {
+        const dw: { kind: DistanceWarningKind; name: string; detail: string }[] = [];
+        for (const e of employeesRaw) {
+          const s = computeSummaryOf(e.employee_number, recsByEmp.get(normEmp(e.employee_number)) ?? []);
+          const kind = distanceKindWarning({
+            isOfficeWorker: Boolean(e.is_office_worker) || e.role_type === "事務員",
+            commuteKm: s.commuteKmTotal, commuteYen: s.commuteYenTotal ?? 0, businessKm: s.businessKmTotal,
+          });
+          if (!kind) continue;
+          dw.push({ kind, name: e.name,
+            detail: `通勤 ${s.commuteKmTotal.toFixed(1)}km` + ((s.commuteYenTotal ?? 0) > 0 ? ` / 通勤費 ${yen(s.commuteYenTotal ?? 0)}` : "") + ` / 出張 ${s.businessKmTotal.toFixed(1)}km` });
+        }
+        const order: DistanceWarningKind[] = ["ヘルパーに通勤距離", "事務員に通勤距離が無い", "事務員に出張距離", "ヘルパーに通勤費(円)"];
+        dw.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.name.localeCompare(b.name, "ja"));
+        setDistWarns(dw);
+      }
       setHourlyResults(hourlySorted);
 
       setProgress({ pct: 92, label: "月給者を計算中" });
@@ -2056,6 +2085,29 @@ export default function PayrollPage() {
       )}
       {distanceWarning && (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded text-sm">⚠ {distanceWarning}</div>
+      )}
+      {distWarns.length > 0 && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-400 text-amber-900 rounded text-sm">
+          <p className="font-medium">
+            ⚠ 距離の種別が ルールと合わない職員が {distWarns.length} 名います
+          </p>
+          <p className="text-xs mt-0.5">
+            ヘルパーの距離は <b>出張距離</b>。事務員は 家と事業所の往復が <b>通勤距離</b> で、
+            役所に行った分・ヘルパーとして訪問した分だけ 出張距離も出ます。直さずに出しているだけです
+          </p>
+          <ul className="mt-2 space-y-1">
+            {distWarns.map((w, i) => (
+              <li key={`${w.kind}-${w.name}-${i}`} className="flex flex-wrap items-baseline gap-x-2">
+                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${w.kind === "ヘルパーに通勤距離" ? "bg-red-100 text-red-800" : w.kind === "事務員に通勤距離が無い" ? "bg-orange-100 text-orange-800" : "bg-slate-100 text-slate-700"}`}>
+                  {w.kind}
+                </span>
+                <span className="font-medium">{w.name}</span>
+                <span className="text-xs text-amber-800">{w.detail}</span>
+                <span className="text-xs text-muted-foreground">— {DISTANCE_WARNING_HINT[w.kind]}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {rateGaps.length > 0 && (
         <div className="mb-4 p-3 bg-red-50 border border-red-400 text-red-900 rounded text-sm">

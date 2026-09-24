@@ -19,7 +19,8 @@
     "check:legal-holiday": "tsx scripts/verify-legal-holiday.mts",
     "check:office-input-flow": "tsx scripts/check-office-input-flow.mts",
     "check:tenure-rehire": "tsx scripts/verify-tenure-rehire.mts",
-    "check:rate-gap": "tsx scripts/verify-rate-gap.mts"
+    "check:rate-gap": "tsx scripts/verify-rate-gap.mts",
+    "check:distance-kind": "tsx scripts/verify-distance-kind.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
