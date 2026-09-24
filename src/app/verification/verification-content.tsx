@@ -7,7 +7,7 @@ import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  diffItems, pickSoukatsu, hasSoukatsuColumn, type DiffContext, type ItemDiff, type DiffVerdict,
+  diffItems, pickSoukatsu, hasSoukatsuColumn, soukatsuAdjustmentParts, type DiffContext, type ItemDiff, type DiffVerdict,
 } from "@/lib/payroll/soukatsu-diff";
 import {
   attendanceWorkMinutes,
@@ -83,6 +83,7 @@ function ourItems(
       { item: "出張費", ours: num(e.business_trip_fee) },
       { item: "ドタキャン", ours: num(e.cancel_allowance) },
       { item: "特日", ours: num(e.tokubi_allowance) },
+      { item: "調整手当(内訳計)", ours: num(e.tokubi_allowance) },
       { item: "残業総額", ours: num(e.overtime_pay) + num(e.legal_holiday_pay) },
       { item: "育児手当", ours: num(e.childcare_allowance) },
       { item: "調整手当", ours: num(e.error_adjustment) },
@@ -117,6 +118,10 @@ function ourItems(
     //   当方は別フィールドに分けているので 足して比べる (2026-09-24 実測: やわた 熊谷明日香 202608 は
     //   当方の office_worker_care_pay 40,852 が総括表と 1 円一致していたのに 偽陽性で出ていた)
     { item: "介護", ours: careOvertimePay(p) + num(e.office_worker_care_pay) },
+    // ★ 総括表は 介護超過・夜朝・特日 を「調整手当」に畳み込む (2026-09-24 に 762 人月で実測・92.7% 一致)。
+    //   当方はそれぞれ別項目なので、合計どうしで突合する。個別項目は参考表示として残す
+    { item: "調整手当(内訳計)", ours: careOvertimePay(p) + num(e.office_worker_care_pay)
+      + yochoAllowance(p) + num(e.tokubi_allowance) },
     { item: "夜朝深夜", ours: yochoAllowance(p) },
     { item: "有給休暇手当", ours: monthlyPaidLeaveAllowance(p) },
     { item: "残業総額", ours: overtimeExcessPay(p, otSettings) },
@@ -218,10 +223,17 @@ export default function VerificationContent() {
           isOfficeWorker: officeWorkerOf.has(n),
           officeNumber,
           officeFormEmpty,
+          // 総括表が 介護超過・夜朝・特日 を「調整手当」に畳み込んでいるか
+          adjustmentFolded: pickSoukatsu(s.row_data, "調整手当") !== 0,
         };
+        // ★ 総括表の「調整手当」= 介護超過(プラスのみ) + 夜朝深夜 + 特日 − 誤差 (2026-09-24 実測 92.7%)。
+        //   当方の内訳計と この合計を突き合わせる項目を差し込む
+        const parts = soukatsuAdjustmentParts(s.row_data);
         const items = ourItems(e, kind, otMap)
-          .filter((x) => hasSoukatsuColumn(s.row_data, x.item))
-          .map((x) => ({ ...x, soukatsu: pickSoukatsu(s.row_data, x.item) }));
+          .filter((x) => x.item === "調整手当(内訳計)" || hasSoukatsuColumn(s.row_data, x.item))
+          .map((x) => ({ ...x, soukatsu: x.item === "調整手当(内訳計)" ? parts.total : pickSoukatsu(s.row_data, x.item) }))
+          // 調整手当が無い人月は 内訳計の行を出さない (0 対 0 のノイズを避ける)
+          .filter((x) => !(x.item === "調整手当(内訳計)" && parts.total === 0 && x.ours === 0));
         out.push({
           name: String(e.employee_name), num: n, kind,
           total: num(e.grand_total),

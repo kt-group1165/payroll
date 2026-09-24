@@ -23,7 +23,8 @@
     "check:distance-kind": "tsx scripts/verify-distance-kind.mts",
     "check:monthly-status": "tsx scripts/verify-monthly-status.mts",
     "check:multiday-training": "tsx scripts/verify-multiday-training.mts",
-    "check:bath-meeting": "tsx scripts/verify-bath-meeting.mts"
+    "check:bath-meeting": "tsx scripts/verify-bath-meeting.mts",
+    "check:adjustment-parts": "tsx scripts/verify-adjustment-parts.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

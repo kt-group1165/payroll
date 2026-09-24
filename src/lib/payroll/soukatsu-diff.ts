@@ -46,6 +46,8 @@ export const SOUKATSU_ALIASES: Record<string, string[]> = {
   出勤時間: ["出勤時間"],
   本人給: ["本人給"],
   事務時給: ["事務時給"],
+  誤差: ["誤差"],
+  特日2: ["・特日"],
   // 社員 (提責・社員シート) の固定給まわり。2026-09-24 に 202607 の実データで 値が入っている列を数えて足した
   職能給: ["職能給"],
   役職手当: ["役職手当"],
@@ -100,6 +102,11 @@ export type DiffContext = {
   /** 事業所番号 */
   officeNumber: string;
   /**
+   * その人月の総括表が 介護超過・夜朝・特日 を「調整手当」に畳み込んでいるか。
+   * true のとき 個別項目の差は 参考表示にして、突合は「調整手当(内訳計)」で行う (2026-09-24)。
+   */
+  adjustmentFolded?: boolean;
+  /**
    * その事業所・月の 事業所書式が 1 行も読めていないか。
    * 2026-09-24 に 合流処理の自己参照バグで 書式が丸ごと消え、出張費・会議費が全社 0 円になった。
    * 1 人ずつ「書式の入力漏れ」と読むと 事故に気づけないので 別の理由として出す。
@@ -115,7 +122,29 @@ const RULES: Rule[] = [
   {
     item: "調整手当",
     verdict: "許容",
-    reason: "総括表で本社が手入力している額。当システムに元が無い (月ごとの手入力で入れれば消える)",
+    reason:
+      "総括表の「調整手当」= 介護超過(プラスのみ) + 夜朝深夜 + 特日 − 誤差。" +
+      "★ 2026-09-24 に 762 人月で実測し 706 件 (92.7%) が 1 円一致。全 22 事業所で同じ式。" +
+      "総括表は これらを個別の支給列として持たず 調整手当に畳み込んでいる。" +
+      "★ 当方の内訳との突合は 下の「調整手当(内訳計)」で行う",
+  },
+  {
+    item: "介護",
+    verdict: "許容",
+    reason: "★ 調整手当に畳み込まれている項目。突合は「調整手当(内訳計)」で行う (2026-09-24)",
+    when: ({ ctx }) => ctx.adjustmentFolded === true,
+  },
+  {
+    item: "夜朝深夜",
+    verdict: "許容",
+    reason: "★ 調整手当に畳み込まれている項目。突合は「調整手当(内訳計)」で行う (2026-09-24)",
+    when: ({ ctx }) => ctx.adjustmentFolded === true,
+  },
+  {
+    item: "特日",
+    verdict: "許容",
+    reason: "★ 調整手当に畳み込まれている項目。突合は「調整手当(内訳計)」で行う (2026-09-24)",
+    when: ({ ctx }) => ctx.adjustmentFolded === true,
   },
   {
     item: "出勤時間",
@@ -246,6 +275,33 @@ export function judgeItem(item: string, ours: number, soukatsu: number, ctx: Dif
     return { item, ours, soukatsu, diff, verdict: r.verdict, reason: r.reason };
   }
   return { item, ours, soukatsu, diff, verdict: "要確認", reason: "理由が分かっていない" };
+}
+
+/**
+ * 総括表の「調整手当」の中身 (2026-09-24 に 762 人月で実測)。
+ *
+ * ★ **事業所ごとに違うのではなく 全 22 事業所で同じ式**だった。
+ *   総括表は 介護超過・夜朝深夜・特日 を **個別の支給列として持たず 調整手当に畳み込んでいる**。
+ *   当方はそれぞれ別項目で出すので、項目別に比べると「調整手当が当方 0 / 総括表が数十万」に見える。
+ *
+ * ```
+ * 調整手当 = 介護超過 (プラスのときだけ) + 夜朝深夜 + 特日 − 誤差
+ * ```
+ *   介護+夜朝            451/762 (59.2%)
+ *   + 特日              634/762 (83.2%)   ← 202608 は 特日 (8/13-15) があるので効く
+ *   + 特日 − 誤差        **706/762 (92.7%)**  11 事業所は 100%
+ *
+ * ⚠ 介護超過は **マイナスの月は足さない**。総括表は 時間外h × 単価 の生値をセルに残すだけで
+ *   支給していない (別途 実証済み)。
+ */
+export function soukatsuAdjustmentParts(row: Record<string, unknown>): {
+  care: number; yocho: number; tokubi: number; gosa: number; total: number;
+} {
+  const care = Math.max(0, pickSoukatsu(row, "介護"));
+  const yocho = Math.max(0, pickSoukatsu(row, "夜朝深夜"));
+  const tokubi = pickSoukatsu(row, "特日2");
+  const gosa = pickSoukatsu(row, "誤差");
+  return { care, yocho, tokubi, gosa, total: care + yocho + tokubi - gosa };
 }
 
 /** 円の差がこれ以下なら「一致」とみなす (端数の丸め) */
