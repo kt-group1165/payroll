@@ -9,7 +9,18 @@ import { Button } from "@/components/ui/button";
 import {
   diffItems, pickSoukatsu, hasSoukatsuColumn, type DiffContext, type ItemDiff, type DiffVerdict,
 } from "@/lib/payroll/soukatsu-diff";
-import { attendanceWorkMinutes, parseWorkHoursMinutes } from "@/lib/payroll/payroll-calc";
+import {
+  attendanceWorkMinutes,
+  careOvertimePay,
+  commuteFeeAmount,
+  monthlyPaidLeaveAllowance,
+  overtimeExcessPay,
+  parseWorkHoursMinutes,
+  travelFeeAmount,
+  yochoAllowance,
+  type MonthlyPayroll,
+  type OvertimeSetting,
+} from "@/lib/payroll/payroll-calc";
 
 /**
  * /verification 総括表との検証 (移行期だけの画面)
@@ -30,6 +41,7 @@ type SoukatsuRow = {
 type CalcPayload = {
   hourly?: Record<string, unknown>[];
   monthly?: Record<string, unknown>[];
+  overtime_settings?: unknown[];
 };
 
 const norm = (n: unknown) => String(n ?? "").replace(/^0+/, "");
@@ -45,7 +57,11 @@ const showVal = (item: string, v: number) => (MINUTE_ITEMS.has(item) ? hhmm(v) :
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 
 /** 当システムの 1 人ぶんの値を 総括表の項目名に合わせて取り出す */
-function ourItems(e: Record<string, unknown>, kind: "part" | "shaseki"): { item: string; ours: number }[] {
+function ourItems(
+  e: Record<string, unknown>,
+  kind: "part" | "shaseki",
+  otSettings: Map<string, OvertimeSetting>,
+): { item: string; ours: number }[] {
   if (kind === "part") {
     return [
       { item: "総支給額", ours: num(e.grand_total) },
@@ -67,6 +83,12 @@ function ourItems(e: Record<string, unknown>, kind: "part" | "shaseki"): { item:
   }
   // 提責・社員。固定給は 給与設定 (settings) の値がそのまま出る
   const st = (e.settings ?? {}) as Record<string, unknown>;
+  // ⚠ 月給者の 通勤費・出張費・介護超過・夜朝・有給・残業は **payload に額として入っていない**。
+  //   payload の 1 件はそのまま MonthlyPayroll なので、給与画面と同じ関数を呼んで出す。
+  //   2026-09-24 まで 出張費を e.business_trip_fee (画面で手入力する上乗せ欄・通常 0) から読んでいて、
+  //   実際は一致している人を「要対応」に出していた (花見川 202605 で 9 名中 8 名が誤報)。
+  //   ★ 逐語コピーは禁止 (片方だけ直すと乖離する)。必ず payroll-calc の関数を呼ぶこと
+  const p = e as unknown as MonthlyPayroll;
   return [
     { item: "総支給額", ours: num(e.grand_total) },
     { item: "本人給", ours: num(st.base_personal_salary) },
@@ -78,9 +100,16 @@ function ourItems(e: Record<string, unknown>, kind: "part" | "shaseki"): { item:
     { item: "特別処遇改善手当", ours: num(st.specific_treatment_improvement) },
     { item: "処遇改善補助金手当", ours: num(st.treatment_subsidy) },
     { item: "固定残業代", ours: num(st.fixed_overtime_pay) },
-    { item: "通勤費", ours: num(e.commute_fee_amount) },
-    { item: "出張費", ours: num(e.business_trip_fee) },
+    { item: "通勤費", ours: commuteFeeAmount(p) },
+    // 出張費 = 距離 × 単価 (travelFeeAmount) + 画面で足した上乗せ (business_trip_fee)
+    { item: "出張費", ours: travelFeeAmount(p) + num(e.business_trip_fee) },
+    { item: "移動手当", ours: 0 },
+    { item: "介護", ours: careOvertimePay(p) },
+    { item: "夜朝深夜", ours: yochoAllowance(p) },
+    { item: "有給休暇手当", ours: monthlyPaidLeaveAllowance(p) },
+    { item: "残業総額", ours: overtimeExcessPay(p, otSettings) },
     { item: "育児手当", ours: num(e.childcare_allowance) },
+    { item: "調整手当", ours: num(e.adjustment) },
     { item: "特日", ours: num(e.tokubi_allowance) },
     { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
   ];
@@ -135,6 +164,10 @@ export default function VerificationContent() {
     if (soukatsu.length === 0) { setNote("この事業所・月の総括表が取り込まれていません (migrations/import_soukatsu_rows.mjs)"); return; }
     const payload = (cRes.data?.payload ?? null) as CalcPayload | null;
     if (!payload) { setNote("この事業所・月の給与計算がまだ実行されていません。先に「給与計算」で実行してください"); return; }
+    // 月給者の 残業・介護超過は 職種ごとの残業設定が要る。計算したときの設定が payload に入っている
+    const otMap = new Map(
+      ((payload.overtime_settings ?? []) as OvertimeSetting[]).map((r) => [r.job_type, r]),
+    );
 
     // 出勤簿の「勤務時間の欄」と「終了−開始−休憩」の食い違い (分)。当システムは時刻を正とするので
     // 食い違いがある人は 出勤時間・残業のずれが説明できる (user 2026-09-23 の方針)
@@ -169,7 +202,7 @@ export default function VerificationContent() {
           officeNumber,
           officeFormEmpty,
         };
-        const items = ourItems(e, kind)
+        const items = ourItems(e, kind, otMap)
           .filter((x) => hasSoukatsuColumn(s.row_data, x.item))
           .map((x) => ({ ...x, soukatsu: pickSoukatsu(s.row_data, x.item) }));
         out.push({

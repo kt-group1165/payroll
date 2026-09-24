@@ -125,6 +125,15 @@ const RULES: Rule[] = [
   },
   {
     item: "介護",
+    verdict: "要確認",
+    reason:
+      "総括表の「介護」がマイナス。この列はプラスなら介護超過手当 (499 件中 470 件が当方と一致) だが、" +
+      "マイナスの 50 件は別物で、当方の「残業から差し引く額」(careOvertimeOffsetForOvertime) とも 1 件も合わない (2026-09-24 実測)。" +
+      "列の意味が分かっていないので 許容にしない",
+    when: ({ soukatsu }) => soukatsu < 0,
+  },
+  {
+    item: "介護",
     verdict: "許容",
     reason: "提責・事務員には介護超過手当を払わない (総括表の「提責・事務」区分 3 の 12 件すべてで ② は 0)",
     when: ({ ctx, ours }) => ours === 0 && (ctx.roleType === "提責" || ctx.roleType === "事務員"),
