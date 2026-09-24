@@ -1,0 +1,22 @@
+{
+  "office_number": "1272401967",
+  "_note": "ＫＴ五井ヘルパーステーション。事業所書式 (202608) に実績があるのに payroll_employees に未登録だった職員。出どころ: payroll_legacy_employee (従業員データ_20260921 (1).csv = 旧システムの職員マスタ)",
+  "employees": [
+    {
+      "employee_number": "260802",
+      "name": "岩坪 恵",
+      "salary_type": "時給",
+      "employment_status": "在職者",
+      "social_insurance": false,
+      "source": "職員マスタ(入社2026-08-05/時給者/ヘルパー) + payroll_service_records 稼働2件(202608)"
+    },
+    {
+      "employee_number": "260803",
+      "name": "木村 江利",
+      "salary_type": "時給",
+      "employment_status": "在職者",
+      "social_insurance": false,
+      "source": "職員マスタ(入社2026-08-25/時給者/ヘルパー)。稼働0件だが事業所書式が初任者研修8/25-8/28のみで入社直後と整合"
+    }
+  ]
+}

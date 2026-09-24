@@ -1,0 +1,14 @@
+{
+  "office_number": "1275800892",
+  "_note": "リンクスヘルパーステーション大網白里。事業所書式 (202608) に実績があるのに payroll_employees に未登録だった職員。出どころ: payroll_legacy_employee (従業員データ_20260921 (3).csv = 旧システムの職員マスタ)",
+  "employees": [
+    {
+      "employee_number": "260803",
+      "name": "木村 美和",
+      "salary_type": "時給",
+      "employment_status": "在職者",
+      "social_insurance": false,
+      "source": "職員マスタ(入社2026-08-26/時給者/ヘルパー) + payroll_service_records 稼働21件(202608)"
+    }
+  ]
+}
