@@ -391,7 +391,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
           .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
         fetchAllSalarySettings(),
@@ -737,9 +737,20 @@ export default function PayrollPage() {
         });
       // 事務員 (役職=事務員 か 事務時給で払う人) は 通勤km を事業所書式優先、それ以外は出勤簿優先 (user 2026-09-18)
       const officeWorkerNums = new Set(employees.filter((e) => e.role_type === "事務員" || e.is_office_worker).map((e) => normEmp(e.employee_number)));
+      // 職員ごとの 通勤単価・出張単価 (入っていれば 事業所の単価より優先。2026-09-24 user)
+      const empCommuteRate = new Map<string, number>();
+      const empTravelRate = new Map<string, number>();
+      for (const e of employees) {
+        const c = (e as { commute_unit_price?: number | null }).commute_unit_price;
+        const tr = (e as { travel_unit_price?: number | null }).travel_unit_price;
+        if (c != null) empCommuteRate.set(normEmp(e.employee_number), Number(c));
+        if (tr != null) empTravelRate.set(normEmp(e.employee_number), Number(tr));
+      }
       const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[], att?: AttendanceRecord[]): AttendanceSummary =>
         computeSummary(withAccompanyByCode(empRecs), att ?? attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
-          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first", specialDays, selectedMonth);
+          officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first", specialDays, selectedMonth,
+          // 自分の通勤単価がある人は その単価で掛けるのが正。「金額とみなす」推測を止める
+          empCommuteRate.has(normEmp(empNum)));
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
@@ -1113,12 +1124,15 @@ export default function PayrollPage() {
           trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");
         const commuteFee = manualCommuteYenByNum.get(normEmp(empNum))
-          ?? hourlyCommuteFeeAmount(empSummary.commuteKmTotal, empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
+          // ⚠ 職員に 通勤単価が入っていれば 事業所の単価より優先 (2026-09-24 user)
+          ?? hourlyCommuteFeeAmount(empSummary.commuteKmTotal,
+               empCommuteRate.get(normEmp(empNum)) ?? empOffice?.commute_unit_price ?? 0, empSummary.commuteYenTotal ?? 0);
         // 出張距離: 手入力 (精算書) > 事業所書式 > 出勤簿 (tripKmOf)。2026-09-17 user 方針: 地図の距離は使わない
         // ⚠ 出張費単価は 従業員契約情報 にも入っているが そちらは「今 (2026-09) の値」で、
         //   ガソリン単価に連動して月ごとに変わる (事業所 12.3〜12.7 に対し 契約は 12.0〜12.1)。
         //   過去月に当てると壊れるので 事業所の単価 (総括表 3〜7月に合わせた値) を使う。2026-09-21
-        const businessTripFee = hourlyBusinessTripFeeAmount(tripKmOf(empNum, empSummary.businessKmTotal), empOffice?.travel_unit_price ?? 0);
+        const businessTripFee = hourlyBusinessTripFeeAmount(tripKmOf(empNum, empSummary.businessKmTotal),
+          empTravelRate.get(normEmp(empNum)) ?? empOffice?.travel_unit_price ?? 0);
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
           ? 0
@@ -1589,8 +1603,9 @@ export default function PayrollPage() {
             bonus_paid: bonusPaidNums.has(normEmp(e.employee_number)),
             travel_km: 0,
             travel_km_auto: travelKmAuto,
-            office_travel_unit_price: office?.travel_unit_price ?? 0,
-            office_commute_unit_price: office?.commute_unit_price ?? 0,
+            // ⚠ 名前は office_ だが **職員の単価があればそちらが入る** (2026-09-24 user)
+            office_travel_unit_price: empTravelRate.get(normEmp(e.employee_number)) ?? office?.travel_unit_price ?? 0,
+            office_commute_unit_price: empCommuteRate.get(normEmp(e.employee_number)) ?? office?.commute_unit_price ?? 0,
             commute_fee_override: manualCommuteYenByNum.get(normEmp(e.employee_number)) ?? null,
             business_trip_fee: 0,
             childcare_allowance: manualChildcareByNum.get(normEmp(e.employee_number)) ?? computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),

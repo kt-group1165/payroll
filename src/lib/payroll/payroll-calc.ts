@@ -1493,6 +1493,12 @@ export function computeSummary(
   specialDays: ReadonlySet<string> = new Set(),
   /** 対象月 (YYYYMM)。渡すと 週40時間超 (日曜起算) も残業に数える (2026-09-23 user 了承) */
   yearMonth?: string,
+  /**
+   * 通勤km の欄の値を「金額 (円)」とみなす閾値を使わない (2026-09-24)。
+   * 職員に **自分の通勤単価**が入っている人は その単価で掛けるのが正なので、
+   * 金額とみなす推測を止める (船橋 金子百恵 = 電車代。単価 1 円/km にして 入力値をそのまま円にする)。
+   */
+  skipCommuteYenHeuristic = false,
 ): AttendanceSummary {
   // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
   const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -1588,11 +1594,13 @@ export function computeSummary(
   //   船橋 金子 事業所書式 3〜7月 21,390〜25,668 (月の km としてありえない) / やわた 熊谷 2026-04 出勤簿 1日 460 (往復の運賃) × 15日
   //   → 書式は 月 COMMUTE_KM_AS_YEN_MONTHLY 以上、出勤簿は 1日 COMMUTE_KM_AS_YEN_DAILY 以上 を 金額 とみなす
   const attCommute = attDays.map((r) => (r as unknown as { commute_km?: number }).commute_km ?? 0);
-  const commuteKmFromAtt = attCommute.filter((v) => v < COMMUTE_KM_AS_YEN_DAILY).reduce((s, v) => s + v, 0);
-  const commuteYenFromAtt = attCommute.filter((v) => v >= COMMUTE_KM_AS_YEN_DAILY).reduce((s, v) => s + v, 0);
+  const yenDaily = skipCommuteYenHeuristic ? Infinity : COMMUTE_KM_AS_YEN_DAILY;
+  const yenMonthly = skipCommuteYenHeuristic ? Infinity : COMMUTE_KM_AS_YEN_MONTHLY;
+  const commuteKmFromAtt = attCommute.filter((v) => v < yenDaily).reduce((s, v) => s + v, 0);
+  const commuteYenFromAtt = attCommute.filter((v) => v >= yenDaily).reduce((s, v) => s + v, 0);
   const ofCommute = ofRecs.filter((r) => r.item_name === "通勤km").map((r) => Number(r.numeric_value) || 0);
-  const commuteKmFromOf = ofCommute.filter((v) => v < COMMUTE_KM_AS_YEN_MONTHLY).reduce((s, v) => s + v, 0);
-  const commuteYenFromOf = ofCommute.filter((v) => v >= COMMUTE_KM_AS_YEN_MONTHLY).reduce((s, v) => s + v, 0);
+  const commuteKmFromOf = ofCommute.filter((v) => v < yenMonthly).reduce((s, v) => s + v, 0);
+  const commuteYenFromOf = ofCommute.filter((v) => v >= yenMonthly).reduce((s, v) => s + v, 0);
   const attAny = commuteKmFromAtt + commuteYenFromAtt > 0, ofAny = commuteKmFromOf + commuteYenFromOf > 0;
   const useOf = commuteSource === "office_form_first" ? (ofAny || !attAny) : (!attAny && ofAny);
   const commuteKmTotal = useOf ? commuteKmFromOf : commuteKmFromAtt;

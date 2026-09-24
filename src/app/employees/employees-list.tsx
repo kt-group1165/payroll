@@ -79,6 +79,8 @@ const defaultForm = {
   care_qualification_kind: "",
   social_insurance: false,
   paid_leave_unit_price: "",
+  commute_unit_price: "",
+  travel_unit_price: "",
   communication_fee_type: "none",
 };
 
@@ -339,6 +341,9 @@ export function EmployeesList({
       care_qualification_kind: form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : null,
       social_insurance: form.social_insurance,
       paid_leave_unit_price: form.paid_leave_unit_price ? parseFloat(form.paid_leave_unit_price) : 0,
+      // 空なら NULL (= 事業所の単価を使う)。0 と 未設定 を区別する
+      commute_unit_price: form.commute_unit_price === "" ? null : parseFloat(form.commute_unit_price),
+      travel_unit_price: form.travel_unit_price === "" ? null : parseFloat(form.travel_unit_price),
       communication_fee_type: form.communication_fee_type,
     };
 
@@ -374,6 +379,8 @@ export function EmployeesList({
       care_qualification_kind: emp.has_care_qualification ? (emp.care_qualification_kind ?? "不明（要件は満たす）") : "",
       social_insurance: emp.social_insurance ?? false,
       paid_leave_unit_price: emp.paid_leave_unit_price?.toString() ?? "",
+      commute_unit_price: (emp as { commute_unit_price?: number | null }).commute_unit_price?.toString() ?? "",
+      travel_unit_price: (emp as { travel_unit_price?: number | null }).travel_unit_price?.toString() ?? "",
       communication_fee_type: emp.communication_fee_type ?? "none",
     });
     setEditingId(emp.id);
@@ -847,6 +854,29 @@ export function EmployeesList({
                       <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
                     </select>
                     <p className="text-[11px] text-muted-foreground mt-0.5">途中で変わった人は「給与設定」の「この月からの通信費」で。</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">通勤単価 (円/km)</Label>
+                      <Input
+                        type="number" min={0} step="0.1"
+                        value={form.commute_unit_price}
+                        placeholder="事業所の単価を使う"
+                        onChange={(e) => setForm({ ...form, commute_unit_price: e.target.value })}
+                      />
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        空なら事業所の単価。<b>1</b> にすると 入力した距離がそのまま円になる (電車代など)
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">出張単価 (円/km)</Label>
+                      <Input
+                        type="number" min={0} step="0.1"
+                        value={form.travel_unit_price}
+                        placeholder="事業所の単価を使う"
+                        onChange={(e) => setForm({ ...form, travel_unit_price: e.target.value })}
+                      />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
