@@ -19,6 +19,7 @@
 
 // ─── 型 (page.tsx から移動。他ファイルはそれぞれ独自定義を持つため import 不要) ───
 
+import { bathVisitCareMinutes } from "./monthly-inputs";
 export type OvertimeSetting = {
   job_type: string;
   scheduled_hours_per_month: number;
@@ -918,7 +919,51 @@ export const MEETING1_UNIT_PRICE = 1500;
  * ⚠ 件数の欄に 金額 (1,500) を入れた書式がある (船橋 3月・四街道 6月・八千代 6月 の 12 件)。
  *   件数として 100 以上はありえないので 金額 (円) として足す (2026-09-19)
  */
-export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number): number {
+/**
+ * 入浴を 介護時間に足すときの数え方。**事業所で記録の仕方が違う** (2026-09-24 実測)。
+ *
+ *   "minutes" … 総括表に **入浴時間 (分)** の列があり、分をそのまま足す
+ *               リンクス茂原 (1271500942)。入浴時間 1,500分 / 訪問件数 16件 ≈ 94分/件
+ *   "count"   … 入浴時間の列が無く **件数**しか無い。1 件 = BATH_VISIT_HOURS (1.12h) で換算
+ *               Ｈａｎａおゆみ野 (1270501180)。総括表の式 時間外h = 訪問 … + 1.12 × 件数 − 120 から逆算
+ *               (1.1 だと 東條 2,500円 / 総括表 4,250円 で合わない。1.12 で合う)
+ *   "none"    … 入浴を介護時間に足さない
+ *
+ * ⚠ **両方入れると二重に足される。**茂原の総括表には「訪問件数」列もあるが、これは
+ *   入浴時間と同じ入浴を別の単位で表しているだけ (入浴時間 0 の月は件数も 0)。
+ *   新しい事業所で入浴が出てきたら **どちらの列があるかを先に確かめる**こと。
+ * ⚠ 1 件あたりの時間も事業所で違う (茂原 約 90〜94 分 / おゆみ野の換算は 67.2 分)。
+ *   同じ「入浴 1 件」でも中身が違うので 換算係数を他所に流用しない。
+ */
+export type BathCareMode = "minutes" | "count" | "none";
+
+/** 既定の数え方。設定に無い事業所は 件数 × 1.12h (従来の挙動) */
+export const DEFAULT_BATH_CARE_MODE: BathCareMode = "count";
+
+/**
+ * 入浴を 介護時間 (分) に換算する。事業所の方式に従う。
+ * @param bathMinutes 月ごとの手入力 bath_minutes
+ * @param bathVisitCount 月ごとの手入力 bath_visit_count
+ */
+export function bathCareMinutes(mode: BathCareMode, bathMinutes: number, bathVisitCount: number): number {
+  if (mode === "none") return 0;
+  if (mode === "minutes") return Math.max(0, bathMinutes);
+  // ★ 1.12 を写さない。monthly-inputs.ts の bathVisitCareMinutes をそのまま呼ぶ
+  //   (逐語コピーすると 片方だけ直したときに乖離する)
+  return bathVisitCareMinutes(bathVisitCount);
+}
+
+/** 会議1/2/3 の単価 (円/件)。事業所ごとに違う */
+export type MeetingUnitPrices = { 会議1?: number; 会議2?: number; 会議3?: number };
+
+/**
+ * 会議 1 件の既定単価。全 21 事業所 263 行で 1,500 円と一致 (2026-09-24 実測)。
+ * ⚠ 会議2・会議3 を使うのは 3 事業所だけで、**同じ「会議3」でも単価が違う**
+ *   (八千代 1,500 / おゆみ野 1,150)。事業所ごとに持つ。
+ */
+export const MEETING1_UNIT_PRICE_DEFAULT = 1500;
+
+export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: number, prices?: MeetingUnitPrices): number {
   const amountAsCount = (r: OfficeFormRecord) => r.record_type === "km" && (r.numeric_value ?? 0) >= MEETING_COUNT_AS_YEN_THRESHOLD;
   const countOf = (key: string) => ofRecs
     .filter((r) => r.item_name.includes(key) && !amountAsCount(r))
@@ -926,8 +971,13 @@ export function computeMeetingFee(ofRecs: OfficeFormRecord[], meetingUnitPrice: 
   const yen = ofRecs
     .filter((r) => /会議[123]/.test(r.item_name) && amountAsCount(r))
     .reduce((s, r) => s + (r.numeric_value ?? 0), 0);
-  return Math.round(countOf("会議1") * MEETING1_UNIT_PRICE)
-    + Math.round((countOf("会議2") + countOf("会議3")) * meetingUnitPrice)
+  // 事業所ごとの単価があればそれを使う。無ければ 会議1=1,500 / 会議2・3=事業所の meeting_unit_price (従来)
+  const p1 = prices?.会議1 ?? MEETING1_UNIT_PRICE;
+  const p2 = prices?.会議2 ?? meetingUnitPrice;
+  const p3 = prices?.会議3 ?? meetingUnitPrice;
+  return Math.round(countOf("会議1") * p1)
+    + Math.round(countOf("会議2") * p2)
+    + Math.round(countOf("会議3") * p3)
     + Math.round(yen);
 }
 

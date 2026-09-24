@@ -36,6 +36,7 @@ const CHECKS: Check[] = [
   { name: "distance-kind", script: "check:distance-kind", why: "距離の種別 (通勤/出張)。ヘルパーの距離は出張・事務員は通勤。取り違えると 通勤費と出張費が二重に出る" },
   { name: "monthly-status", script: "check:monthly-status", why: "月次の確定と 確定後の過誤。確定した月を上書きしない / 差額を翌月以降で清算する" },
   { name: "multiday-training", script: "check:multiday-training", why: "研修・会議の「複数日を1行にまとめた書き方」を日数ぶん数えるか。1回としか数えないと 研修費が半分になる" },
+  { name: "bath-meeting", script: "check:bath-meeting", why: "入浴の数え方 (分/件数) と 会議1・2・3 の単価を事業所ごとに選ぶ。両方足すと介護時間が二重になる" },
   // 2026-09-24: 職員マスタ未登録 3 組 (2026-08 入社) を登録して 基準値が 0 になったので strict に戻した。
   // 基準値ファイル (check-office-input-flow-baseline.json) 自体は残っているが 期待値は 0 = 増えたら落ちる。
   { name: "office-input-flow", script: "check:office-input-flow", why: "★ 事業所書式 Web 入力 (/office-input) が 給与計算に届く経路。射影・合流・実データ合流 (職員マスタ未登録 0 組が期待値)" },

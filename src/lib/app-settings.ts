@@ -36,6 +36,53 @@ export async function getWeekendHolidayRates(supabase: SupabaseClient): Promise<
 }
 
 /**
+ * 会議1/2/3 の単価 (円/件) を事業所ごとに持つ (2026-09-24)。
+ *   { "<事業所番号>": { "会議1": 1500, "会議2": 500, "会議3": 1500 } }
+ * 入っていない会議は 従来どおり (会議1 = 1,500 / 会議2・3 = payroll_offices.meeting_unit_price)。
+ *
+ * ⚠ **payroll_offices.meeting_unit_price は 画面・CSV のラベルが「会議1単価」なのに
+ *   計算では 会議2・会議3 の単価として使われている**という食い違いがある (2026-09-24 判明)。
+ *   ここに入れた事業所は その食い違いの影響を受けない。
+ *
+ * 実測 (2026-09-24 / 総括表からの逆算):
+ *   会議1 = 1,500 が 21 事業所 263 行で一致
+ *   会議2・会議3 を使うのは 3 事業所だけ:
+ *     ムツミ(1272400829)  会議2 = 500     (マスタは 1,500 で 5 件 ¥5,000 の過大)
+ *     おゆみ野(1270501180) 会議2 = 1,150 / 会議3 = 1,150
+ *     八千代(1272603851)   会議3 = 1,500
+ *   ⚠ おゆみ野の会議3 は 202605 だけ 1,500 で 202606-07 は 1,150。根拠が 2 名 6 件しか無いので
+ *     月ごとの切替は入れていない。
+ */
+export const MEETING_UNIT_PRICES_KEY = "meeting_unit_prices";
+
+export type MeetingUnitPriceMap = Record<string, { 会議1?: number; 会議2?: number; 会議3?: number }>;
+
+export async function getMeetingUnitPrices(supabase: SupabaseClient): Promise<{ prices: MeetingUnitPriceMap; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MEETING_UNIT_PRICES_KEY).maybeSingle();
+  if (error) return { prices: {}, error: error.message };
+  return { prices: ((data?.value as { prices?: MeetingUnitPriceMap } | null)?.prices) ?? {}, error: null };
+}
+
+/**
+ * 入浴を 介護時間に足すときの数え方を 事業所ごとに選ぶ (2026-09-24 user)。
+ *   { "<事業所番号>": "minutes" | "count" | "none" }
+ *
+ *   minutes … 総括表に 入浴時間(分) の列がある。分をそのまま足す   例 リンクス茂原
+ *   count   … 件数しか無い。1 件 = 1.12 時間 で換算              例 Ｈａｎａおゆみ野
+ *   none    … 入浴を介護時間に足さない
+ * 設定に無い事業所は "count" (従来の挙動)。
+ *
+ * ⚠ **両方の手入力を入れると二重に足される。**方式を選ぶことで どちらを見るかが決まる。
+ */
+export const BATH_CARE_MODES_KEY = "bath_care_modes";
+
+export async function getBathCareModes(supabase: SupabaseClient): Promise<{ modes: Record<string, "minutes" | "count" | "none">; error: string | null }> {
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", BATH_CARE_MODES_KEY).maybeSingle();
+  if (error) return { modes: {}, error: error.message };
+  return { modes: ((data?.value as { modes?: Record<string, "minutes" | "count" | "none"> } | null)?.modes) ?? {}, error: null };
+}
+
+/**
  * 会議費を払わない事業所 (事業所番号)。
  * 総括表 2026-07 で おゆみ野 は 会議1件数・会議(時間) の記録がある 3 名とも 会議費 0 円だった。
  */

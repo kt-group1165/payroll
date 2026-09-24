@@ -12,9 +12,9 @@ import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
-import { bathVisitCareMinutes, BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
+import { BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
 import Link from "next/link";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingCountItems, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingUnitPrices, getBathCareModes, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -41,6 +41,8 @@ import {
   adjustedCommuteDistanceM,
   normalizeYM,
   computeChildcareAllowance,
+  bathCareMinutes,
+  DEFAULT_BATH_CARE_MODE,
   computeMeetingFee,
   meetingMinutes,
   treatmentSubsidyAmount,
@@ -612,8 +614,12 @@ export default function PayrollPage() {
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
-      const meetingItemsRes = await getMeetingCountItems(supabase);
-      if (meetingItemsRes.error) throw new Error(`会議費の件数の項目の読み込みに失敗: ${meetingItemsRes.error}`);
+      // 会議1/2/3 の単価 (事業所ごと)。入っていない会議は 従来どおり
+      const meetingPricesRes = await getMeetingUnitPrices(supabase);
+      if (meetingPricesRes.error) throw new Error(`会議の単価の読み込みに失敗: ${meetingPricesRes.error}`);
+      // 入浴を介護時間に足すときの数え方 (事業所ごと。minutes / count / none)
+      const bathModeRes = await getBathCareModes(supabase);
+      if (bathModeRes.error) throw new Error(`入浴の数え方の読み込みに失敗: ${bathModeRes.error}`);
       const doukouFlatRes = await getDoukouEngoFlatRates(supabase);
       if (doukouFlatRes.error) throw new Error(`同行援護の時給の読み込みに失敗: ${doukouFlatRes.error}`);
       const sougouRatesRes = await getSougouSeikatsuRates(supabase);
@@ -1246,7 +1252,8 @@ export default function PayrollPage() {
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
           ? 0
-          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""))
+          : computeMeetingFee(ofByEmp.get(empNum) ?? [], meetingUnitPriceOf(info?.officeId ?? ""),
+              meetingPricesRes.prices[empOffice?.office_number ?? ""])
             + (trainingPayAmount(meetingMinutes(ofByEmp.get(empNum) ?? []), trainingRate) ?? 0);
         // 事務時間: 手入力があればそれ (出勤簿が CSV で取り込めない人)。無ければ出勤簿の出勤時間
         const officeWorkMinutes = info.isOfficeWorker ? (manualOfficeWorkMinByNum.get(empNum) ?? empSummary.workHoursMin) : 0;
@@ -1752,8 +1759,13 @@ export default function PayrollPage() {
               // 研修の手入力 (書式に無い分) も 介護時間に足す。旧システムは HRD を介護超過の時間に入れている
               //   (おゆみ野 山本純子 2026-04: 訪問144.25 + HRD 1.0 + 重度×0.75 − 重度 − 120 = 18.125h × 2,500 = 45,313円)
               + (manualTrainingMinByNum.get(normEmp(e.employee_number)) ?? 0)
-              + bathVisitCareMinutes(bathCountByEmp.get(normEmp(e.employee_number)) ?? 0)
-              + Math.max(0, bathMinutesByEmp.get(normEmp(e.employee_number)) ?? 0),
+              // ⚠ 入浴は 事業所の方式で **どちらか一方**だけを足す (2026-09-24 user)。
+              //   両方足すと 同じ入浴が 時間でも件数でも数えられて二重になる
+              //   (茂原の総括表には 入浴時間 と 訪問件数 の両方があるが 同じ入浴を別の単位で表しているだけ)
+              + bathCareMinutes(
+                  bathModeRes.modes[selectedOffice.office_number] ?? DEFAULT_BATH_CARE_MODE,
+                  bathMinutesByEmp.get(normEmp(e.employee_number)) ?? 0,
+                  bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             // 欠勤日数: 出勤簿があれば出勤簿の「欠勤」(半欠勤 0.5)、無ければ事業所書式 (東郷 戸田 2026-03 は出勤簿で 4 日 = 総括表)
