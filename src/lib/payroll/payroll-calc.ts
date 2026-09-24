@@ -1196,6 +1196,15 @@ export function payMinutesOf(minutes: number): number {
   return minutes > 0 ? Math.ceil(minutes / 5) * 5 : minutes;
 }
 
+/**
+ * 時給で払わない類型。**0 円でも「単価が引けていない」ではない** ので警告に出さない (2026-09-24)。
+ *   キャンセル … ドタキャン手当 (cancel_allowance) で払う。実績の calc_duration は 24:00 の置き値
+ *   対象外     … そもそも支給対象ではない
+ * 実測: 全 284,342 実績のうち 単価が引けない 581 件中 **507 件 (87%) がこの 2 類型**で、
+ *   本物の設定漏れが 74 件に埋もれていた。
+ */
+export const NON_HOURLY_CATEGORIES = new Set(["キャンセル", "対象外"]);
+
 export function visitPayAmount(
   minutes: number,
   hourlyRate: number | null,

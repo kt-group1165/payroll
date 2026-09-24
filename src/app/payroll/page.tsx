@@ -91,6 +91,7 @@ import {
   type VisitServiceRecord,
   type OfficeAttendanceRecord,
   type OfficeFormRecord,
+  NON_HOURLY_CATEGORIES,
   resolveGroupTenureMonths,
 } from "@/lib/payroll/payroll-calc";
 
@@ -1179,7 +1180,8 @@ export default function PayrollPage() {
         //   おゆみ野 澤木 72→75 = 131円 が 総括表の差と一致)。時間の集計 (介護超過・残業など) は切り上げない
         const pay        = visitPayAmount(payMinutesOf(minutes), hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
         // 0 円になった理由を残す (類型が無いのか / 類型はあるが時給が無いのか)
-        if (pay === null || hourlyRate === null) {
+        // ⚠ キャンセル・対象外は そもそも時給で払わないので 警告に出さない (NON_HOURLY_CATEGORIES)
+        if ((pay === null || hourlyRate === null) && !NON_HOURLY_CATEGORIES.has(catName)) {
           const cause = categoryId === null ? "類型なし" : "時給なし";
           const key = cause === "類型なし"
             ? `類型なし|${rec.service_code}`
@@ -1204,7 +1206,11 @@ export default function PayrollPage() {
         const { minutes, catName, hourlyRate, pay } = recordPayOf(rec);
         emp.records.push({ id: rec.id, service_date: rec.service_date, minutes, service_code: rec.service_code, category_name: catName, hourly_rate: hourlyRate, pay });
         emp.totalMinutes += minutes;
-        if (pay !== null) emp.totalPay += pay; else emp.unmappedCount++;
+        // ⚠ unmappedCount は「単価が引けず 0 円になった」件数。キャンセル・対象外 (有給・研修・会議) は
+        //   そもそも時給で払わないので数えない。数えていたため 検証ページが
+        //   ドタキャン 1 件の人を「単価が引けず 0 円の訪問がある」と誤って出していた (2026-09-24)
+        if (pay !== null) emp.totalPay += pay;
+        else if (!NON_HOURLY_CATEGORIES.has(catName)) emp.unmappedCount++;
       }
 
       // ── 法定休日労働の割増 (日曜起算で 7 日連続勤務した週の土曜 × 0.35) ──

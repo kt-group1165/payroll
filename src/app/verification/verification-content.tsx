@@ -12,6 +12,8 @@ import {
 import {
   attendanceWorkMinutes,
   careOvertimePay,
+  weekendAllowanceMinutes,
+  weekendHolidayAllowanceAmount,
   commuteFeeAmount,
   monthlyPaidLeaveAllowance,
   overtimeExcessPay,
@@ -66,7 +68,14 @@ function ourItems(
     return [
       { item: "総支給額", ours: num(e.grand_total) },
       { item: "集計項目小計", ours: num(e.totalPay) },
-      { item: "本人給", ours: num(e.totalPay) + num(e.office_work_pay) },
+      // ⚠ 総括表のパートの「本人給」は 集計項目小計 そのものではなく、
+      //   集計項目小計 + ドタキャン + 土日祝 + 特日 (2026-09-24 に 2,304 人月で実測。
+      //   小計だけ 85.9% → ドタキャン・土日祝・特日 を足して 97.1% → 初任者研修費まで入れると 98.6%)。
+      //   ★ 当方の「集計項目小計」(= totalPay) は 総括表と一致しているので、ずれていたのは この列の中身だけ
+      { item: "本人給", ours: num(e.totalPay) + num(e.office_work_pay) + num(e.cancel_allowance)
+        + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate))
+        + num(e.tokubi_allowance) },
+      { item: "土日祝", ours: weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate)) },
       { item: "移動手当", ours: num(e.travel_allowance) },
       { item: "有給休暇手当", ours: num(e.paid_leave_allowance) },
       { item: "通信手当", ours: num(e.communication_fee) },
