@@ -299,6 +299,42 @@ export function resolveTenureAllowance(
   return computed;
 }
 
+/** 旧システムの従業員マスタ 1 行 (勤続の解決に要る分だけ) */
+export type LegacyTenureRow = {
+  /** その事業所での勤続月数 */
+  office_tenure_months: number | null;
+  /** グループ通算の勤続月数 */
+  group_tenure_months: number | null;
+  hire_date: string | null;
+  quit_date: string | null;
+};
+
+/**
+ * グループ勤続月数を出す。**退職を挟んで再入社した人はリセットする** (2026-09-24)。
+ *
+ * 旧システムの `group_tenure_months` は 退職の前後を通算したままで、再入社しても戻らない。
+ * 総括表はリセットした年数で払っているので、そのまま使うと 勤続手当が過大になる。
+ *
+ * 判定: **同じ人の別の行の退職日が この行の入社日より前** なら 空白期間があった = 再入社。
+ *   兼務先を 1 つ辞めただけの人 (退職日 > この行の入社日) は 継続なので リセットしない。
+ *
+ * 実測 (2026-09-24 / payroll_legacy_employee 1,656 行):
+ *   退職行と在職行を併せ持つ 7 名のうち 再入社は **白石 則子 1 名だけ**。
+ *   おゆみ野 入社 2024-09-16 / 五井 退職 2024-05-31 → group 178 か月 (50円/h) を
+ *   office 22 か月 (10円/h) に落とす。総括表の単価 10 と一致し 6 か月 ¥34,250 の過大が消える。
+ *   他 6 名 (藤原有紀子・齊藤延江・花島典子・小林里奈・櫻澤美紀・堀内則子) は
+ *   退職日のほうが後 = 兼務先の終了なので 触らない。
+ */
+export function resolveGroupTenureMonths(row: LegacyTenureRow, siblings: LegacyTenureRow[]): number | null {
+  const group = row.group_tenure_months;
+  if (group == null) return null;
+  if (!row.hire_date) return group;
+  const rehired = siblings.some((s) => s !== row && s.quit_date != null && s.quit_date < row.hire_date!);
+  if (!rehired) return group;
+  // 再入社。この事業所での勤続 (= 再入社後の月数) に戻す。取れなければ 通算のまま
+  return row.office_tenure_months ?? group;
+}
+
 /**
  * 勤続手当の月数 = グループ勤続月数 と 入社日からの月数 の 長い方 (月給の節目判定用、2026-09-22)。
  * 入社日からの月数 = その月 − 入社月、入社日が 1 日でなければ さらに 1 か月引く

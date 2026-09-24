@@ -91,6 +91,7 @@ import {
   type VisitServiceRecord,
   type OfficeAttendanceRecord,
   type OfficeFormRecord,
+  resolveGroupTenureMonths,
 } from "@/lib/payroll/payroll-calc";
 
 // ─── 実勤続月数の基準月 ─────────────────────────────────────
@@ -638,23 +639,33 @@ export default function PayrollPage() {
         const target = normName(selectedOffice.name ?? "");
         // ⚠ 1,656 行あるので必ずページングする。以前は 1 回の select で 先頭 1,000 行しか読めておらず、
         //   残りの人は 勤続月数・入社日が引けないまま 従来の月数で計算されていた (2026-09-22 判明)
-        const data: { office_name: string; employee_number: string; group_tenure_months: number | null; company_tenure_months: number | null; tenure_as_of: string; hire_date: string | null }[] = [];
+        const data: { office_name: string; employee_number: string; employee_name: string | null; office_tenure_months: number | null; group_tenure_months: number | null; company_tenure_months: number | null; tenure_as_of: string; hire_date: string | null; quit_date: string | null }[] = [];
         let error: { message: string } | null = null;
         for (let from = 0; ; from += 1000) {
           const res = await supabase
             .from("payroll_legacy_employee")
-            .select("office_name,employee_number,group_tenure_months,company_tenure_months,tenure_as_of,hire_date")
+            .select("office_name,employee_number,employee_name,office_tenure_months,group_tenure_months,company_tenure_months,tenure_as_of,hire_date,quit_date")
             .order("id").range(from, from + 999);
           if (res.error) { error = res.error; break; }
           data.push(...((res.data ?? []) as typeof data));
           if ((res.data ?? []).length < 1000) break;
         }
         if (error) console.warn("[payroll] 旧システムの従業員データを読めませんでした (従来の勤続月数で計算します):", error.message);
+        // ⚠ 退職 → 再入社の人は グループ勤続がリセットされる。判定には **同じ人の全事業所ぶんの行**が要るので
+        //   事業所で絞り込む前に 人ごとにまとめておく (resolveGroupTenureMonths)
+        const byPerson = new Map<string, typeof data>();
+        for (const r of data) {
+          const k = normEmp(r.employee_number) + "|" + normName(r.employee_name ?? "");
+          const list = byPerson.get(k);
+          if (list) list.push(r); else byPerson.set(k, [r]);
+        }
         for (const r of data) {
           if (r.group_tenure_months == null || normName(r.office_name) !== target) continue;
+          const groupMonths = resolveGroupTenureMonths(r, byPerson.get(normEmp(r.employee_number) + "|" + normName(r.employee_name ?? "")) ?? [r]);
+          if (groupMonths == null) continue;
           if (r.hire_date) legacyHireDate.set(normEmp(r.employee_number), r.hire_date);
           const asOf = Number(r.tenure_as_of.slice(0, 4)) * 12 + Number(r.tenure_as_of.slice(4, 6));
-          legacyTenureMonths.set(normEmp(r.employee_number), Math.max(0, r.group_tenure_months - (asOf - (year * 12 + month))));
+          legacyTenureMonths.set(normEmp(r.employee_number), Math.max(0, groupMonths - (asOf - (year * 12 + month))));
           legacyStepMonths.set(normEmp(r.employee_number), Math.max(0, Math.max(r.group_tenure_months, r.company_tenure_months ?? 0) - (asOf - (year * 12 + month))));
         }
       }
