@@ -122,6 +122,12 @@ export type HourlyPayroll = {
   meeting_fee: number;
   /** 研修・HRD研修の手当 = 研修時間 × 同行の時給 (trainingPayAmount) */
   training_pay: number;
+  /**
+   * 初任者研修ぶんの手当 (円)。★ **総括表では「本人給」に入る** ので training_pay と分けて持つ
+   * (研修・HRD研修・手入力ぶんは「その他手当」側で 本人給には入らない。2026-09-25 実測)。
+   * ⚠ training_pay にも含まれているので **足し算するときに二重にしない**。
+   */
+  shoninsha_pay?: number;
   /** 特日手当 (tokubiAllowanceAmount)。hourlyTotalPay に含める */
   tokubi_allowance?: number;
   /** 旧システムのデータを使った項目 (例 "移動時間" "出勤時間")。use_legacy_data の切り替えまで。2026-09-22 */

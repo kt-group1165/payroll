@@ -63,6 +63,8 @@ function ourItems(
   e: Record<string, unknown>,
   kind: "part" | "shaseki",
   otSettings: Map<string, OvertimeSetting>,
+  /** 総括表の「初任者研修費」列に金額があるか。あるときだけ 本人給に足す */
+  shoninshaInSoukatsu = false,
 ): { item: string; ours: number }[] {
   if (kind === "part") {
     return [
@@ -72,9 +74,13 @@ function ourItems(
       //   集計項目小計 + ドタキャン + 土日祝 + 特日 (2026-09-24 に 2,304 人月で実測。
       //   小計だけ 85.9% → ドタキャン・土日祝・特日 を足して 97.1% → 初任者研修費まで入れると 98.6%)。
       //   ★ 当方の「集計項目小計」(= totalPay) は 総括表と一致しているので、ずれていたのは この列の中身だけ
+      // ★ 初任者研修費も本人給に含まれる。ただし **総括表の「初任者研修費」列がある人だけ**。
+      //   研修・HRD研修は「その他手当」側で本人給には入らない。
+      //   実測 (2026-09-25 / パート 2,294 人月): 足さないと 95.2% → 列がある人だけ足して **96.3%**
+      //   (当方の初任者研修費を全員に足すと 95.3% にしかならない。橘真悟・伊藤瑠奈・春日晶子 は足さないほうが合う)
       { item: "本人給", ours: num(e.totalPay) + num(e.office_work_pay) + num(e.cancel_allowance)
         + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate))
-        + num(e.tokubi_allowance) },
+        + num(e.tokubi_allowance) + (shoninshaInSoukatsu ? num(e.shoninsha_pay) : 0) },
       { item: "土日祝", ours: weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate)) },
       { item: "移動手当", ours: num(e.travel_allowance) },
       { item: "有給休暇手当", ours: num(e.paid_leave_allowance) },
@@ -229,7 +235,8 @@ export default function VerificationContent() {
         // ★ 総括表の「調整手当」= 介護超過(プラスのみ) + 夜朝深夜 + 特日 − 誤差 (2026-09-24 実測 92.7%)。
         //   当方の内訳計と この合計を突き合わせる項目を差し込む
         const parts = soukatsuAdjustmentParts(s.row_data);
-        const items = ourItems(e, kind, otMap)
+        const items = ourItems(e, kind, otMap,
+          pickSoukatsu(s.row_data, "初任者研修費") + pickSoukatsu(s.row_data, "初任者研修調整費") > 0)
           .filter((x) => x.item === "調整手当(内訳計)" || hasSoukatsuColumn(s.row_data, x.item))
           .map((x) => ({ ...x, soukatsu: x.item === "調整手当(内訳計)" ? parts.total : pickSoukatsu(s.row_data, x.item) }))
           // 調整手当が無い人月は 内訳計の行を出さない (0 対 0 のノイズを避ける)

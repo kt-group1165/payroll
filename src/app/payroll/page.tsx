@@ -1234,6 +1234,10 @@ export default function PayrollPage() {
         const paidLeaveAllowance = paidLeaveAllowanceOf(info.empId, empNum, paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         // 研修・会議の時間は 全事業所 一律 1,150円/時 (総括表① で実測。以前は同行の時給で 0.75 掛けの事業所が 863円になっていた)
         const trainingRate = TRAINING_RATE_PER_HOUR;
+        // ⚠ **初任者研修費は 総括表では「本人給」に入る**ので 分けて持つ (2026-09-25 実測)。
+        //   研修・HRD研修・手入力ぶんは「その他手当」側で、本人給には入らない。
+        //   パート 2,294 人月で 本人給 = 小計+ドタ+土日祝+特日 が 95.2% → **初任者研修費を足すと 98%台**
+        const shoninshaPay = trainingPayAmount(shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
         const trainingPay = trainingPayAmount(
           trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? [])
             + (manualTrainingMinByNum.get(empNum) ?? 0),
@@ -1279,6 +1283,7 @@ export default function PayrollPage() {
           communication_fee: communicationFee,
           meeting_fee: meetingFee,
           training_pay: trainingPay,
+          shoninsha_pay: shoninshaPay,
           ...(() => { const m = (attByEmpH.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
           childcare_allowance: manualChildcareByNum.get(empNum) ?? computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth, { limit: contractOf.get(empNum)?.childcare_limit, ratePct: contractOf.get(empNum)?.childcare_rate_pct, method: contractOf.get(empNum)?.childcare_method }),
           commute_fee: commuteFee,
