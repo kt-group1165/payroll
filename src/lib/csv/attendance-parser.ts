@@ -1,3 +1,4 @@
+import { parseNumericCell } from "./numeric-cell";
 import type {
   AttendanceRow,
   AttendanceMeta,
@@ -164,8 +165,9 @@ export async function parseAttendanceFile(
     const totals = {
       breakTime: (totalsRow?.[18] ?? "").trim(),
       workHours: (totalsRow?.[19] ?? "").trim(),
-      commuteKm: parseFloat((totalsRow?.[21] ?? "0").trim()) || 0,
-      businessKm: parseFloat((totalsRow?.[20] ?? "0").trim()) || 0,
+      // ★ parseFloat("1,302") は 1。カンマ・全角を外してから読む (numeric-cell.ts)
+      commuteKm: parseNumericCell(totalsRow?.[21]) ?? 0,
+      businessKm: parseNumericCell(totalsRow?.[20]) ?? 0,
       overtimeHours: "0:00",
     };
 
@@ -260,11 +262,11 @@ export function fillMissingRows(rows: AttendanceRow[]): void {
     if (r.勤務時間 !== before) filled.push(r);
   }
   if (filled.length === 0) return;
-  const kms = new Set(rows.map((r) => parseFloat(r.通勤km ?? "")).filter((v) => Number.isFinite(v) && v > 0));
+  const kms = new Set(rows.map((r) => parseNumericCell(r.通勤km)).filter((v): v is number => v !== null && v > 0));
   if (kms.size !== 1) return;
   const km = [...kms][0];
   for (const r of filled) {
-    if (!(parseFloat(r.通勤km ?? "") > 0)) r.通勤km = String(km);
+    if (!((parseNumericCell(r.通勤km) ?? 0) > 0)) r.通勤km = String(km);
   }
 }
 

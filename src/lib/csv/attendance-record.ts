@@ -1,4 +1,5 @@
 import type { AttendanceMeta, AttendanceRow } from "@/types/csv";
+import { parseNumericCell } from "./numeric-cell";
 
 /**
  * 出勤簿 1 日分 → payroll_attendance_records 1 行。
@@ -34,8 +35,9 @@ export function attendanceRowToRecord(row: AttendanceRow, meta: AttendanceMeta, 
     end_time_5: row.終了5,
     break_time: row.休憩,
     work_hours: row.勤務時間,
-    commute_km: row.通勤km ? parseFloat(row.通勤km) || null : null,
-    business_km: row.出張km ? parseFloat(row.出張km) || null : null,
+    // ★ parseFloat("1,302") は 1 を返す。カンマ・全角を外してから読む (numeric-cell.ts)
+    commute_km: parseNumericCell(row.通勤km) || null,
+    business_km: parseNumericCell(row.出張km) || null,
     overtime_weekly: row.週残業 ?? "",
     overtime_daily: row.日残業 ?? "",
     holiday_work: row.休日 ?? "",
