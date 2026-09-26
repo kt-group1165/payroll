@@ -36,3 +36,22 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 変更したら `npx tsc --noEmit` と `npx eslint <触ったファイル>` を通す
 - ★ **伝送系マスタや オブジェクトキーに記号が入る変更をしたら build も回す** (tsc をすり抜ける)
 - 画面の変更は **実際にブラウザで動かして確認**してから完了と言う
+
+#### commit 前に通す 3 つ (2026-09-27 に決めた)
+
+```
+npx tsc --noEmit                              → 0
+npx eslint <触ったファイル>                    → 0
+node node_modules/next/dist/bin/next build    → 成功   ★ ../../ を付けない
+```
+
+- ★ **`next build` は `scripts/` も型検査する。**`scripts/` から `src/` を import したら build も回すこと。
+  `.ts` を `.ts` 拡張子で import して build だけが落ちた例がある (tsc は通る場合がある)。
+  ★ NodeNext なので **import は `.js` / `.mjs` と書く** (`./_rest.mts` → `./_rest.mjs`)。
+- ★ **ESLint がヒープ不足で落ちることがある** (型付き lint で `src/app/payroll/page.tsx` を含むとき)。
+  `NODE_OPTIONS=--max-old-space-size=8192 npx eslint …` で通る。`tsc` は既定のままで通る。
+  ★ 「tsc が OOM した」と誤認しやすい。落ちたのがどちらかを先に確かめること。
+- ★ 別セッションが build 中だと `Another next build process is already running.` で失敗する。
+  ★ **コードのエラーではない。**少し置いて回し直す。
+- ★ 未追跡のファイルは Vercel に行かないので、★ ローカル build が落ちていても deploy は通ることがある。
+  ★ 逆に commit した瞬間に deploy が落ちる。**commit 前**に回すこと。
