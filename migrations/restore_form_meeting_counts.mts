@@ -27,9 +27,17 @@
  *   ⚠ payroll_office_form_records には notes 列が無い。child_name / year_month は保育料の計算が読むので
  *     マーカーに使わない。
  *
- * 【①の行も同時に消す】戻した事業所×月に ①由来 (import_batch_id が空) の 会議N件数 が残っていると
- *   computeMeetingFee が両方を足して 二重計上になる。混成の決まり (書式に件数がある事業所×月には ①を入れない)
- *   に合わせて、戻す事業所×月の ①の行を消す。
+ * 【①の行は 職員単位で消す (職員単位の混成)】
+ *   戻した職員に ①由来 (import_batch_id が空) の 会議N件数 が残っていると computeMeetingFee が両方を足して
+ *   二重計上になるので、★ 書式に件数がある職員の ①は消す。★ 書式に件数が無い職員の ①は残す。
+ *   原則「書式を正・無い所だけ ①で補う」を 事業所×月 ではなく 職員 の粒度で当てはめたもの。
+ *   なぜ職員単位か (2026-09-27 dry-run で判明):
+ *     事業所×月の単位で ①を全部消すと、①にだけ居て書式に件数が無い 3 人の会議費が 1,500 → 0 になった。
+ *     東郷 202606 260503 / 五井 202606 631 は 総括表パートで 会議費 1,500 円が実際に払われている = 書式への書き漏れ。
+ *     さつき 202606 2052 は 総括表の会議費が空で確かめられないが 同じ型なので同じ扱い。
+ *     五井 202606 は ちょうど入れ替わり (書式にだけ 221008 / ①にだけ 631) で、職員単位でないと両方を正しく扱えない。
+ *   ⚠ import_soukatsu_meeting_counts.mjs は 書式に件数がある事業所×月を丸ごと飛ばすので、
+ *     残した ①の行は 以後 消されも足されもしない (安定)。
  *
  * 【dry-run の合格条件】金額が動く行が 29 行 / 今 − 戻した後 = ¥-41,800 (check:office-form-shrink の測定から
  *   ちはら台の 1 行 ¥-6,350 を除いたもの)。一致しなければ --execute を拒否する。
@@ -108,7 +116,7 @@ const baseOf = (f: string) => f.split(/[\\/]/).pop()!;
 
 type Plan = { key: string; batch: Batch; insert: ReturnType<typeof officeFormRecordToRow>[]; deleteSoukatsu: Row[]; feeNow: number; feeAfter: number; effRows: number; lines: string[] };
 const plans: Plan[] = [];
-const noCsv: string[] = [], excluded: string[] = [];
+const noCsv: string[] = [], excluded: string[] = [], keptAll: string[] = [];
 let totalShrink = 0;
 for (const [k, b] of [...latest].sort()) {
   const shrink = b.record_count - (nowCount.get(b.id) ?? 0);
@@ -140,14 +148,18 @@ for (const [k, b] of [...latest].sort()) {
     if (u < (need.get(kk) ?? 0)) { insert.push(officeFormRecordToRow(r, { batchId: b.id, processingMonth: b.processing_month })); used.set(kk, u + 1); }
   }
   if (insert.length === 0) continue;
-  const deleteSoukatsu = cur.filter((r) => !r.import_batch_id && isMeet(r.item_name));
+  // ★ 職員単位の混成: 書式に件数がある職員の ①だけ消す。書式に件数が無い職員の ①は残す
+  const formEmps = new Set([...cur.filter((r) => r.import_batch_id === b.id && isMeet(r.item_name)), ...insert].map((r) => nn(r.employee_number)));
+  const deleteSoukatsu = cur.filter((r) => !r.import_batch_id && isMeet(r.item_name) && formEmps.has(nn(r.employee_number)));
+  const keptSoukatsu = cur.filter((r) => !r.import_batch_id && isMeet(r.item_name) && !formEmps.has(nn(r.employee_number)));
+  for (const r of keptSoukatsu) keptAll.push(`${k} 職員${nn(r.employee_number)} ${r.item_name}=${r.numeric_value}`);
 
   // 金額: 今 (①と書式の残り) と 戻した後 (書式だけ) の会議費を 職員ごとに
   const [office, month] = k.split("|");
   const unit = unitOf(office, month);
   const fee = (rs: { record_type: string; item_name: string; numeric_value?: number | null }[]) =>
     unpaid.has(office) ? 0 : computeMeetingFee(rs.map((r) => ({ record_type: r.record_type, item_name: r.item_name, numeric_value: r.numeric_value ?? null }) as never), unit, prices[office]);
-  const after = [...cur.filter((r) => isMeet(r.item_name) && r.import_batch_id), ...insert];
+  const after = [...cur.filter((r) => isMeet(r.item_name) && r.import_batch_id), ...insert, ...keptSoukatsu];
   const emps = new Set([...cur.filter((r) => isMeet(r.item_name)).map((r) => nn(r.employee_number)), ...insert.map((r) => nn(r.employee_number))]);
   let feeNow = 0, feeAfter = 0, effRows = 0; const lines: string[] = [];
   for (const e of emps) {
@@ -166,7 +178,10 @@ const yen = plans.reduce((s, p) => s + (p.feeNow - p.feeAfter), 0);   // 今 −
 console.log(`=== 書式の会議件数を戻す ${EXECUTE ? "【本番】" : "(DRY RUN)"} ===`);
 console.log(`取込後に行が減った 事業所×月の 減った行 合計 ${totalShrink}`);
 console.log(`戻す: ${plans.length} 事業所×月 / 書式の会議N件数 ${insTotal} 行 (元のバッチ id で)`);
-console.log(`消す: 同じ事業所×月の ①由来 (import_batch_id が空) の会議N件数 ${delTotal} 行 (残すと二重計上)`);
+console.log(`消す: 同じ事業所×月で 書式に件数がある職員の ①由来 (import_batch_id が空) の会議N件数 ${delTotal} 行 (残すと二重計上)`);
+console.log(`残す: 書式に件数が無い職員の ①由来 ${keptAll.length} 行 (書式への書き漏れ。①が正)`);
+for (const s of keptAll) console.log(`  ${s}`);
+console.log("  ⚠ 東郷 260503・五井 631 は 総括表パートで会議費 1,500 円が払われているのを確かめた。さつき 2052 は総括表の会議費が空で確かめられていない (同じ型なので同じ扱い)");
 for (const p of plans) {
   console.log(`  ${p.key}  戻す ${p.insert.length} / ①を消す ${p.deleteSoukatsu.length}  会議費 ¥${p.feeNow.toLocaleString()} → ¥${p.feeAfter.toLocaleString()}${p.lines.length ? "\n      " + p.lines.join("\n      ") : ""}`);
 }
@@ -185,11 +200,18 @@ function printSql() {
   SELECT count(*) FROM payroll_office_form_records
    WHERE item_name IN ('会議1件数','会議2件数','会議3件数')
      AND import_batch_id IN (${plans.map((p) => `'${p.batch.id}'`).join(",")});
-  -- 同じ事業所×月に ①由来の会議N件数 が残っていないこと。0 行になるはず
-  SELECT office_number, processing_month, count(*) FROM payroll_office_form_records
-   WHERE item_name IN ('会議1件数','会議2件数','会議3件数') AND import_batch_id IS NULL
-     AND (office_number, processing_month) IN (${plans.map((p) => `('${p.batch.office_number}','${p.batch.processing_month}')`).join(",")})
-   GROUP BY 1, 2;`);
+  -- 同じ職員に 書式と ① の会議N件数 が両方残っていないこと (二重計上)。0 行になるはず
+  SELECT a.office_number, a.processing_month, a.employee_number, count(*) FROM payroll_office_form_records a
+   WHERE a.item_name IN ('会議1件数','会議2件数','会議3件数') AND a.import_batch_id IS NULL
+     AND EXISTS (SELECT 1 FROM payroll_office_form_records b
+                  WHERE b.office_number = a.office_number AND b.processing_month = a.processing_month
+                    AND b.employee_number = a.employee_number AND b.import_batch_id IS NOT NULL
+                    AND b.item_name IN ('会議1件数','会議2件数','会議3件数'))
+   GROUP BY 1, 2, 3;
+  -- 書式に件数が無い職員の ① (残したもの)。${keptAll.length} 行になるはず
+  SELECT count(*) FROM payroll_office_form_records a
+   WHERE a.item_name IN ('会議1件数','会議2件数','会議3件数') AND a.import_batch_id IS NULL
+     AND (a.office_number, a.processing_month) IN (${plans.map((p) => `('${p.batch.office_number}','${p.batch.processing_month}')`).join(",")});`);
 }
 printSql();
 
