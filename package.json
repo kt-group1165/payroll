@@ -18,6 +18,7 @@
     "check:all": "tsx scripts/check-all.mts",
     "check:attendance-hours-gap": "tsx scripts/check-attendance-hours-gap.mts",
     "check:legal-holiday": "tsx scripts/verify-legal-holiday.mts",
+    "check:rest-helper": "tsx scripts/_rest_smoke.mts",
     "check:attendance-nobreak": "tsx scripts/verify-attendance-nobreak.mts",
     "check:paid-leave-rate": "tsx scripts/verify-paid-leave-rate.mts",
     "check:km-swap": "tsx scripts/check-km-swap.mts",
