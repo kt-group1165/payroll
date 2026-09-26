@@ -61,10 +61,55 @@ for (const M of MONTHS) {
   }
 }
 
-// 同じキーが 2 度出たら 後勝ち (シートが分かれている事業所がある)
+// 同じキーが 2 度出たら 後勝ち (シートが分かれている事業所がある)。
+//
+// ★ ただし 2 つ例外がある (2026-09-26 に 202603〜202608 × 全22事業所 × part/shaseki を全数走査して確定)。
+//   重複しているファイルは全期間で 2 組だけ:
+//     おゆみ野 202604 shaseki  過誤_おゆみ野_提責_社員_202604.xlsm ↔ おゆみ野_提責_社員_202604.xlsm
+//     中央     202606 shaseki  コピー中央_..._202606.xlsm ↔ 中央_..._202606.xlsm  (14人月すべて一致・実害なし)
+//
+//   ① 過誤 (訂正) 版は 正ではない。おゆみ野 21 名を 通常版 / 過誤版 / 前後の月 (202603・202605) で
+//      3 者比較した結果、★ 過誤版のほうが前後の月と合うケースは 0 件だった。
+//      逆に 6 名が #VALUE! で 0 になり (失われた値 ¥1,395,844)、8 名が 4 月だけ大きく下振れ、7 名が無傷。
+//      「4 月が本当に安い月」なら 21 名全員が揃って下がるはずで、このバラバラな壊れ方と矛盾する。
+//      → 過誤版は 一部の行の数式参照が壊れているだけ。通常版が正しい。
+//   ② エラー文字列 (#VALUE! / #REF! / #DIV/0! / #N/A) は 数値として読めず 0 として扱われるので、
+//      黙って総支給額 0 円の行になる。★ 落ちないので気づけない silent failure。
+//
+//   よって 勝者の選び方を 2 段にする:
+//     先に「ファイル名が 過誤/訂正/コピー で始まる版」を負けにする (通常版を優先)。
+//     同格ならこれまでどおり後勝ち。さらに 勝者の値がエラー文字列の項目だけ 敗者の値で埋める。
+const LOSER_FILE = /(^|[\\\/])\s*(過誤|訂正|再|コピー)/;
+const ERR_CELL = /^#(VALUE|REF|DIV\/0|N\/A|NAME|NUM|NULL)!?/;
+const isLoserFile = (r) => LOSER_FILE.test(String(r.source_file ?? ""));
 const byKey = new Map();
-for (const r of rows) byKey.set(`${r.processing_month}|${r.office_number}|${r.employee_number}|${r.sheet_kind}`, r);
+const overwritten = [];
+for (const r of rows) {
+  const k = `${r.processing_month}|${r.office_number}|${r.employee_number}|${r.sheet_kind}`;
+  const prev = byKey.get(k);
+  if (!prev) { byKey.set(k, r); continue; }
+  // 通常版を勝たせる。両方とも通常版 (または両方とも過誤版) なら後勝ち
+  const winner = isLoserFile(r) && !isLoserFile(prev) ? prev
+    : !isLoserFile(r) && isLoserFile(prev) ? r
+    : r;
+  const loser = winner === r ? prev : r;
+  // 勝者の値がエラー文字列の項目だけ 敗者の値で埋める (silent な 0 円化を防ぐ)
+  let filled = 0;
+  for (const [key, v] of Object.entries(winner.row_data ?? {})) {
+    if (typeof v !== "string" || !ERR_CELL.test(v.trim())) continue;
+    const alt = (loser.row_data ?? {})[key];
+    if (alt == null || (typeof alt === "string" && ERR_CELL.test(alt.trim()))) continue;
+    winner.row_data[key] = alt; filled++;
+  }
+  overwritten.push(`${k}  採用=${winner.source_file ?? "?"}  不採用=${loser.source_file ?? "?"}` + (filled ? `  (エラー ${filled} 項目を補完)` : ""));
+  byKey.set(k, winner);
+}
 const body = [...byKey.values()];
+// ★ 残ったエラー文字列を必ず報告する (握りつぶさない)
+const stillErr = [];
+for (const r of body) for (const [key, v] of Object.entries(r.row_data ?? {})) {
+  if (typeof v === "string" && ERR_CELL.test(v.trim())) stillErr.push(`${r.processing_month} ${r.office_number} ${r.employee_name ?? r.employee_number} ${key}=${v}`);
+}
 
 const byMonth = {};
 for (const r of body) byMonth[r.processing_month] = (byMonth[r.processing_month] ?? 0) + 1;
@@ -72,6 +117,8 @@ console.log(`=== 総括表の取込 ${EXECUTE ? "【本番】" : "(DRY RUN)"} ${
 console.log("  月別:", JSON.stringify(byMonth));
 console.log("  シート別:", JSON.stringify(body.reduce((a, r) => { a[r.sheet_kind] = (a[r.sheet_kind] ?? 0) + 1; return a; }, {})));
 if (skipped.length) { console.log("--- 取り込めなかったもの"); for (const s of skipped) console.log("  " + s); }
+if (overwritten.length) { console.log(`--- 重複キー ${overwritten.length} 件 (通常版を優先)`); for (const o of overwritten) console.log("  " + o); }
+if (stillErr.length) { console.log(`★ 補完できなかったエラー値 ${stillErr.length} 件 (0 円として入ります)`); for (const e of stillErr) console.log("  " + e); }
 if (!EXECUTE || body.length === 0) { console.log("DRY RUN。--execute で書き込みます"); process.exit(0); }
 
 let done = 0;
