@@ -10,7 +10,7 @@ import {
 } from "./attendance-helpers";
 import { AttendanceContent } from "./attendance-content";
 
-type OfficeRow = { office_number: string; name: string; work_week_start: number };
+type OfficeRow = { id: string; office_number: string; name: string; work_week_start: number };
 
 /**
  * /attendance
@@ -50,12 +50,13 @@ export default async function AttendancePage({
       (from, to) =>
         supabase
           .from("payroll_employees")
-          .select("employee_number,name,role_type,salary_type")
+          // ★ office_id も取る。職員番号だけで引くと 別人に当たる (2026-09-27 実測 14/121 組)
+          .select("office_id,employee_number,name,role_type,salary_type")
           .order("id").range(from, to) as unknown as PromiseLike<{ data: Employee[] | null }>,
     ),
     supabase
       .from("payroll_offices")
-      .select(`office_number, work_week_start, ${OFFICE_MASTER_JOIN}`),
+      .select(`id, office_number, work_week_start, ${OFFICE_MASTER_JOIN}`),
   ]);
 
   const seen = new Set<string>();
@@ -105,26 +106,38 @@ export default async function AttendancePage({
           .range(from, to) as unknown as PromiseLike<{ data: AttendanceRecord[] | null }>,
     );
 
-    const empMap = new Map(allEmployees.map((e) => [e.employee_number, e]));
+    // ★ 職員番号は事業所をまたぐと重複するので (事業所番号, 職員番号) の対で引く。
+    //   番号だけで引いていたため 121 組中 14 組 (11.6%) が別人の役職・給与形態を出していた (2026-09-27 実測)
+    const officeNumOfId = new Map(
+      (flattenOfficeMaster(offRes.data as never) as unknown as OfficeRow[]).map((o) => [o.id, o.office_number]),
+    );
+    const empMap = new Map(
+      allEmployees.map((e) => [`${officeNumOfId.get((e as { office_id?: string }).office_id ?? "") ?? ""}|${e.employee_number}`, e]),
+    );
     const officeRows = (flattenOfficeMaster(offRes.data as never) as unknown as OfficeRow[]);
     const officeMap = new Map(officeRows.map((o) => [o.office_number, o]));
 
     const firstOfficeNum = records[0]?.office_number;
     weekStart = officeMap.get(firstOfficeNum ?? "")?.work_week_start ?? 0;
 
+    // ★ 束ねるのも (事業所番号, 職員番号) の対。番号だけだと 別の事業所の同じ番号の人が 1 行に混ざる。
+    //   2026-09-27 時点では 混ざる組は 0 件だが (出勤簿があるのは提責と事務員だけで衝突していない)、
+    //   ★ 出勤簿の範囲が広がれば すぐ発火する
     const grouped = new Map<string, AttendanceRecord[]>();
     for (const r of records) {
-      if (!grouped.has(r.employee_number)) grouped.set(r.employee_number, []);
-      grouped.get(r.employee_number)!.push(r);
+      const k = `${r.office_number}|${r.employee_number}`;
+      if (!grouped.has(k)) grouped.set(k, []);
+      grouped.get(k)!.push(r);
     }
 
     const result: EmployeeSummary[] = [];
-    for (const [empNum, recs] of grouped) {
-      const emp = empMap.get(empNum);
-      const empOfficeNum = recs[0]?.office_number;
-      const empWs = officeMap.get(empOfficeNum ?? "")?.work_week_start ?? 0;
+    for (const [key, recs] of grouped) {
+      const emp = empMap.get(key);
+      const empOfficeNum = recs[0]?.office_number ?? "";
+      const empWs = officeMap.get(empOfficeNum)?.work_week_start ?? 0;
       result.push({
-        employee_number: empNum,
+        office_number: empOfficeNum,
+        employee_number: recs[0].employee_number,
         employee_name: recs[0].employee_name,
         role_type: emp?.role_type ?? "",
         salary_type: emp?.salary_type ?? "",
@@ -132,7 +145,7 @@ export default async function AttendancePage({
         stats: computeLaborStats(recs, selectedYear, selectedMonth, empWs),
       });
     }
-    result.sort((a, b) => a.employee_number.localeCompare(b.employee_number));
+    result.sort((a, b) => (a.employee_number.localeCompare(b.employee_number) || a.office_number.localeCompare(b.office_number)));
     summaries = result;
   }
 

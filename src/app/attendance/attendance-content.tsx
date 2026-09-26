@@ -61,7 +61,9 @@ export function AttendanceContent({
   };
 
   async function handleClearMonth() {
-    if (!confirm(`${selectedYear}年${selectedMonth}月の出勤簿データを全て削除しますか？\n対象: ${summaries.length}名、${summaries.reduce((s, e) => s + e.records.length, 0)}件`)) return;
+    // ⚠ この画面は全事業所を横断して出しているので、削除も全事業所に及ぶ。確認文にもそう書く
+    const offCount = new Set(summaries.map((s) => s.office_number)).size;
+    if (!confirm(`${selectedYear}年${selectedMonth}月の出勤簿データを全て削除しますか？\n★ この画面は全事業所を横断して出しています。削除も全事業所に及びます。\n対象: ${offCount}事業所、${summaries.length}名、${summaries.reduce((s, e) => s + e.records.length, 0)}件`)) return;
 
     const { error } = await supabase
       .from("payroll_attendance_records")
@@ -78,13 +80,16 @@ export function AttendanceContent({
   }
 
   async function handleClearEmployee(emp: EmployeeSummary) {
-    if (!confirm(`${emp.employee_name}の${selectedYear}年${selectedMonth}月データを削除しますか？`)) return;
+    if (!confirm(`${emp.employee_name}の${selectedYear}年${selectedMonth}月データを削除しますか？\n事業所: ${emp.office_number}`)) return;
 
+    // ★ office_number で必ず絞る。職員番号は事業所をまたぐと重複するので、
+    //   番号だけで消すと **別の事業所の同じ番号の人の出勤簿まで消える** (2026-09-27 是正)
     const { error } = await supabase
       .from("payroll_attendance_records")
       .delete()
       .eq("year", selectedYear)
       .eq("month", selectedMonth)
+      .eq("office_number", emp.office_number)
       .eq("employee_number", emp.employee_number);
 
     if (error) {
@@ -98,7 +103,7 @@ export function AttendanceContent({
   function exportCsv() {
     const label = `${selectedYear}年${selectedMonth}月`;
     const rows: string[][] = [[
-      "職員番号","職員名","役職","給与形態",
+      "事業所番号","職員番号","職員名","役職","給与形態",
       "出勤日数","総労働時間","日残業","週残業","法定休日時間","残業合計",
       "有給","特休","欠勤","出張km",
     ]];
@@ -106,7 +111,7 @@ export function AttendanceContent({
       const t = s.stats;
       const totalOT = t.dailyOvertimeMin + t.weeklyOvertimeMin;
       rows.push([
-        s.employee_number, s.employee_name, s.role_type, s.salary_type,
+        s.office_number, s.employee_number, s.employee_name, s.role_type, s.salary_type,
         String(t.workDays), formatMinutes(t.totalWorkMin),
         formatMinutes(t.dailyOvertimeMin), formatMinutes(t.weeklyOvertimeMin),
         formatMinutes(t.legalHolidayMin), formatMinutes(totalOT),

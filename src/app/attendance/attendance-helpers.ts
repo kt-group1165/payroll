@@ -55,6 +55,14 @@ export type LaborStats = {
 };
 
 export type EmployeeSummary = {
+  /**
+   * ★ 職員番号は **事業所をまたぐと重複する**ので、この画面では必ず office_number と対で扱う。
+   * 2026-09-27 に実測: 出勤簿に出てくる 121 組のうち ★ 14 組 (11.6%) が、
+   * 職員番号だけで職員マスタを引くと **別人**に当たっていた
+   * (例 210803 → 磯部恵 (提責/月給) のはずが 井口勇司 (パート/時給))。
+   * 役職・給与形態は 表示と CSV にしか使っていないので金額は動かないが、CSV を見た人が誤解する。
+   */
+  office_number: string;
   employee_number: string;
   employee_name: string;
   role_type: string;
