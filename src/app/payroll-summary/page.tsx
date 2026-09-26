@@ -88,6 +88,8 @@ type MonthlyRow = {
   office_travel_unit_price: number;
   business_trip_fee: number;
   childcare_allowance: number;
+  /** 欠勤日数。payload に元から入っているが 画面に出していなかった (2026-09-26) */
+  absence_days?: number;
   summary: AttendanceSummary;
 };
 
@@ -195,8 +197,14 @@ const MONTHLY_COLS: ColDef<MonthlyRow>[] = [
   { key: "employee_name",   label: "氏名",      always: true, render: (r) => r.employee_name },
   { key: "role_type",       label: "役職",      render: (r) => r.role_type },
   { key: "workDays",        label: "出勤日数",  align: "right", render: (r) => num(r.summary.workDays) },
-  { key: "paidLeave",       label: "有給",      align: "right", defaultOff: true, render: (r) => num(r.summary.paidLeave) },
-  { key: "specialLeave",    label: "特休",      align: "right", defaultOff: true, render: (r) => num(r.summary.specialLeave) },
+  // ★ 総括表は 有給 / 欠勤 / 特休 の 3 つを並べて持っている。画面も揃える (2026-09-26 user)。
+  //   欠勤は 列そのものが無かった。★ 欠勤を知らないと 固定給を満額出してしまう
+  //   (金香蘭 2 人月・石毛博美 1 人月で 計 ¥904,500 の過大が実際に起きていた)。
+  { key: "paidLeave",       label: "有給",      align: "right", render: (r) => num(r.summary.paidLeave) },
+  { key: "halfLeave",       label: "半有給",    align: "right", defaultOff: true, render: (r) => num(r.summary.halfLeave) },
+  { key: "specialLeave",    label: "特休",      align: "right", render: (r) => num(r.summary.specialLeave) },
+  { key: "absenceDays",     label: "欠勤",      align: "right", render: (r) => (r.absence_days ?? 0) > 0
+      ? <span className="font-bold text-rose-700">{num(r.absence_days ?? 0)}</span> : num(0) },
   { key: "workHoursMin",    label: "出勤時間",  align: "right", render: (r) => r.summary.workHoursMin > 0 ? fmtMinutes(r.summary.workHoursMin) : "—" },
   { key: "visitMinutes",    label: "訪問時間",  align: "right", defaultOff: true, render: (r) => r.summary.visitMinutes > 0 ? fmtMinutes(r.summary.visitMinutes) : "—" },
   { key: "base_personal",   label: "本人給",    align: "right", render: (r) => yen(r.settings?.base_personal_salary ?? 0) },

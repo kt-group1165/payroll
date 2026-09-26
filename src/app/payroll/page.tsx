@@ -1820,10 +1820,16 @@ export default function PayrollPage() {
               if (manualAbs != null && manualAbs > 0) return manualAbs;
               const att = attByEmpM.get(normEmp(e.employee_number)) ?? [];
               const notes = (a: AttendanceRecord) => [a.work_note_1, a.work_note_2, a.work_note_3, a.work_note_4, a.work_note_5].map((n) => n ?? "");
-              if (att.length > 0) return att.reduce((s, a) => s + (notes(a).some((n) => n.includes("半欠")) ? 0.5 : notes(a).some((n) => n.includes("欠勤")) ? 1 : 0), 0);
+              const fromAtt = att.reduce((s, a) => s + (notes(a).some((n) => n.includes("半欠")) ? 0.5 : notes(a).some((n) => n.includes("欠勤")) ? 1 : 0), 0);
               const cnt = (r: OfficeFormRecord) => (r.record_type === "km" ? Math.round((r.numeric_value as number) ?? 1) : listedDateCount(r.item_date));
-              return empOfRecs.filter((r) => r.item_name === "欠勤").reduce((s, r) => s + cnt(r), 0)
+              const fromForm = empOfRecs.filter((r) => r.item_name === "欠勤").reduce((s, r) => s + cnt(r), 0)
                 + empOfRecs.filter((r) => r.item_name === "半欠勤").reduce((s, r) => s + cnt(r), 0) * 0.5;
+              // ★ 出勤簿に行があっても 欠勤の注記が 1 件も無ければ 事業所書式を見る (2026-09-26)。
+              //   以前は「出勤簿が 1 行でもあれば出勤簿だけ」だったので、
+              //   出勤簿に欠の注記が無く 書式にだけ「欠勤 8/28」がある人が 0 日になっていた
+              //   (山武 黒田美和 202608。欠勤控除 ¥9,559 が丸ごと落ちていた)。
+              //   ⚠ 両方に入っている人は 出勤簿を優先する。書式と足すと 二重に数える。
+              return fromAtt > 0 ? fromAtt : fromForm;
             })(),
             is_office_worker_for_deduction: roleM === "事務員" || (e.is_office_worker ?? false),
             // 月給者も 付与ごとの日当 (有給管理簿シートの値) で計算する。付与が無い人だけ 給与設定 → 職員マスタ の単価。
