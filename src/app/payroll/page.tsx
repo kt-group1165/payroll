@@ -16,6 +16,7 @@ import { applyOfficeUnitPrices, type OfficeUnitPriceRow } from "@/lib/payroll/of
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { resolveVisitPay, type VisitRateContext } from "@/lib/payroll/visit-pay";
 import { BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
+import { hourlyTargetEmployeeNumbers } from "@/lib/payroll/hourly-targets";
 import Link from "next/link";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingUnitPrices, getBathCareModes, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
@@ -1251,9 +1252,12 @@ export default function PayrollPage() {
       // ⚠ 同じ型で 研修時間・出張km・有給 (管理簿の当月日数) の手入力しか無い人も落ちていた (2026-09-27 給与D)。
       //   check:manual-input-dropped の A1: 岩田ゆきよ 202604 (研修120分+出張1.7km = 総括表① ¥2,321 と一致) /
       //   江波戸祐子 202607 (研修60分 = ① ¥1,150) / 杉尾加奈子 202606 / 木村江利・岩坪恵 202607 の 5 名 6 行
-      const ledgerThisMonthNums = [...ledgerDaysByNum].filter(([, byM]) => (byM.get(selectedMonth) ?? 0) > 0).map(([n]) => n);
-      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys(), ...manualOfficeWorkMinByNum.keys(),
-        ...manualTrainingMinByNum.keys(), ...manualTripKmByNum.keys(), ...ledgerThisMonthNums])) {
+      //   集合の作り方は src/lib/payroll/hourly-targets.ts (純関数。check:hourly-targets で検査)
+      for (const empNum of hourlyTargetEmployeeNumbers({
+        records: recsByEmp.keys(), attendance: attByEmp.keys(), officeForms: ofByEmp.keys(),
+        manualOfficeWork: manualOfficeWorkMinByNum.keys(), manualTraining: manualTrainingMinByNum.keys(),
+        manualTripKm: manualTripKmByNum.keys(), ledgerDaysByNum, month: selectedMonth,
+      })) {
         const info    = roleMap.get(empNum);
         // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
         if (!info) continue;
