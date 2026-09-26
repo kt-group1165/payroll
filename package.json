@@ -27,6 +27,7 @@
     "check:rate-gap": "tsx scripts/verify-rate-gap.mts",
     "check:soukatsu-source": "tsx scripts/check-soukatsu-source.mts",
     "check:soukatsu-cause": "tsx scripts/check-soukatsu-cause.mts",
+    "check:nonnumeric-cells": "tsx scripts/check-nonnumeric-cells.mts",
     "check:distance-kind": "tsx scripts/verify-distance-kind.mts",
     "check:monthly-status": "tsx scripts/verify-monthly-status.mts",
     "check:multiday-training": "tsx scripts/verify-multiday-training.mts",
