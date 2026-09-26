@@ -70,11 +70,19 @@ if (!L1_DIR) {
   execSync("node migrations/extract_soukatsu_from_xlsm.mjs --execute", { env: { ...process.env, OUT: L1_DIR, MONTHS: MONTHS.join(",") }, stdio: "inherit" });
 }
 const l1: { key: string; m: string; d: Record<string, unknown> }[] = [];
+const l1Seen = new Set<string>();
+let l1DupRows = 0;
 for (const f of readdirSync(L1_DIR).filter((x) => /_(\d{6})\.json$/.test(x))) {
   const m = /_(\d{6})\.json$/.exec(f)![1];
   if (!MONTHS.includes(m)) continue;
   for (const r of JSON.parse(readFileSync(`${L1_DIR}/${f}`, "utf8")) as L1Row[]) {
-    if (r.sheet_kind === "part") l1.push({ key: `${r.office_number}|${nn(r.employee_number)}|${m}`, m, d: r.row_data });
+    if (r.sheet_kind !== "part") continue;
+    // ⚠ 同じ人月が 写しのファイル (過誤_・コピー など) から 2 行入っていることがある (2026-09-27 給与E: 43 人月・総支給は同額)。
+    //   行で数えると 片側の件数などが多く出るので 人月で 1 行にする (先に読んだ行を残す)
+    const key = `${r.office_number}|${nn(r.employee_number)}|${m}`;
+    if (l1Seen.has(key)) { l1DupRows++; continue; }
+    l1Seen.add(key);
+    l1.push({ key, m, d: r.row_data });
   }
 }
 
@@ -88,7 +96,7 @@ else {
   if (CALC_SNAPSHOT) writeFileSync(CALC_SNAPSHOT, JSON.stringify(calc));
 }
 const calcAt = calc.map((c) => c.calculated_at).sort();
-console.log(`給与計算 ${calc.length} 事業所月 (計算日時 ${calcAt[0]} 〜 ${calcAt.at(-1)}) / ① パート ${l1.length} 人月`);
+console.log(`給与計算 ${calc.length} 事業所月 (計算日時 ${calcAt[0]} 〜 ${calcAt.at(-1)}) / ① パート ${l1.length} 人月 (写しの重複行 ${l1DupRows} 行を除いた)`);
 
 // ── ② (① が総支給に入れていない分を ② が払っているかを見るため) ──
 type L2Row = { office_number: string; employee_number: string; processing_month: string; sheet_kind: string; row_data: Record<string, unknown> };
