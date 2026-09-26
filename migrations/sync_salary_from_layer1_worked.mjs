@@ -122,6 +122,7 @@ console.log(`      ★ 対象 ${stats.target} 人月 (${targetMonths.size} 名)`
 
 // ── 給与設定と比べて 書く内容を作る ──
 const ops = [];
+const skippedBad = [];
 for (const [pk, list] of targetMonths) {
   const e = empBy.get(pk);
   list.sort((a, b) => a.m.localeCompare(b.m));
@@ -131,9 +132,15 @@ for (const [pk, list] of targetMonths) {
   const autoTenure = settings.length > 0 && settings[settings.length - 1].tenure_allowance_auto === true;
   const cols = L1_TO_SETTING.filter(([, col]) => !(autoTenure && col === "tenure_allowance"));
   // 値が同じ月をまとめる (区間)
+  // ★ 未設定と 0 を混ぜない (COALESCE(列,0) と同じ型の事故を防ぐ):
+  //   ・① のシートに その列 (見出し) が無い → その項目は比べない・書かない (0 で上書きしない)
+  //   ・① のセルが エラー値 (#VALUE! 等) や数字でない文字 → その人月ごと対象外にして名前を出す
+  //   ・① のセルが空欄 → 0 とみなす (① は旧システムの出力で、空欄は 支給なし = 総支給にも入っていない)
   const segs = [];
   for (const { m, d } of list) {
-    const values = Object.fromEntries(cols.map(([c1, col]) => [col, num(d[c1])]));
+    const bad = cols.filter(([c1]) => c1 in d && d[c1] != null && d[c1] !== "" && !Number.isFinite(Number(String(d[c1]).replace(/,/g, ""))));
+    if (bad.length) { skippedBad.push(`${pk} ${e.name} ${m}: ${bad.map(([c1]) => `${c1}=${JSON.stringify(d[c1])}`).join(", ")}`); continue; }
+    const values = Object.fromEntries(cols.filter(([c1]) => c1 in d).map(([c1, col]) => [col, num(d[c1])]));
     const prev = segs[segs.length - 1];
     if (!prev || JSON.stringify(prev.values) !== JSON.stringify(values)) segs.push({ start: m, values, file: d._file });
   }
@@ -141,9 +148,10 @@ for (const [pk, list] of targetMonths) {
     const ms = monthStart(seg.start);
     // その月に効いている行 (effective_from <= 月初 のうち最新)
     const active = [...settings].reverse().find((s) => String(s.effective_from) <= ms);
-    const diff = active ? Object.entries(seg.values).filter(([k, v]) => Number(active[k] ?? 0) !== v) : Object.entries(seg.values);
+    // 給与設定の NULL (未設定) は 0 と別に扱う: ① が 0 で 設定が NULL なら 書かない (未設定のまま残す)
+    const diff = active ? Object.entries(seg.values).filter(([k, v]) => (active[k] == null ? v !== 0 : Number(active[k]) !== v)) : Object.entries(seg.values);
     if (diff.length === 0) continue;
-    const label = `${pk} ${e.name} ${seg.start}〜: ${diff.map(([k, v]) => `${k} ${active ? Number(active[k] ?? 0) : "(行なし)"}→${v}`).join(", ")}  (${seg.file})`;
+    const label = `${pk} ${e.name} ${seg.start}〜: ${diff.map(([k, v]) => `${k} ${!active ? "(行なし)" : active[k] == null ? "未設定" : Number(active[k])}→${v}`).join(", ")}  (${seg.file})`;
     if (active && String(active.effective_from) === ms) {
       ops.push({ label: `PATCH ${label}`, method: "PATCH", path: `payroll_salary_settings?id=eq.${active.id}`,
         body: { ...seg.values, ...(autoTenure ? {} : { tenure_allowance_auto: false }), note: `${active.note ?? ""} ${MARKER}`.trim() } });
@@ -156,6 +164,10 @@ for (const [pk, list] of targetMonths) {
   }
 }
 
+if (skippedBad.length) {
+  console.log(`\n--- ① のセルが数字でないので対象外 ${skippedBad.length} 人月 (0 とみなして書かない)`);
+  for (const x of skippedBad) console.log("  " + x);
+}
 console.log(`\n--- 書く内容 ${ops.length} 件`);
 for (const o of ops) console.log("  " + o.label);
 const confirmSql = `SELECT e.employee_number, e.name, s.effective_from, s.base_personal_salary, s.skill_salary, s.position_allowance,
