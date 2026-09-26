@@ -5,20 +5,36 @@
  *   node migrations/import_soukatsu_meeting_counts.mjs --execute
  *   SOUKATSU=<dir> node ...   # 総括表の置き場 (既定は scratchpad の soukatsu<YYYYMM>)
  *
- * なぜ: 会議費 = 会議1件数×1,500 + 会議2件数×1,150 + 会議3件数×1,150 + 会議時間×1,150/60 で、
- *   この **「件数」の入力欄が 事業所入力 (旧システム) にも 事業所書式 (xlsm) にも無い**。
- *   旧システムの出力である「総括表データ_パート」シートにだけ 1 人ずつ入っている。
+ * なぜ: 会議費 = 会議1件数×1,500 + 会議2件数×1,150 + 会議3件数×1,150 + 会議時間×1,150/60。
+ *   ~~件数の入力欄が 事業所書式 (xlsm) にも無い~~ ★ 誤りだった (2026-09-27 実測で訂正)。
+ *   件数列が無いのは 旧システムの「事業所入力」CSV (会議は 日付・開始・終了 の時間だけ) のほう。
+ *   ★ 事業所書式 CSV には 会議N件数 がある (2026-03〜07 の書式 CSV 96 本中 34 事業所×月に値あり)。
  *   ⚠ 取るのは件数だけ。金額 (会議費・研修費) は取らない。金額は当方のロジックで計算して突合する。
+ *
+ * ★ これは 旧システムの出力 (①) で当方の入力を作る **循環** である。原本は事業所書式なので
+ *   **書式を正**とし、①は「書式に件数が 1 件も無い事業所×月」の穴埋めにだけ使う (混成)。
+ *   総括表との一致 (会議費の件数ぶん・301 人月): ①だけ 288 / 書式だけ 262 / ★ 混成 291。
+ *   書式だけだと悪化するのは ちはら台202606・大網202606 の書式に件数がそもそも無いから。
+ *
+ * ★ 2026-09-27 まで DELETE に import_batch_id の条件が無く、**書式から取り込んだ件数まで消していた**
+ *   (書式バッチの 取込時件数 − 今の行数 が 書式CSVの会議N件数行数と 31/36 事業所×月で一致)。
+ *   今は ①由来 (import_batch_id が空) の行だけを消す。
+ *
+ *   SKIP_SOUKATSU_MEETING_COUNTS=1   ①を一切入れない (外して測るため。DRY RUN でも効く)
  *
  * ⚠ 会議の「時間」(開始・終了) は別の入力。件数として数えると二重計上になる。
  * ⚠ 市原ムツミの xlsm にはこのシートが無い。その事業所月は触らない。
- * 冪等: (office_number, processing_month) の 会議N件数 だけ消して入れ直す。
+ * 冪等: (office_number, processing_month) の ①由来の 会議N件数 だけ消して入れ直す。
  */
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import ExcelJS from "exceljs";
 
 const EXECUTE = process.argv.includes("--execute");
+if (process.env.SKIP_SOUKATSU_MEETING_COUNTS === "1") {
+  console.log("SKIP_SOUKATSU_MEETING_COUNTS=1: 総括表① 由来の会議件数を入れません (何もしないで終了)");
+  process.exit(0);
+}
 const SOUKATSU = process.env.SOUKATSU || "C:/Users/domen-PC/AppData/Local/Temp/claude/C--Users-domen-PC-Downloads---------/f92df4c4-f5b9-4d0e-8db9-bd810cfdc5d6/scratchpad";
 const MONTHS = (process.env.MONTHS || "202603,202604,202605,202606,202607").split(",");
 
@@ -98,6 +114,19 @@ for (const m of MONTHS) {
   }
 }
 
+// ★ 書式に件数がある事業所×月には ①を入れない (書式が正)。書式由来 = import_batch_id がある行
+const formHas = new Set();
+for (let from = 0; ; from += 1000) {
+  const res = await fetch(`${SB}payroll_office_form_records?select=office_number,processing_month&import_batch_id=not.is.null&item_name=in.(会議1件数,会議2件数,会議3件数)&order=id`, { headers: { ...H, Range: `${from}-${from + 999}` } });
+  const j = await res.json();
+  if (!res.ok || !Array.isArray(j)) { console.error(`✗ 書式の会議件数を読めない: ${JSON.stringify(j).slice(0, 300)}`); process.exit(1); }
+  for (const r of j) formHas.add(`${r.office_number}|${r.processing_month}`);
+  if (j.length < 1000) break;
+}
+const skippedByForm = [];
+for (const [k, v] of out) if (formHas.has(k)) { skippedByForm.push(`${v.folder} ${v.processing_month}`); out.delete(k); }
+if (skippedByForm.length) console.log(`書式に件数があるので ①を入れない 事業所×月 ${skippedByForm.length}: ${skippedByForm.sort().join(" / ")}`);
+
 console.log(`事業所×月 ${out.size}`);
 const tally = new Map();
 let total = 0;
@@ -115,7 +144,7 @@ if (skipped.length) console.log("  ⚠ 飛ばした:", [...new Set(skipped)].joi
 if (!EXECUTE) { console.log("\nDRY RUN (--execute で書き込み)"); process.exit(0); }
 
 for (const [, v] of out) {
-  const del = await fetch(`${SB}payroll_office_form_records?office_number=eq.${v.office_number}&processing_month=eq.${v.processing_month}&item_name=in.(会議1件数,会議2件数,会議3件数)`, { method: "DELETE", headers: { ...H, Prefer: "return=minimal" } });
+  const del = await fetch(`${SB}payroll_office_form_records?office_number=eq.${v.office_number}&processing_month=eq.${v.processing_month}&item_name=in.(会議1件数,会議2件数,会議3件数)&import_batch_id=is.null`, { method: "DELETE", headers: { ...H, Prefer: "return=minimal" } });
   if (!del.ok) { console.error(`✗ 既存の削除に失敗 (${v.office_number} ${v.processing_month}): ${await del.text()}`); process.exit(1); }
   for (let i = 0; i < v.rows.length; i += 300) {
     const res = await fetch(`${SB}payroll_office_form_records`, { method: "POST", headers: { ...H, Prefer: "return=minimal" }, body: JSON.stringify(v.rows.slice(i, i + 300)) });
