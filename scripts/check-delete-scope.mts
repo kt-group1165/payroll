@@ -170,7 +170,15 @@ if (UPDATE) {
 let base: Baseline;
 try { base = JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline; }
 catch { console.log("\n⚠ 基準値のファイルがありません。--update で作ってください"); process.exit(1); }
-const added = current.flagged.filter((s) => !base.flagged.includes(s));
+// 同じ (ファイル|表) で 条件を足して狭めただけのもの (基準値の条件 ⊂ 今の条件) は「増えた」とみなさない
+//   実例: attendance-content.tsx の職員単位の削除に office_number を足した (9587a77) → 月+項目・人 が 月+事業所+項目・人 に
+const narrowed = (s: string) => {
+  const [f, t, c] = s.split("|"); const now = new Set(c.split("+"));
+  return base.flagged.some((b) => { const [bf, bt, bc] = b.split("|"); return bf === f && bt === t && bc.split("+").every((x) => now.has(x)); });
+};
+const added = current.flagged.filter((s) => !base.flagged.includes(s) && !narrowed(s));
+const narrowedList = current.flagged.filter((s) => !base.flagged.includes(s) && narrowed(s));
+if (narrowedList.length) console.log(`\n条件を足して狭めたもの (悪化ではない。--update で基準値に取り込む): \n  ${narrowedList.join("\n  ")}`);
 const gone = base.flagged.filter((s) => !current.flagged.includes(s));
 console.log(`\n基準値 ★ ${base.flagged.length} 種 / 今回 ${current.flagged.length} 種  (消えた ${gone.length})`);
 if (!negOk) { console.log("\n★ 負のコントロールが通らないので PASS を出しません"); process.exit(1); }

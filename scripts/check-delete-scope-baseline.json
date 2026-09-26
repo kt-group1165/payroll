@@ -10,7 +10,7 @@
     "migrations/fix_kimitsu_202604_attendance.mjs|payroll_attendance_records|月+事業所+項目・人",
     "migrations/import_legacy_office_form.mjs|payroll_office_form_records|月+事業所+項目・人",
     "src/app/attendance/attendance-content.tsx|payroll_attendance_records|月",
-    "src/app/attendance/attendance-content.tsx|payroll_attendance_records|月+項目・人",
+    "src/app/attendance/attendance-content.tsx|payroll_attendance_records|月+事業所+項目・人",
     "src/app/services/services-content.tsx|payroll_service_type_mappings|",
     "src/components/csv/attendance-importer.tsx|payroll_attendance_records|月+事業所",
     "src/components/csv/meisai-importer.tsx|payroll_service_records|月+事業所",

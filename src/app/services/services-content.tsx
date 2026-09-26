@@ -431,6 +431,23 @@ function MappingsTab({
     )
       return;
 
+    // ★ 全削除 → 再挿入のあいだに挿入が落ちると 表が空になり、全事業所の時給が引けなくなる。
+    //   削除の前に今の行を控え、挿入に失敗したら控えを戻す (2026-09-27。check:delete-scope の ★全件)
+    const backup: Record<string, unknown>[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error: backupError } = await supabase
+        .from("payroll_service_type_mappings")
+        .select("*")
+        .order("id")
+        .range(from, from + 999);
+      if (backupError) {
+        toast.error(`既存マッピングの控えに失敗しました (削除していません): ${backupError.message}`);
+        return;
+      }
+      backup.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+
     // 全削除して再挿入
     const { error: deleteError } = await supabase
       .from("payroll_service_type_mappings")
@@ -445,7 +462,16 @@ function MappingsTab({
       .from("payroll_service_type_mappings")
       .insert(dedupedMappings);
     if (error) {
-      toast.error(`インポートエラー: ${error.message}`);
+      const { error: restoreError } = await supabase
+        .from("payroll_service_type_mappings")
+        .insert(backup);
+      if (restoreError) {
+        console.error("mapping restore failed:", restoreError.message);
+        toast.error(`インポートエラー: ${error.message} / ★ 元のマッピングに戻せませんでした (表が空です): ${restoreError.message}`);
+      } else {
+        toast.error(`インポートエラー: ${error.message} (元のマッピング ${backup.length} 件に戻しました)`);
+      }
+      fetchData();
       return;
     }
     toast.success(`${dedupedMappings.length}件のマッピングをインポートしました`);
