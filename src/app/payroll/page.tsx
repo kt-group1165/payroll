@@ -1579,6 +1579,8 @@ export default function PayrollPage() {
         if (legacyTravel.get(num)?.hourly) used.push("移動時間");
         if ((attByEmpH.get(num) ?? []).length === 0 && legacyWorkMinOf(num) != null) used.push("出勤時間");
         if (used.length) e.legacy_used = used;
+        // ★ 出勤簿も旧日計も無い = 訪問実績等からの推定。legacy_used に立たず 見えなかった (2026-09-26)
+        if ((attByEmpH.get(num) ?? []).length === 0 && legacyWorkMinOf(num) == null) e.estimated_used = ["出勤時間"];
       }
       setCategoryList((catRes.data ?? []).map((c: ServiceCategory) => ({ id: c.id, name: c.name })));
       setRateGaps([...rateGapAcc.values()].sort((a, b) => b.count - a.count));
@@ -1818,6 +1820,8 @@ export default function PayrollPage() {
         if ((attByEmpM.get(num) ?? []).length === 0 && legacyWorkMinOf(num) != null) used.push("出勤時間");
         if ((legacyDailyOtMin.get(num) ?? 0) > 0) used.push("残業時間");
         if (used.length) (p as { legacy_used?: string[] }).legacy_used = used;
+        // ★ 出勤簿も旧日計も無い = 訪問実績等からの推定。legacy_used に立たず 見えなかった (2026-09-26)
+        if ((attByEmpM.get(num) ?? []).length === 0 && legacyWorkMinOf(num) == null) (p as { estimated_used?: string[] }).estimated_used = ["出勤時間"];
       }
       setMonthlyResults(monthlySorted);
 
@@ -2392,10 +2396,18 @@ export default function PayrollPage() {
       {(() => {
         const h = hourlyResults.filter((e) => e.legacy_used?.length).length;
         const m = monthlyResults.filter((p) => p.legacy_used?.length).length;
-        return h + m > 0 ? (
+        const eh = hourlyResults.filter((e) => e.estimated_used?.length).length;
+        const em = monthlyResults.filter((p) => p.estimated_used?.length).length;
+        return h + m + eh + em > 0 ? (
           <div className="mb-4 p-3 bg-sky-50 border border-sky-200 text-sky-900 rounded text-sm">
             旧システムのデータ (移動時間・出勤時間) を使った人: 時給 {h} 名 / 月給 {m} 名。名前の横の「旧」で分かります。
             本格稼働の前に 設定 use_legacy_data を切り替えると 当システムだけで計算します。
+            {eh + em > 0 ? (
+              <span className="mt-1 block text-rose-800">
+                ★ 出勤簿も旧システムの日計も無く <b>訪問実績から推定</b>した人: 時給 {eh} 名 / 月給 {em} 名 (「推定」)。
+                根拠が弱いので 出勤簿を取り込むか 月ごとの手入力 (事務時間・残業) を入れてください。
+              </span>
+            ) : null}
           </div>
         ) : null;
       })()}
@@ -2638,6 +2650,7 @@ export default function PayrollPage() {
                                   <span className="font-mono text-xs text-muted-foreground">{emp.employee_number}</span>
                                   <span className="font-medium">{emp.employee_name}</span>
                                   {emp.legacy_used?.length ? <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={`旧システムのデータを使用: ${emp.legacy_used.join("・")}`}>旧</span> : null}
+                                  {emp.estimated_used?.length ? <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] text-rose-800" title={`出勤簿も旧システムの日計も無く 訪問実績から推定: ${emp.estimated_used.join("・")}`}>推定</span> : null}
                                 </div>
                               </td>
                               <td className="px-3 py-2"><RoleBadge role={emp.role_type} /></td>
@@ -2976,6 +2989,7 @@ export default function PayrollPage() {
                                   <span className="font-mono text-xs text-muted-foreground">{p.employee_number}</span>
                                   <span className="font-medium">{p.employee_name}</span>
                                   {p.legacy_used?.length ? <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={`旧システムのデータを使用: ${p.legacy_used.join("・")}`}>旧</span> : null}
+                                  {p.estimated_used?.length ? <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] text-rose-800" title={`出勤簿も旧システムの日計も無く 訪問実績から推定: ${p.estimated_used.join("・")}`}>推定</span> : null}
                                 </div>
                               </td>
                               <td className="px-3 py-2"><RoleBadge role={p.role_type} /></td>
