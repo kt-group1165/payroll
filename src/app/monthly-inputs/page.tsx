@@ -136,7 +136,22 @@ export default function MonthlyInputsPage() {
       </Card>
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">{MONTHLY_INPUT_ITEMS.map((i) => `${i.label}: ${i.help}`).join(" / ")}</CardTitle>
+          {/* ⚠ 以前は全項目の help を " / " で 1 段落に繋げていて、項目が増えるほど読めなくなっていた
+              (2026-09-26 に 4 項目足して user から指摘)。項目ごとに 1 行にし、既定は畳んでおく。 */}
+          <CardTitle className="text-sm font-medium">月ごとの手入力</CardTitle>
+          <details className="mt-1">
+            <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">
+              項目の説明 ({MONTHLY_INPUT_ITEMS.length}件) — クリックで開く
+            </summary>
+            <dl className="mt-2 space-y-1.5 text-xs">
+              {MONTHLY_INPUT_ITEMS.map((i) => (
+                <div key={i.key} className="grid grid-cols-[10rem_1fr] gap-2">
+                  <dt className="font-medium text-foreground">{i.label}<span className="text-muted-foreground">（{i.unit}）</span></dt>
+                  <dd className="text-muted-foreground leading-relaxed">{i.help}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -145,7 +160,11 @@ export default function MonthlyInputsPage() {
                 <th className="text-left px-3 py-2">職員番号</th>
                 <th className="text-left px-3 py-2">氏名</th>
                 <th className="text-left px-3 py-2">給与形態・役職</th>
-                {MONTHLY_INPUT_ITEMS.map((i) => <th key={i.key} className="text-right px-3 py-2">{i.label}</th>)}
+                {MONTHLY_INPUT_ITEMS.map((i) => (
+                  <th key={i.key} className="text-right px-3 py-2" title={i.help}>
+                    <span className="border-b border-dotted border-muted-foreground/50">{i.label}</span>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
