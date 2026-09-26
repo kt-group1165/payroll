@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useState, useRef, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -171,6 +173,19 @@ export function EmployeesList({
   const employees = initialEmployees;
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  /**
+   * 給与設定の履歴 (payroll_salary_settings)。★ 役職・給与形態もここに月ごとに持てる (2026-09-26 user)。
+   * ⚠ ただし **時給/月給の振り分け自体は 職員マスタの salary_type (= 今の値) を見ている**。
+   *   過去に 時給→月給 で変わった人の古い月を計算し直すと 今の給与形態で計算される。
+   *   この画面は「何がいつから変わったか」を見るためのもので、直すのは /salary。
+   */
+  type HistoryRow = {
+    effective_from: string; role_type: string | null; salary_type: string | null;
+    base_personal_salary: number | null; skill_salary: number | null; bonus_amount: number | null;
+    paid_leave_unit_price: number | null; note: string | null;
+  };
+  const [history, setHistory] = useState<HistoryRow[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [form, setForm] = useState(defaultForm);
   const [filterStatus, setFilterStatus] = useState<string>("在職者");
   const [filterOfficeIdInternal, setFilterOfficeIdRaw] = useState<string>("");
@@ -384,6 +399,18 @@ export function EmployeesList({
       communication_fee_type: emp.communication_fee_type ?? "none",
     });
     setEditingId(emp.id);
+    // 給与設定の履歴を読む (この画面では見るだけ。直すのは /salary)
+    setHistory(null); setHistoryLoading(true);
+    void (async () => {
+      const { data, error } = await supabase
+        .from("payroll_salary_settings")
+        .select("effective_from,role_type,salary_type,base_personal_salary,skill_salary,bonus_amount,paid_leave_unit_price,note")
+        .eq("employee_id", emp.id)
+        .order("effective_from", { ascending: false });
+      if (error) { console.warn("[employees] 給与設定の履歴を読めませんでした:", error.message); setHistory([]); }
+      else setHistory((data ?? []) as HistoryRow[]);
+      setHistoryLoading(false);
+    })();
     setIsOpen(true);
   };
 
@@ -910,6 +937,72 @@ export function EmployeesList({
                     <span className="text-sm">社会保険加入（処遇改善補助金手当対象）</span>
                   </label>
                 </section>
+
+                {/* 給与設定の履歴 (2026-09-26 user)。3 カラムの下に横いっぱいで出す */}
+                {editingId && (
+                  <section className="rounded-lg border p-4 md:col-span-3">
+                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">
+                      給与設定の履歴
+                      <span className="ml-2 font-normal">
+                        役職・給与形態・本人給などは <b>適用開始月ごと</b>に持てます。直すのは
+                        {" "}<Link href="/salary" className="underline">給与設定</Link> の画面です
+                      </span>
+                    </h3>
+                    {historyLoading ? (
+                      <p className="text-sm text-muted-foreground">読み込み中…</p>
+                    ) : !history || history.length === 0 ? (
+                      <p className="text-sm text-red-600">
+                        ★ 給与設定の行がありません。月給者はこの状態だと <b>総支給額が 0 円</b>になります
+                      </p>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="text-xs text-muted-foreground">
+                          <tr className="border-b">
+                            <th className="text-left py-1 pr-3">適用開始</th>
+                            <th className="text-left py-1 pr-3">役職</th>
+                            <th className="text-left py-1 pr-3">給与形態</th>
+                            <th className="text-right py-1 pr-3">本人給</th>
+                            <th className="text-right py-1 pr-3">職能給</th>
+                            <th className="text-right py-1 pr-3">報奨金</th>
+                            <th className="text-right py-1 pr-3">有給単価</th>
+                            <th className="text-left py-1">メモ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {history.map((h, i) => {
+                            // 1 つ後ろ (= 時系列で前) の行と比べて 変わった項目に印を付ける
+                            const prev = history[i + 1];
+                            const chg = (a: unknown, b: unknown) => !!prev && a !== b;
+                            const yen = (v: number | null) => (v == null ? "—" : Number(v).toLocaleString() + "円");
+                            return (
+                              <tr key={h.effective_from} className="border-b last:border-0">
+                                <td className="py-1 pr-3 font-mono text-xs">
+                                  {h.effective_from === "1970-01-01"
+                                    ? <span title="いつからか分からないので 最初から有効という扱い">最初から</span>
+                                    : h.effective_from.replace(/-/g, "/")}
+                                </td>
+                                <td className={"py-1 pr-3 " + (chg(h.role_type, prev?.role_type) ? "font-bold text-amber-700" : "")}>{h.role_type || "—"}</td>
+                                <td className={"py-1 pr-3 " + (chg(h.salary_type, prev?.salary_type) ? "font-bold text-amber-700" : "")}>{h.salary_type || "—"}</td>
+                                <td className={"py-1 pr-3 text-right " + (chg(h.base_personal_salary, prev?.base_personal_salary) ? "font-bold text-amber-700" : "")}>{yen(h.base_personal_salary)}</td>
+                                <td className={"py-1 pr-3 text-right " + (chg(h.skill_salary, prev?.skill_salary) ? "font-bold text-amber-700" : "")}>{yen(h.skill_salary)}</td>
+                                <td className={"py-1 pr-3 text-right " + (chg(h.bonus_amount, prev?.bonus_amount) ? "font-bold text-amber-700" : "")}>{yen(h.bonus_amount)}</td>
+                                <td className={"py-1 pr-3 text-right " + (chg(h.paid_leave_unit_price, prev?.paid_leave_unit_price) ? "font-bold text-amber-700" : "")}>{yen(h.paid_leave_unit_price)}</td>
+                                <td className="py-1 text-xs text-muted-foreground truncate max-w-[18rem]" title={h.note ?? ""}>{h.note || ""}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                    {history && history.length > 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        ★ 色が付いているのは 1 つ前の行から変わったところ。
+                        ⚠ 役職・給与形態がここで変わっていても、<b>時給か月給かの振り分け自体は職員マスタの「今の値」</b>を見ています。
+                        過去の月を計算し直すと 今の給与形態で計算されます
+                      </p>
+                    )}
+                  </section>
+                )}
               </div>
             </DialogContent>
           </Dialog>
