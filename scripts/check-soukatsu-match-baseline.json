@@ -1,0 +1,1118 @@
+{
+  "_readme": "check-soukatsu-match の基準値。事業所番号|処理月 ごとの 対の数・完全一致数など。悪化したまま --update しないこと (穴を焼き付ける)",
+  "updated_at": "2026-09-26T13:04:56.245Z",
+  "total": {
+    "pairs": 3692,
+    "exact": 2973,
+    "within1pct": 3413,
+    "soukatsuNotNumber": 0,
+    "onlyOurs": 115,
+    "onlySoukatsu": 15
+  },
+  "cells": {
+    "1270105271|202603": {
+      "pairs": 34,
+      "exact": 31,
+      "within1pct": 34,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270105271|202604": {
+      "pairs": 35,
+      "exact": 33,
+      "within1pct": 34,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270105271|202605": {
+      "pairs": 36,
+      "exact": 34,
+      "within1pct": 36,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270105271|202606": {
+      "pairs": 35,
+      "exact": 34,
+      "within1pct": 35,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270105271|202607": {
+      "pairs": 34,
+      "exact": 31,
+      "within1pct": 34,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270105271|202608": {
+      "pairs": 34,
+      "exact": 30,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270201930|202603": {
+      "pairs": 20,
+      "exact": 17,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270201930|202604": {
+      "pairs": 20,
+      "exact": 18,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270201930|202605": {
+      "pairs": 20,
+      "exact": 17,
+      "within1pct": 17,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270201930|202606": {
+      "pairs": 20,
+      "exact": 14,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270201930|202607": {
+      "pairs": 20,
+      "exact": 18,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270201930|202608": {
+      "pairs": 20,
+      "exact": 18,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270203191|202603": {
+      "pairs": 22,
+      "exact": 16,
+      "within1pct": 20,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270203191|202604": {
+      "pairs": 22,
+      "exact": 14,
+      "within1pct": 20,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 1
+    },
+    "1270203191|202605": {
+      "pairs": 24,
+      "exact": 11,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270203191|202606": {
+      "pairs": 23,
+      "exact": 13,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270203191|202607": {
+      "pairs": 22,
+      "exact": 18,
+      "within1pct": 19,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270203191|202608": {
+      "pairs": 22,
+      "exact": 20,
+      "within1pct": 21,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270303173|202603": {
+      "pairs": 14,
+      "exact": 9,
+      "within1pct": 13,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270303173|202604": {
+      "pairs": 16,
+      "exact": 14,
+      "within1pct": 14,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270303173|202605": {
+      "pairs": 15,
+      "exact": 12,
+      "within1pct": 15,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270303173|202606": {
+      "pairs": 17,
+      "exact": 12,
+      "within1pct": 15,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270303173|202607": {
+      "pairs": 18,
+      "exact": 11,
+      "within1pct": 16,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270303173|202608": {
+      "pairs": 17,
+      "exact": 15,
+      "within1pct": 17,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270402116|202603": {
+      "pairs": 31,
+      "exact": 29,
+      "within1pct": 30,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270402116|202604": {
+      "pairs": 31,
+      "exact": 27,
+      "within1pct": 31,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270402116|202605": {
+      "pairs": 29,
+      "exact": 24,
+      "within1pct": 27,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1270402116|202606": {
+      "pairs": 30,
+      "exact": 23,
+      "within1pct": 29,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270402116|202607": {
+      "pairs": 29,
+      "exact": 26,
+      "within1pct": 29,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270402116|202608": {
+      "pairs": 28,
+      "exact": 24,
+      "within1pct": 27,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270501180|202603": {
+      "pairs": 63,
+      "exact": 52,
+      "within1pct": 56,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 1
+    },
+    "1270501180|202604": {
+      "pairs": 65,
+      "exact": 50,
+      "within1pct": 54,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 1
+    },
+    "1270501180|202605": {
+      "pairs": 65,
+      "exact": 42,
+      "within1pct": 48,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 1
+    },
+    "1270501180|202606": {
+      "pairs": 65,
+      "exact": 39,
+      "within1pct": 51,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1270501180|202607": {
+      "pairs": 67,
+      "exact": 53,
+      "within1pct": 58,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1270501180|202608": {
+      "pairs": 67,
+      "exact": 58,
+      "within1pct": 60,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 1
+    },
+    "1270906546|202603": {
+      "pairs": 24,
+      "exact": 20,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270906546|202604": {
+      "pairs": 24,
+      "exact": 18,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270906546|202605": {
+      "pairs": 24,
+      "exact": 21,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270906546|202606": {
+      "pairs": 24,
+      "exact": 19,
+      "within1pct": 21,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270906546|202607": {
+      "pairs": 25,
+      "exact": 19,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1270906546|202608": {
+      "pairs": 25,
+      "exact": 18,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271101295|202603": {
+      "pairs": 33,
+      "exact": 30,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271101295|202604": {
+      "pairs": 32,
+      "exact": 27,
+      "within1pct": 31,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271101295|202605": {
+      "pairs": 32,
+      "exact": 29,
+      "within1pct": 32,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271101295|202606": {
+      "pairs": 33,
+      "exact": 31,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271101295|202607": {
+      "pairs": 33,
+      "exact": 27,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271101295|202608": {
+      "pairs": 33,
+      "exact": 32,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271103184|202603": {
+      "pairs": 0,
+      "exact": 0,
+      "within1pct": 0,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1271103184|202604": {
+      "pairs": 0,
+      "exact": 0,
+      "within1pct": 0,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1271103184|202605": {
+      "pairs": 0,
+      "exact": 0,
+      "within1pct": 0,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1271103184|202606": {
+      "pairs": 0,
+      "exact": 0,
+      "within1pct": 0,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1271103184|202607": {
+      "pairs": 0,
+      "exact": 0,
+      "within1pct": 0,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1271103184|202608": {
+      "pairs": 0,
+      "exact": 0,
+      "within1pct": 0,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1271500942|202603": {
+      "pairs": 28,
+      "exact": 25,
+      "within1pct": 27,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 4,
+      "onlySoukatsu": 0
+    },
+    "1271500942|202604": {
+      "pairs": 31,
+      "exact": 27,
+      "within1pct": 30,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 1
+    },
+    "1271500942|202605": {
+      "pairs": 32,
+      "exact": 27,
+      "within1pct": 29,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1271500942|202606": {
+      "pairs": 32,
+      "exact": 27,
+      "within1pct": 29,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 1
+    },
+    "1271500942|202607": {
+      "pairs": 34,
+      "exact": 24,
+      "within1pct": 29,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1271500942|202608": {
+      "pairs": 33,
+      "exact": 31,
+      "within1pct": 31,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1271502518|202603": {
+      "pairs": 24,
+      "exact": 22,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271502518|202604": {
+      "pairs": 24,
+      "exact": 17,
+      "within1pct": 21,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271502518|202605": {
+      "pairs": 24,
+      "exact": 12,
+      "within1pct": 21,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 1
+    },
+    "1271502518|202606": {
+      "pairs": 25,
+      "exact": 19,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271502518|202607": {
+      "pairs": 25,
+      "exact": 21,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1271502518|202608": {
+      "pairs": 25,
+      "exact": 24,
+      "within1pct": 25,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272400142|202603": {
+      "pairs": 28,
+      "exact": 24,
+      "within1pct": 28,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272400142|202604": {
+      "pairs": 28,
+      "exact": 23,
+      "within1pct": 27,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272400142|202605": {
+      "pairs": 28,
+      "exact": 18,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272400142|202606": {
+      "pairs": 29,
+      "exact": 23,
+      "within1pct": 28,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272400142|202607": {
+      "pairs": 30,
+      "exact": 27,
+      "within1pct": 30,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272400142|202608": {
+      "pairs": 29,
+      "exact": 28,
+      "within1pct": 28,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272400829|202603": {
+      "pairs": 32,
+      "exact": 29,
+      "within1pct": 29,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272400829|202604": {
+      "pairs": 32,
+      "exact": 29,
+      "within1pct": 30,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272400829|202605": {
+      "pairs": 33,
+      "exact": 27,
+      "within1pct": 31,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272400829|202606": {
+      "pairs": 33,
+      "exact": 25,
+      "within1pct": 30,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272400829|202607": {
+      "pairs": 33,
+      "exact": 31,
+      "within1pct": 32,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272400829|202608": {
+      "pairs": 33,
+      "exact": 29,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272401561|202603": {
+      "pairs": 28,
+      "exact": 25,
+      "within1pct": 27,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272401561|202604": {
+      "pairs": 27,
+      "exact": 21,
+      "within1pct": 26,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272401561|202605": {
+      "pairs": 27,
+      "exact": 22,
+      "within1pct": 26,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272401561|202606": {
+      "pairs": 26,
+      "exact": 21,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272401561|202607": {
+      "pairs": 26,
+      "exact": 22,
+      "within1pct": 25,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272401561|202608": {
+      "pairs": 26,
+      "exact": 23,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1272401967|202603": {
+      "pairs": 24,
+      "exact": 17,
+      "within1pct": 20,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 1
+    },
+    "1272401967|202604": {
+      "pairs": 23,
+      "exact": 18,
+      "within1pct": 20,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1272401967|202605": {
+      "pairs": 24,
+      "exact": 20,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272401967|202606": {
+      "pairs": 24,
+      "exact": 16,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272401967|202607": {
+      "pairs": 24,
+      "exact": 19,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272401967|202608": {
+      "pairs": 24,
+      "exact": 15,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 2
+    },
+    "1272403534|202603": {
+      "pairs": 25,
+      "exact": 22,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272403534|202604": {
+      "pairs": 25,
+      "exact": 24,
+      "within1pct": 25,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272403534|202605": {
+      "pairs": 26,
+      "exact": 23,
+      "within1pct": 26,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272403534|202606": {
+      "pairs": 26,
+      "exact": 24,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272403534|202607": {
+      "pairs": 28,
+      "exact": 19,
+      "within1pct": 28,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272403534|202608": {
+      "pairs": 28,
+      "exact": 26,
+      "within1pct": 27,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272404508|202603": {
+      "pairs": 14,
+      "exact": 13,
+      "within1pct": 13,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1272404508|202604": {
+      "pairs": 15,
+      "exact": 12,
+      "within1pct": 14,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1272404508|202605": {
+      "pairs": 14,
+      "exact": 13,
+      "within1pct": 13,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1272404508|202606": {
+      "pairs": 15,
+      "exact": 7,
+      "within1pct": 10,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1272404508|202607": {
+      "pairs": 15,
+      "exact": 14,
+      "within1pct": 14,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 0
+    },
+    "1272404508|202608": {
+      "pairs": 14,
+      "exact": 12,
+      "within1pct": 14,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 4,
+      "onlySoukatsu": 0
+    },
+    "1272603851|202603": {
+      "pairs": 13,
+      "exact": 10,
+      "within1pct": 11,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272603851|202604": {
+      "pairs": 13,
+      "exact": 10,
+      "within1pct": 12,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272603851|202605": {
+      "pairs": 13,
+      "exact": 12,
+      "within1pct": 13,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272603851|202606": {
+      "pairs": 14,
+      "exact": 12,
+      "within1pct": 13,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1272603851|202607": {
+      "pairs": 14,
+      "exact": 10,
+      "within1pct": 13,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 1
+    },
+    "1272603851|202608": {
+      "pairs": 15,
+      "exact": 14,
+      "within1pct": 15,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273001626|202603": {
+      "pairs": 22,
+      "exact": 18,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273001626|202604": {
+      "pairs": 20,
+      "exact": 14,
+      "within1pct": 20,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273001626|202605": {
+      "pairs": 20,
+      "exact": 13,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273001626|202606": {
+      "pairs": 21,
+      "exact": 11,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273001626|202607": {
+      "pairs": 21,
+      "exact": 18,
+      "within1pct": 21,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273001626|202608": {
+      "pairs": 20,
+      "exact": 16,
+      "within1pct": 18,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273400844|202603": {
+      "pairs": 39,
+      "exact": 34,
+      "within1pct": 38,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1273400844|202604": {
+      "pairs": 40,
+      "exact": 32,
+      "within1pct": 40,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273400844|202605": {
+      "pairs": 40,
+      "exact": 17,
+      "within1pct": 32,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273400844|202606": {
+      "pairs": 39,
+      "exact": 33,
+      "within1pct": 37,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273400844|202607": {
+      "pairs": 39,
+      "exact": 34,
+      "within1pct": 37,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1273400844|202608": {
+      "pairs": 37,
+      "exact": 34,
+      "within1pct": 36,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1275800892|202603": {
+      "pairs": 26,
+      "exact": 21,
+      "within1pct": 25,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1275800892|202604": {
+      "pairs": 27,
+      "exact": 22,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1275800892|202605": {
+      "pairs": 27,
+      "exact": 23,
+      "within1pct": 24,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1275800892|202606": {
+      "pairs": 27,
+      "exact": 23,
+      "within1pct": 26,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1275800892|202607": {
+      "pairs": 27,
+      "exact": 23,
+      "within1pct": 26,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 0
+    },
+    "1275800892|202608": {
+      "pairs": 27,
+      "exact": 18,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 1,
+      "onlySoukatsu": 1
+    },
+    "1278600398|202603": {
+      "pairs": 36,
+      "exact": 32,
+      "within1pct": 34,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1278600398|202604": {
+      "pairs": 36,
+      "exact": 24,
+      "within1pct": 35,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1278600398|202605": {
+      "pairs": 37,
+      "exact": 16,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1278600398|202606": {
+      "pairs": 38,
+      "exact": 17,
+      "within1pct": 33,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1278600398|202607": {
+      "pairs": 37,
+      "exact": 30,
+      "within1pct": 37,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1278600398|202608": {
+      "pairs": 37,
+      "exact": 34,
+      "within1pct": 36,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 0,
+      "onlySoukatsu": 0
+    },
+    "1279000366|202603": {
+      "pairs": 24,
+      "exact": 21,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1279000366|202604": {
+      "pairs": 24,
+      "exact": 18,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1279000366|202605": {
+      "pairs": 24,
+      "exact": 17,
+      "within1pct": 22,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1279000366|202606": {
+      "pairs": 24,
+      "exact": 17,
+      "within1pct": 23,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 0
+    },
+    "1279000366|202607": {
+      "pairs": 25,
+      "exact": 21,
+      "within1pct": 25,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 2,
+      "onlySoukatsu": 1
+    },
+    "1279000366|202608": {
+      "pairs": 24,
+      "exact": 19,
+      "within1pct": 21,
+      "soukatsuNotNumber": 0,
+      "onlyOurs": 3,
+      "onlySoukatsu": 1
+    }
+  }
+}
