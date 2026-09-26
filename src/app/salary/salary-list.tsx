@@ -620,8 +620,20 @@ export function SalaryList({
           const empByNumFiltered = filterOfficeId
             ? new Map(candidateEmps.map((e) => [e.employee_number, e]))
             : empByNum;
-          emp = empByNumFiltered.get(empNum);
-          if (!emp) err = `社員番号「${empNum}」が職員マスタに未登録`;
+          // ★ 事業所を絞っていないと、番号だけの Map は **後勝ち**で 1 人しか残らない。
+          //   職員番号は事業所をまたぐと重複する (2026-09-27 実測: 1,091 番号のうち 184 番号が別人と衝突)。
+          //   ここは **給与設定を書き換える**経路なので、黙って別人を選ばずに その行を落とす。
+          const sameNum = candidateEmps.filter((e) => e.employee_number === empNum);
+          if (sameNum.length > 1) {
+            const where = sameNum
+              .map((e) => `${offices.find((o) => o.id === e.office_id)?.office_number ?? "?"}:${e.name}`)
+              .join(" / ");
+            err = `社員番号「${empNum}」が ${sameNum.length} 名に付いています (${where})。`
+              + `CSV に「事業所番号」の列を入れるか、上の絞り込みで事業所を選んでから取り込んでください`;
+          } else {
+            emp = empByNumFiltered.get(empNum);
+            if (!emp) err = `社員番号「${empNum}」が職員マスタに未登録`;
+          }
         }
 
         parsed.push({
