@@ -86,10 +86,32 @@ for (const [on, en, nm] of TARGETS) {
       if (haveYen.get(k) === yen) continue;
       yenOps.push({ office_number: on, employee_number: en, processing_month: m, item_key: "commute_yen", numeric_value: yen,
         note: `総括表の通勤費から (sync_commute_from_soukatsu.mjs)。出勤簿が当システムに無い職員。日額 × 出勤日数 の積み上げで km に割り戻せない 2026-09-24`,
+        _empKey: `${on}|${en}`, _nm: nm,
         label: `${nm} ${m} 通勤費 ${haveYen.has(k) ? `${haveYen.get(k)} → ` : ""}¥${yen}` });
     }
   }
 }
+
+// ⚠ 同じ人の他の月と桁が違う yen は 電車代(定期代)の可能性がある (2026-09-26)。
+//   例: HO JINAN KYLE 202604 ¥12,134 / 202605 ¥6,339 (他の月は ¥227 前後)。
+//   金子百恵 (船橋) と同型の疑い。転記自体は正しい (総括表の値をそのまま payroll_monthly_inputs に
+//   入れるのが本スクリプトの役割) が、note に残さないと誰も気づけないので中央値との比較で警告を足す。
+{
+  const byEmp = new Map();
+  for (const o of yenOps) { const a = byEmp.get(o._empKey) ?? []; a.push(o.numeric_value); byEmp.set(o._empKey, a); }
+  const median = (arr) => { const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  for (const o of yenOps) {
+    const vals = byEmp.get(o._empKey);
+    if (vals.length < 3) continue; // 中央値の意味がある人数だけ
+    const med = median(vals);
+    if (med > 0 && o.numeric_value > med * 3) {
+      o.note += ` ⚠ ${o._nm}の他の月(中央値¥${med})と桁が違う。電車代(定期代)の可能性あり・未検証`;
+      o.label += " ⚠桁違い";
+    }
+  }
+}
+for (const o of yenOps) { delete o._empKey; delete o._nm; }
+
 console.log(`=== 通勤費 ${EXECUTE ? "【本番】" : "(DRY RUN)"} ===`);
 console.log(`A. 事業所書式の 通勤km に入れる (距離列がある人) — ${kmOps.length} 件`);
 for (const o of kmOps) console.log("   " + o.label);
