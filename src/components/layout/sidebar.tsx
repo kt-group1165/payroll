@@ -44,6 +44,7 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "給与計算",
     items: [
+      { href: "/service-records",       label: "サービス記録一覧", icon: "📝", mode: "payroll" },
       { href: "/attendance",            label: "労働時間管理", icon: "🕐", mode: "payroll" },
       { href: "/kyotaku-attendance",    label: "出勤簿",       icon: "📅", mode: "payroll" },
       { href: "/kyotaku-labor-check",   label: "居宅労働時間チェック", icon: "🩺", mode: "payroll" },
