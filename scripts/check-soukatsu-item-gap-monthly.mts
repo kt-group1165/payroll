@@ -120,6 +120,9 @@ type Items = Record<string, number>;
  * 出張km と通勤km が同じ値のとき 出張を 0 にする修正 (tripKmExcludingCommute) より前の計算かどうか。
  * payload の grand_total は 計算した時点の式で出ているので、それより前の計算は 前の式 (重複除去なし) で項目を出す。
  * ★ この時刻 (2026-09-27 02:00 JST) より後に 修正前のコードで再計算した場合は ずれる (push → デプロイの前に再計算しないこと)
+ * ★ この分岐は 検査の中だけにある (給与の計算 payroll-calc.ts / page.tsx には 時刻の分岐は無い)。
+ * ★ 消す条件: 読んだ payload の calculated_at が 全部 KM_DEDUPE_FROM 以後になったら (= 138 事業所月を再計算したら)
+ *   travelFeeAt を travelFeeAmount に戻し KM_DEDUPE_FROM を消す。そうなると 出力の最後に「この分岐は消せます」と出る。
  */
 const KM_DEDUPE_FROM = "2026-09-26T17:00:00Z";
 const travelFeeAt = (p: M) => (String(p.calculated_at ?? "") < KM_DEDUPE_FROM
@@ -332,6 +335,12 @@ if (UPDATE) {
     if (v > b) expect(false, `${k} が基準値から増えた (${v} > ${b})`);
   }
   expect(Object.entries(counts).every(([k, v]) => v <= (baseline.counts[k] ?? Number.POSITIVE_INFINITY)), `どの件数も基準値から増えていない (${Object.keys(counts).length} 項目)`);
+}
+{
+  const old = calc.filter((c) => String(c.calculated_at) < KM_DEDUPE_FROM).length;
+  console.log(old === 0
+    ? `\n★ 読んだ payload は全部 ${KM_DEDUPE_FROM} 以後の計算です。KM_DEDUPE_FROM と travelFeeAt の分岐は消せます (travelFeeAmount に戻す)`
+    : `\n(足場) ${KM_DEDUPE_FROM} より前の計算 ${old} / ${calc.length} 事業所月は 出張・通勤の重複除去の前の式で出張費を出している。0 になったら分岐を消す`);
 }
 console.log(fail ? `\n★ FAIL ${fail} 件` : "\nPASS (★ 2026-09-23 の計算に基づく)");
 process.exit(fail ? 1 : 0);
