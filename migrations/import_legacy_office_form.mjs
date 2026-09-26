@@ -15,6 +15,17 @@
  *
  * ⚠ 取込は (office_number, processing_month) 単位で 既存を消してから入れ直す。
  *   既に xlsm から入っている月には当てないこと (--only で対象を絞る)。
+ *
+ * ★ OVERWRITE_LIMIT の意図 (下の定義のコメントより): 「既に書式が入っている月を壊さない」。
+ *   ただし判定が **行数 (既存 30 行以上なら飛ばす) で書式の有無を代用**していたので、
+ *   書式が 30 行未満の月は書式ごと消していた (ちはら台 202606: 書式 27 行 (出張km) が
+ *   2026-09-21 に旧システムの 55 行に置き換わった。check:office-form-shrink で判明)。
+ *   2026-09-27 から:
+ *     ・書式バッチの行 (import_batch_id がある行) が 1 行でもある事業所×月は **飛ばす** (意図そのものの判定)
+ *     ・行数の判定 (OVERWRITE_LIMIT) も残す (これまでより広く飛ばすだけで、狭くはしない)
+ *     ・DELETE は import_batch_id=is.null の行だけ (OVERWRITE_LIMIT を上げて強行しても書式は消えない)
+ *   ⚠ 「丸ごと消して旧システムの内容に置き換える」意図は残してある。書式以外の行
+ *     (総括表①由来の 会議N件数・出張km の補完 等。import_batch_id が空) は今も消える。
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -167,9 +178,16 @@ let total = 0;
 const targets = [];
 for (const [k, v] of [...out].sort()) {
   const r = await fetch(`${SB}payroll_office_form_records?select=id&office_number=eq.${v.office_number}&processing_month=eq.${v.processing_month}&limit=200`, { headers: H });
-  const cur = (await r.json()).length;
-  const skip = cur >= OVERWRITE_LIMIT;
-  console.log(`  ${k}  職員${v.emps.size} 行${v.rows.length}  既存${cur}${skip ? "  ★ 既に書式があるので飛ばす" : ""}`);
+  const curRows = await r.json();
+  if (!r.ok || !Array.isArray(curRows)) { console.error(`✗ 既存の取得に失敗 (${k}): ${JSON.stringify(curRows).slice(0, 200)}`); process.exit(1); }
+  const cur = curRows.length;
+  const fr = await fetch(`${SB}payroll_office_form_records?select=id&office_number=eq.${v.office_number}&processing_month=eq.${v.processing_month}&import_batch_id=not.is.null&limit=1`, { headers: H });
+  const formRows = await fr.json();
+  if (!fr.ok || !Array.isArray(formRows)) { console.error(`✗ 書式バッチ行の取得に失敗 (${k}): ${JSON.stringify(formRows).slice(0, 200)}`); process.exit(1); }
+  const hasForm = formRows.length > 0;
+  const skip = hasForm || cur >= OVERWRITE_LIMIT;
+  const why = hasForm ? "  ★ 書式バッチの行があるので飛ばす" : cur >= OVERWRITE_LIMIT ? `  ★ 既存が ${OVERWRITE_LIMIT} 行以上あるので飛ばす` : "";
+  console.log(`  ${k}  職員${v.emps.size} 行${v.rows.length}  既存${cur}${why}`);
   if (!skip) { targets.push(v); total += v.rows.length; }
 }
 console.log(`取込対象 ${targets.length} 事業所月 / ${total} 行`);
@@ -180,7 +198,7 @@ for (const [k, v] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`    ${
 if (!EXECUTE) { console.log("\nDRY RUN (--execute で書き込み)"); process.exit(0); }
 
 for (const t of targets) {
-  const del = await fetch(`${SB}payroll_office_form_records?office_number=eq.${t.office_number}&processing_month=eq.${t.processing_month}`, { method: "DELETE", headers: { ...H, Prefer: "return=minimal" } });
+  const del = await fetch(`${SB}payroll_office_form_records?office_number=eq.${t.office_number}&processing_month=eq.${t.processing_month}&import_batch_id=is.null`, { method: "DELETE", headers: { ...H, Prefer: "return=minimal" } });
   if (!del.ok) { console.error(`✗ 既存の削除に失敗 (${t.office_number} ${t.processing_month}): ${await del.text()}`); process.exit(1); }
   for (let i = 0; i < t.rows.length; i += 300) {
     const res = await fetch(`${SB}payroll_office_form_records`, { method: "POST", headers: { ...H, Prefer: "return=minimal" }, body: JSON.stringify(t.rows.slice(i, i + 300)) });

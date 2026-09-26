@@ -1,0 +1,20 @@
+{
+  "_readme": [
+    "check:delete-scope の基準値。★ (経路で絞っていない / 月で区切っていない DELETE) を (ファイル|表|条件) で覚える。",
+    "★ 0 を目指さない。画面の「この月の書式・実績・出勤簿を削除」ボタンは 経路を問わず消すのが意図なので ★ のまま残る。",
+    "★ 新しい ★ が増えたら落ちる。★ 条件を足して ★ が消えたぶんには落ちない。",
+    "★ --update は 新しい ★ が意図どおりか (巻き込んでよいか) を確かめてから。"
+  ],
+  "flagged": [
+    "migrations/delete_meisai_month_office.mjs|payroll_service_records|月+事業所",
+    "migrations/fix_kimitsu_202604_attendance.mjs|payroll_attendance_records|月+事業所+項目・人",
+    "migrations/import_legacy_office_form.mjs|payroll_office_form_records|月+事業所+項目・人",
+    "src/app/attendance/attendance-content.tsx|payroll_attendance_records|月",
+    "src/app/attendance/attendance-content.tsx|payroll_attendance_records|月+項目・人",
+    "src/app/services/services-content.tsx|payroll_service_type_mappings|",
+    "src/components/csv/attendance-importer.tsx|payroll_attendance_records|月+事業所",
+    "src/components/csv/meisai-importer.tsx|payroll_service_records|月+事業所",
+    "src/components/csv/office-form-importer.tsx|payroll_office_form_records|月+事業所",
+    "src/components/kaigo/kaigo-meisai-importer.tsx|payroll_service_records|月+事業所"
+  ]
+}
