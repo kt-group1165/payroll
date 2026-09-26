@@ -39,7 +39,9 @@
     "check:fixed-pay-no-work": "tsx scripts/check-fixed-pay-no-work.mts",
     "check:zero-as-unset": "tsx scripts/check-zero-as-unset.mts",
     "check:delete-scope": "tsx scripts/check-delete-scope.mts",
-    "check:manual-input-dropped": "tsx scripts/check-manual-input-dropped.mts"
+    "check:manual-input-dropped": "tsx scripts/check-manual-input-dropped.mts",
+    "check:manual-input-month": "tsx scripts/check-manual-input-month.mts",
+    "check:emp-number-pair": "tsx scripts/check-emp-number-pair.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
