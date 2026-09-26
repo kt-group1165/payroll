@@ -365,6 +365,16 @@ export default function ServiceRecordsPage() {
     };
   }, [shownRows]);
 
+  /**
+   * ほのぼのの金額 (MEISAI の「金額」列) が 1 件でも入っているか。
+   * ⚠ 全件 空のまま 0 円として比べると「差 181,549 円」のように出て **取込漏れを金額のズレと読み違える**
+   *   (2026-09-26 に ちはら台 202607 で実際にそう見えた)。入っていないときは 比べない。
+   */
+  const hasHonobono = useMemo(
+    () => !!rows?.some((r) => r.kind === "visit" && r.rec.amount != null),
+    [rows],
+  );
+
   const anyFilter = !!(fClient || fCode || fDoukou || fYoruasa || fShinya || fHoliday);
   const clearFilters = () => { setFClient(""); setFCode(""); setFDoukou(false); setFYoruasa(false); setFShinya(false); setFHoliday(false); setSubtotalOnly(false); };
 
@@ -436,7 +446,7 @@ export default function ServiceRecordsPage() {
                   <TH>利用者コード</TH><TH>利用者名</TH><TH>サービス名</TH>
                   <TH>休日<br />区分</TH><TH>時間帯</TH>
                   <TH right>金額</TH>
-                  <TH right>ほのぼの<br />の金額</TH>
+                  <TH right>ほのぼの<br />の金額{!hasHonobono && <span className="block text-[10px] font-normal text-muted-foreground">未取込</span>}</TH>
                   <TH right>残業<br />時間</TH>
                   <TH right>休日残業<br />時間</TH>
                   <TH right>週勤務<br />時間</TH>
@@ -522,8 +532,14 @@ export default function ServiceRecordsPage() {
               <span>件数 <b className="tabular-nums">{total.count.toLocaleString()}</b></span>
               <span>訪問時間 <b className="tabular-nums">{hm(total.visitMin)}</b></span>
               <span>金額 (当方) <b className="tabular-nums">{yen(total.pay)}円</b></span>
-              <span className="text-muted-foreground">ほのぼのの金額 <b className="tabular-nums">{yen(total.honobono)}円</b></span>
-              {total.pay !== total.honobono && <span className="text-amber-700">差 {yen(total.pay - total.honobono)}円</span>}
+              {hasHonobono ? (
+                <>
+                  <span className="text-muted-foreground">ほのぼのの金額 <b className="tabular-nums">{yen(total.honobono)}円</b></span>
+                  {total.pay !== total.honobono && <span className="text-amber-700">差 {yen(total.pay - total.honobono)}円</span>}
+                </>
+              ) : (
+                <span className="text-muted-foreground">ほのぼのの金額は <b>取り込まれていません</b> (MEISAI の「金額」列が空) — 比べていません</span>
+              )}
             </div>
           )}
 
