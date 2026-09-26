@@ -22,6 +22,7 @@ import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidO
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
+import { isEmployedInMonth, leaveInMonth } from "@/lib/payroll/employment-in-month";
 import { getEntriesByEmployeesMonthRange } from "@/lib/office-input/queries";
 import { mergeOfficeFormSources, officeInputEntriesToFormRecords, officeInputEntryToFormRecord, normEmp, processingToBillingMonth } from "@/lib/office-input/to-form-records";
 import {
@@ -522,9 +523,9 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date").eq("office_id", selectedOfficeId)
-          // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
-          .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date").eq("office_id", selectedOfficeId),
+          // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)。
+          // ★ 判定は DB の .or() でなく 全員読んで isEmployedInMonth で行う (2026-09-27。月ごとの判定を 1 か所に集めるため。挙動は同じ)
         fetchAllSalarySettings(),
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
@@ -539,6 +540,8 @@ export default function PayrollPage() {
         const err = (r as { error?: { message: string } | null }).error;
         if (err) throw new Error(`${label}の読み込みに失敗しました (もう一度計算してください): ${err.message}`);
       }
+      // その月に在籍していた職員だけ (退職の判定。休職は 月給の計算のところで leaveInMonth)
+      const empInMonth = ((empRes.data ?? []) as Employee[]).filter((e) => isEmployedInMonth(e, selectedMonth));
       for (const [label, r] of [["出勤簿", attRes], ["残業の設定", otRes], ["事業所の単価の履歴", officePriceRes]] as const) {
         const err = (r as { error?: { message: string } | null }).error;
         if (err) throw new Error(`${label}の読み込みに失敗しました (もう一度計算してください): ${err.message}`);
@@ -576,7 +579,7 @@ export default function PayrollPage() {
       //   出力は CSV そのまま (= 現行と完全に同じ) になる。
       //   ⚠ employee_id → 職員番号 が引けない行は 黙って捨てず 警告に出す。
       const empNumById = new Map(
-        ((empRes.data ?? []) as Employee[]).map((e) => [e.id, e.employee_number]),
+        empInMonth.map((e) => [e.id, e.employee_number]),
       );
       let webWonKeys: string[] = [];
       {
@@ -621,7 +624,7 @@ export default function PayrollPage() {
       }
       const officeMap         = new Map(officeRows.map((o: Office) => [o.office_number, o.id]));
       const officeByIdMap     = new Map(officeRows.map((o: Office) => [o.id, o]));
-      const employeesRaw = (empRes.data ?? []) as Employee[];
+      const employeesRaw = empInMonth;
       // 履歴化方式: 対象月 (selectedMonth = YYYYMM) で active な salary row を選ぶ。
       // effective_from <= 対象月 のうち最新を per-employee で 1 row 抽出。
       // 履歴がまだ無い employee は default '1970-01-01' の backfill row が当たる。
@@ -1696,7 +1699,7 @@ export default function PayrollPage() {
         return !!h && h > monthEndIsoForHire;
       };
       const monthlyEmps = employees.filter(
-        (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
+        (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && !leaveInMonth(e, selectedMonth).onLeave
           && !hiredAfterMonth(e)
       );
       const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
