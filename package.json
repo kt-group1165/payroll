@@ -22,6 +22,7 @@
     "check:attendance-nobreak": "tsx scripts/verify-attendance-nobreak.mts",
     "check:paid-leave-rate": "tsx scripts/verify-paid-leave-rate.mts",
     "check:km-swap": "tsx scripts/check-km-swap.mts",
+    "check:km-double": "tsx scripts/check-km-double.mts",
     "check:office-input-flow": "tsx scripts/check-office-input-flow.mts",
     "check:tenure-rehire": "tsx scripts/verify-tenure-rehire.mts",
     "check:rate-gap": "tsx scripts/verify-rate-gap.mts",
