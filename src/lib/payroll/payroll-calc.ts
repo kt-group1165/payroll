@@ -552,7 +552,26 @@ export function computeOvertimePay(
 }
 
 export function effectiveTravelKm(p: MonthlyPayroll): number {
-  return p.travel_km > 0 ? p.travel_km : p.travel_km_auto;
+  return tripKmExcludingCommute(p.travel_km > 0 ? p.travel_km : p.travel_km_auto, p.summary.commuteKmTotal, (p.commute_fee_override ?? 0) > 0);
+}
+
+/**
+ * 出張km が 同じ人月に払う通勤km と同じ値なら 出張は 0 にして 通勤として 1 回だけ払う (2026-09-27 給与D)。
+ *   月給は effectiveTravelKm、時給は page.tsx の出張費の計算で 必ずこれを通す。出張km の元
+ *   (手入力 > 事業所書式 > 出勤簿 / 月給の画面の手入力 travel_km) の **どの段から来ても** ここで落とす
+ *   (1 つの段だけ直すと 別の段で再発するため)。scripts/check-km-double.mts が見張る。
+ * なぜ: 同じ km を 出張と通勤の両方で払っていた人月が 4 (江尻 202608 63km / 福田 202604 48km /
+ *   根本カオリ 202606 16km / 五十嵐 202604 100.8km。計 ¥2,837)。② (支払用) は 4 件とも片方だけ払っていた。
+ * なぜ通勤に寄せるか (★ 当方の判断。user が覆せる): 同じ人の別の月と比べると 出張km に入っていた値は
+ *   どれも その人の「いつもの通勤km」だった (670 組中 9 組、全部この形) = 通勤の km が出張の欄に入り込んでいる。
+ *   ② も 通勤 3 / 出張 1 で通勤が多い。
+ *   ★ 出張単価と通勤単価は 全事業所×全月 (360 通り) で同じなので どちらに寄せても金額は同じ (欄が変わるだけ)。
+ * 値がたまたま同じになる正当な例は 実データに見つからなかった (上の 670 組)。
+ * 通勤を円で上書きしている人月 (手入力 commute_yen) は 通勤km を払わないので そのまま。
+ */
+export function tripKmExcludingCommute(tripKm: number, paidCommuteKm: number, commuteOverriddenByYen: boolean): number {
+  if (commuteOverriddenByYen || !(tripKm > 0) || !(paidCommuteKm > 0)) return tripKm;
+  return Math.abs(tripKm - paidCommuteKm) < 0.05 ? 0 : tripKm;
 }
 
 /**

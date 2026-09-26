@@ -116,6 +116,15 @@ const noWork = (p: M) => WORK_KEYS.every((k) => !Number((p.summary as unknown as
 
 // ── 項目 ──
 type Items = Record<string, number>;
+/**
+ * 出張km と通勤km が同じ値のとき 出張を 0 にする修正 (tripKmExcludingCommute) より前の計算かどうか。
+ * payload の grand_total は 計算した時点の式で出ているので、それより前の計算は 前の式 (重複除去なし) で項目を出す。
+ * ★ この時刻 (2026-09-27 02:00 JST) より後に 修正前のコードで再計算した場合は ずれる (push → デプロイの前に再計算しないこと)
+ */
+const KM_DEDUPE_FROM = "2026-09-26T17:00:00Z";
+const travelFeeAt = (p: M) => (String(p.calculated_at ?? "") < KM_DEDUPE_FROM
+  ? Math.ceil((p.travel_km > 0 ? p.travel_km : p.travel_km_auto) * p.office_travel_unit_price - 1e-6)
+  : travelFeeAmount(p));
 const ITEMS = ["本人給", "職能給", "役職", "資格", "勤続", "固定残業", "処遇改善", "特定処遇改善", "ベースアップ", "出張", "通勤", "育児", "介護超過", "夜朝深夜", "特日", "欠勤控除", "残業"] as const;
 const NO_L1_COLUMN = ["有給", "泊まり", "報奨金"] as const;
 function oursItems(es: M[]): Items {
@@ -127,14 +136,14 @@ function oursItems(es: M[]): Items {
     add("本人給", s.base_personal_salary); add("職能給", s.skill_salary); add("役職", s.position_allowance); add("資格", s.qualification_allowance);
     add("勤続", s.tenure_allowance); add("固定残業", s.fixed_overtime_pay); add("処遇改善", s.treatment_improvement);
     add("特定処遇改善", s.specific_treatment_improvement); add("ベースアップ", s.treatment_subsidy);
-    add("出張", travelFeeAmount(p) + p.business_trip_fee); add("通勤", commuteFeeAmount(p)); add("育児", p.childcare_allowance);
+    add("出張", travelFeeAt(p) + p.business_trip_fee); add("通勤", commuteFeeAmount(p)); add("育児", p.childcare_allowance);
     // 事務員の介護分は ② の「介護」列に入る (熊谷 1272404508|260402|202608 ¥40,852)
     add("介護超過", careOvertimePay(p) + (p.office_worker_care_pay ?? 0)); add("夜朝深夜", yochoAllowance(p)); add("特日", p.tokubi_allowance ?? 0);
     add("欠勤控除", absenceDeduction(p));
     add("有給", monthlyPaidLeaveAllowance(p)); add("泊まり", p.overnight_allowance ?? 0);
     add("報奨金", (p.bonus_paid ? s.bonus_amount : 0) + s.special_bonus);
     // 超過残業は 総支給から他の項目を引いた残り (overtimeExcessPay は残業設定の表が要るので 保存された総支給から逆算する)
-    const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAmount(p) + commuteFeeAmount(p) + p.business_trip_fee
+    const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAt(p) + commuteFeeAmount(p) + p.business_trip_fee
       + (p.overnight_allowance ?? 0) + p.childcare_allowance + careOvertimePay(p) + yochoAllowance(p) + monthlyPaidLeaveAllowance(p)
       + (p.tokubi_allowance ?? 0) + (p.office_worker_care_pay ?? 0) - absenceDeduction(p) + (p.adjustment ?? 0);
     add("残業", Number(p.grand_total ?? 0) - others);
@@ -156,7 +165,7 @@ for (const c of calc) {
   if (!MONTHS.includes(c.processing_month)) continue;
   for (const p of c.monthly ?? []) {
     const k = `${c.office_number}|${nn(p.employee_number)}|${c.processing_month}`;
-    oursByKey.set(k, [...(oursByKey.get(k) ?? []), p]);
+    oursByKey.set(k, [...(oursByKey.get(k) ?? []), { ...p, calculated_at: c.calculated_at }]);
   }
 }
 const calcMonths = new Set(calc.map((c) => `${c.office_number}|${c.processing_month}`));

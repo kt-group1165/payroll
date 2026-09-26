@@ -32,6 +32,7 @@ import {
   yochoAllowance,
   computeOvertimePay,
   effectiveTravelKm,
+  tripKmExcludingCommute,
   travelFeeAmount,
   commuteFeeAmount,
   overtimeExcessPay,
@@ -1317,7 +1318,9 @@ export default function PayrollPage() {
         // ⚠ 出張費単価は 従業員契約情報 にも入っているが そちらは「今 (2026-09) の値」で、
         //   ガソリン単価に連動して月ごとに変わる (事業所 12.3〜12.7 に対し 契約は 12.0〜12.1)。
         //   過去月に当てると壊れるので 事業所の単価 (総括表 3〜7月に合わせた値) を使う。2026-09-21
-        const businessTripFee = hourlyBusinessTripFeeAmount(tripKmOf(empNum, empSummary.businessKmTotal),
+        // ⚠ 同じ km を 通勤でも払うなら 出張は 0 (通勤に寄せる。payroll-calc.ts tripKmExcludingCommute)
+        const businessTripFee = hourlyBusinessTripFeeAmount(
+          tripKmExcludingCommute(tripKmOf(empNum, empSummary.businessKmTotal), empSummary.commuteKmTotal, manualCommuteYenByNum.has(normEmp(empNum))),
           empTravelRate.get(normEmp(empNum)) ?? empOffice?.travel_unit_price ?? 0);
         // 会議費 = 件数 × 会議単価 ＋ 会議時間 × 同行の時給 (総括表 2026-05〜07 の 四街道・やわた で確認)
         const meetingFee = meetingUnpaidRes.offices.has(empOffice?.office_number ?? "")
