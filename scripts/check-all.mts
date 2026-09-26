@@ -43,6 +43,23 @@ const CHECKS: Check[] = [
   { name: "office-input-flow", script: "check:office-input-flow", why: "★ 事業所書式 Web 入力 (/office-input) が 給与計算に届く経路。射影・合流・実データ合流 (職員マスタ未登録 0 組が期待値)" },
   { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)",
     kind: "baseline", knownDiff: 9 }, // 実績0件月の基本給の扱い (既知・B-2y。user判断待ち)
+
+  // ── 2026-09-27 に足した 4 本 ──
+  // ★ 入れる基準は これまでどおり「落ちたら 金額か返戻に効く」かつ「0 を目指せる」。
+  //   ★ 同じ日に 10 本以上の検査を足したが、★ 診断系・基準値方式は **入れていない**
+  //   (check:soukatsu-cause / check:soukatsu-item-gap / check:fixed-pay-no-work /
+  //    check:calc-freshness / check:zero-as-unset / check:delete-scope /
+  //    check:emp-number-pair / check:nonnumeric-cells / check:manual-input-* /
+  //    check:office-form-shrink / check:honobono-amount / check:prehire-pay)。
+  //   ★ それらは「いま どこまで見えているか」を測るもので、落ちる/落ちないの話ではない。
+  { name: "hourly-targets", script: "check:hourly-targets",
+    why: "★ 時給者の計算対象の集合。手入力しか無い人が落ちると **その人の給与が丸ごと 0 になる** (2026-09-27 に 6 名 8 人月で実際に起きていた)。fixture・DB 非依存" },
+  { name: "non-care-records", script: "check:non-care-records",
+    why: "★ 介護時間・訪問時間に 会議・面談・契約・担当者会議・健康診断 を数えない。数えると介護超過が過大 (−¥5,000/6か月)。★ 研修は外さない (外すと ② より少なくなる) も固定している" },
+  { name: "km-double", script: "check:km-double",
+    why: "★ 同じ km を 出張と通勤の両方で払う二重。2026-09-27 に 4 人月 ¥2,837 を是正して 0 にした。増えたら再発" },
+  { name: "numeric-cell", script: "check:numeric-cell",
+    why: "★ 表計算のセルを数値として読む helper。parseFloat(\"1,302\") = 1 で **もっともらしい値**になるため 0 より危ない。出勤簿の km がこれを通る。fixture・DB 非依存" },
 ];
 
 /**
@@ -58,6 +75,16 @@ function looksLikeNoSampleSkip(out: string): boolean {
 
 /** ★ この一覧が見ていないもの。緑でも安心しないための明示 */
 const NOT_COVERED = [
+  "★ 2026-09-27 に足した診断系の検査は **この一覧に入れていない** (意図的)。" +
+    "check:soukatsu-cause / soukatsu-item-gap(-monthly) / fixed-pay-no-work / calc-freshness / " +
+    "zero-as-unset / delete-scope / emp-number-pair / nonnumeric-cells / manual-input-dropped / " +
+    "manual-input-month / office-form-shrink / honobono-amount / prehire-pay。" +
+    "★ どれも「いま どこまで見えているか」を測るもので、落ちる/落ちないの話ではない。手で回すこと。" +
+    "★ check:prehire-pay だけは 0 を目指す検査だが、いま 8 人月残っているので " +
+    "埋め戻し → 再計算 → 0 を確認してから編入する",
+  "★ payroll_calc_results は 2026-09-23 の計算のまま (全 138 事業所月)。" +
+    "★ payload を読む検査の数字は すべてその時点のもの。npm run check:calc-freshness で古さを見る。" +
+    "★ 138 件を再計算したら、基準値を持つ検査は --update せずに回して中身を見てから取り直すこと",
   "事業所書式の 2 経路 (CSV 取込 payroll_office_form_records / Web 入力 payroll_office_input_entries) のうち、" +
     "office-input-flow が見るのは 射影 (Web → OfficeFormRecord) と 合流の優先だけ。" +
     "CSV パーサ (office-form-parser) と /office-input の画面そのものは見ていない。" +
