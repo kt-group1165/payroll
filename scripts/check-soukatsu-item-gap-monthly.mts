@@ -98,14 +98,15 @@ else {
 }
 const l2 = new Map<string, Record<string, unknown>>();
 for (const r of l2rows) if (r.sheet_kind === "shaseki") l2.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, r.row_data);
-/** 当方の項目 → ② (支払用) の列 */
+/** 当方の項目 → ② (支払用) の列。★ 同じ項目の列名が事業所で違う (特定処遇改善 は 4 通り。2026-09-27 に 1 つ落として 1199 を誤って「② は 0」と出した) */
 const L2_COLS: Record<string, string[]> = {
   本人給: ["本人給"], 職能給: ["職能給"], 役職: ["役職手当"], 資格: ["資格手当"], 勤続: ["勤続手当"], 固定残業: ["固定残業代"],
-  処遇改善: ["処遇改善手当"], 特定処遇改善: ["特別処遇改善手当", "特定処遇改善手当"], ベースアップ: ["処遇改善補助金手当"],
+  処遇改善: ["処遇改善手当"], 特定処遇改善: ["特別処遇改善手当", "特定処遇改善手当", "特別処遇改善", "特定処遇改善"], ベースアップ: ["処遇改善補助金手当"],
   出張: ["出張費"], 通勤: ["通勤費"], 育児: ["育児手当"], 介護超過: ["介護"], 夜朝深夜: ["・夜朝・深夜"], 特日: ["・特日"],
-  欠勤控除: ["欠勤控除"], 残業: ["残業総額"],
+  欠勤控除: ["欠勤控除"], 残業: ["残業総額", "残業総額2"],
 };
-const l2Val = (key: string, item: string): number | null => { const d = l2.get(key); return d ? L2_COLS[item].reduce((s, c) => s + Math.abs(num(d[c])), 0) : null; };
+// 足さずに 最大を取る (残業総額 と 残業総額2 に同じ値が入っている行があり、足すと倍になる)
+const l2Val = (key: string, item: string): number | null => { const d = l2.get(key); return d ? Math.max(0, ...L2_COLS[item].map((c) => Math.abs(num(d[c])))) : null; };
 
 // ── 働いた記録が無い月 (check:fixed-pay-no-work と同じ定義) ──
 const TOP_KEYS = ["paid_leave_allowance_override", "travel_km", "travel_km_auto", "business_trip_fee", "absence_days", "care_minutes", "office_worker_care_pay"];
@@ -116,7 +117,7 @@ const noWork = (p: M) => WORK_KEYS.every((k) => !Number((p.summary as unknown as
 // ── 項目 ──
 type Items = Record<string, number>;
 const ITEMS = ["本人給", "職能給", "役職", "資格", "勤続", "固定残業", "処遇改善", "特定処遇改善", "ベースアップ", "出張", "通勤", "育児", "介護超過", "夜朝深夜", "特日", "欠勤控除", "残業"] as const;
-const NO_L1_COLUMN = ["有給", "事務員の介護分", "泊まり", "報奨金"] as const;
+const NO_L1_COLUMN = ["有給", "泊まり", "報奨金"] as const;
 function oursItems(es: M[]): Items {
   const o: Items = {};
   const add = (k: string, v: number) => { o[k] = (o[k] ?? 0) + (v || 0); };
@@ -127,9 +128,10 @@ function oursItems(es: M[]): Items {
     add("勤続", s.tenure_allowance); add("固定残業", s.fixed_overtime_pay); add("処遇改善", s.treatment_improvement);
     add("特定処遇改善", s.specific_treatment_improvement); add("ベースアップ", s.treatment_subsidy);
     add("出張", travelFeeAmount(p) + p.business_trip_fee); add("通勤", commuteFeeAmount(p)); add("育児", p.childcare_allowance);
-    add("介護超過", careOvertimePay(p)); add("夜朝深夜", yochoAllowance(p)); add("特日", p.tokubi_allowance ?? 0);
+    // 事務員の介護分は ② の「介護」列に入る (熊谷 1272404508|260402|202608 ¥40,852)
+    add("介護超過", careOvertimePay(p) + (p.office_worker_care_pay ?? 0)); add("夜朝深夜", yochoAllowance(p)); add("特日", p.tokubi_allowance ?? 0);
     add("欠勤控除", absenceDeduction(p));
-    add("有給", monthlyPaidLeaveAllowance(p)); add("事務員の介護分", p.office_worker_care_pay ?? 0); add("泊まり", p.overnight_allowance ?? 0);
+    add("有給", monthlyPaidLeaveAllowance(p)); add("泊まり", p.overnight_allowance ?? 0);
     add("報奨金", (p.bonus_paid ? s.bonus_amount : 0) + s.special_bonus);
     // 超過残業は 総支給から他の項目を引いた残り (overtimeExcessPay は残業設定の表が要るので 保存された総支給から逆算する)
     const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAmount(p) + commuteFeeAmount(p) + p.business_trip_fee
@@ -206,7 +208,7 @@ function run(l1rows: L1[], ours: Map<string, M[]>): Result {
 }
 
 const r0 = run(l1, oursByKey);
-if (process.env.DUMP) writeFileSync(process.env.DUMP, JSON.stringify(r0));
+
 
 console.log(`\n--- ① の総支給の式: ${r0.formulaOk} / ${r0.formulaN} 人月が一致 (説明のつかない残差 ${r0.formulaBad.length} 人月)`);
 for (const x of r0.formulaBad.slice(0, 8)) console.log(`    ${x.key} 残差 ${yen(x.diff)}`);
@@ -231,11 +233,26 @@ for (const k of ITEMS) {
 const againstL2 = (res: Result) => ITEMS.flatMap((k) => [
   ...res.oursOnly[k].filter((x) => l2Val(x.key, k) === 0).map((x) => ({ item: k, key: x.key, ours: x.v, l1: 0, l2: 0 })),
   ...res.l1Only[k].filter((x) => (l2Val(x.key, k) ?? 0) > 0).map((x) => ({ item: k, key: x.key, ours: 0, l1: x.v, l2: l2Val(x.key, k) ?? 0 })),
-]);
-const ag = againstL2(r0);
+]).map((x) => ({ ...x, l2TotalSame: l2TotalSame(x.key) }));
+/** ② の総支給 = 当方の総支給 (±1 円) なら、列の対応が違うだけで ② は当方と同じ額を払っている */
+function l2TotalSame(key: string): boolean | null {
+  const d = l2.get(key); const es = oursByKey.get(key);
+  if (!d || !es) return null;
+  return Math.abs(num(d["総支給額"]) - es.reduce((s, p) => s + Number(p.grand_total ?? 0), 0)) <= 1;
+}
+// ★ 残業は項目ではなく「総支給 − 他の項目」の残差なので 別掲にする (混ぜると型が読めない)
+const agAll = againstL2(r0);
+const ag = agAll.filter((x) => x.item !== "残業");
+const agOt = agAll.filter((x) => x.item === "残業");
+if (process.env.DUMP) writeFileSync(process.env.DUMP, JSON.stringify({ r0, ag: agAll }));
 console.log(`
   ★ ② が 当方と違う側にいる片側: ${ag.length} 人月 (当方が払い ②=0: ${ag.filter((x) => x.ours > 0).length} 人月 ${yen(ag.reduce((s, x) => s + x.ours, 0))} / ② が払い 当方=0: ${ag.filter((x) => x.ours === 0).length} 人月 ${yen(ag.reduce((s, x) => s + x.l2, 0))})`);
-for (const x of ag) console.log(`    ${x.item.padEnd(6, "　")} ${x.key}  当方 ${yen(x.ours)} / ① ${yen(x.l1)} / ② ${yen(x.l2)}`);
+const agLine = (x: (typeof agAll)[number]) => `    ${x.item.padEnd(6, "　")} ${x.key}  当方 ${yen(x.ours)} / ① ${yen(x.l1)} / ② ${yen(x.l2)}${x.l2TotalSame ? "  (② の総支給 = 当方)" : ""}`;
+for (const x of ag) console.log(agLine(x));
+console.log(`
+  別掲: 残業 (★ 項目ではなく 総支給 − 他の項目 の残差) で ② と違う側: ${agOt.length} 人月 (当方が払い ②=0: ${agOt.filter((x) => x.ours > 0).length} 人月 ${yen(agOt.reduce((s, x) => s + x.ours, 0))} / ② が払い 当方=0: ${agOt.filter((x) => x.ours === 0).length} 人月)`);
+console.log("    ⚠ 1,761 円 (210946 × 4 か月 / 426 × 2 か月) は 事務員の出勤時間が ② より 60 分長い (時刻 − 休憩 vs 欄)。user 判断済み「時刻を正」で直さない");
+for (const x of agOt) console.log(agLine(x));
 console.log(`  合計 当方だけ ${yen(sumOf(r0.oursOnly))} / ① だけ ${yen(sumOf(r0.l1Only))}  (★ 残業・特日・欠勤控除は ① の総支給に入っていない項目)`);
 console.log(`  参考 (① に列が無い): ${NO_L1_COLUMN.map((k) => `${k} ${r0.noColumn[k].n} 人月 ${yen(r0.noColumn[k].sum)}`).join(" / ")}`);
 console.log(`  行ごと片側: ① だけ (総支給>0・同じ事業所月は計算済み) ${r0.rowOnlyL1} 人月 / 当方だけ ${r0.rowOnlyOurs} 人月`);
@@ -284,6 +301,7 @@ type Baseline = { _readme: string[]; counts: Record<string, number> };
 const counts: Record<string, number> = { 説明のつかない残差: r0.formulaBad.length, 記録なしの固定給: r0.noWork.n, "行ごと片側_①だけ": r0.rowOnlyL1, "行ごと片側_当方だけ": r0.rowOnlyOurs };
 for (const k of ITEMS) { counts[`当方だけ:${k}`] = r0.oursOnly[k].length; counts[`①だけ:${k}`] = r0.l1Only[k].length; }
 counts["②と違う側"] = ag.length;
+counts["②と違う側_残業(残差)"] = agOt.length;
 const baseline: Baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline : { _readme: [], counts: {} };
 if (UPDATE) {
   baseline.counts = counts;
