@@ -42,6 +42,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { restAll } from "./_rest.mjs";
 
+// ★ payroll_calc_results (計算結果) は使わない。再計算しても件数は変わらない (動いたら設定の表が書き換わった)
 const BASELINE = new URL("./check-zero-as-unset-baseline.json", import.meta.url);
 const UPDATE = process.argv.includes("--update");
 const SNAPSHOT = process.env.SNAPSHOT ?? "";
