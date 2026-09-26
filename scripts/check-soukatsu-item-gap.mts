@@ -49,7 +49,12 @@ const MONTHS = (process.env.MONTHS || "202603,202604,202605,202606,202607,202608
 let fail = 0;
 const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
 const nn = (s: unknown) => String(s ?? "").trim().replace(/^0+/, "");
-const num = (v: unknown) => (typeof v === "number" ? v : 0);
+/** ① の数値。"10,000" のようなカンマ付き文字列も数値に直す (2026-09-27: 読めていなかったので直した) */
+const num = (v: unknown) => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && /^-?[\d,]+(\.\d+)?$/.test(v.trim())) return Number(v.replace(/,/g, ""));
+  return 0;
+};
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
 
 console.log("=== check:soukatsu-item-gap (時給者の手当 当方 vs 総括表 ①・項目ごと・両方向) ===");
@@ -207,6 +212,7 @@ for (const k of ITEMS) {
 const oursOnlySum = ITEMS.reduce((s, k) => s + r0.oursOnly[k].reduce((t, x) => t + x.v, 0), 0);
 const l1OnlySum = ITEMS.reduce((s, k) => s + r0.l1Only[k].reduce((t, x) => t + x.v, 0), 0);
 console.log(`  合計 当方だけ ${yen(oursOnlySum)} / ① だけ ${yen(l1OnlySum)}`);
+console.log("  ★ 欄違い 2 人月 (240705 202606 / 杉尾 202606): 初任者研修が 当方は研修の欄・① ② は本人給の欄。総額は一致。直さない (2026-09-27 判断)");
 console.log(`  参考 (① に列が無い): ${NO_L1_COLUMN.map((k) => `${k} ${r0.noColumn[k].n} 人月 ${yen(r0.noColumn[k].sum)}`).join(" / ")}`);
 console.log(`  行ごと片側: ① だけ (総支給>0・同じ事業所月は計算済み) ${r0.rowOnlyL1} 人月 / 当方だけ ${r0.rowOnlyOurs} 人月`);
 console.log(`  当方の項目の合計 ≠ 保存された grand_total: ${r0.sanity} 人月 (0 でなければ 対応表が取りこぼしている)`);
@@ -231,6 +237,15 @@ console.log("\n--- 負のコントロール");
   const copy = l1.map((x, j) => (j === i ? { ...x, d: { ...x.d, "総支給額（パート）": num(x.d["総支給額（パート）"]) + 1000 } } : x));
   const n = run(copy, oursByKey).formulaOk;
   expect(n === r0.formulaOk - 1, `① の写しの 総支給 を 1 件 +1,000 すると 式の一致が −1 (${r0.formulaOk} → ${n})`);
+}
+
+{
+  // ① の xlsm には "10,000" のようなカンマ付き文字列で入っている事業所がある (2026-09-27 発見)。
+  // 写しの 移動手当 を 同じ値のカンマ付き文字列にしても 件数が変わらない = 文字列を 0 と読んでいない
+  const i = l1.findIndex((x) => { const o = oursByKey.get(x.key); return o && num(x.d["移動手当"]) >= 1000 && oursItems(o)["移動"] > 0; });
+  const copy = l1.map((x, j) => (j === i ? { ...x, d: { ...x.d, 移動手当: num(x.d["移動手当"]).toLocaleString("en-US") } } : x));
+  const n = run(copy, oursByKey).oursOnly["移動"].length;
+  expect(i >= 0 && typeof copy[i].d["移動手当"] === "string" && n === r0.oursOnly["移動"].length, `① の写しの 移動手当 を "${i >= 0 ? copy[i].d["移動手当"] : ""}" (カンマ付き文字列) にしても 当方だけ(移動) が変わらない (${r0.oursOnly["移動"].length} → ${n})`);
 }
 
 // ── 基準値 ──

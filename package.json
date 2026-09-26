@@ -43,6 +43,7 @@
     "check:manual-input-month": "tsx scripts/check-manual-input-month.mts",
     "check:hourly-targets": "tsx scripts/check-hourly-targets.mts",
     "check:soukatsu-item-gap": "tsx scripts/check-soukatsu-item-gap.mts",
+    "check:soukatsu-item-gap-monthly": "tsx scripts/check-soukatsu-item-gap-monthly.mts",
     "check:emp-number-pair": "tsx scripts/check-emp-number-pair.mts"
   },
   "dependencies": {
