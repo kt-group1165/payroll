@@ -27,7 +27,16 @@
  *   PZ     パートのその他
  *   ── 月給 (提責・社員・事務員) ──
  *   T      総支給額の差 = 通勤費の差 だけで説明できる
- *   U      総支給額の差 = 調整手当(内訳計: 介護超過+事務員の訪問分+夜朝+特日) の差 だけで説明できる
+ *   U*     総支給額の差 = 調整手当(内訳計: 介護超過+事務員の訪問分+夜朝+特日) の差 だけで説明できる。部品で 5 つに分ける
+ *            (②の調整手当 = 介護超過(プラスのみ) + 夜朝 + 特日 − 誤差。全22事業所で同じ式 / memory: payroll_soukatsu_adjustment_parts)
+ *     UO   ②の「調整手当」セルが 上の式と合わない = ② で手で上書きされている。部品 (介護・夜朝・特日・誤差) は当方と一致
+ *          ★ 2026-05 に 27 件 (他の月 0〜1)。5月の月給の落ち込みの正体
+ *     UC   介護超過 (事務員の訪問分を含む) の差だけ
+ *     UY   夜朝深夜 の差だけ
+ *     UT   特日 の差だけ
+ *     UM   上の部品の 2 つ以上 (または誤差) が絡む
+ *          ⚠ 0.75 換算は 介護超過と特日だけ (Hana系)。夜朝・土日祝には掛けない (memory: payroll_075_conversion_scope)
+ *            当方の値は careOvertimePay / yochoAllowance をそのまま呼ぶので この規則は payroll-calc 側に従う
  *   SZ     月給のその他
  *   「だけで説明できる」は ±1 円。
  *
@@ -49,13 +58,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { restAll, empKey, normEmpNo } from "./_rest.mjs";
 import { careOvertimePay, yochoAllowance, commuteFeeAmount } from "../src/lib/payroll/payroll-calc.js";
+import { soukatsuAdjustmentParts } from "../src/lib/payroll/soukatsu-diff.js";
 import type { MonthlyPayroll } from "../src/lib/payroll/payroll-calc.js";
 
 const UPDATE = process.argv.includes("--update");
 const DETAIL = process.argv.find((a) => a.startsWith("--detail="))?.split("=")[1];
 const BASELINE_PATH = join(dirname(fileURLToPath(import.meta.url)), "check-soukatsu-cause-baseline.json");
 
-export const TYPES = ["STALE", "NaN", "A", "B", "B2", "AB", "C", "PZ", "T", "U", "SZ"] as const;
+export const TYPES = ["STALE", "NaN", "A", "B", "B2", "AB", "C", "PZ", "T", "UO", "UC", "UY", "UT", "UM", "SZ"] as const;
 export type CauseType = (typeof TYPES)[number];
 const TYPE_LABEL: Record<CauseType, string> = {
   STALE: "手入力が計算より新しい (再計算待ち)",
@@ -67,7 +77,11 @@ const TYPE_LABEL: Record<CauseType, string> = {
   C: "パート: ②に誤差あり (上のどれでもない)",
   PZ: "パート: その他",
   T: "月給: 通勤費だけ",
-  U: "月給: 調整手当(内訳計)だけ",
+  UO: "月給: ②の調整手当セルが式と違う (②の上書き)",
+  UC: "月給: 調整手当のうち 介護超過だけ",
+  UY: "月給: 調整手当のうち 夜朝だけ",
+  UT: "月給: 調整手当のうち 特日だけ",
+  UM: "月給: 調整手当の部品が複数",
   SZ: "月給: その他",
 };
 
@@ -112,8 +126,20 @@ export function classify(p: Pair): CauseType | null {
   const mp = e as unknown as MonthlyPayroll;
   const commute = commuteFeeAmount(mp) - num(r["通勤費"]);
   if (!within1(commute) && within1(d - commute)) return "T";
-  const adjParts = careOvertimePay(mp) + num(e.office_worker_care_pay) + yochoAllowance(mp) + num(e.tokubi_allowance) - num(r["調整手当"]);
-  if (!within1(adjParts) && within1(d - adjParts)) return "U";
+  const oCare = careOvertimePay(mp) + num(e.office_worker_care_pay), oYocho = yochoAllowance(mp), oTok = num(e.tokubi_allowance);
+  const adjParts = oCare + oYocho + oTok - num(r["調整手当"]);
+  if (!within1(adjParts) && within1(d - adjParts)) {
+    // ★ 先に総支給で絞ってから部品に降りる (項目差 ≠ 支給差)
+    const sp = soukatsuAdjustmentParts(r);
+    if (!within1(num(r["調整手当"]) - sp.total)) return "UO";
+    const dc = oCare - sp.care, dy = oYocho - sp.yocho, dt = oTok - sp.tokubi;
+    if (within1(sp.gosa)) {
+      if (!within1(dc) && within1(adjParts - dc)) return "UC";
+      if (!within1(dy) && within1(adjParts - dy)) return "UY";
+      if (!within1(dt) && within1(adjParts - dt)) return "UT";
+    }
+    return "UM";
+  }
   return "SZ";
 }
 
@@ -167,6 +193,7 @@ export function compare(base: Record<string, MonthCell>, cur: Map<string, MonthC
     if (b.pairs !== c.pairs) { denom.push(`${m} 対 ${b.pairs}→${c.pairs}`); continue; }
     for (const t of TYPES) {
       if (t === "STALE") continue;
+      if (b[t] === undefined) { denom.push(`${m} 型 ${t} が基準値に無い (型の定義が変わった。中身を見てから --update)`); continue; }
       if (c[t] > b[t]) worse.push(`${m} ${t} ${b[t]}→${c[t]} (${TYPE_LABEL[t]})`);
       else if (c[t] < b[t]) better.push(`${m} ${t} ${b[t]}→${c[t]}`);
     }
@@ -196,6 +223,7 @@ async function loadSnapshot(): Promise<Snapshot> {
  *   ① 一致しているパート 1 人月の ②移動手当 を −500 し 総支給 も −500 → B か B2 が 1 増える
  *   ② 一致しているパート 1 人月の ②調整手当 を +700 し 総支給 も +700 → A が 1 増える
  *   ③ 一致している月給 1 人月の 当方 grand_total を +10,000 → SZ が 1 増え、compare が「悪化」を出す
+ *   ④ 一致している月給 1 人月の ②調整手当セルを +900 し 総支給 も +900 (部品は触らない) → UO が 1 増える
  */
 function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
   const lines: string[] = [];
@@ -220,7 +248,10 @@ function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
   const ok3a = t3.get(pickShaseki.month)!.SZ === base.get(pickShaseki.month)!.SZ + 1;
   const ok3b = compare(Object.fromEntries(base), t3).worse.length > 0;
   lines.push(`③ 当方の月給 +10,000 → SZ +1: ${ok3a ? "OK" : "★ NG"} / 基準値比較が「悪化」を出す: ${ok3b ? "OK" : "★ NG"}`);
-  return { ok: ok1 && ok2 && ok3a && ok3b, lines };
+  const p4 = mutate(pickShaseki, (p) => ({ ...p, soukatsu: (p.soukatsu ?? 0) + 900, row: { ...p.row, 調整手当: num(p.row["調整手当"]) + 900 } }));
+  const ok4 = cnt(p4, pickShaseki.month, "UO") === base.get(pickShaseki.month)!.UO + 1;
+  lines.push(`④ ②調整手当セルを +900 (部品はそのまま) → UO +1: ${ok4 ? "OK" : "★ NG"}`);
+  return { ok: ok1 && ok2 && ok3a && ok3b && ok4, lines };
 }
 
 const pct = (a: number, b: number) => (b === 0 ? "-" : `${((100 * a) / b).toFixed(1)}%`);
@@ -231,6 +262,7 @@ async function main() {
   const cur = tally(pairs);
 
   console.log("=== 総括表との不一致の 原因の型 (人月・総支給額) 2026-09-26 新設・読み取り専用 ===");
+  console.log("★ check:all には入れていない (意図的)。理由: 型 A・C・UO は ② の手入力の増減で動くので、当方のコードが正しくても FAIL しうる。診断系");
   console.log("");
   console.log("★ 比べているもの: 当方 = payroll_calc_results の grand_total / 総括表 = ★ ② 支払用シート (手入力混在)。① ではない");
   console.log("  → 型 A・C は ② の手入力そのもの。当方の誤りの件数ではない。是非の判断は ① (旧システムの出力) を見ること");
@@ -241,7 +273,7 @@ async function main() {
   console.log("  ・計算結果が古い人月は STALE に分けるだけで 中身は見ない (→ check:calc-staleness のあと再計算)");
   console.log("  ・ミロク (実際の支給) とは比べていない / 控除後の金額は見ていない");
   console.log("  ・型は「その項目の差だけで総支給の差が ±1円で説明できるか」で決める。2 項目以上が絡むと その他 (PZ / SZ) に落ちる");
-  console.log("  ・月給の型 T・U は当方の値を payroll-calc の関数で出し直している。payload に額として入っていない項目のため");
+  console.log("  ・月給の型 T・U* は当方の値を payroll-calc の関数で出し直している。payload に額として入っていない項目のため");
   console.log("");
 
   const neg = negativeControl(pairs);
