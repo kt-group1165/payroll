@@ -16,6 +16,26 @@
  *
  * ⚠ **km に割り戻さない。**牧野 21,670 ÷ 12.3 = 1,762km/月 のような作り物の距離になる。
  * ⚠ 出勤簿が 1 件でもある職員は対象にしない (当方は出勤簿を正とする)。
+ * ⚠ **出勤簿の有無は必ず (office_number, employee_number) の対で判定する。**
+ *   employee_number は事業所内でしか一意でない (CLAUDE.md 既知の罠)。
+ *   実例 (2026-09-26): 稲葉香織 (大網 1275800892・230702) を対象に加えようとしたとき、
+ *   employee_number だけで出勤簿の有無を見ると、**別事業所 (やわた 1272404508) の
+ *   根本由香さんが同じ職員番号 230702 を持っていて出勤簿があるため、
+ *   稲葉香織が「出勤簿あり」と誤判定されて対象から弾かれる**ところだった。
+ *   (2026-09-26 に同じ罠を「給与E」も別の場面 (読み取り結果の突合) で踏んでいる。
+ *    警告文では防げないので、コード側で office_number 込みのキーにするしかない)
+ *
+ * 【2026-09-26 追加】木村由伸 (250201)・HO JINAN KYLE (260403) — ちはら台 1271500942
+ *   同じ「出勤簿が無く総括表だけが通勤費を払っている」パターンで新たに発見 (計 5 人月 ¥1,652)。
+ *   どちらも 距離列がある → A経路 (km)。
+ *
+ * ⚠ 五十嵐尚子・稲葉香織は **対象にしない**。総括表とは別に通常の事業所書式CSV取込
+ *   (import_batch_id が月ごとに別々に付く、2026-09-17 取込) で既に通勤km が入っており、
+ *   「出勤簿が無いので総括表で補う」という本スクリプトの前提と異なる
+ *   (総括表 と 事業所書式CSV という 2 つの一次ソースが食い違っているだけ。
+ *    稲葉 202607: 総括表387.8km / CSV取込369.2km。
+ *    五十嵐 202603: 総括表は通勤費2,280円なのに距離列が空 / CSV取込100.8km で
+ *    どちらの数字とも合わない。2026-09-26 発見・給与E への申し送り事項)。
  */
 const EXECUTE = process.argv.includes("--execute");
 import { readFileSync } from "node:fs";
@@ -36,11 +56,12 @@ const TARGETS = [
   ["1270501180", "3328", "牧野 美帆"], ["1270501180", "11047", "髙山 洋"],
   ["1270201930", "241213", "三島 由佳"], ["1270501180", "231204", "牛来 葉子"],
   ["1270501180", "3056", "世古 啓子"], ["1272400829", "284", "本田 亜美"],
+  ["1271500942", "250201", "木村 由伸"], ["1271500942", "260403", "HO JINAN KYLE"],
 ];
 
-// 出勤簿が 1 件でもあれば触らない
-const att = await get("payroll_attendance_records?select=employee_number&order=id");
-const hasAtt = new Set(att.map((a) => nn(a.employee_number)));
+// 出勤簿が 1 件でもあれば触らない。⚠ office_number 込みのキーで判定する (上の注記参照)
+const att = await get("payroll_attendance_records?select=office_number,employee_number&order=id");
+const hasAtt = new Set(att.map((a) => `${a.office_number}|${nn(a.employee_number)}`));
 const rows = await get("payroll_soukatsu_rows?select=office_number,processing_month,employee_number,row_data&order=id");
 const curYen = await get("payroll_monthly_inputs?select=office_number,employee_number,processing_month,numeric_value&item_key=eq.commute_yen&order=id");
 const haveYen = new Map(curYen.map((r) => [`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, num(r.numeric_value)]));
@@ -49,7 +70,7 @@ const haveKm = new Map(curKm.map((r) => [`${r.office_number}|${nn(r.employee_num
 
 const yenOps = [], kmOps = [], skipped = [];
 for (const [on, en, nm] of TARGETS) {
-  if (hasAtt.has(en)) { skipped.push(`★ ${nm}: 出勤簿があるので触らない`); continue; }
+  if (hasAtt.has(`${on}|${en}`)) { skipped.push(`★ ${nm}: 出勤簿があるので触らない`); continue; }
   for (const r of rows) {
     if (String(r.office_number) !== on || nn(r.employee_number) !== en) continue;
     const d = r.row_data, m = String(r.processing_month);
