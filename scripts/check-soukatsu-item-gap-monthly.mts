@@ -165,12 +165,12 @@ type Hit = { key: string; v: number };
 type Result = {
   formulaOk: number; formulaN: number; formulaBad: { key: string; diff: number }[];
   noWork: { n: number; yen: number; l1Yen: number };
-  oursOnly: Record<string, Hit[]>; l1Only: Record<string, Hit[]>; bothDiff: Record<string, { n: number; net: number }>;
+  oursOnly: Record<string, Hit[]>; l1Only: Record<string, Hit[]>; bothDiff: Record<string, { n: number; net: number; hits: { key: string; ours: number }[] }>;
   rowOnlyL1: number; rowOnlyOurs: number; noColumn: Record<string, { n: number; sum: number }>;
 };
 function run(l1rows: L1[], ours: Map<string, M[]>): Result {
   const r: Result = { formulaOk: 0, formulaN: 0, formulaBad: [], noWork: { n: 0, yen: 0, l1Yen: 0 }, oursOnly: {}, l1Only: {}, bothDiff: {}, rowOnlyL1: 0, rowOnlyOurs: 0, noColumn: {} };
-  for (const k of ITEMS) { r.oursOnly[k] = []; r.l1Only[k] = []; r.bothDiff[k] = { n: 0, net: 0 }; }
+  for (const k of ITEMS) { r.oursOnly[k] = []; r.l1Only[k] = []; r.bothDiff[k] = { n: 0, net: 0, hits: [] }; }
   for (const k of NO_L1_COLUMN) r.noColumn[k] = { n: 0, sum: 0 };
   const l1ByKey = new Map(l1rows.map((x) => [x.key, x.d]));
   for (const x of l1rows) {
@@ -196,7 +196,7 @@ function run(l1rows: L1[], ours: Map<string, M[]>): Result {
       const ov = Math.round(o[k] ?? 0), av = Math.round(a[k] ?? 0);
       if (ov > 0 && av === 0) r.oursOnly[k].push({ key, v: ov });
       else if (av > 0 && ov === 0) r.l1Only[k].push({ key, v: av });
-      else if (Math.abs(ov - av) > 1) { r.bothDiff[k].n++; r.bothDiff[k].net += ov - av; }
+      else if (Math.abs(ov - av) > 1) { r.bothDiff[k].n++; r.bothDiff[k].net += ov - av; r.bothDiff[k].hits.push({ key, ours: ov }); }
     }
     for (const k of NO_L1_COLUMN) if ((o[k] ?? 0) > 0) { r.noColumn[k].n++; r.noColumn[k].sum += o[k]; }
   }
@@ -253,6 +253,15 @@ console.log(`
   別掲: 残業 (★ 項目ではなく 総支給 − 他の項目 の残差) で ② と違う側: ${agOt.length} 人月 (当方が払い ②=0: ${agOt.filter((x) => x.ours > 0).length} 人月 ${yen(agOt.reduce((s, x) => s + x.ours, 0))} / ② が払い 当方=0: ${agOt.filter((x) => x.ours === 0).length} 人月)`);
 console.log("    ⚠ 1,761 円 (210946 × 4 か月 / 426 × 2 か月) は 事務員の出勤時間が ② より 60 分長い (時刻 − 休憩 vs 欄)。user 判断済み「時刻を正」で直さない");
 for (const x of agOt) console.log(agLine(x));
+console.log(`
+  ★ 両方にあって額が違う人月のうち ② が当方と同じ額 (± 1 円) / ② が ① と同じ額 (2026-09-27: 職能給 103/103・特定処遇改善 109/109 が ② = 当方。① の値だけが古い)`);
+for (const k of ITEMS) {
+  const hs = r0.bothDiff[k].hits;
+  if (!hs.length) continue;
+  const withL2 = hs.filter((h) => l2Val(h.key, k) != null);
+  const same = withL2.filter((h) => Math.abs((l2Val(h.key, k) ?? 0) - h.ours) <= 1).length;
+  console.log(`  ${k.padEnd(7, "　")}  ${hs.length} 人月 (② 行あり ${withL2.length}) のうち ② = 当方 ${same}`);
+}
 console.log(`  合計 当方だけ ${yen(sumOf(r0.oursOnly))} / ① だけ ${yen(sumOf(r0.l1Only))}  (★ 残業・特日・欠勤控除は ① の総支給に入っていない項目)`);
 console.log(`  参考 (① に列が無い): ${NO_L1_COLUMN.map((k) => `${k} ${r0.noColumn[k].n} 人月 ${yen(r0.noColumn[k].sum)}`).join(" / ")}`);
 console.log(`  行ごと片側: ① だけ (総支給>0・同じ事業所月は計算済み) ${r0.rowOnlyL1} 人月 / 当方だけ ${r0.rowOnlyOurs} 人月`);
