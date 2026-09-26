@@ -6,6 +6,7 @@
  *   npx tsx scripts/check-kenmu-duplicate-rows.mts
  */
 import { readFileSync } from "node:fs";
+import { pickSoukatsu } from "../src/lib/payroll/soukatsu-diff.js";
 const env: Record<string, string> = {};
 for (const p of ["../kaigo-app/.env.local", ".env.local"]) {
   let t = "";
@@ -34,6 +35,8 @@ async function getAll(): Promise<Row[]> {
 const norm = (s: unknown) => String(s ?? "").normalize("NFKC").replace(/\s+/g, "");
 
 async function main() {
+  // 負のコントロール: カンマ付きの値を数えられること
+  if (pickSoukatsu({ 総支給額: "10,000" }, "総支給額") !== 10000) { console.error("★ 負のコントロール失敗: カンマ付きの値を数えられません"); process.exit(1); }
   const rows = await getAll();
   console.log("payroll_soukatsu_rows 総行数:", rows.length);
 
@@ -61,7 +64,8 @@ async function main() {
     for (const [month, monthRows] of byMonth) {
       const offices = new Set(monthRows.map((r) => r.office_number));
       if (offices.size < 2) continue;
-      const totals = monthRows.map((r) => Number(r.row_data["総支給額"] ?? 0));
+      // ★ pickSoukatsu で読む (カンマ付き文字列も数える)。Number("10,000") は NaN になり 比較から静かに漏れていた
+      const totals = monthRows.map((r) => pickSoukatsu(r.row_data, "総支給額"));
       if (totals.every((t) => t > 0) && new Set(totals).size === 1) {
         dupCandidates.push({ name: monthRows[0].employee_name, month, rows: monthRows });
       }

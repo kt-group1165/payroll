@@ -5,6 +5,7 @@
  *   npx tsx scripts/check-zero-soukatsu-nonzero-calc.mts
  */
 import { readFileSync } from "node:fs";
+import { pickSoukatsu } from "../src/lib/payroll/soukatsu-diff.js";
 const env: Record<string, string> = {};
 for (const p of ["../kaigo-app/.env.local", ".env.local"]) {
   let t = "";
@@ -51,7 +52,12 @@ async function main() {
   }
 
   // 総括表 総支給額=0 の行 (母数)
-  const zeroRows = soukatsu.filter((r) => num(r.row_data["総支給額"]) === 0);
+  // ★ 総括表の値は pickSoukatsu で読む (カンマ付き文字列 "10,000" も数える)。
+  //   以前は typeof number 以外を 0 としていて、文字列の行を「総括表 0 円」と誤って数える穴があった (2026-09-27)
+  if (pickSoukatsu({ 総支給額: "10,000" }, "総支給額") !== 10000 || pickSoukatsu({ 総支給額: 10000 }, "総支給額") !== 10000) {
+    console.error("★ 負のコントロール失敗: カンマ付きの値を数えられません"); process.exit(1);
+  }
+  const zeroRows = soukatsu.filter((r) => pickSoukatsu(r.row_data, "総支給額") === 0);
   console.log(`\n総括表で 総支給額=0 の行: ${zeroRows.length} / 全${soukatsu.length}行`);
 
   const flagged: { office: string; month: string; emp: string; name: string; calcTotal: number }[] = [];
