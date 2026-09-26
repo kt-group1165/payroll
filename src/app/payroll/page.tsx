@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { BatchRecalc } from "./batch-recalc";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
@@ -238,6 +239,9 @@ export default function PayrollPage() {
   /** 直近の計算結果を DB に保存した時刻 (次の計算を始めるまで表示しておく) */
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState("");
+  /** まとめて再計算が 失敗の理由を残すために 直近のエラーを読む (calculateFor の中身には手を入れない) */
+  const lastErrorRef = useRef("");
+  useEffect(() => { lastErrorRef.current = error; }, [error]);
   /** 移動距離・時間が取れなかったとき (Google の月間上限・エラー) の警告。移動手当・出張費が少なく出ている */
   const [distanceWarning, setDistanceWarning] = useState("");
   // 通勤km・出張km が事業所の確認ラインを超えた職員 (km-anomaly.ts)
@@ -381,7 +385,23 @@ export default function PayrollPage() {
 
   // ─── 給与計算実行 ─────────────────────────────────────────────
 
-  async function calculate() {
+  /** 画面の「計算」ボタンから: 今選んでいる事業所・月で計算する */
+  function calculate() {
+    return calculateFor(selectedOfficeId, selectedMonth, monthStatus);
+  }
+
+  /**
+   * 事業所・月を引数で受け取って計算する (2026-09-27 まとめて再計算のため)。
+   * ★ 中身は 画面の状態を読んでいた頃から 1 行も変えていない。同じ名前の定数で受け直しているだけ。
+   *   → ボタンからの 1 件の計算と まとめて再計算の 1 件は 同じ関数・同じ環境・同じログインで動く
+   *   (同一性を構造で担保する。逐語コピーはしない)。
+   * ⚠ 画面の状態 (setProgress / setHourlyResults など) への書き込みはそのまま。
+   *   まとめて実行中は 最後に計算した事業所月の内容で上書きされていく。
+   */
+  async function calculateFor(officeIdArg: string, monthArg: string, statusArg: typeof monthStatus) {
+    const selectedOfficeId = officeIdArg;
+    const selectedMonth = monthArg;
+    const monthStatus = statusArg;
     if (!selectedMonth || !selectedOfficeId) return;
     setLoading(true); setError(""); setDistanceWarning(""); setKmWarnings([]);
     setProgress({ pct: 0, label: "実績データを読み込み中" });
@@ -2297,6 +2317,12 @@ export default function PayrollPage() {
               </div>
             </div>
           )}
+          {/* まとめて再計算 (2026-09-27)。1 件ずつ上の「給与計算を実行」と同じ calculateFor を呼ぶ */}
+          <BatchRecalc
+            offices={offices.filter((o) => o.office_type === "訪問介護")}
+            calculateFor={calculateFor}
+            getLastError={() => lastErrorRef.current}
+          />
         </CardContent>
       </Card>
 
