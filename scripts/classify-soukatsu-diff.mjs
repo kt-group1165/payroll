@@ -13,7 +13,10 @@ import { join } from "node:path";
 const S = process.env.SP;
 if (!S) { console.error("✗ SP に 作業ディレクトリ (cmp/ と soukatsu<YYYYMM>/ がある場所) を渡してください"); process.exit(1); }
 const nn=s=>String(s??"").trim().replace(/^0+/,"");
-const num=x=>{const v=(x&&typeof x==="object"&&"result"in x)?x.result:x; const n=Number(v); return Number.isFinite(n)?n:0;};
+// ★ ① の xlsm には カンマ付きの文字列 "15,631" が 922 セル (2026-09-27 実測)。外してから読む
+const num=x=>{const v=(x&&typeof x==="object"&&"result"in x)?x.result:x;
+  if (typeof v === "number") return Number.isFinite(v)?v:0;
+  const n=Number(String(v??"").normalize("NFKC").replace(/[,s]/g,"")); return Number.isFinite(n)?n:0;};
 const MAP_PART={ "移動手当":["移動手当"], "勤続":["勤続手当（パート）"], "育児":["育児手当"], "通勤":["通勤費"],
   "出張":["出張費"], "通信":["通信手当"], "補助金":["処遇改善補助金手当"], "土日祝":["土日祝"],
   "ドタキャン":["キャンセル手当（金額）"], "小計":["集計項目小計"], "残業":["残業手当総額_パート"],

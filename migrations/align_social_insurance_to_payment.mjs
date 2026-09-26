@@ -45,6 +45,14 @@ const page = async (q) => {
 // extract.json の office (フォルダ名) → 事業所番号 (訪問介護 22 事業所)
 const OFF = { "04_おゆみ野": "1270501180", "06_さつき": "1270203191", "02_花見川": "1270201930", "05_高品": "1270402116", "11_Hana四街道": "1270303173", "06_Hana中央": "1270105271", "04_Hana船橋": "1270906546", "10_Hana八千代": "1272603851", "03_やわた": "1272404508", "03_五井": "1272401967", "01_KT姉崎": "1272400142", "05_Hanaちはら台": "1272403534", "01_姉崎ムツミ": "1272400829", "リンクス茂原": "1271500942", "08_いすみ": "1278600398", "09_山武": "1279000366", "リンクス大網": "1275800892", "03_木更津ムツミ": "1271101295", "02_市原ムツミ": "1272401561", "07_袖ケ浦": "1273400844", "14_君津": "1273001626", "13_東郷": "1271502518" };
 const MONTHS = ["202603", "202604", "202605", "202606", "202607"];
+// ★ ①② の抽出物には カンマ付きの文字列 "20,000" がある (2026-09-27 実測で ① に 922 セル)。
+//   Number("20,000") = NaN → その行を黙って飛ばすので、カンマ・全角を外してから読む
+const num = (v) => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (v && typeof v === "object" && "result" in v) return num(v.result);
+  const n = Number(String(v ?? "").normalize("NFKC").replace(/[,s]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+};
 const nn = (s) => String(s ?? "").replace(/^0+/, "");
 
 const offices = await page("payroll_offices?select=id,office_number");
@@ -64,7 +72,8 @@ for (const m of MONTHS) {
     for (const r of f.rows) {
       const code = nn(r._code ?? r["№"]);
       if (!code || String(r._code ?? "").includes("合計")) continue;
-      if (!(Number(r["処遇改善補助金手当"] || 0) > 0)) continue;
+      // ★ カンマ付きの文字列 "20,000" だと Number は NaN → この行を黙って飛ばす
+      if (!(num(r["処遇改善補助金手当"]) > 0)) continue;
       const k = `${on}|${code}|${m}`;
       const ours = monthly.has(k) ? monthly.get(k) : empSI.get(`${offIdByNum.get(on)}|${code}`);
       if (ours === undefined || ours) continue;

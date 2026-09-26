@@ -46,7 +46,15 @@ const FIXED = [
   [["特別処遇改善手当", "特別処遇改善", "特定処遇改善手当", "特定処遇改善"], "specific_treatment_improvement"],
   [["処遇改善補助金手当"], "treatment_subsidy"], [["固定残業代"], "fixed_overtime_pay"],
 ];
-const num = (v) => (typeof v === "number" ? v : Number(v) || 0);
+// ★ ① の xlsm には カンマ付きの文字列 "15,631" が 922 セルある (2026-09-27 実測)。
+//   Number("15,631") = NaN → 0。★ この script は **昇給を DB に書く** ので、
+//   資格手当_3 などが 0 になると 黙って給与を下げる。カンマ・全角を外してから読む
+const num = (v) => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (v && typeof v === "object" && "result" in v) return num(v.result);
+  const n = Number(String(v ?? "").normalize("NFKC").replace(/[,s]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+};
 const val = (r, keys) => num(r[keys.find((k) => r[k] != null) ?? keys[0]]);
 const nn = (s) => String(s ?? "").replace(/^0+/, "");
 const monthStart = `${MONTH.slice(0, 4)}-${MONTH.slice(4, 6)}-01`;
