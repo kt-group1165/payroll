@@ -35,7 +35,8 @@
     "check:prehire-pay": "tsx scripts/check-prehire-monthly-pay.mts",
     "check:calc-freshness": "tsx scripts/check-calc-freshness.mts",
     "check:honobono-amount": "tsx scripts/check-honobono-amount-gap.mts",
-    "check:office-form-shrink": "tsx scripts/check-office-form-shrink.mts"
+    "check:office-form-shrink": "tsx scripts/check-office-form-shrink.mts",
+    "check:fixed-pay-no-work": "tsx scripts/check-fixed-pay-no-work.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
