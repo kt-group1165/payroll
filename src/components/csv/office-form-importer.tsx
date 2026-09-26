@@ -57,10 +57,13 @@ export function OfficeFormImporter({ initialOffices, initialExistingMonths }: Of
     const pageSize = 1000;
     let from = 0;
     while (true) {
-      const { data } = await supabase
+      // ★ order 無しのページングは行が抜ける/重なる (PostgREST。並びが毎回同じとは限らない)。id で固定する
+      const { data, error } = await supabase
         .from("payroll_office_form_records")
         .select("processing_month,office_number")
+        .order("id")
         .range(from, from + pageSize - 1);
+      if (error) { toast.error(`事業所書式の件数の取得に失敗: ${error.message}`); return; }
       if (!data || data.length === 0) break;
       for (const r of data as { processing_month: string; office_number: string }[]) {
         const key = `${r.processing_month}__${r.office_number}`;
