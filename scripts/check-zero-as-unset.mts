@@ -14,12 +14,14 @@
  *   C 同じく 月給・在職者で 給与設定の行が 1 件も無い (未設定がそのまま見える形。参考として同じ基準値で見る)
  *   D 実在の訪問介護事業所 (payroll_offices。9999… の試験用・本社・居宅は除く) の 出張単価・通勤単価 が 0
  *   E 居宅の出勤簿 (payroll_kyotaku_attendance_records) で 休憩 0 分・6 時間超の日
+ *   F 移行 SQL の COALESCE(<列>, 0) (DB は読まずファイルだけ)。★ 内海典子の型 (seed が意図的に NULL にした列を
+ *     初期投入が 0 に写した) の再発を見張る。既知 8 件 = payroll_salary_history.sql (適用済み)
  *     (訪問介護の出勤簿で「休憩空欄 → 0」が +60 分残業に化けた件と同じ型。居宅は今 0 件)
  *   ※ payroll_employees.paid_leave_unit_price=0 は在職者の過半 (2026-09-26 で 395/733) で、
  *     有給の付与ごとの単価が優先されるため 0 でも金額に効かないことが多い。件数だけ参考に出す (合否に入れない)。
  *
  * 【基準値方式】0 を目指す検査ではない。★ いまの対象者を固定し、**増えたら (新しい人が出たら) 落ちる**。
- *   ★ 2026-09-26 の基準: A 1 名 (内海典子。user 判断待ち) / B 4 名 / C 0 / D 0 / E 0
+ *   ★ 2026-09-26 の基準: A 1 名 (内海典子。user 判断待ち) / B 4 名 / C 0 / D 0 / E 0 / F 8 (payroll_salary_history.sql)
  *   ★ C は 0。「月給・在職 242 名のうち 9 名は設定行なし」と言われていた 9 名は **全員 居宅** で、
  *     居宅は payroll_kyotaku_salary を使うので payroll_salary_settings に行が無いのが正しい (誤警報だった)
  *   ★ 減るのは良い (直った)。--update は **原因を確かめてから**。悪化したまま更新すると穴を焼き付ける。
@@ -32,6 +34,8 @@
  *     ③ 居宅出勤簿の 1 日を 9:00-18:00・休憩 0 分
  *   → exit 1。「A 1→2 + 天野恵子 / D 0→1 + 1272404508 通勤単価 / E 0→1 + 三枝裕紀子 2026-07-11」と名指しで出た
  *   元の SNAPSHOT に戻すと exit 0 (PASS)
+ *   F: EXTRA_SQL で「コメント中の COALESCE 1 つ + 本文の COALESCE(e.new_money_col, 0) 1 つ」の SQL を足す
+ *   → exit 1。「F 8→9 + neg_control_coalesce.sql COALESCE(e.new_money_col, 0)」だけが出た (コメントは数えない)
  *   ```
  *
  * 使い方:
@@ -86,7 +90,30 @@ const latestOf = <T extends { employee_id: string; effective_from: string }>(row
   return m;
 };
 
-const found: Record<string, string[]> = { A: [], B: [], C: [], D: [], E: [] };
+const found: Record<string, string[]> = { A: [], B: [], C: [], D: [], E: [], F: [] };
+
+// F 移行 SQL で「未設定 (NULL) を 0 にして写す」書き方 = 内海典子の型の 再発を見張る (DB は読まない・ファイルだけ)
+//   COALESCE(<列>, 0) を payroll 系の migrations から拾う。★ 行番号は動くので「ファイル名 + 式」で名指しする。
+//   2026-09-26 時点の既知は payroll_salary_history.sql の 8 件 (居宅の初期投入。内海の原因。適用済み)。
+//   ★ これから書く移行で COALESCE(…, 0) が要るなら、「0 と未設定で意味が変わらない」ことを確かめてから --update する。
+//   負のコントロール用に EXTRA_SQL=<path> で追加のファイルを 1 本足せる (DB もリポジトリも壊さずに鳴らすため)。
+{
+  const { readdirSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const dirs = [new URL("../migrations/", import.meta.url), new URL("../../../migrations/tier5_payroll/", import.meta.url)];
+  const files: string[] = [];
+  for (const d of dirs) {
+    const p = fileURLToPath(d);
+    if (!existsSync(p)) continue;
+    for (const f of readdirSync(p)) if (f.endsWith(".sql")) files.push(p + f);
+  }
+  if (process.env.EXTRA_SQL) files.push(process.env.EXTRA_SQL);
+  const re = /COALESCE\(\s*([^,()]+?)\s*,\s*0(?:\.0+)?\s*\)/gi;
+  for (const f of files) {
+    const text = readFileSync(f, "utf8").replace(/--[^\n]*/g, "");   // コメント中の言及は数えない
+    for (const m of text.matchAll(re)) found.F.push(`${f.replace(/\\/g, "/").split("/").pop()} COALESCE(${m[1].trim()}, 0)`);
+  }
+}
 
 // A 居宅の給与設定 最新行が全部 0
 for (const [id, s] of latestOf(snap.ksal)) {
@@ -124,6 +151,7 @@ const LABEL: Record<string, string> = {
   C: "月給・在職で 給与設定の行が無い",
   D: "実在の訪問介護事業所で 出張・通勤単価が0 (payroll_offices)",
   E: "居宅の出勤簿で 休憩0分・6時間超の日",
+  F: "移行SQLで 未設定(NULL)を0にして写す COALESCE(…, 0) (内海の型の再発)",
 };
 const denom: Record<string, string> = {
   A: `分母 居宅の給与設定がある職員 ${latestOf(snap.ksal).size} 名`,
@@ -131,6 +159,7 @@ const denom: Record<string, string> = {
   C: `分母 月給・在職 (居宅を除く) ${monthly.length} 名`,
   D: `分母 実在の訪問介護事業所 ${realVisit.length} × 2 列`,
   E: `分母 居宅の出勤簿 ${snap.katt.length} 行`,
+  F: "分母 apps/payroll-app/migrations と migrations/tier5_payroll の .sql (コメントを除く)",
 };
 for (const k of Object.keys(LABEL)) {
   console.log(`${k} ${LABEL[k]}: ${found[k].length} 件   (${denom[k]})`);
