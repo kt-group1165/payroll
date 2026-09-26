@@ -18,6 +18,7 @@
     "check:all": "tsx scripts/check-all.mts",
     "check:attendance-hours-gap": "tsx scripts/check-attendance-hours-gap.mts",
     "check:legal-holiday": "tsx scripts/verify-legal-holiday.mts",
+    "check:paid-leave-rate": "tsx scripts/verify-paid-leave-rate.mts",
     "check:km-swap": "tsx scripts/check-km-swap.mts",
     "check:office-input-flow": "tsx scripts/check-office-input-flow.mts",
     "check:tenure-rehire": "tsx scripts/verify-tenure-rehire.mts",

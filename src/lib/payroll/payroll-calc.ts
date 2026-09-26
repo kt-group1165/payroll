@@ -1867,11 +1867,31 @@ export function activePaidLeaveGrant<T extends PaidLeaveGrant>(grants: T[], mont
  * @param usedBefore  付与日から前月までに使った有給日数
  * @param fallbackRate 付与が無い / 日当が空のときの単価 (給与設定・職員マスタの有給単価)
  */
+/**
+ * 付与の日当が **0** になっているか。★ 0 は「未設定」の可能性が高いので 警告に出す (2026-09-26)。
+ *
+ * 実測: payroll_paid_leave_grants 2,022 行のうち 単価 0 を含むのが 415 行 / 184 名。
+ * その 184 名が総括表で有給を使った 37 人月を調べたが、
+ * ★ 「付与の単価 0 かつ 総括表もその月 0 円」(= 保留型) の実例は **1 件も無かった**。
+ * ⚠ memory の 有給の保留運用 (単価が空の月を 0 円で置き、後でまとめて精算) は
+ *   **総括表も 0 円**になる型。今のデータにその実例が無いので、0 は事故とみなして単価を拾い直す。
+ *   ★ ただし将来 保留運用が始まると衝突するので、0 の付与は必ず警告に出すこと。
+ */
+export function paidLeaveGrantHasZeroRate(g: PaidLeaveGrant | null): boolean {
+  return !!g && ((g.cur_rate != null && g.cur_rate <= 0) || (g.prev_rate != null && g.prev_rate <= 0));
+}
+
 export function paidLeaveAllowanceByGrant(days: number, usedBefore: number, g: PaidLeaveGrant | null, fallbackRate: number): number {
   if (days <= 0) return 0;
-  if (!g || (g.cur_rate == null && g.prev_rate == null)) return Math.round(days * fallbackRate);
-  const cur = g.cur_rate ?? fallbackRate;
-  const prev = g.prev_rate ?? cur;
+  // ★ 0 を「値あり」として通さない。以前は `g.cur_rate ?? fallbackRate` だったが、
+  //   ?? は null/undefined しか置き換えないので **単価 0 の付与がそのまま通って 0 円**になっていた。
+  //   実害: 大網 橋本光代 2026-05 有給 21 日。職員マスタに 9,425 円があるのに 0 円で、
+  //   総括表は同じ月に ¥197,925 を払っていた (2026-09-26 給与E が特定)。
+  const usable = (v: number | null): number | null => (v != null && v > 0 ? v : null);
+  const curRaw = usable(g?.cur_rate ?? null), prevRaw = usable(g?.prev_rate ?? null);
+  if (!g || (curRaw == null && prevRaw == null)) return Math.round(days * fallbackRate);
+  const cur = curRaw ?? fallbackRate;
+  const prev = prevRaw ?? cur;
   const oldDays = Math.min(days, Math.max(0, (g.carry_days ?? 0) - usedBefore));
   return Math.round(oldDays * prev + (days - oldDays) * cur);
 }
