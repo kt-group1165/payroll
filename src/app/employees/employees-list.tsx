@@ -809,6 +809,13 @@ export function EmployeesList({
                         onChange={(e) => setForm({ ...form, effective_service_months: e.target.value })}
                         placeholder="例: 120 (=10年)"
                       />
+                      {/* ⚠ 実勤続月数は「いつ時点か」が無いと 時間が経つほど黙ってズレる (2026-09-26 user)。
+                          基準日は payroll_employees.effective_service_months_as_of に持つ。*/}
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {Number(form.effective_service_months) > 0
+                          ? <>= {formatMonths(Number(form.effective_service_months))}</>
+                          : "入社日から計算できない人 (転籍・休職・再雇用など) だけ入れます"}
+                      </p>
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground">入社年月日</Label>
