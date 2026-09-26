@@ -36,7 +36,10 @@
     "check:calc-freshness": "tsx scripts/check-calc-freshness.mts",
     "check:honobono-amount": "tsx scripts/check-honobono-amount-gap.mts",
     "check:office-form-shrink": "tsx scripts/check-office-form-shrink.mts",
-    "check:fixed-pay-no-work": "tsx scripts/check-fixed-pay-no-work.mts"
+    "check:fixed-pay-no-work": "tsx scripts/check-fixed-pay-no-work.mts",
+    "check:zero-as-unset": "tsx scripts/check-zero-as-unset.mts",
+    "check:delete-scope": "tsx scripts/check-delete-scope.mts",
+    "check:manual-input-dropped": "tsx scripts/check-manual-input-dropped.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
