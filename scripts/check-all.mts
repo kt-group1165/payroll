@@ -58,6 +58,8 @@ const CHECKS: Check[] = [
     why: "★ 介護時間・訪問時間に 会議・面談・契約・担当者会議・健康診断 を数えない。数えると介護超過が過大 (−¥5,000/6か月)。★ 研修は外さない (外すと ② より少なくなる) も固定している" },
   { name: "km-double", script: "check:km-double",
     why: "★ 同じ km を 出張と通勤の両方で払う二重。2026-09-27 に 4 人月 ¥2,837 を是正して 0 にした。増えたら再発" },
+  { name: "late-early", script: "check:late-early",
+    why: "★ 遅刻早退控除 (2026-09-27 新設)。単価 = floor((本人給+職能給)/所定時間)。欠勤控除と **同じ母数の helper** を使うので、片方を変えたら両方鳴る。fixture・DB 非依存" },
   { name: "numeric-cell", script: "check:numeric-cell",
     why: "★ 表計算のセルを数値として読む helper。parseFloat(\"1,302\") = 1 で **もっともらしい値**になるため 0 より危ない。出勤簿の km がこれを通る。fixture・DB 非依存" },
 ];
