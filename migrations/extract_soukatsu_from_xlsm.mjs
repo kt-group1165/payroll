@@ -151,15 +151,26 @@ if (!EXECUTE) {
   process.exit(0);
 }
 
+// 同じ (事業所, 職員, 月, シート) が 2 ファイルに出たときの勝者の決め方。
+// ★ import_soukatsu_rows.mjs (813ca46) と同じ規則にする。ここがズレると 検証テーブルと原本の突合で
+//   「別の版どうしを比べている」偽の不一致が出る (2026-09-26: おゆみ野 202604 で 過誤版が
+//   ファイル名の並び順で後勝ちしていた)。
+//   ① ファイル名が 過誤/訂正/再/コピー で始まる版を負けにする (通常版を優先)
+//   ② 同格なら後勝ち
+//   ③ 勝者の値がエラー文字列 (#VALUE! 等) の項目だけ 敗者の値で埋める
+const LOSER_FILE = /(^|[\\\/])\s*(過誤|訂正|再|コピー)/;
+const isErrorValue = (v) => typeof v === "string" && /^#/.test(v.trim());
+
 mkdirSync(OUT, { recursive: true });
 let totalRows = 0, totalWarn = 0;
+const overwritten = [];
 for (const [month, entries] of byMonth) {
-  const out = [];
+  const byKey = new Map();
   for (const e of entries) {
     const { rows, warn } = await extractFile(e);
     if (warn) { console.warn(`  ⚠ ${e.path}: ${warn}`); totalWarn++; continue; }
     for (const r of rows) {
-      out.push({
+      const row = {
         office_number: e.office_number,
         employee_number: r.employee_number,
         employee_name: r.employee_name,
@@ -167,12 +178,31 @@ for (const [month, entries] of byMonth) {
         sheet_kind: e.kind,
         row_data: r.row_data,
         source_file: e.file,
-      });
+      };
+      const k = `${row.office_number}|${row.employee_number}|${row.sheet_kind}`;
+      const prev = byKey.get(k);
+      if (!prev) { byKey.set(k, row); continue; }
+      const prevLoses = LOSER_FILE.test(prev.source_file), curLoses = LOSER_FILE.test(row.source_file);
+      const winner = prevLoses && !curLoses ? row : !prevLoses && curLoses ? prev : row;
+      const loser = winner === row ? prev : row;
+      let filled = 0;
+      for (const [key, v] of Object.entries(winner.row_data)) {
+        const alt = loser.row_data[key];
+        if (isErrorValue(v) && alt != null && !isErrorValue(alt)) { winner.row_data[key] = alt; filled++; }
+      }
+      byKey.set(k, winner);
+      overwritten.push(`${month} ${k}  採用=${winner.source_file}  不採用=${loser.source_file}${filled ? `  (エラー ${filled} 項目を補完)` : ""}`);
     }
     totalRows += rows.length;
   }
+  const out = [...byKey.values()];
   const outPath = join(OUT, `soukatsu_extract_${month}.json`);
   writeFileSync(outPath, JSON.stringify(out, null, 1));
   console.log(`  ${month}: ${out.length} 行 → ${outPath}`);
 }
-console.log(`合計 ${totalRows} 行 (警告 ${totalWarn} 件)`);
+if (overwritten.length) {
+  const files = new Set(overwritten.map((s) => s.replace(/^.*?\s採用=/, "採用=").replace(/\s+\(エラー.*$/, "")));
+  console.log(`同じ職員が2ファイルに出た人月: ${overwritten.length} 件 (ファイルの組 ${files.size}):`);
+  for (const f of files) console.log(`  ${f}`);
+}
+console.log(`合計 ${totalRows} 行 読込 (警告 ${totalWarn} 件)`);
