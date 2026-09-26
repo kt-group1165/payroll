@@ -224,6 +224,8 @@ async function loadSnapshot(): Promise<Snapshot> {
  *   ② 一致しているパート 1 人月の ②調整手当 を +700 し 総支給 も +700 → A が 1 増える
  *   ③ 一致している月給 1 人月の 当方 grand_total を +10,000 → SZ が 1 増え、compare が「悪化」を出す
  *   ④ 一致している月給 1 人月の ②調整手当セルを +900 し 総支給 も +900 (部品は触らない) → UO が 1 増える
+ *   ⑤ ①と同じ壊し方をしたうえで ②の値を "12,345" 形式の カンマ付き文字列にしても ①と同じ件数になる
+ *      (Number("10,000") は NaN / parseFloat("10,000") は 10 で どちらも静かに壊れる。2026-09-27 給与D が ① で発見)
  */
 function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
   const lines: string[] = [];
@@ -248,10 +250,15 @@ function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
   const ok3a = t3.get(pickShaseki.month)!.SZ === base.get(pickShaseki.month)!.SZ + 1;
   const ok3b = compare(Object.fromEntries(base), t3).worse.length > 0;
   lines.push(`③ 当方の月給 +10,000 → SZ +1: ${ok3a ? "OK" : "★ NG"} / 基準値比較が「悪化」を出す: ${ok3b ? "OK" : "★ NG"}`);
+  const toComma = (v: unknown) => Math.round(num(v)).toLocaleString("en-US");
+  const p5 = mutate(pickPart, (p) => ({ ...p, soukatsu: (p.soukatsu ?? 0) - 500,
+    row: { ...p.row, 移動手当: toComma(num(p.row["移動手当"]) - 500), 総支給額: toComma((p.soukatsu ?? 0) - 500), 調整手当: toComma(p.row["調整手当"]) } }));
+  const ok5 = cnt(p5, pickPart.month, bType) === cnt(p1, pickPart.month, bType) && typeof p5.find((p) => p.emp === pickPart.emp && p.month === pickPart.month && p.office === pickPart.office)!.row["移動手当"] === "string";
+  lines.push(`⑤ ②の値をカンマ付き文字列 ("12,345") にしても ①と同じ件数: ${ok5 ? "OK" : "★ NG"}`);
   const p4 = mutate(pickShaseki, (p) => ({ ...p, soukatsu: (p.soukatsu ?? 0) + 900, row: { ...p.row, 調整手当: num(p.row["調整手当"]) + 900 } }));
   const ok4 = cnt(p4, pickShaseki.month, "UO") === base.get(pickShaseki.month)!.UO + 1;
   lines.push(`④ ②調整手当セルを +900 (部品はそのまま) → UO +1: ${ok4 ? "OK" : "★ NG"}`);
-  return { ok: ok1 && ok2 && ok3a && ok3b && ok4, lines };
+  return { ok: ok1 && ok2 && ok3a && ok3b && ok4 && ok5, lines };
 }
 
 const pct = (a: number, b: number) => (b === 0 ? "-" : `${((100 * a) / b).toFixed(1)}%`);
@@ -272,6 +279,8 @@ async function main() {
   console.log("  ・片側にしか居ない人月 (当方だけ / 総括表だけ) は数えない (→ check:soukatsu-match)");
   console.log("  ・計算結果が古い人月は STALE に分けるだけで 中身は見ない (→ check:calc-staleness のあと再計算)");
   console.log("  ・ミロク (実際の支給) とは比べていない / 控除後の金額は見ていない");
+  console.log("  ・① (旧システムの出力 xlsm) は読まない。② のセルはカンマ付き文字列も数値に直して読む (負のコントロール⑤)");
+  console.log("  ・② のエラー値 (#VALUE! 等) は 0 として読む。2026-09-27 時点で 誤差列に 155 行 (対になった 60 人月・うち不一致 4)。その不一致は C でなく PZ / STALE に入る");
   console.log("  ・型は「その項目の差だけで総支給の差が ±1円で説明できるか」で決める。2 項目以上が絡むと その他 (PZ / SZ) に落ちる");
   console.log("  ・月給の型 T・U* は当方の値を payroll-calc の関数で出し直している。payload に額として入っていない項目のため");
   console.log("");
