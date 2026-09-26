@@ -1105,6 +1105,8 @@ export default function PayrollPage() {
       const manualCommuteYenByNum = new Map<string, number>();
       // 泊まり手当 (円)。★規則が決まっていないので計算せず 人が入れた額をそのまま足す
       const manualOvernightByNum = new Map<string, number>();
+      // 項目 → 値>0 の職員番号 (時給者の計算対象の集合に使う。項目を列挙しない。src/lib/payroll/hourly-targets.ts)
+      const manualNumsByItem = new Map<string, Set<string>>();
       {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
@@ -1112,6 +1114,10 @@ export default function PayrollPage() {
           .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
+          if (Number(r.numeric_value ?? 0) > 0) {
+            if (!manualNumsByItem.has(r.item_key)) manualNumsByItem.set(r.item_key, new Set());
+            manualNumsByItem.get(r.item_key)!.add(normEmp(r.employee_number));
+          }
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
           if (r.item_key === "social_insurance") socialInsuranceByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0) > 0);
           if (r.item_key === BONUS_PAID_KEY && Number(r.numeric_value ?? 0) > 0) bonusPaidNums.add(normEmp(r.employee_number));
@@ -1255,8 +1261,7 @@ export default function PayrollPage() {
       //   集合の作り方は src/lib/payroll/hourly-targets.ts (純関数。check:hourly-targets で検査)
       for (const empNum of hourlyTargetEmployeeNumbers({
         records: recsByEmp.keys(), attendance: attByEmp.keys(), officeForms: ofByEmp.keys(),
-        manualOfficeWork: manualOfficeWorkMinByNum.keys(), manualTraining: manualTrainingMinByNum.keys(),
-        manualTripKm: manualTripKmByNum.keys(), ledgerDaysByNum, month: selectedMonth,
+        manualByItem: manualNumsByItem, ledgerDaysByNum, month: selectedMonth,
       })) {
         const info    = roleMap.get(empNum);
         // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
