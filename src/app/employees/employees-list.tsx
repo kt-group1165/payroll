@@ -971,8 +971,9 @@ export function EmployeesList({
                 { key: "role_type",       label: "役職" },
                 { key: "salary_type",     label: "給与形態" },
                 { key: "hire_date",       label: "入社日" },
-                { key: "effective_service_months", label: "実勤続" },
-                { key: "address",         label: "住所" },
+                // ⚠ 実勤続・住所は 一覧から外した (2026-09-26 user)。
+                //   横に長すぎて 右端の「編集」までスクロールしないと届かなかった。
+                //   どちらも編集ダイアログには残っている。並べ替えたいときは そこで直す。
               ] as { key: SortKey; label: string }[]
             ).map(({ key, label }) => (
               <TableHead
@@ -987,13 +988,13 @@ export function EmployeesList({
               </TableHead>
             ))}
             <TableHead>事業所</TableHead>
-            <TableHead className="w-[100px]">操作</TableHead>
+            <TableHead className="w-[110px] text-right">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {filteredEmployees.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={10} className="text-center text-muted-foreground">
+              <TableCell colSpan={8} className="text-center text-muted-foreground">
                 {filterStatus === "全員" ? "職員が登録されていません" : `${filterStatus}の職員はいません`}
               </TableCell>
             </TableRow>
@@ -1008,17 +1009,12 @@ export function EmployeesList({
                 <TableCell className="text-sm text-muted-foreground">
                   {emp.hire_date ? emp.hire_date.replace(/-/g, "/") : "—"}
                 </TableCell>
-                <TableCell className="text-sm">
-                  {formatMonths(emp.effective_service_months ?? 0)}
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate">
-                  {emp.address || "—"}
-                </TableCell>
+
                 <TableCell className="text-sm">
                   {(() => { const _o = officeMap.get(emp.office_id); return (_o?.short_name || _o?.name) ?? "—"; })()}
                 </TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
+                <TableCell className="text-right">
+                  <div className="flex gap-1 justify-end">
                     <Button variant="ghost" size="sm" onClick={() => handleEdit(emp)}>編集</Button>
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(emp.id)}>削除</Button>
                   </div>

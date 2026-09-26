@@ -1544,7 +1544,24 @@ export function attendanceWorkMinutes(r: OfficeAttendanceRecord): number {
   //   2026 年の出勤簿で 時間帯が 2 つ以上の日は 113 日。113 日すべて 欄 = 時間帯の合計 (休憩を引かない)
   //   (さつき 福島可奈 9:00-12:00 / 13:00-16:00 休1:00 → 6 時間。2026-09-23 是正)
   if (ranges >= 2) return Math.max(0, span);
-  return Math.max(0, span - parseWorkHoursMinutes(r.break_time ?? ""));
+  const brk = parseWorkHoursMinutes(r.break_time ?? "");
+  // ★ 休憩欄が空/0 のとき、勤務時間の欄が ちょうど「時刻 − 60 分」なら **欄を採る** (2026-09-26)。
+  //
+  //   出勤簿 xlsm は 1 日目だけ勤務時間が空で出てくるので、取込 (attendance-parser の
+  //   fillMissingWorkHours) が「休憩が 0 なら 6 時間超で 1 時間引く」で欄を埋める。
+  //   ★ ところが **休憩欄は 0:00 のまま保存する**ので、2026-09-23 に計算側を
+  //   「終了 − 開始 − 休憩」に変えた結果、**その 1 時間控除が打ち消されて +60 分が残業に化けていた**。
+  //   実測: 1 日目 71 行 + 熊谷明日香 2026-05 の 19 行 (20 日で +1,200 分 = +¥32,080)。
+  //
+  //   ⚠ 「休憩 0・6 時間超なら一律 60 分引く」にはしない。そうすると
+  //   **欄も時刻も一致していて今は食い違いが無い 392 行 (171 人月) まで 60 分減る**。
+  //   本当に休憩を取っていない日が混じり得るので、減らしてよいか分かっていない。
+  //   ★ 「欄が 1 時間引いている」ときだけに絞れば、その 392 行には何も起きない。
+  if (brk <= 0) {
+    const listed = parseWorkHoursMinutes(r.work_hours);
+    if (listed > 0 && span - listed === 60) return listed;
+  }
+  return Math.max(0, span - brk);
 }
 
 /** "9:00" / "9::00" / "24:00:00" のような時刻を 0:00 からの分に直す。読めなければ null */
