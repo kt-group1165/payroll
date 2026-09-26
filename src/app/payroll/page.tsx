@@ -1248,7 +1248,12 @@ export default function PayrollPage() {
       //   実績も出勤簿も事業所書式も無い事務員は ここに入らず、手入力があっても **行ごと消えていた**。
       //   実証: 五井 根本カオリ 202603 は 手入力 4,562 分があるのに payload に居ない (本人給 0 円・総括表は 87,438 円)。
       //   202604〜08 に居たのは たまたま 事業所書式に通勤km/出張km の行があって ofByEmp に入っていたから
-      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys(), ...manualOfficeWorkMinByNum.keys()])) {
+      // ⚠ 同じ型で 研修時間・出張km・有給 (管理簿の当月日数) の手入力しか無い人も落ちていた (2026-09-27 給与D)。
+      //   check:manual-input-dropped の A1: 岩田ゆきよ 202604 (研修120分+出張1.7km = 総括表① ¥2,321 と一致) /
+      //   江波戸祐子 202607 (研修60分 = ① ¥1,150) / 杉尾加奈子 202606 / 木村江利・岩坪恵 202607 の 5 名 6 行
+      const ledgerThisMonthNums = [...ledgerDaysByNum].filter(([, byM]) => (byM.get(selectedMonth) ?? 0) > 0).map(([n]) => n);
+      for (const empNum of new Set([...recsByEmp.keys(), ...attByEmp.keys(), ...ofByEmp.keys(), ...manualOfficeWorkMinByNum.keys(),
+        ...manualTrainingMinByNum.keys(), ...manualTripKmByNum.keys(), ...ledgerThisMonthNums])) {
         const info    = roleMap.get(empNum);
         // 選択事業所の職員マスタに存在しない番号はスキップ（他事業所の番号衝突対策）
         if (!info) continue;
@@ -1860,11 +1865,14 @@ export default function PayrollPage() {
             // ⚠ 個人シートの日当は 前年度パートだった社員で総括表と食い違う (さつき 米倉 個人シート 7,712 / 管理簿 906)。
             //   有給管理簿シートの日当なら 2026-04〜07 の社員 224 件中 206 件一致
             // 提責・事務員は 有給休暇手当なし (総括表 2026-03〜07 で 357 件中 356 件が 0 円)。給与設定の単価があっても払わない (さつき 宮野 3 月の 54 円を引き継いでいた)
+            // ⚠ 付与が無い人も paidLeaveAllowanceOf を通す (2026-09-27 給与D)。以前は undefined にして
+            //   monthlyPaidLeaveAllowance (事業所書式・出勤簿の日数 × 単価) に任せていたため、有給管理簿の手入力日数を使っていなかった
+            //   (山武 髙山祐見 202605: 管理簿 2 日 / 書式 2.5 日)。付与が無いときの単価は 同じ e.paid_leave_unit_price
+            //   (paidLeaveAllowanceByGrant は 付与が無ければ 日数 × fallbackRate)。変わるのは 日数の出どころだけ。
+            //   付与の無い月給者 60 人月で試算: 変わるのは この 1 人月 (−¥346) だけ。管理簿の 0 で書式の日数が消える人月は 0
             paid_leave_allowance_override: ["提責", "事務員"].includes(roleM)
               ? 0
-              : grantByEmpId.has(e.id)
-              ? paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0)
-              : undefined,
+              : paidLeaveAllowanceOf(e.id, normEmp(e.employee_number), paidLeaveDays(summary.paidLeave, summary.halfLeave), e.paid_leave_unit_price ?? 0),
             care_overtime_lower_tier: careTiersRes.tiers[office?.office_number ?? ""] ?? null,
             summary,
           };
