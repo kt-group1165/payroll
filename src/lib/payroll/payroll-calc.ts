@@ -426,11 +426,32 @@ export function fixedTotal(s: SalarySettings): number {
 }
 
 /**
+ * 介護時間・訪問時間に数えない実績の種別 (service_type。2026-09-27 給与D)。
+ *   実績 (payroll_service_records) には 訪問でない行も入っていて、介護時間 (月給の介護超過・特日) と
+ *   訪問時間 (時給の通信手当・勤続などの判定) に そのまま足されていた。
+ *   月給 1,406 人月中 23 人月に該当。外すと ② (支払用) の「120h以上対象時間」との一致が 23 中 2 → 10 に増えた。
+ *   金額は 月給 −¥5,000 (松井 1279000366|16004|202606 面談 / 伊井 1273400844|9039|202607 健康診断) / 時給 勤続 −¥3。
+ * ★ 種別名で判定する。健康診断は service_code 012000 が「自費（生活）」と共有なので コードでは切れない。
+ * ★ 入れないもの (数え直さずに済むよう理由を残す):
+ *   - 研修・HRD研修 … ② のほうが多い人月がある (小川千晴 1272603851|250101|202604 ② 2,930 / 当方 2,870 / 外すと 2,630)。
+ *                       page.tsx の care_minutes にも「訪問 + 研修・HRD研修の時間 (米倉・大治で総括表と一致)」の記録がある
+ *   - キャンセル・ドタキャン … ② は外していない (高橋 1272403534|230402|202607 4,540 / 橋本 1275800892|396|202603 3,950 = 外す前の値)
+ *   - モニタリング … ② が外す前と後の間の値で 判定できない (鈴木理実 1270203191|240204|202604 当方 4,555 / 外すと 4,510 / ② 4,540)
+ *   - 移動支援 (移動身あり○○ など) … 名前に「移動」が付くが 本物の訪問
+ * 月給の介護時間・特日 (careMinutesFromRecords) と 時給・月給の訪問時間 (computeSummary) は 必ず isCareRecord を通る。
+ * scripts/check-non-care-records.mts が見張る。
+ */
+export const NON_CARE_SERVICE_TYPES: readonly string[] = ["会議", "面談", "契約", "担当者会議", "健康診断"];
+export function isCareRecord(r: { service_type?: string | null }): boolean {
+  return !NON_CARE_SERVICE_TYPES.includes(String(r.service_type ?? "").trim());
+}
+
+/**
  * 介護時間 (分) = 訪問時間 − 0.75 掛け対象サービスの時間 × 0.25 (総括表と同じ。2026-09-17)
  * 例) 米倉靖子 2026-07: 7,345 − 180×0.25 = 7,300分 → 120h 超過 100分 × 2,500円 = 4,167円
  */
-export function careMinutesFromRecords(records: { calc_duration: string; service_code: string }[], isHours075: (code: string) => boolean): number {
-  return records.reduce((s, r) => {
+export function careMinutesFromRecords(records: { calc_duration: string; service_code: string; service_type?: string | null }[], isHours075: (code: string) => boolean): number {
+  return records.filter(isCareRecord).reduce((s, r) => {
     const m = parseDurationMinutes(r.calc_duration);
     return s + (isHours075(r.service_code) ? m * 0.75 : m);
   }, 0);
@@ -1632,6 +1653,8 @@ export type VisitServiceRecord = {
   time_period?: string | null;
   /** MEISAI の休日区分 (平日/日祭/休日 …) */
   holiday_type?: string | null;
+  /** 種別 (身体介護(自立) / 会議 / 面談 …)。介護時間・訪問時間に数えるかの判定 (isCareRecord) に使う */
+  service_type?: string | null;
 };
 
 /**
@@ -1793,10 +1816,12 @@ export function computeSummary(
     for (const v of byWeek.values()) weekly += Math.max(0, v - WEEKLY_WORK_MINUTES);
     return daily + weekly;
   })();
-  const recordCount = empRecs.length;
-  const accompaniedCount = empRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
-  const visitMinutes = empRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-  const visitMinutesExcludingAccompanied = empRecs
+  // 訪問時間・件数は 訪問でない実績 (会議・面談 …) を数えない (NON_CARE_SERVICE_TYPES)。出勤した日 (helperDateSet) には数える
+  const careRecs = empRecs.filter(isCareRecord);
+  const recordCount = careRecs.length;
+  const accompaniedCount = careRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
+  const visitMinutes = careRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
+  const visitMinutesExcludingAccompanied = careRecs
     .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   // 通勤km: 出勤簿の合計と 事業所書式のどちらを優先するかは 職種で分ける (user 2026-09-18)。
@@ -1820,18 +1845,18 @@ export function computeSummary(
   const commuteYenTotal = useOf ? commuteYenFromOf : commuteYenFromAtt;
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
   // 特日 (8/15 土曜など) は 土日祝ではなく特日として払う (Hana系パート 2026-08: 8/15 を土日祝から外すと 42 → 62/74 名一致)
-  const weekendHolidayMinutes = empRecs
+  const weekendHolidayMinutes = careRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-  const weekendHolidayAccompaniedMinutes = empRecs
+  const weekendHolidayAccompaniedMinutes = careRecs
     .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   // 日曜・祝日 (カレンダー) の訪問時間。2026-09-18 までは実績の休日区分 (日祭・休日) で数えていたが、
   // カレンダーのほうが総括表と合う (やわた 4→8/8。五井・君津・姉ム・木更津は どちらでも全員一致)
-  const sundayHolidayMinutes = empRecs
+  const sundayHolidayMinutes = careRecs
     .filter((r) => isSundayOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
-  const tokubiMinutes = empRecs
+  const tokubiMinutes = careRecs
     .filter((r) => isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 

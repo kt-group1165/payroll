@@ -432,7 +432,7 @@ export default function PayrollPage() {
         while (true) {
           const { data, error } = await supabase
             .from("payroll_service_records")
-            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time,time_period,holiday_type")
+            .select("id,employee_number,employee_name,service_date,calc_duration,service_code,office_number,accompanied_visit,client_number,dispatch_start_time,dispatch_end_time,time_period,holiday_type,service_type")
             .eq("processing_month", selectedMonth)
             .eq("office_number", selectedOffice.office_number)
             .order("id")
