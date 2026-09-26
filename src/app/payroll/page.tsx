@@ -13,6 +13,7 @@ import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-da
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { applyOfficeUnitPrices, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
+import { resolveVisitPay, type VisitRateContext } from "@/lib/payroll/visit-pay";
 import { BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
 import Link from "next/link";
 import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingUnitPrices, getBathCareModes, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
@@ -51,12 +52,10 @@ import {
   communicationFeeAmount,
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
-  visitPayAmount,
   yochoHoursFromRecords,
   paidLeaveDays,
   trainingMinutes,
   hourlyOvertimeMinutes,
-  payMinutesOf,
   trainingMinutesByDay,
   legalWithinOvertimeMinutes,
   monthlyPaidLeaveAllowance,
@@ -1338,26 +1337,18 @@ export default function PayrollPage() {
       const lifeSupportCategoryId = [...categoryMap.entries()].find(([, name]) => name === "生活援助")?.[0] ?? null;
       // 0 円になった訪問を ためる (下の setRateGaps で画面に出す)
       const rateGapAcc = new Map<string, RateGap>();
+      // 時給の引き方は src/lib/payroll/visit-pay.ts に切り出してある (サービス記録一覧の画面と共有。
+      //   逐語コピーにすると片方だけ直したときに黙って乖離するため)
+      const rateCtx: VisitRateContext = {
+        mappingMap, categoryMap, officeMap, rateMap,
+        juhoShortRates: juhoShortRes.rates,
+        sougouRates: sougouRatesRes.rates,
+        doukouFlatRates: doukouFlatRes.rates,
+        lifeSupportCategoryId,
+      };
       // 訪問 1 件の本人給。時給者と「訪問分を払う事務員 (月給)」の両方で使う (2026-09-22 事務員の介護分)
       const recordPayOf = (rec: ServiceRecord) => {
-        const minutes    = parseDurationMinutes(rec.calc_duration);
-        const categoryId = mappingMap.get(rec.service_code) ?? null;
-        const catName    = categoryId ? (categoryMap.get(categoryId) ?? "不明") : "未マッピング";
-        const officeId   = officeMap.get(rec.office_number) ?? null;
-        const longRate = categoryId && officeId ? (rateMap.get(`${officeId}:${categoryId}`) ?? null) : null;
-        // 重度訪問は 1 回 1.5 時間以下なら短時間の時給 (事業所ごとの設定がある区分だけ)
-        const shortRate = juhoShortRes.rates[rec.office_number]?.[catName];
-        // 総合事業 (A…) で生活援助に結び付いている訪問は 事業所ごとの総合事業の時給 (船橋 1,400)
-        const sougouRate = /^A/.test(rec.service_code) && catName === "生活援助" ? sougouRatesRes.rates[rec.office_number] : undefined;
-        // 同行援護 (021008) を固定の時給で払う事業所 (五井・やわた 1,750 / KT姉崎 2,100)。段階式にしない
-        const doukouFlat = String(rec.service_code).padStart(6, "0") === "021008" ? doukouFlatRes.rates[rec.office_number] : undefined;
-        const hourlyRate = doukouFlat !== undefined && longRate !== null ? doukouFlat
-          : sougouRate !== undefined && longRate !== null ? sougouRate
-          : longRate !== null && shortRate !== undefined && minutes <= 90 ? shortRate : longRate;
-        const overflowRate = officeId && lifeSupportCategoryId ? (rateMap.get(`${officeId}:${lifeSupportCategoryId}`) ?? null) : null;
-        // 本人給は 1 回の訪問時間を 5 分単位に切り上げて払う (2026-09-19。姉ム 竹内 44分→45分 ×3件 = 78円 / 姉ム 小岩 59→60 = 35円 /
-        //   おゆみ野 澤木 72→75 = 131円 が 総括表の差と一致)。時間の集計 (介護超過・残業など) は切り上げない
-        const pay        = visitPayAmount(payMinutesOf(minutes), hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
+        const { minutes, categoryId, catName, officeId, hourlyRate, pay } = resolveVisitPay(rec, rateCtx);
         // 0 円になった理由を残す (類型が無いのか / 類型はあるが時給が無いのか)
         // ⚠ キャンセル・対象外は そもそも時給で払わないので 警告に出さない (NON_HOURLY_CATEGORIES)
         if ((pay === null || hourlyRate === null) && !NON_HOURLY_CATEGORIES.has(catName)) {
