@@ -54,6 +54,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "legal_within_overtime_minutes",
+    label: "法内残業 (出勤簿が取り込めない人)",
+    unit: "分",
+    help: "所定 (8h) は超えたが 法定 (8h/40h) は超えない残業。★ 割増が付かないので 残業とは単価が違う (法内残業手当 = 分 ÷ 60 × 残業単価 ÷ 1.25。総括表 17/17 で 1 円まで一致)。総括表には「法内残業」列が 全事業所に存在する。出勤簿が当システムに無い人だけ手で入れる",
+    allowNegative: false,
+  },
+  {
     key: "overtime_minutes",
     label: "残業 (出勤簿が取り込めない人)",
     unit: "分",

@@ -11,6 +11,7 @@ import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calcu
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
+import { applyOfficeUnitPrices, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
 import { BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
 import Link from "next/link";
@@ -491,7 +492,7 @@ export default function PayrollPage() {
       };
 
       setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
-      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes] = await Promise.all([
+      const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes, officePriceRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
@@ -505,13 +506,15 @@ export default function PayrollPage() {
         getWeekendHolidayRates(supabase),
         getCareOvertimeLowerTiers(supabase),
         getMeetingFeeUnpaidOffices(supabase),
+        // 事業所の単価の履歴 (effective_from 方式)。対象月で有効な行を後で重ねる (2026-09-26)
+        supabase.from("payroll_office_unit_prices").select("office_id,effective_from,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
       ]);
       // 基本のデータの読み込みエラーを見逃さない (2026-09-19: 同時計算で読み込みが失敗し、時給・実績が欠けたまま計算していた)
       for (const [label, r] of [["サービス区分の対応", mappingRes], ["サービス区分", catRes], ["事業所", officeRes], ["区分の時給", rateRes], ["職員", empRes]] as const) {
         const err = (r as { error?: { message: string } | null }).error;
         if (err) throw new Error(`${label}の読み込みに失敗しました (もう一度計算してください): ${err.message}`);
       }
-      for (const [label, r] of [["出勤簿", attRes], ["残業の設定", otRes]] as const) {
+      for (const [label, r] of [["出勤簿", attRes], ["残業の設定", otRes], ["事業所の単価の履歴", officePriceRes]] as const) {
         const err = (r as { error?: { message: string } | null }).error;
         if (err) throw new Error(`${label}の読み込みに失敗しました (もう一度計算してください): ${err.message}`);
       }
@@ -580,7 +583,17 @@ export default function PayrollPage() {
       const records    = allServiceRecords;
       const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
       const categoryMap= new Map((catRes.data ?? []).map((c: ServiceCategory) => [c.id, c.name]));
-      const officeRows        = flattenOfficeMaster(officeRes.data as never) as unknown as Office[];
+      const officeRowsRaw     = flattenOfficeMaster(officeRes.data as never) as unknown as Office[];
+      // ★ 事業所の単価は 対象月の履歴で上書きする (payroll_offices の現在値をそのまま使うと、
+      //   改定後に過去の月を再計算したとき 新しい単価で計算されて 過去が静かに変わる。2026-09-26)
+      const { offices: officeRows, missing: officePriceMissing } = applyOfficeUnitPrices(
+        officeRowsRaw, (officePriceRes.data ?? []) as OfficeUnitPriceRow[], selectedMonthToMonthStart(selectedMonth),
+      );
+      // ⚠ 履歴に行が無い事業所は payroll_offices の現在値のまま。0 で潰すと単価が消えて金額が静かに変わるので、
+      //   潰さずに 件数だけ残して 気づけるようにする
+      if (officePriceMissing.length > 0) {
+        console.warn(`★ 単価の履歴が無い事業所 ${officePriceMissing.length} 件: 現在値で計算します`, officePriceMissing);
+      }
       const officeMap         = new Map(officeRows.map((o: Office) => [o.office_number, o.id]));
       const officeByIdMap     = new Map(officeRows.map((o: Office) => [o.id, o]));
       const employeesRaw = (empRes.data ?? []) as Employee[];
@@ -1062,6 +1075,8 @@ export default function PayrollPage() {
       const manualOfficeWorkMinByNum = new Map<string, number>();
       // 事務員の残業 (出勤簿が CSV に無い人)。payroll_monthly_inputs overtime_minutes。2026-09-26
       const manualOvertimeMinByNum = new Map<string, number>();
+      // 法内残業 (出勤簿が CSV に無い人)。payroll_monthly_inputs legal_within_overtime_minutes。2026-09-26
+      const manualLegalWithinByNum = new Map<string, number>();
       // 初任者研修の時間 (事業所書式に記録が無い人)。payroll_monthly_inputs shoninsha_training_minutes。2026-09-26
       const manualShoninshaMinByNum = new Map<string, number>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
@@ -1072,7 +1087,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -1083,6 +1098,7 @@ export default function PayrollPage() {
           if (r.item_key === "childcare_allowance" && Number(r.numeric_value ?? 0) > 0) manualChildcareByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "office_work_minutes" && Number(r.numeric_value ?? 0) > 0) manualOfficeWorkMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualOvertimeMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "legal_within_overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualLegalWithinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
@@ -1788,7 +1804,9 @@ export default function PayrollPage() {
                   bathMinutesByEmp.get(normEmp(e.employee_number)) ?? 0,
                   bathCountByEmp.get(normEmp(e.employee_number)) ?? 0),
             overtime_minutes_override: manualOvertimeMinByNum.get(normEmp(e.employee_number)),
-            legal_within_minutes: legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
+            // 出勤簿から出せない人は 手入力を使う (出勤簿が 0 行だと legalWithinOvertimeMinutes は必ず 0 を返す)
+            legal_within_minutes: manualLegalWithinByNum.get(normEmp(e.employee_number))
+              ?? legalWithinOvertimeMinutes(attByEmpM.get(normEmp(e.employee_number)) ?? [], empOfRecs),
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             // 欠勤日数: 出勤簿があれば出勤簿の「欠勤」(半欠勤 0.5)、無ければ事業所書式 (東郷 戸田 2026-03 は出勤簿で 4 日 = 総括表)
             absence_days: (() => {

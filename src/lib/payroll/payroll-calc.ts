@@ -241,7 +241,15 @@ export type MonthlyPayroll = {
    * 元データが スキャンPDF しか無い。★ 総括表の 出勤時間・出勤日数 から
    *   残業 = max(0, 出勤時間 − 480 × 出勤日数)
    * を当てると 42 人月中 34 しか合わない (稲葉香織 4 / 加瀬 2 / 牛来 1 / 本田 1 が外れる) ので 計算では出せない。
-   * ⚠ 入っているときは legal_within_minutes は足さない (総括表の事務員は 残業列が 1 本しか無く、二重になる)。
+   * ⚠ 上書きするのは **法定外の残業だけ**。法内残業 (legal_within_minutes) は別枠でそのまま足す。
+   *   2026-09-26 に総括表を全数で見たところ、「法内残業」列は shaseki 1,326 行すべてに存在し、
+   *   値が 0 でない行が 20 件 (事務員扱い 115 行のうち 17 件) あった。**別建ての独立した支払い**で、
+   *     残業総額     = 残業 ÷ 60 × 残業単価             115/115 成立
+   *     法内残業手当 = 法内残業 ÷ 60 × (残業単価 ÷ 1.25)  17/17 が 1 円まで一致
+   *   ★ 当初 overtime_minutes が入っている月は legal_within_minutes を足さない設計にしたが誤り。
+   *     「総括表の事務員は残業列が 1 本しか無い」という前提が違っていた。
+   *     実害が出るのは「法内残業あり かつ 出勤簿が当方に無い」3 人月
+   *     (本田亜美 202605 / 三島由佳 202603 / 加瀬真紀江 202608)。手入力が入った瞬間に発火する。
    */
   overtime_minutes_override?: number;
   summary: AttendanceSummary;
@@ -536,7 +544,8 @@ export function computeOvertimePay(
   //   2026-08-31 監査まで一律 1.25 だった (実データで OT 64.0h の職員が居る)。
   const within60 = Math.min(overtimeMin, MONTHLY_OT_THRESHOLD_MIN);
   const over60 = Math.max(0, overtimeMin - MONTHLY_OT_THRESHOLD_MIN);
-  const legalWithin = p.role_type === "事務員" && manualOt <= 0 ? (p.legal_within_minutes ?? 0) : 0;
+  // ★ 法内残業は 法定外の残業とは別の法的区分・別の支払い列なので、手入力で残業を上書きしても落とさない
+  const legalWithin = p.role_type === "事務員" ? (p.legal_within_minutes ?? 0) : 0;
   return Math.round(
     (within60 / 60) * Math.round(hourlyRate * 1.25) + (over60 / 60) * Math.round(hourlyRate * 1.5),
   ) + Math.round((legalWithin / 60) * hourlyRate);
