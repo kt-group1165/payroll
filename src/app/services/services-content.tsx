@@ -907,7 +907,7 @@ function RatesTab({
         <table className="w-full border-separate border-spacing-0 text-sm">
           <thead>
             <tr>
-              <th className="sticky left-0 top-0 z-30 border-b border-r bg-muted px-3 py-2 text-left font-medium min-w-[12rem]">事業所</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-r bg-muted px-2 py-2 text-left font-medium min-w-[13.5rem]">事業所</th>
               <th className="sticky top-0 z-20 border-b bg-muted px-3 py-2 text-left font-medium whitespace-nowrap">時期</th>
               {shownCategories.map((c) => (
                 <th key={c.id} className="sticky top-0 z-20 border-b bg-muted px-2 py-2 text-right font-medium whitespace-nowrap">
@@ -925,25 +925,34 @@ function RatesTab({
               const zebra = oi % 2 === 1 ? "bg-muted/30" : "";
               const rowCount = Math.max(1, periods.length);
               const nameCell = (
-                <td rowSpan={rowCount} className="sticky left-0 z-10 border-t border-r bg-background px-3 py-1.5 align-top">
-                  <div className="font-medium leading-tight">{officeName(o)}</div>
+                <td rowSpan={rowCount} className="sticky left-0 z-10 border-t border-r bg-background px-2 py-1 align-middle">
                   {addFor === o.id ? (
-                    <div className="mt-1.5 space-y-1">
+                    <div className="space-y-1">
+                      <div className="text-[13px] font-medium leading-[1.2]">{officeName(o)}</div>
                       <Input type="month" value={addMonth} onChange={(e) => e.target.value && setAddMonth(e.target.value)} className="h-7 w-32" />
                       <div className="flex gap-1">
                         <Button size="sm" className="h-6 px-2 text-xs" disabled={saving} onClick={() => addPeriod(o.id)}>追加</Button>
                         <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setAddFor(null)}>やめる</Button>
                       </div>
                     </div>
-                  ) : periods.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => { setAddFor(o.id); setAddMonth(thisMonth()); }}
-                      className="mt-0.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      ＋ 時給が変わる月
-                    </button>
-                  ) : null}
+                  ) : (
+                    /* ★ 「＋ 時給が変わる月」は 以前 名前の下の行に置いていて、全事業所で 3 行目を
+                       占有していた。名前の右の小さな ＋ に変えて 縦を返す (凡例に意味を書く) */
+                    <div className="flex items-start gap-1">
+                      <span className="flex-1 text-[13px] font-medium leading-[1.2]">{officeName(o)}</span>
+                      {periods.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => { setAddFor(o.id); setAddMonth(thisMonth()); }}
+                          title="時給が変わる月を追加"
+                          aria-label={`${officeName(o)} に 時給が変わる月を追加`}
+                          className="shrink-0 rounded px-1 text-sm leading-none text-muted-foreground opacity-50 hover:bg-muted hover:text-foreground hover:opacity-100 focus-visible:opacity-100"
+                        >
+                          ＋
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </td>
               );
 
@@ -1003,6 +1012,7 @@ function RatesTab({
       </div>
       <p className="text-xs text-muted-foreground">
         <span className="font-semibold text-amber-700">色付きの数字</span> = 前の時期から変わった時給。
+        事業所名の右の <span className="rounded border px-1">＋</span> = その事業所に 時給が変わる月を足す。
         給与計算は その月が入る時期の時給を使います。
       </p>
     </div>
