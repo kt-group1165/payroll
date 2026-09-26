@@ -148,7 +148,12 @@ for (const s of skipped) console.log(s);
 if (!EXECUTE) { console.log("\nDRY RUN。--execute で書き込みます"); process.exit(0); }
 if (rows.length === 0) { console.log("\n対象がありません"); process.exit(0); }
 
-const payload = rows.map(({ _label, _amt, _paid, ...r }) => r);
+// ★ _ で始まる表示用の項目は DB に送らない (分割代入で捨てると eslint の未使用警告が出るので明示的に組む)
+const payload = rows.map((x) => ({
+  office_number: x.office_number, employee_number: x.employee_number,
+  processing_month: x.processing_month, item_key: x.item_key,
+  numeric_value: x.numeric_value, note: x.note,
+}));
 const r = await fetch(`${SB}/rest/v1/payroll_monthly_inputs`, {
   method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(payload),
 });
