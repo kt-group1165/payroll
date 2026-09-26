@@ -47,6 +47,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "overtime_minutes",
+    label: "残業 (出勤簿が取り込めない人)",
+    unit: "分",
+    help: "事務員の残業。出勤簿が CSV で取り込めない人 (スキャンPDFしか無い人) 用。残業総額 = この分数 ÷ 60 × 残業単価 で払う (総括表 事務員 84/84 一致)。★ 残業 = 出勤時間 − 480分 × 出勤日数 は 42人月中 34 しか合わないので 計算しない。PDF の出勤簿 (赤字の手書き訂正が正) から人が入れる。本稼働後は出勤簿から",
+    allowNegative: false,
+  },
+  {
     key: "commute_yen",
     label: "通勤費 (出勤簿が取り込めない人)",
     unit: "円",

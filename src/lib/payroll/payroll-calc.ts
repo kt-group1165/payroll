@@ -208,6 +208,16 @@ export type MonthlyPayroll = {
   paid_leave_allowance_override?: number;
   /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
   legal_within_minutes?: number;
+  /**
+   * 残業の分数を 月ごとの手入力で上書きする (payroll_monthly_inputs overtime_minutes)。2026-09-26
+   *
+   * 事務員 8 名は 出勤簿 (payroll_attendance_records) が 0 行で、事業所書式にも 出勤時間/残業 が無く、
+   * 元データが スキャンPDF しか無い。★ 総括表の 出勤時間・出勤日数 から
+   *   残業 = max(0, 出勤時間 − 480 × 出勤日数)
+   * を当てると 42 人月中 34 しか合わない (稲葉香織 4 / 加瀬 2 / 牛来 1 / 本田 1 が外れる) ので 計算では出せない。
+   * ⚠ 入っているときは legal_within_minutes は足さない (総括表の事務員は 残業列が 1 本しか無く、二重になる)。
+   */
+  overtime_minutes_override?: number;
   summary: AttendanceSummary;
 };
 
@@ -474,7 +484,8 @@ export function computeOvertimePay(
 ): number {
   const ot = otSettings.get(p.job_type);
   if (!ot || ot.scheduled_hours_per_month <= 0) return 0;
-  const overtimeMin = p.summary.overtimeMinutes;
+  const manualOt = p.overtime_minutes_override ?? 0;
+  const overtimeMin = manualOt > 0 ? manualOt : p.summary.overtimeMinutes;
   if (overtimeMin <= 0 && !(p.role_type === "事務員" && (p.legal_within_minutes ?? 0) > 0)) return 0;
   const s = p.settings;
   if (!s) return 0;
@@ -499,7 +510,7 @@ export function computeOvertimePay(
   //   2026-08-31 監査まで一律 1.25 だった (実データで OT 64.0h の職員が居る)。
   const within60 = Math.min(overtimeMin, MONTHLY_OT_THRESHOLD_MIN);
   const over60 = Math.max(0, overtimeMin - MONTHLY_OT_THRESHOLD_MIN);
-  const legalWithin = p.role_type === "事務員" ? (p.legal_within_minutes ?? 0) : 0;
+  const legalWithin = p.role_type === "事務員" && manualOt <= 0 ? (p.legal_within_minutes ?? 0) : 0;
   return Math.round(
     (within60 / 60) * Math.round(hourlyRate * 1.25) + (over60 / 60) * Math.round(hourlyRate * 1.5),
   ) + Math.round((legalWithin / 60) * hourlyRate);
