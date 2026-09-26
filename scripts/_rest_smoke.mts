@@ -1,5 +1,5 @@
 // _rest.mts が 1000 行上限を越えられることを実データで確かめる (2026-09-26)
-import { restAll, restCount, restPage, restOne, empKey, normEmpNo } from "./_rest.mts";
+import { restAll, restCount, restPage, restOne, empKey, normEmpNo } from "./_rest.mjs";
 let ng = 0;
 const ok = (b: boolean, msg: string) => { if (!b) ng++; console.log(`  ${b ? "PASS" : "★FAIL"}  ${msg}`); };
 console.log("=== restAll が 1000 行を越えるか (今日 3 回踏んだ罠) ===");
