@@ -81,11 +81,15 @@ for (const r of rows) {
   const e = byNum.get(r.num);
   if (!e) { skipped.push(`${r.file}:${r.line} 職員 ${r.num} が事業所 ${OFFICE} に居ません ★職員番号は事業所をまたぐと重複するので必ず確認すること`); continue; }
   if (r.source === "無し" || (r.work == null && r.ot == null)) { skipped.push(`${r.file}:${r.line} ${e.name} ${r.month} 読み取れなかった行 (source=${r.source}) -> 入れない`); continue; }
-  if (r.source === "ロスター" && !ALLOW_ROSTER) { skipped.push(`${r.file}:${r.line} ${e.name} ${r.month} source=ロスター は総括表そのもの (循環参照) -> 既定では入れない。入れるなら --allow-roster`); continue; }
-  if (!["印字", "赤字", "ロスター"].includes(r.source)) { skipped.push(`${r.file}:${r.line} ${e.name} ${r.month} source が不正: ${r.source}`); continue; }
+  if (r.source.includes("ロスター") && !ALLOW_ROSTER) { skipped.push(`${r.file}:${r.line} ${e.name} ${r.month} source=ロスター は総括表そのもの (循環参照) -> 既定では入れない。入れるなら --allow-roster`); continue; }
+  // ★ 表記ゆれを吸収する。「印字+赤字裏付」のような書き方で弾いていて、
+  //   本田亜美 202604 の残業 180 分 (赤字「残3h」の裏付けあり) を取りこぼしていた (2026-09-26 給与B が発見)。
+  //   ★ 「赤字」を含むなら赤字、含まず「印字」を含むなら印字、と読む。
+  const src = r.source.includes("赤字") ? "赤字" : r.source.includes("印字") ? "印字" : r.source.includes("ロスター") ? "ロスター" : r.source;
+  if (!["印字", "赤字", "ロスター"].includes(src)) { skipped.push(`${r.file}:${r.line} ${e.name} ${r.month} source が不正: ${r.source}`); continue; }
   const note = `スキャンPDF (${r.source})${r.note ? " " + r.note : ""}`;
-  if (r.work != null && r.work > 0) ops.push({ num: r.num, name: e.name, month: r.month, key: "office_work_minutes", v: r.work, note, source: r.source });
-  if (r.ot != null && r.ot > 0) ops.push({ num: r.num, name: e.name, month: r.month, key: "overtime_minutes", v: r.ot, note, source: r.source });
+  if (r.work != null && r.work > 0) ops.push({ num: r.num, name: e.name, month: r.month, key: "office_work_minutes", v: r.work, note, source: src });
+  if (r.ot != null && r.ot > 0) ops.push({ num: r.num, name: e.name, month: r.month, key: "overtime_minutes", v: r.ot, note, source: src });
 }
 
 // -- 既存の値と比べる --------------------------------------------------

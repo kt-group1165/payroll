@@ -1077,6 +1077,8 @@ export default function PayrollPage() {
       const manualOvertimeMinByNum = new Map<string, number>();
       // 法内残業 (出勤簿が CSV に無い人)。payroll_monthly_inputs legal_within_overtime_minutes。2026-09-26
       const manualLegalWithinByNum = new Map<string, number>();
+      // 欠勤日数 (出勤簿にも事業所書式にも入っていない人)。payroll_monthly_inputs absence_days。2026-09-26
+      const manualAbsenceDaysByNum = new Map<string, number>();
       // 初任者研修の時間 (事業所書式に記録が無い人)。payroll_monthly_inputs shoninsha_training_minutes。2026-09-26
       const manualShoninshaMinByNum = new Map<string, number>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
@@ -1087,7 +1089,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -1099,6 +1101,7 @@ export default function PayrollPage() {
           if (r.item_key === "office_work_minutes" && Number(r.numeric_value ?? 0) > 0) manualOfficeWorkMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualOvertimeMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "legal_within_overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualLegalWithinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "absence_days" && Number(r.numeric_value ?? 0) > 0) manualAbsenceDaysByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
@@ -1810,6 +1813,11 @@ export default function PayrollPage() {
             paid_leave_unit_price: e.paid_leave_unit_price ?? 0,
             // 欠勤日数: 出勤簿があれば出勤簿の「欠勤」(半欠勤 0.5)、無ければ事業所書式 (東郷 戸田 2026-03 は出勤簿で 4 日 = 総括表)
             absence_days: (() => {
+              // ★ 手入力が最優先。出勤簿にも書式にも欠勤が無いと 満額で計算してしまう (2026-09-26)。
+              //   実害: 金香蘭 202603・202604 (欠22) と 石毛博美 202604 (欠21) の 3 人月で 計 ¥904,500 の過大。
+              //   総括表は 欠勤控除で 総支給額 0 にしていたが、当方は 欠勤を知らないので 固定給を満額出していた。
+              const manualAbs = manualAbsenceDaysByNum.get(normEmp(e.employee_number));
+              if (manualAbs != null && manualAbs > 0) return manualAbs;
               const att = attByEmpM.get(normEmp(e.employee_number)) ?? [];
               const notes = (a: AttendanceRecord) => [a.work_note_1, a.work_note_2, a.work_note_3, a.work_note_4, a.work_note_5].map((n) => n ?? "");
               if (att.length > 0) return att.reduce((s, a) => s + (notes(a).some((n) => n.includes("半欠")) ? 0.5 : notes(a).some((n) => n.includes("欠勤")) ? 1 : 0), 0);

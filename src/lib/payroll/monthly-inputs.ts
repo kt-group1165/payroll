@@ -54,6 +54,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "absence_days",
+    label: "欠勤日数 (出勤簿・書式にない分)",
+    unit: "日",
+    help: "欠勤した日数。半欠勤は 0.5 で入れる。★ まるまる 1 か月休んだ月は 固定給を全額控除する。総括表の「欠勤控除」列と「有給・特休・欠勤」欄 (例 欠22) が元。⚠ 出勤簿にも事業所書式にも欠勤が入っていないと 当システムは満額で計算してしまう (金香蘭 2 人月・石毛博美 1 人月で 計 ¥904,500 の過大が実際に起きていた)",
+    allowNegative: false,
+  },
+  {
     key: "legal_within_overtime_minutes",
     label: "法内残業 (出勤簿が取り込めない人)",
     unit: "分",
