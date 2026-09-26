@@ -61,6 +61,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "late_early_minutes",
+    label: "遅刻早退 (分)",
+    unit: "分",
+    help: "月給者の遅刻・早退の合計 (分)。遅刻早退控除 = 分 ÷ 60 × 切り捨て((本人給 + 職能給) ÷ 所定時間 159h/168h) を総支給から引く。総括表の「遅刻早退」列 (分) が元。★ 出勤簿に遅刻・早退の注記が無く 自動では出せないので手で入れる (2026-09-27)",
+    allowNegative: false,
+  },
+  {
     key: "legal_within_overtime_minutes",
     label: "法内残業 (出勤簿が取り込めない人)",
     unit: "分",

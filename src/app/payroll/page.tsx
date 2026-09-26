@@ -63,6 +63,7 @@ import {
   legalWithinOvertimeMinutes,
   monthlyPaidLeaveAllowance,
   absenceDeduction,
+  lateEarlyDeduction,
   hourlyOvertimePayAmount,
   legalHolidaySaturdays,
   legalHolidayPremiumAmount,
@@ -1103,6 +1104,8 @@ export default function PayrollPage() {
       const manualLegalWithinByNum = new Map<string, number>();
       // 欠勤日数 (出勤簿にも事業所書式にも入っていない人)。payroll_monthly_inputs absence_days。2026-09-26
       const manualAbsenceDaysByNum = new Map<string, number>();
+      // 遅刻早退の分 (月給者)。payroll_monthly_inputs late_early_minutes。出勤簿から出せないので手入力だけ。2026-09-27
+      const manualLateEarlyMinByNum = new Map<string, number>();
       // 初任者研修の時間 (事業所書式に記録が無い人)。payroll_monthly_inputs shoninsha_training_minutes。2026-09-26
       const manualShoninshaMinByNum = new Map<string, number>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
@@ -1115,7 +1118,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (Number(r.numeric_value ?? 0) > 0) {
@@ -1132,6 +1135,7 @@ export default function PayrollPage() {
           if (r.item_key === "overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualOvertimeMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "legal_within_overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualLegalWithinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "absence_days" && Number(r.numeric_value ?? 0) > 0) manualAbsenceDaysByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "late_early_minutes" && Number(r.numeric_value ?? 0) > 0) manualLateEarlyMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
@@ -1876,6 +1880,7 @@ export default function PayrollPage() {
               return fromAtt > 0 ? fromAtt : fromForm;
             })(),
             is_office_worker_for_deduction: roleM === "事務員" || (e.is_office_worker ?? false),
+            late_early_minutes: manualLateEarlyMinByNum.get(normEmp(e.employee_number)) ?? 0,
             // 月給者も 付与ごとの日当 (有給管理簿シートの値) で計算する。付与が無い人だけ 給与設定 → 職員マスタ の単価。
             // ⚠ 個人シートの日当は 前年度パートだった社員で総括表と食い違う (さつき 米倉 個人シート 7,712 / 管理簿 906)。
             //   有給管理簿シートの日当なら 2026-04〜07 の社員 224 件中 206 件一致
@@ -3157,6 +3162,7 @@ export default function PayrollPage() {
                                           <DetailLine label="残業代" v={computeOvertimePay(p, otSettings)} />
                                           {monthlyPaidLeaveAllowance(p) > 0 && <DetailLine label="有給休暇手当" v={monthlyPaidLeaveAllowance(p)} />}
                                           {absenceDeduction(p) > 0 && <DetailLine label={`欠勤控除 (${p.absence_days ?? 0}日)`} v={-absenceDeduction(p)} />}
+                                          {lateEarlyDeduction(p) > 0 && <DetailLine label={`遅刻早退控除 (${p.late_early_minutes ?? 0}分)`} v={-lateEarlyDeduction(p)} />}
                                           {(p.adjustment ?? 0) !== 0 && <DetailLine label="調整手当・過誤 (手入力)" v={p.adjustment ?? 0} />}
                                           <DetailLine label="特別報奨金" v={s.special_bonus} />
                                           {p.bonus_paid && s.bonus_amount > 0 && <DetailLine label="報奨金" v={s.bonus_amount} />}

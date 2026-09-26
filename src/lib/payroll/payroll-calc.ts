@@ -230,6 +230,8 @@ export type MonthlyPayroll = {
   absence_days?: number;
   /** 事務員 (欠勤控除の所定時間 159h) */
   is_office_worker_for_deduction?: boolean;
+  /** 遅刻早退の分。月ごとの手入力 (payroll_monthly_inputs late_early_minutes) だけ。lateEarlyDeduction */
+  late_early_minutes?: number;
   /** 付与ごとの日当 (payroll_paid_leave_grants) で計算した有給休暇手当。あれば paid_leave_unit_price より優先 */
   paid_leave_allowance_override?: number;
   /** 事務員の法内残業 (分)。legalWithinOvertimeMinutes */
@@ -747,7 +749,8 @@ export function monthlyGrandTotal(p: MonthlyPayroll, otSettings: Map<string, Ove
     overtimeExcessPay(p, otSettings) +
     (p.tokubi_allowance ?? 0) +
     (p.office_worker_care_pay ?? 0) -
-    absenceDeduction(p) +
+    absenceDeduction(p) -
+    lateEarlyDeduction(p) +
     (p.adjustment ?? 0)
   );
 }
@@ -762,8 +765,43 @@ export function absenceDeduction(p: MonthlyPayroll): number {
   const days = p.absence_days ?? 0;
   if (!p.settings || days <= 0) return 0;
   if ((p.summary.workDays ?? 0) <= 0 && (p.summary.visitMinutes ?? 0) <= 0) return fixedTotal(p.settings);
-  const hours = p.is_office_worker_for_deduction ? 159 : 168;
-  return Math.floor(((p.settings.base_personal_salary + p.settings.skill_salary) / hours) * 8 * days + 1e-6);
+  const { base, hours } = deductionBase(p);
+  return Math.floor((base / hours) * 8 * days + 1e-6);
+}
+
+/**
+ * 欠勤控除・遅刻早退控除の 共通の母数 (2026-09-27 切り出し。★ 2 か所に同じ式を書かないため)。
+ *   base  = 本人給 + 職能給 (★ 処遇改善補助金は入れない)
+ *   hours = 所定時間。事務職 159h / それ以外 168h
+ * ⚠ 総括表 ② の「遅刻早退単価」列は 八千代 (1272603851) だけ 補助金込み (36/36) だが、
+ *   八千代の欠勤控除は補助金なしで一致し (田中恵 202603 欠0.5 = 4,666)、遅刻早退の実例は 0 件。
+ *   お金として効いた例が無いので 採らない (八千代で遅刻早退が出たら ② と照合して見直す)。
+ */
+export function deductionBase(p: MonthlyPayroll): { base: number; hours: number } {
+  const s = p.settings;
+  return {
+    base: s ? s.base_personal_salary + s.skill_salary : 0,
+    hours: p.is_office_worker_for_deduction ? 159 : 168,
+  };
+}
+
+/**
+ * 遅刻早退控除 (円、正の数で返す。総支給から引く)。2026-09-27 実装 (user「F 作る」)。
+ *   単価 = 切り捨て(本人給 + 職能給 ÷ 所定時間)   総括表 ② の「遅刻早退単価」列 1,326 行中 1,290 行一致
+ *        (残り 36 行は八千代の補助金込み。deductionBase のコメント)。round だけで一致する行は 0 → 切り捨て
+ *   金額 = 遅刻早退の分 ÷ 60 × 単価
+ *   実データ (② 遅刻早退金額) 小原 30分 660 / 牛来 240分 5,784 / 池谷 120分 2,640 / 黒田 180分 3,582 が 1 円一致。
+ * ★ 端数の丸めは 実データでは決まらない (5 件とも 30 分単位で端数が出ない) ので 欠勤控除に揃えて切り捨て。
+ * ★ 熊谷明日香 202607 だけ ② が 単価 1,194 でなく 1,283 (残業の時間単価) で掛けている (2,566)。
+ *   1 件では規則か誤りか決まらないので 合わせに行かない (scripts/check-late-early.mts で既知の不一致として別掲)。
+ * 分は 月ごとの手入力 (payroll_monthly_inputs late_early_minutes) だけ。出勤簿に遅刻・早退の注記が無く 自動では出せない。
+ */
+export function lateEarlyDeduction(p: MonthlyPayroll): number {
+  const min = p.late_early_minutes ?? 0;
+  if (!p.settings || min <= 0) return 0;
+  const { base, hours } = deductionBase(p);
+  const unit = Math.floor(base / hours + 1e-9);
+  return Math.floor((min / 60) * unit + 1e-6);
 }
 
 /**

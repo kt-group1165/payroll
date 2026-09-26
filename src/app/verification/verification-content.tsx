@@ -20,6 +20,7 @@ import {
   parseWorkHoursMinutes,
   travelFeeAmount,
   yochoAllowance,
+  lateEarlyDeduction,
   type MonthlyPayroll,
   type OvertimeSetting,
 } from "@/lib/payroll/payroll-calc";
@@ -134,6 +135,8 @@ function ourItems(
     { item: "育児手当", ours: num(e.childcare_allowance) },
     { item: "調整手当", ours: num(e.adjustment) },
     { item: "特日", ours: num(e.tokubi_allowance) },
+    // ② の「遅刻早退金額」は 負の数で入っている (−660 等)。当方は 控除額を正の数で持つので 符号を合わせる (2026-09-27)
+    { item: "遅刻早退金額", ours: -lateEarlyDeduction(p) },
     { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
   ];
 }

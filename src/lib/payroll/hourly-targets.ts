@@ -20,6 +20,7 @@ export const HOURLY_TARGET_EXCLUDED_ITEMS: Readonly<Record<string, string>> = {
   overtime_minutes: "月給者 (事務員) の残業。時給者の計算は読まない → 入れると 固定分だけの行ができる",
   legal_within_overtime_minutes: "月給者の法内残業。時給者の計算は読まない",
   absence_days: "月給者の欠勤控除。時給者の計算は読まない",
+  late_early_minutes: "月給者の遅刻早退控除。時給者の計算は読まない",
   overnight_allowance: "泊まり手当。月給者の計算だけが読む",
 };
 
