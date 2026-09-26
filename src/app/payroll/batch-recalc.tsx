@@ -174,6 +174,8 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
         <Button size="sm" variant="outline" onClick={() => void run(true)} disabled={running || !counts["失敗"]}>失敗だけ出し直す</Button>
         <Button size="sm" variant="destructive" onClick={() => { stopRef.current = true; resumeRef.current?.(); }} disabled={!running}>止める (今の 1 件が終わったら)</Button>
         {paused && <Button size="sm" onClick={() => resumeRef.current?.()}>再開</Button>}
+        <Button size="sm" variant="ghost" onClick={() => setItems((xs) => xs.map((x) => ({ ...x, selected: x.state !== "確定のため飛ばし" })))} disabled={running || items.length === 0}>全部選ぶ</Button>
+        <Button size="sm" variant="ghost" onClick={() => setItems((xs) => xs.map((x) => ({ ...x, selected: false })))} disabled={running || items.length === 0}>全部外す</Button>
         <Button size="sm" variant="ghost" onClick={() => { writeRunStart(null); setItems((xs) => xs.map((x) => ({ ...x, state: x.state === "確定のため飛ばし" ? x.state : "待ち", note: "" }))); }} disabled={running}>新しく始める</Button>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
