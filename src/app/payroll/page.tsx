@@ -497,7 +497,7 @@ export default function PayrollPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date").eq("office_id", selectedOfficeId)
+        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date").eq("office_id", selectedOfficeId)
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)
           .or(`employment_status.neq.退職者,resignation_date.gte.${year}-${String(month).padStart(2, "0")}-01`),
         fetchAllSalarySettings(),
@@ -1648,8 +1648,21 @@ export default function PayrollPage() {
       const offsetFullCareRes = await getOvertimeOffsetFullCareOffices(supabase);
       if (offsetFullCareRes.error) throw new Error(`残業代から介護超過を差し引く事業所の設定の読み込みに失敗: ${offsetFullCareRes.error}`);
       // 月給者
+      // ⚠ 退職日は DB 側の .or() で見ているのに **入社日を見ていなかった** (2026-09-26 是正)。
+      //   入社前の月まで固定給を満額出していた。実測: 9 人月 ¥2,586,112
+      //   (岡林真美 2026-06 入社なのに 202603〜05 を ¥389,000 × 3 ほか)。
+      //   ★ 「入社日より後に始まる月」だけ外す。hire_date が空の人は外さない
+      //     (空を理由に外すと、入社日が未入力なだけの在籍者まで落ちて 払い漏れになる)。
+      //   ★ 上の 9 人月は hire_date が空だったので この判定だけでは直らない。
+      //     payroll_legacy_employee に入社日があるので backfill が要る (別途)。
+      const monthEndIsoForHire = `${year}-${String(month).padStart(2, "0")}-${new Date(year, month, 0).getDate()}`;
+      const hiredAfterMonth = (e: Employee) => {
+        const h = (e as { hire_date?: string | null }).hire_date;
+        return !!h && h > monthEndIsoForHire;
+      };
       const monthlyEmps = employees.filter(
         (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && (!e.employment_status || e.employment_status === "在職者" || e.employment_status === "退職者")
+          && !hiredAfterMonth(e)
       );
       const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
           const sw = switchByNum.get(normEmp(e.employee_number));
