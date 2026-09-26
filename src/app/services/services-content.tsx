@@ -667,6 +667,16 @@ function RatesTab({
   const [addMonth, setAddMonth] = useState(thisMonth());
   const [importMonth, setImportMonth] = useState(thisMonth());
   const importRef = useRef<HTMLInputElement>(null);
+  /**
+   * いま書き換えているセル ("事業所id|類型id|時期の開始日")。
+   * ★ 既定は **ただの数字**として出す。以前は 全セルが入力枠で、値の無いところまで枠が出ていたため
+   *   23 事業所 × 13 類型 = 約 300 個の枠が並び、桁も揃わず読めなかった (2026-09-26 user「めっちゃ見づらい」)。
+   */
+  const [editing, setEditing] = useState<string | null>(null);
+  /** Esc で取り消したとき、続けて飛んでくる blur で保存しないための目印 */
+  const cancelRef = useRef(false);
+  /** どの事業所も値を持っていない類型を隠す。13 類型のうち実際に使うのは数個なので既定で隠す */
+  const [hideEmpty, setHideEmpty] = useState(true);
   const fetchData = useCallback(() => router.refresh(), [router]);
 
   const officesWithRates = new Set(rates.map((r) => r.office_id));
@@ -696,6 +706,15 @@ function RatesTab({
     });
   };
   const nowStart = `${thisMonth()}-01`;
+
+  // 表に出す事業所ぶんだけ 先に時期を組み立てる (セルの描画で何度も呼ばないため)
+  type Period = ReturnType<typeof periodsOf>[number];
+  const periodsByOffice = new Map<string, Period[]>(shown.map((o) => [o.id, periodsOf(o.id)]));
+  // どこにも値が無い類型は既定で隠す (横に切れて「列がもっとある」ことに気づけないため)
+  const hasAnyValue = (categoryId: string) =>
+    shown.some((o) => (periodsByOffice.get(o.id) ?? []).some((p) => p.byCat.has(categoryId)));
+  const shownCategories = hideEmpty ? categories.filter((c) => hasAnyValue(c.id)) : categories;
+  const hiddenCount = categories.length - shownCategories.length;
 
   // その時期の時給を直す = その時期の頭 (start) の行を作る / 上書きする
   const saveCell = async (officeId: string, categoryId: string, start: string, current: number | undefined, raw: string) => {
@@ -804,18 +823,60 @@ function RatesTab({
     reader.readAsArrayBuffer(file);
   };
 
+  /**
+   * 時給 1 つぶんのセル。★ 普段は数字だけ、押すと入力欄になる。
+   * 保存の道筋 (saveCell) は入力欄だったときと同じ。
+   */
+  // ⚠ コンポーネントにせず **ただの関数**にする。レンダー関数の中で定義したコンポーネントは
+  //   再レンダーのたびに型が変わり、React が毎回 unmount/remount するため 入力中にフォーカスが飛ぶ
+  const rateCell = (office: Office, categoryId: string, period: Period, prev: Period | undefined) => {
+    const r = period.byCat.get(categoryId);
+    const key = `${office.id}|${categoryId}|${period.start}`;
+    const before = prev?.byCat.get(categoryId)?.hourly_rate;
+    const changed = !!prev && !!r && before !== r.hourly_rate;
+    if (editing === key) {
+      return (
+        <Input
+          type="number" min={1} step={1} disabled={saving} autoFocus
+          defaultValue={r?.hourly_rate ?? ""} placeholder="—"
+          onBlur={(e) => {
+            const v = e.target.value;
+            setEditing(null);
+            if (cancelRef.current) { cancelRef.current = false; return; }
+            void saveCell(office.id, categoryId, period.start, r?.hourly_rate, v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") { cancelRef.current = true; (e.target as HTMLInputElement).blur(); }
+          }}
+          className="h-7 w-24 text-right tabular-nums"
+        />
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(key)}
+        title={changed ? `前の時期 ${before?.toLocaleString() ?? "未設定"}円 から変更。押すと書き換えられます` : "押すと書き換えられます"}
+        className={`h-7 w-24 rounded px-2 text-right tabular-nums transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          r ? (changed ? "font-semibold text-amber-700" : "") : "text-muted-foreground/40"
+        }`}
+      >
+        {r ? r.hourly_rate.toLocaleString() : "—"}
+      </button>
+    );
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
+    <div className="space-y-3">
+      {/* 操作の帯。説明は表のすぐ上に 1 行だけ置く (以前は絞り込みの真横で場所を取っていた) */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <label className="text-sm">事業所
           <select className="block mt-1 h-9 rounded-md border bg-background px-2 text-sm" value={officeFilter} onChange={(e) => setOfficeFilter(e.target.value)}>
             <option value="">すべて ({offices.length})</option>
             {offices.map((o) => <option key={o.id} value={o.id}>{officeName(o)}</option>)}
           </select>
         </label>
-        <p className="text-sm text-muted-foreground flex-1 min-w-[260px]">
-          時給が同じ時期を 1 行にまとめています。時給が変わるときは「＋ 時給が変わる月を追加」で新しい時期を作り、変わる類型だけ書き換えます。
-        </p>
         <div className="flex items-end gap-2">
           <Button variant="outline" onClick={handleExport}>📥 CSV出力 (今月)</Button>
           <label className="text-xs text-muted-foreground">取り込みの適用開始月
@@ -826,85 +887,124 @@ function RatesTab({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="text-sm border-collapse w-full">
-          <thead className="bg-muted/60 sticky top-0 z-10">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span>時給が同じ時期を 1 行にまとめています。<b className="font-medium text-foreground">数字を押すと書き換えられます</b> (Enter で確定 / Esc で取り消し)。</span>
+        {hiddenCount > 0 || !hideEmpty ? (
+          <label className="inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+            <input type="checkbox" checked={hideEmpty} onChange={(e) => setHideEmpty(e.target.checked)} className="h-3.5 w-3.5" />
+            どこにも時給が入っていない類型を隠す
+            {hideEmpty && hiddenCount > 0 && <span className="rounded bg-muted px-1.5 py-0.5">{hiddenCount} 列を非表示</span>}
+          </label>
+        ) : null}
+      </div>
+
+      {/*
+        ⚠ 高さを決めた overflow-auto の中でないと sticky は効かない。
+          以前は overflow-x-auto だけで高さも無く、**見出しは実際には固定されていなかった**。
+        ⚠ border-collapse だと sticky セルの罫線が描画されない。border-separate + border-spacing-0 にする。
+      */}
+      <div className="max-h-[calc(100vh-17rem)] overflow-auto rounded-lg border">
+        <table className="w-full border-separate border-spacing-0 text-sm">
+          <thead>
             <tr>
-              <th className="sticky left-0 bg-muted px-3 py-2 text-left font-medium min-w-52">事業所 / 時期</th>
-              {categories.map((c) => <th key={c.id} className="px-2 py-2 text-center font-medium whitespace-nowrap">{c.name}</th>)}
-              <th className="px-2 py-2" />
+              <th className="sticky left-0 top-0 z-30 border-b border-r bg-muted px-3 py-2 text-left font-medium min-w-[12rem]">事業所</th>
+              <th className="sticky top-0 z-20 border-b bg-muted px-3 py-2 text-left font-medium whitespace-nowrap">時期</th>
+              {shownCategories.map((c) => (
+                <th key={c.id} className="sticky top-0 z-20 border-b bg-muted px-2 py-2 text-right font-medium whitespace-nowrap">
+                  {c.name}<span className="ml-1 font-normal text-[10px] text-muted-foreground">円</span>
+                </th>
+              ))}
+              <th className="sticky top-0 z-20 border-b bg-muted" />
             </tr>
           </thead>
           <tbody>
-            {shown.map((o) => {
-              const periods = periodsOf(o.id);
-              return [
-                <tr key={`${o.id}-h`} className="border-t-2 bg-muted/20">
-                  <td className="sticky left-0 bg-muted/40 px-3 py-1.5 font-medium whitespace-nowrap" colSpan={1}>{officeName(o)}</td>
-                  <td colSpan={categories.length + 1} className="px-2 py-1 text-right">
-                    {addFor === o.id ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Input type="month" value={addMonth} onChange={(e) => e.target.value && setAddMonth(e.target.value)} className="h-7 w-36" />
-                        <span className="text-xs">から時給が変わる</span>
-                        <Button size="sm" disabled={saving} onClick={() => addPeriod(o.id)}>追加</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setAddFor(null)}>やめる</Button>
-                      </span>
-                    ) : (
-                      periods.length > 0 && <Button size="sm" variant="ghost" onClick={() => { setAddFor(o.id); setAddMonth(thisMonth()); }}>＋ 時給が変わる月を追加</Button>
-                    )}
-                  </td>
-                </tr>,
-                ...(periods.length === 0 ? [
-                  <tr key={`${o.id}-none`}>
-                    <td className="sticky left-0 bg-background px-3 py-1 pl-6 text-muted-foreground">時給が未設定</td>
-                    {categories.map((c) => (
-                      <td key={c.id} className="px-1 py-1">
-                        <Input type="number" min={1} disabled={saving} placeholder="—" className="h-8 w-24 text-right"
+            {shown.map((o, oi) => {
+              const periods = periodsByOffice.get(o.id) ?? [];
+              // 事業所ごとに 薄い縞を付けて「ここからここまでが 1 事業所」と分かるようにする。
+              // ⚠ 左の固定列は 不透明でないと横スクロールで下の文字が透けるので 縞を付けない
+              const zebra = oi % 2 === 1 ? "bg-muted/30" : "";
+              const rowCount = Math.max(1, periods.length);
+              const nameCell = (
+                <td rowSpan={rowCount} className="sticky left-0 z-10 border-t border-r bg-background px-3 py-1.5 align-top">
+                  <div className="font-medium leading-tight">{officeName(o)}</div>
+                  {addFor === o.id ? (
+                    <div className="mt-1.5 space-y-1">
+                      <Input type="month" value={addMonth} onChange={(e) => e.target.value && setAddMonth(e.target.value)} className="h-7 w-32" />
+                      <div className="flex gap-1">
+                        <Button size="sm" className="h-6 px-2 text-xs" disabled={saving} onClick={() => addPeriod(o.id)}>追加</Button>
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setAddFor(null)}>やめる</Button>
+                      </div>
+                    </div>
+                  ) : periods.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => { setAddFor(o.id); setAddMonth(thisMonth()); }}
+                      className="mt-0.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      ＋ 時給が変わる月
+                    </button>
+                  ) : null}
+                </td>
+              );
+
+              if (periods.length === 0) {
+                return (
+                  <tr key={o.id} className={`${zebra} hover:bg-primary/5`}>
+                    {nameCell}
+                    <td className="border-t px-3 py-1 text-muted-foreground whitespace-nowrap">時給が未設定</td>
+                    {shownCategories.map((c) => (
+                      <td key={c.id} className="border-t px-1 py-1 text-right">
+                        <Input type="number" min={1} disabled={saving} placeholder="—" className="h-7 w-24 text-right tabular-nums"
                           onBlur={(e) => saveCell(o.id, c.id, BASE_FROM, undefined, e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
                       </td>
                     ))}
-                    <td />
-                  </tr>,
-                ] : periods.map((p, i) => {
-                  const current = p.start <= nowStart && (p.isLast || periods[i + 1].start > nowStart);
-                  const prev = periods[i - 1];
-                  return (
-                    <tr key={`${o.id}-${p.start}`} className={`border-t ${current ? "" : "text-muted-foreground"}`}>
-                      <td className="sticky left-0 bg-background px-3 py-1 pl-6 whitespace-nowrap">
-                        {p.label}
-                        {current && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">今</span>}
+                    <td className="border-t" />
+                  </tr>
+                );
+              }
+
+              return periods.map((p, i) => {
+                const current = p.start <= nowStart && (p.isLast || periods[i + 1].start > nowStart);
+                const prev = periods[i - 1];
+                // 事業所の切れ目だけ太い線。同じ事業所の中の時期は細い線で続ける
+                const top = i === 0 ? "border-t-2" : "border-t";
+                return (
+                  <tr key={`${o.id}-${p.start}`} className={`${zebra} hover:bg-primary/5 ${current ? "" : "text-muted-foreground"}`}>
+                    {i === 0 && nameCell}
+                    <td className={`${top} px-3 py-1 whitespace-nowrap`}>
+                      {p.label}
+                      {current && <span className="ml-2 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">今</span>}
+                    </td>
+                    {shownCategories.map((c) => (
+                      <td key={c.id} className={`${top} px-1 py-0.5 text-right`}>
+                        {rateCell(o, c.id, p, prev)}
                       </td>
-                      {categories.map((c) => {
-                        const r = p.byCat.get(c.id);
-                        const changed = prev && r && prev.byCat.get(c.id)?.hourly_rate !== r.hourly_rate;
-                        return (
-                          <td key={`${c.id}|${r?.id ?? ""}|${r?.hourly_rate ?? ""}`} className="px-1 py-1">
-                            <Input
-                              type="number" min={1} step={1} disabled={saving}
-                              defaultValue={r?.hourly_rate ?? ""} placeholder="—"
-                              onBlur={(e) => saveCell(o.id, c.id, p.start, r?.hourly_rate, e.target.value)}
-                              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                              title={changed ? `前の時期 ${prev.byCat.get(c.id)?.hourly_rate ?? "未設定"}円 から変更` : undefined}
-                              className={`h-8 w-24 text-right ${changed ? "bg-amber-50 border-amber-300 font-medium text-foreground" : ""}`}
-                            />
-                          </td>
-                        );
-                      })}
-                      <td className="px-2 text-right">
-                        {p.start !== BASE_FROM && (
-                          <Button size="sm" variant="ghost" disabled={saving} onClick={() => deletePeriod(o.id, p.start, p.label)}>消す</Button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })),
-              ];
+                    ))}
+                    <td className={`${top} px-2 text-right`}>
+                      {p.start !== BASE_FROM && (
+                        <button
+                          type="button" disabled={saving}
+                          onClick={() => deletePeriod(o.id, p.start, p.label)}
+                          aria-label={`${officeName(o)} の ${p.label} の時期を消す`}
+                          title={`${p.label} の時期を消す`}
+                          className="rounded px-1.5 py-0.5 text-xs text-muted-foreground opacity-60 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              });
             })}
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-muted-foreground"><span className="px-1 bg-amber-50 border border-amber-300 rounded">色付き</span> = 前の時期から変わった時給。給与計算は その月が入る時期の時給を使います。</p>
+      <p className="text-xs text-muted-foreground">
+        <span className="font-semibold text-amber-700">色付きの数字</span> = 前の時期から変わった時給。
+        給与計算は その月が入る時期の時給を使います。
+      </p>
     </div>
   );
 }
