@@ -30,6 +30,8 @@ async function scanAndCount(
     const { data, error } = await supabase
       .from(table)
       .select(columns)
+      // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+      .order("id")
       .range(from, from + pageSize - 1);
     if (error) {
       console.warn(`[import-counts] ${table} fallback スキャン失敗:`, error.message);

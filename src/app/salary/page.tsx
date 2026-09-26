@@ -80,6 +80,8 @@ export default async function SalaryPage() {
         supabase
           .from("payroll_salary_settings")
           .select("*")
+          // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+          .order("id")
           .range(from, to) as unknown as PromiseLike<{ data: SalarySettings[] | null }>,
     ),
     supabase.from("payroll_overtime_settings").select("*"),

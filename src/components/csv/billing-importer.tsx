@@ -240,6 +240,8 @@ export function BillingImporter() {
         const { data } = await supabase
           .from(table)
           .select("segment, office_number, billing_month")
+          // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+          .order("id")
           .range(from, from + pageSize - 1);
         if (!data || data.length === 0) break;
         for (const r of data as { segment: string; office_number: string | null; billing_month: string }[]) {

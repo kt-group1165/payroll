@@ -481,7 +481,10 @@ export default function PayrollPage() {
         let sFrom = 0;
         while (true) {
           const { data, error } = await supabase
-            .from("payroll_salary_settings").select("*").range(sFrom, sFrom + 999);
+            // ★ order が無いと ページ間で行の並びが保証されず、行が抜ける・重複する。
+            //   2026-09-27 時点で 947 行 = 1000 まで **残り 53 行**。給与設定は履歴 (append-only) なので
+            //   給与を 1 回変えるたびに増える。★ 抜けると その人の給与設定が消えて 支給額が壊れる
+            .from("payroll_salary_settings").select("*").order("id").range(sFrom, sFrom + 999);
           // 読み込みエラーを「データの終わり」と扱わない (2026-09-19: 同時計算で実績が途中で切れ、本人給が半分になった)
           if (error) throw new Error(`データの読み込みに失敗しました (もう一度計算してください): ${error.message}`);
           if (!data || data.length === 0) break;

@@ -82,6 +82,8 @@ export default async function BillingPage({
         supabase
           .from("payroll_billing_amount_items")
           .select("billing_month")
+          // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+          .order("id")
           .range(from, to) as unknown as PromiseLike<{ data: { billing_month: string }[] | null }>,
     ),
   ]);
@@ -138,6 +140,8 @@ export default async function BillingPage({
                 "segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status",
               )
               .in("office_number", companyOfficeNums)
+              // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+              .order("id")
               .range(from, to) as unknown as PromiseLike<{ data: AmountRow[] | null }>,
         ),
         fetchAllPagesParallel<Payment>(
@@ -151,6 +155,8 @@ export default async function BillingPage({
               .from("payroll_payments")
               .select("*")
               .eq("company_id", selectedCompanyId)
+              // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+              .order("id")
               .range(from, to) as unknown as PromiseLike<{ data: Payment[] | null }>,
         ),
       ]);

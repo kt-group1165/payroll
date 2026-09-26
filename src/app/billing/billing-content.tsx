@@ -546,6 +546,8 @@ function BulkIssueButton({
           .eq("billing_month", billingMonth)
           .in("office_number", officeNumbers)
           .eq("billing_status", ISSUE_TARGET_STATUS)
+          // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+          .order("id")
           .range(from, from + PAGE - 1);
         if (e1) { toast.error(`取得エラー: ${e1.message}`); return; }
         if (!data || data.length === 0) break;

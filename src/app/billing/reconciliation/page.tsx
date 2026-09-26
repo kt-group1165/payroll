@@ -63,6 +63,8 @@ export default async function ReconciliationPage({
             "id, segment, office_number, client_number, client_name, billing_month, service_month, amount, invoiced_amount, paid_amount, billing_status, actual_issue_date, actual_withdrawal_date, parent_item_id, lifecycle_note, service_item",
           )
           .in("office_number", officeNums)
+          // ★ order が無いとページ間で行の並びが保証されない (行が抜ける)。2026-09-27
+          .order("id")
           .range(from, from + pageSize - 1);
         if (filterMonth) q = q.eq("billing_month", filterMonth);
         const { data } = await q;
