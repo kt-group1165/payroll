@@ -1062,6 +1062,8 @@ export default function PayrollPage() {
       const manualOfficeWorkMinByNum = new Map<string, number>();
       // 事務員の残業 (出勤簿が CSV に無い人)。payroll_monthly_inputs overtime_minutes。2026-09-26
       const manualOvertimeMinByNum = new Map<string, number>();
+      // 初任者研修の時間 (事業所書式に記録が無い人)。payroll_monthly_inputs shoninsha_training_minutes。2026-09-26
+      const manualShoninshaMinByNum = new Map<string, number>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
       const manualCommuteYenByNum = new Map<string, number>();
       // 泊まり手当 (円)。★規則が決まっていないので計算せず 人が入れた額をそのまま足す
@@ -1070,7 +1072,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (r.item_key === "adjustment") adjustmentByNum.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
@@ -1081,6 +1083,7 @@ export default function PayrollPage() {
           if (r.item_key === "childcare_allowance" && Number(r.numeric_value ?? 0) > 0) manualChildcareByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "office_work_minutes" && Number(r.numeric_value ?? 0) > 0) manualOfficeWorkMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualOvertimeMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
@@ -1195,6 +1198,9 @@ export default function PayrollPage() {
         //   適用開始日より前の月は none 扱いにする (高品 菊池 4月から / 中村 6月から。2026-09-21)
         communicationFeeType: (e.communication_fee_from && e.communication_fee_from > monthEndIso) ? "none" : (e.communication_fee_type ?? "none"),
         isOfficeWorker: e.is_office_worker ?? false,
+        // 処遇改善支援費の 事務職ティア (¥14,000) の判定。role_type と is_office_worker は独立な 2 つのフラグで、
+        // どちらか立っていれば事務職 (2026-09-26 実測。全 22 事業所で例外なし)。
+        isOfficeWorkerTier: Boolean(e.is_office_worker) || e.role_type === "事務員",
       }]));
       const hourlyEmpMap = new Map<string, HourlyPayroll>();
 
@@ -1227,6 +1233,7 @@ export default function PayrollPage() {
         const treatmentSubsidy = treatmentSubsidyAmount(
           isVisitCare, hasSocialInsurance, empSummary.visitMinutes,
           empOffice?.treatment_subsidy_amount ?? 0, sal?.treatment_subsidy ?? 0,
+          info?.isOfficeWorkerTier ?? false,
         );
         const cancelRecs = empRecs.filter((r) => {
           const catId = mappingMap.get(r.service_code) ?? null;
@@ -1240,9 +1247,13 @@ export default function PayrollPage() {
         // ⚠ **初任者研修費は 総括表では「本人給」に入る**ので 分けて持つ (2026-09-25 実測)。
         //   研修・HRD研修・手入力ぶんは「その他手当」側で、本人給には入らない。
         //   パート 2,294 人月で 本人給 = 小計+ドタ+土日祝+特日 が 95.2% → **初任者研修費を足すと 98%台**
-        const shoninshaPay = trainingPayAmount(shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []), trainingRate);
+        // 書式に記録が無い月は 月ごとの手入力 (shoninsha_training_minutes) を使う。2026-09-26
+        // ⚠ 実測: 総括表に初任者研修費がある 23 人月のうち 13 人月は書式に記録が無く 当方 0 円だった (計 ¥533,025)。
+        //   書式に記録がある 10 人月のうち 6 は総括表の時間と完全一致するので、計算式 (終了−開始−休憩の合計) 自体は正しい。
+        const shoninshaMinutes = manualShoninshaMinByNum.get(empNum) ?? shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? []);
+        const shoninshaPay = trainingPayAmount(shoninshaMinutes, trainingRate);
         const trainingPay = trainingPayAmount(
-          trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaTrainingMinutes(ofByEmp.get(empNum) ?? [])
+          trainingMinutes(ofByEmp.get(empNum) ?? []) + shoninshaMinutes
             + (manualTrainingMinByNum.get(empNum) ?? 0),
           trainingRate);
         const communicationFee = communicationFeeAmount(info?.socialInsurance ?? false, empSummary.visitMinutes, info?.communicationFeeType ?? "none");

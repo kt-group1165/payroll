@@ -47,6 +47,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "shoninsha_training_minutes",
+    label: "初任者研修の時間 (書式にない分)",
+    unit: "分",
+    help: "事業所書式に初任者研修が入力されていない月の受講時間。1,150円/時で 本人給 に入る。★ 実測 (2026-09-26): 総括表に初任者研修費がある 23 人月のうち 13 人月は事業所書式に記録が無く 当方 0 円だった (計 ¥533,025)。入れた月は 書式からの計算より優先する。本稼働後は書式に入れてもらう",
+    allowNegative: false,
+  },
+  {
     key: "overtime_minutes",
     label: "残業 (出勤簿が取り込めない人)",
     unit: "分",

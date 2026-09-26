@@ -1032,9 +1032,31 @@ export function meetingMinutes(ofRecs: OfficeFormRecord[]): number {
 
 // ─── 時給者の各種手当 (page.tsx から一言一句転記。2026-09-05 切り出し) ────
 
+/** 事務職の処遇改善支援費。★ 全社一律で ヘルパーの ¥20,000 に対し ¥14,000 (2026-09-26 実測) */
+export const OFFICE_WORKER_TREATMENT_SUBSIDY = 14000;
+
 /**
- * 処遇改善支援費 (訪問介護・社保加入・当月実績ありなら事業所単価、それ以外は給与設定の額)。
+ * 処遇改善支援費 (訪問介護・社保加入なら定額、それ以外は給与設定の額)。
  * ⚠ 手当というより「どちらの単価を採用するか」の選択ロジック。
+ *
+ * ★ 2026-09-26 に 総括表 part 2,489 人月 (突合不能 0) を 社保 × 事務職 で層別して実測:
+ *   社保あり / ヘルパー / 支給 20,000    576
+ *   社保あり / ヘルパー / 0・空           33
+ *   社保あり / 事務職  / 支給 14,000     12   ← 2 ティアは実在
+ *   社保なし / ヘルパー / 0・空        1,828   ← ★ ここ
+ *   社保なし / 事務職  / 0・空           17   ← ★ ここ
+ *   社保なし / ヘルパー / 支給 20,000     22
+ *   社保なし / 事務職  / 支給 14,000       1   (片岡久美子 202603)
+ *
+ * ⚠ **社保加入は本当に支給条件**。「社保なしなのに支給されている 15 人月があるから
+ *   hasSocialInsurance を外すべき」という見立ては誤りで、外すと **社保なし × 未支給 1,845 人月**
+ *   に誤って払う。社保なしで支給されている 23 人月のほうが例外 (規則未特定)。
+ *   ★ 片側 (払われているのに 0 の人) だけを数えて 逆側 (払っていないのに払ってしまう人) を
+ *   数えないと こうなる。必ず対で数えること。
+ *
+ * ⚠ 事務職ティアは **訪問ゼロでも支給する**。該当 12 人月は 中村素子 (市原ムツミ) と
+ *   福島可奈 (さつきが丘) の 2 名だけで、2 名とも 総括表の訪問時間が null (訪問ゼロ)。
+ *   visitMinutes > 0 を課すと この 12 人月を再現できない。
  */
 export function treatmentSubsidyAmount(
   isVisitCare: boolean,
@@ -1042,8 +1064,11 @@ export function treatmentSubsidyAmount(
   visitMinutes: number,
   officeSubsidyAmount: number,
   salaryTreatmentSubsidy: number,
+  isOfficeWorkerTier = false,
 ): number {
-  return isVisitCare && hasSocialInsurance && visitMinutes > 0 ? officeSubsidyAmount : salaryTreatmentSubsidy;
+  if (!isVisitCare || !hasSocialInsurance) return salaryTreatmentSubsidy;
+  if (isOfficeWorkerTier) return OFFICE_WORKER_TREATMENT_SUBSIDY;
+  return visitMinutes > 0 ? officeSubsidyAmount : salaryTreatmentSubsidy;
 }
 
 /**
