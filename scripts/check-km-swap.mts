@@ -50,8 +50,9 @@ for (const p of ["../kaigo-app/.env.local", ".env.local"]) {
 if (!env.SUPABASE_SERVICE_ROLE_KEY) { fail("SUPABASE_SERVICE_ROLE_KEY が無いので検査できません"); process.exit(1); }
 const SB = env.NEXT_PUBLIC_SUPABASE_URL;
 const H = { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: "Bearer " + env.SUPABASE_SERVICE_ROLE_KEY };
-async function all(q: string): Promise<any[]> {
-  let out: any[] = [], from = 0;
+type Row = { office_number: string; employee_number?: string; employee_name?: string; processing_month?: string; item_name?: string; numeric_value?: number | null; row_data?: Record<string, unknown> | null; travel_unit_price?: number | null; commute_unit_price?: number | null };
+async function all(q: string): Promise<Row[]> {
+  let out: Row[] = [], from = 0;
   for (;;) {
     const r = await fetch(`${SB}/rest/v1/${q}&order=id&offset=${from}&limit=1000`, { headers: H });
     const j = await r.json();
@@ -102,22 +103,22 @@ for (const r of sk) {
   if (price <= 0 || Math.abs(calc - soFee) > 1) { skippedCount++; continue; }
 
   const name = String(r.employee_name ?? "").replace(/\s/g, "");
-  tripOps.push({ on: r.office_number, num: nn(r.employee_number), name, m: r.processing_month, from: f.trip, to: soDist });
+  tripOps.push({ on: r.office_number, num: nn(r.employee_number), name, m: String(r.processing_month), from: f.trip, to: soDist });
 
   const soCommuteFee = N(d["通勤費"]);
   if (soCommuteFee != null && soCommuteFee > 0) {
     const commutePrice = commutePriceOf.get(r.office_number) ?? 0;
     const mineCommute = f.commute != null && commutePrice > 0 ? Math.ceil(f.commute * commutePrice - 1e-6) : 0;
     if (Math.abs(mineCommute - soCommuteFee) > 1) {
-      commuteOps.push({ on: r.office_number, num: nn(r.employee_number), name, m: r.processing_month, from: mineCommute, to: soCommuteFee });
+      commuteOps.push({ on: r.office_number, num: nn(r.employee_number), name, m: String(r.processing_month), from: mineCommute, to: soCommuteFee });
     }
   }
 }
 
 const existTrip = await all("payroll_monthly_inputs?select=office_number,employee_number,processing_month,numeric_value&item_key=eq.business_km");
-const haveTrip = new Map(existTrip.map((r: any) => [`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, Number(r.numeric_value)]));
+const haveTrip = new Map(existTrip.map((r) => [`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, Number(r.numeric_value)]));
 const existCom = await all("payroll_monthly_inputs?select=office_number,employee_number,processing_month,numeric_value&item_key=eq.commute_yen");
-const haveCom = new Map(existCom.map((r: any) => [`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, Number(r.numeric_value)]));
+const haveCom = new Map(existCom.map((r) => [`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, Number(r.numeric_value)]));
 
 // --- 負のコントロール: tripOps に実在する1件を、手入力マップから「消えた」ことにして
 //     tripTodo として検知されるかを確認する。★ 集計には混ぜない(検知確認専用)。

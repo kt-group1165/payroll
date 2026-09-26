@@ -1,19 +1,32 @@
 /**
- * 総括表 xlsm (原本) と payroll_soukatsu_rows (検証用テーブル) の 金額列だけの常設diff
+ * 総括表 xlsm の ①「総括表データ」シート と ②「支払用」シート (= payroll_soukatsu_rows) の
+ * 金額6列の常設diff
  *
  *   npm run check:soukatsu-source              # xlsm を再抽出して diff (重い。数分かかる)
  *   npm run check:soukatsu-source -- --update   ★ 基準値方式の数だけ更新
  *
+ * ── ★ 何と何を比べているか (2026-09-26 夜 訂正) ────────────────────────────────
+ *   総括表 xlsm には層がある (memory: payroll_soukatsu_three_layers)。
+ *     ① 総括表データ_パート / 総括表データ_提責_社員   旧システムの出力 (列: 従業員コード, 会議費, 総支給額（パート）…)
+ *     ② パート_総括表データより / 提責_社員 系         支払用。①を数式で引きつつ 一部は手入力 (列: №, _code, 研修, 誤差, 総支給額…)
+ *   この検査の抽出器 (migrations/extract_soukatsu_from_xlsm.mjs) は ① を読む。
+ *   payroll_soukatsu_rows は ② を写したもの (元の抽出スクリプトはリポジトリに無いが、
+ *   おゆみ野 202606 で ② の「研修」列の値が DB と一致することを確認した)。
+ *   ★ よってこの検査は「① と ② が 6 列で食い違うセル」= ② 側の手入力・手修正 を見張る。
+ *   ⚠ 当初 (2026-09-26 昼) は「原本 vs 検証テーブルの抽出バグ」と誤って説明していた。
+ *     おゆみ野の会議まわり 11 件も 抽出の誤りではなく ② の「研修」列の手入力が ① の会議費と違うもの。
+ *     突合の正は ① (memory: payroll_layer1_vs_layer2_verification)。
+ *
  * ── なぜこの検査があるか (2026-09-26 給与D) ──────────────────────────────────
- *   payroll_soukatsu_rows を作った元の xlsm→JSON 抽出スクリプトがリポジトリに残っておらず、
- *   実データ突合(おゆみ野の会議手当11件)で「実在しない値」「他職員の値との入れ替わり」
- *   「孤立値」が見つかった。同じ調査を後日また割り当てる事故 (このプロジェクトで前例あり:
- *   生活援助の回数制限を2回調査した) を避けるため、一度きりの調査を常設検査にする。
+ *   同じ調査を後日また割り当てる事故 (このプロジェクトで前例あり: 生活援助の回数制限を
+ *   2回調査した) を避けるため、一度きりの調査を常設検査にする。
  *
  * ── この検査が見ていないもの (誤解防止のため明記) ───────────────────────────
- *   ★ 総支給額 は対象外。原本の「総支給額（パート）」1列と DB の「総支給額」は別概念
- *     (DB側は他の手当も足し込んだ合計で、パート単体列だけでは再現できない)。
+ *   ★ 総支給額 は対象外。①の「総支給額（パート）」と ②の「総支給額」は別の層の別の列
+ *     (② は ① に無い手当・手入力を足し込んだ支払額)。
  *     入れると総支給額だけで1,967件の偽陽性が出ることを2026-09-26に実証済み。
+ *   ★ ① にだけ居て ② に居ない職員 (例: おゆみ野 船木治美) は 行ごと比較対象外。
+ *     2026-09-26 実測で 879 人月 (うち ① で総支給>0 が 358 人月)。
  *   ★ 時刻列 (訪問時間 等) は対象外。原本は "HH:MM" 文字列、DB は分の整数で、
  *     値は同じでも型が違うため比較しない (時刻専用の別検査を作るならそちらで)。
  *   ★ 氏名列は対象外。全角/半角スペースの表記ゆれがあるだけで実害が無い。
@@ -26,9 +39,11 @@
  *   対象6列(通勤費/出張費/処遇改善補助金手当/育児手当/本人給/集計項目小計)で
  *   2026-09-26 に実測: 21,490セル中 164件 (0.76%) が「両方に値がありかつ違う」。
  *   19事業所に1〜27件で散在 (おゆみ野は11件で19事業所中5位、突出せず)。
- *   大半は出張費の距離データが抽出後に修正されたとみられるもの (単価は月次で完全一致を
- *   別途確認済み。project_soukatsu 系のメモリ参照)。
- *   おゆみ野の会議1/2/3件数まわり11件は原本と突合して確証済みの本物 (別途是正が必要)。
+ *   ① と ② で出張費・本人給などが違うセル。② 側の手入力・手修正と見られる
+ *   (② の「研修」列は数式ではなく値で入っていることを おゆみ野 202606 で確認。
+ *    出張費・本人給の列が数式か手入力かは まだ列ごとに確かめていない)。
+ *   (当初「距離データが抽出後に修正された」と書いたが、① と ② の層の差と読むのが正しい。)
+ *   おゆみ野の 会議まわり 11 件は ② の「研修」列が手入力で ① の会議費と違うもの (抽出の誤りではない)。
  *   ★ 0 を目指す検査ではない。**増えたら落ちる。**
  *   ⚠ 悪化したまま --update すると穴を焼き付けることになる。原因を潰してから更新すること。
  *   ⚠ import_soukatsu_rows.mjs の dedupe 修正 (2026-09-26 813ca46) をまだ取込に反映していない。
@@ -86,8 +101,9 @@ if (!env.SUPABASE_SERVICE_ROLE_KEY) {
 }
 const SB = env.NEXT_PUBLIC_SUPABASE_URL + "/rest/v1/";
 const H = { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` };
-async function fetchAll(path: string): Promise<any[]> {
-  const out: any[] = []; let from = 0;
+type SkRow = { office_number: string; employee_number: string; employee_name: string; processing_month: string; sheet_kind: string; row_data: Record<string, unknown>; source_file?: string };
+async function fetchAll(path: string): Promise<SkRow[]> {
+  const out: SkRow[] = []; let from = 0;
   for (;;) {
     const res = await fetch(SB + path, { headers: { ...H, Range: `${from}-${from + 999}` } });
     const chunk = await res.json();
@@ -135,15 +151,15 @@ function toNumOrError(v: unknown): { kind: "null" | "error" | "num" | "other"; v
   return { kind: "other" };
 }
 
-const fresh: any[] = [];
+const fresh: SkRow[] = [];
 for (const m of MONTHS) {
   const p = `${EXTRACT_OUT}/soukatsu_extract_${m}.json`;
   if (!existsSync(p)) { fail(`抽出結果が無い: ${p}`); continue; }
   fresh.push(...JSON.parse(readFileSync(p, "utf8")));
 }
-const freshByKey = new Map<string, any>();
+const freshByKey = new Map<string, SkRow>();
 for (const r of fresh) freshByKey.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}|${r.sheet_kind}`, r);
-const dbByKey = new Map<string, any>();
+const dbByKey = new Map<string, SkRow>();
 for (const r of db) dbByKey.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}|${r.sheet_kind}`, r);
 
 // --- 負のコントロール: DB側の1セルを+999999して壊す。③として検知できるかを見る ---
@@ -152,12 +168,15 @@ for (const r of db) dbByKey.set(`${r.office_number}|${nn(r.employee_number)}|${r
 //   (2026-09-26 に一度この不具合で誤NGを出した)。
 const negKey = [...dbByKey.keys()].find((k) => {
   if (!freshByKey.has(k)) return false;
-  const dOk = toNumOrError(pick(dbByKey.get(k).row_data, PAIRS[0].db)).kind === "num";
-  const fOk = toNumOrError(pick(freshByKey.get(k).row_data, PAIRS[0].fresh)).kind === "num";
+  const d = dbByKey.get(k), f = freshByKey.get(k);
+  if (!d || !f) return false;
+  const dOk = toNumOrError(pick(d.row_data, PAIRS[0].db)).kind === "num";
+  const fOk = toNumOrError(pick(f.row_data, PAIRS[0].fresh)).kind === "num";
   return dOk && fOk;
 });
 if (!negKey) { fail("負のコントロール用の行が見つからない (本人給が原本・DB双方で数値の行が無い)"); process.exit(1); }
 const negRow = dbByKey.get(negKey);
+if (!negRow) { fail("負のコントロール用の行が引けない"); process.exit(1); }
 const negOrig = Number(pick(negRow.row_data, PAIRS[0].db));
 negRow.row_data = { ...negRow.row_data, "本人給": negOrig + 999999 };
 
@@ -224,6 +243,24 @@ if (UPDATE) {
     for (const [o, c] of byOffice) console.log(`    ${o}: ${c}件`);
   }
 }
+
+// --- 追加の見張り: 「誤差」がエラー値 かつ 調整手当≠0 の行 (★ 0 件が期待値) ---
+// soukatsuAdjustmentParts (verification 画面の 調整手当(内訳計)) は 誤差 を引くが、
+// pickSoukatsu は #VALUE! を黙って 0 にする。調整手当がある行で 誤差がエラーになると
+// 内訳計が 誤差分だけ大きく出ても気づけない。
+// 2026-09-26 時点: 誤差=#VALUE! は 155 行あるが 全部 調整手当=0 (訪問実績が無い人で 原本の数式
+// [システム総支給額]-[総支給-有給] が Excel 上でエラーになっているだけ) なので該当 0 件。
+const isErrorValue = (v: unknown) => typeof v === "string" && /^#/.test(v.trim());
+const adjNonZero = (v: unknown) => { const n = toNumOrError(v); return n.kind === "num" && Math.abs(n.value as number) > 0; };
+const gosaErrWithAdj = <T extends { row_data?: Record<string, unknown> }>(rows: T[]) => rows.filter((r) => isErrorValue(r.row_data?.["誤差"]) && adjNonZero(r.row_data?.["調整手当"]));
+// 負のコントロール: 条件を満たす架空の1行を混ぜて 検知されることを先に確かめる (本番の集計には混ぜない)
+const gosaNeg = gosaErrWithAdj([{ row_data: { "誤差": "#VALUE!", "調整手当": 1234 } }]).length === 1
+  && gosaErrWithAdj([{ row_data: { "誤差": "#VALUE!", "調整手当": 0 } }]).length === 0;
+expect(gosaNeg, "負のコントロール: 誤差エラー×調整手当あり の架空行を検知し、調整手当0の行は検知しない");
+const gosaHits = gosaErrWithAdj(db);
+console.log(`\n誤差がエラー値 かつ 調整手当≠0 の行: ${gosaHits.length} 件 (期待値 0)`);
+for (const r of gosaHits.slice(0, 20)) console.log(`  ${r.office_number} ${r.processing_month} ${r.sheet_kind} ${r.employee_name} 調整手当=${r.row_data["調整手当"]}`);
+expect(gosaHits.length === 0, "誤差がエラー値の行で 調整手当が出ていない (出ていると 内訳計が黙ってずれる)");
 
 // 後片付け (原本の再抽出結果は使い捨て)
 rmSync(EXTRACT_OUT, { recursive: true, force: true });
