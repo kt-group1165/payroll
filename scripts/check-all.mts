@@ -50,7 +50,8 @@ const CHECKS: Check[] = [
   //   (check:soukatsu-cause / check:soukatsu-item-gap / check:fixed-pay-no-work /
   //    check:calc-freshness / check:zero-as-unset / check:delete-scope /
   //    check:emp-number-pair / check:nonnumeric-cells / check:manual-input-* /
-  //    check:office-form-shrink / check:honobono-amount / check:prehire-pay)。
+  //    check:office-form-shrink / check:honobono-amount)。
+  //   ★ check:prehire-pay は 2026-09-27 に 0 件になり 負のコントロールを足したので 下で編入した。
   //   ★ それらは「いま どこまで見えているか」を測るもので、落ちる/落ちないの話ではない。
   { name: "hourly-targets", script: "check:hourly-targets",
     why: "★ 時給者の計算対象の集合。手入力しか無い人が落ちると **その人の給与が丸ごと 0 になる** (2026-09-27 に 6 名 8 人月で実際に起きていた)。fixture・DB 非依存" },
@@ -62,6 +63,12 @@ const CHECKS: Check[] = [
     why: "★ 遅刻早退控除 (2026-09-27 新設)。単価 = floor((本人給+職能給)/所定時間)。欠勤控除と **同じ母数の helper** を使うので、片方を変えたら両方鳴る。fixture・DB 非依存" },
   { name: "numeric-cell", script: "check:numeric-cell",
     why: "★ 表計算のセルを数値として読む helper。parseFloat(\"1,302\") = 1 で **もっともらしい値**になるため 0 より危ない。出勤簿の km がこれを通る。fixture・DB 非依存" },
+  { name: "prehire-pay", script: "check:prehire-pay",
+    why: "★ 入社前の月に固定給が付く = 在籍していない月に払う。2026-09-27 に入社日を 6 名埋め戻して 8 人月 ¥2,309,160 → 0 になった。★ 入社日が無い人 (今 3 名) は判定しない。負のコントロール付き (payload を読むので再計算の後に回す)" },
+  { name: "employment-in-month", script: "check:employment-in-month",
+    why: "★ その月に在籍していたかの判定 (isEmployedInMonth / leaveInMonth)。2,268 通り + 実データ 6 か月で 以前の SQL の .or() と id の集合が完全一致。★ 休職者を全月外していた型 (林美咲 ¥703,824) を直す土台" },
+  { name: "employment-status-sites", script: "check:employment-status-sites",
+    why: "★ 給与計算のファイルで employment_status を直接比較していないか (静的・DB 不要)。★ 「今の状態」で過去月を判定すると 休職前・退職前の月まで落ちる" },
 ];
 
 /**
@@ -80,13 +87,12 @@ const NOT_COVERED = [
   "★ 2026-09-27 に足した診断系の検査は **この一覧に入れていない** (意図的)。" +
     "check:soukatsu-cause / soukatsu-item-gap(-monthly) / fixed-pay-no-work / calc-freshness / " +
     "zero-as-unset / delete-scope / emp-number-pair / nonnumeric-cells / manual-input-dropped / " +
-    "manual-input-month / office-form-shrink / honobono-amount / prehire-pay。" +
+    "manual-input-month / office-form-shrink / honobono-amount / soukatsu-row-only / status-excluded-paid。" +
     "★ どれも「いま どこまで見えているか」を測るもので、落ちる/落ちないの話ではない。手で回すこと。" +
-    "★ check:prehire-pay だけは 0 を目指す検査だが、いま 8 人月残っているので " +
-    "埋め戻し → 再計算 → 0 を確認してから編入する",
-  "★ payroll_calc_results は 2026-09-23 の計算のまま (全 138 事業所月)。" +
-    "★ payload を読む検査の数字は すべてその時点のもの。npm run check:calc-freshness で古さを見る。" +
-    "★ 138 件を再計算したら、基準値を持つ検査は --update せずに回して中身を見てから取り直すこと",
+    "(prehire-pay は 2026-09-27 に 0 件になり 負のコントロールを足して 編入した。入社日が無い人 (今 3 名) は判定していない)",
+  "★ payload を読む検査 (prehire-pay ほか) の数字は payroll_calc_results の計算日時のもの " +
+    "(2026-09-27 に全 138 事業所月を再計算済み)。npm run check:calc-freshness で古さを見る。" +
+    "★ 再計算したら、基準値を持つ検査は --update せずに回して中身を見てから取り直すこと",
   "事業所書式の 2 経路 (CSV 取込 payroll_office_form_records / Web 入力 payroll_office_input_entries) のうち、" +
     "office-input-flow が見るのは 射影 (Web → OfficeFormRecord) と 合流の優先だけ。" +
     "CSV パーサ (office-form-parser) と /office-input の画面そのものは見ていない。" +

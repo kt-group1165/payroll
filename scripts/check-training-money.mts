@@ -45,16 +45,26 @@ async function main() {
     if (!latestInput.has(k) || r.created_at > latestInput.get(k)!) latestInput.set(k, r.created_at);
   }
   const ours = new Map<string, { money: number; detail: string; calcAt: string; stale: boolean }>();
+  // ★ 前提: payload の training_pay は 初任者研修の分を含む (page.tsx で 研修の分数 + 初任者の分数 から出す)。
+  //   だから 総括表の「その他手当」と比べるときは 初任者の分を引く。★ 前提が崩れると 二重に引いて 当方を少なく見せる
+  //   (2026-09-27 check:non-care-records が「payload には既に除外が入っているのに 検査が二重に引く」型で赤くなった)。
+  //   崩れたら ここで止める。2026-09-27 再計算後: 初任者 > 0 の 13 人月すべて training_pay >= shoninsha_pay
+  let brokenPremise = 0;
   for (const c of calc) {
     const stale = (latestInput.get(`${c.office_number}|${c.processing_month}`) ?? "") > c.calculated_at;
     for (const e of c.hourly ?? []) {
       const tp = num(e.training_pay) ?? 0, sh = num(e.shoninsha_pay) ?? 0, mf = num(e.meeting_fee) ?? 0;
+      if (sh > 0 && tp < sh) brokenPremise++;
       ours.set(key(c.office_number, String(e.employee_number), c.processing_month), {
         money: tp - sh + mf, detail: `研修${tp}(うち初任者${sh})+会議${mf}`, calcAt: c.calculated_at, stale,
       });
     }
   }
 
+  if (brokenPremise > 0) {
+    console.error(`★ 前提が崩れています: 初任者研修費 > 研修費 の人月が ${brokenPremise} 件。training_pay が初任者の分を含まなくなった可能性。検査の式 (tp − sh + mf) を見直すこと`);
+    process.exit(1);
+  }
   let both = 0, match = 0, staleSkip = 0, under = 0, over = 0;
   const lines: string[] = [];
   for (const r of sou) {

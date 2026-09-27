@@ -17,6 +17,12 @@
  * 裏取り: 同じ人月に総括表 (payroll_soukatsu_rows) の行があるか。入社前なら普通は無い。
  *
  * 終了コード: 入社前の月に固定給が付いている人月が 1 件でもあれば 1 (★ 0 が正しい不変条件)。
+ *
+ * ★ 「0 件」の意味: 入社日が分かっている人について 0。★ 入社日が無い人は判定していない (出力の先頭に人数、下に氏名を出す。
+ *   合否とは別。2026-09-27 時点 3 名 = 牛来葉子 / HO JINAN KYLE / 秋元環。減ったら分かる)
+ * 負のコントロール: 取得した入社日の写しを 1 名だけ「固定給が付いている月の翌月 1 日」に後ろへずらし、1 件以上 鳴ることを
+ *   毎回確かめる (★ DB は壊さない)。鳴らなければ exit 1 (検査が死んでいる)。
+ * check:all に編入 (2026-09-27)。入社日を 6 名埋め戻して 138 件を再計算し 8 人月 ¥2,309,160 → 0 になった後。
  */
 import { restAll, empKey, normEmpNo } from "./_rest.mjs";
 
@@ -31,11 +37,6 @@ type Calc = { office_number: string; processing_month: string; calculated_at: st
 type Sou = { office_number: string; employee_number: string; processing_month: string };
 
 async function main() {
-  // ★ 2026-09-26 指示役判断: まだ check:all に入れていない。理由は 8 件残っているから
-  //   (埋め戻し → 再計算 → 0 件 を確認してから編入する)。0 件になったらこの注記ごと消す
-  // ★ 2026-09-27: 入社日の埋め戻し (6 名) → 138 件を再計算 → 0 件になった。編入は指示役の判断待ち (編入したらこの注記ごと消す)
-  console.log("⚠ この検査は まだ check:all に入れていません。2026-09-27 の再計算で 0 件になった (以前は 8 件 6 名)。編入は指示役の判断待ち");
-  console.log("  ⚠ 入社日が不明の人 (下の「?」) は判定していない。0 件でも この人たちの入社前の月は見ていない\n");
   const po = await restAll<PO>("payroll_offices?select=id,office_number,office_id,office_type");
   const ofs = await restAll<{ id: string; name: string }>("offices?select=id,name");
   const poById = new Map(po.map((p) => [p.id, p]));
@@ -56,10 +57,21 @@ async function main() {
     if (cand.length === 1 && cand[0].hire_date) hireOf.set(e.id, { hire: cand[0].hire_date, src: "旧システム" });
     else unknown.push(`${p.office_number} #${e.employee_number} ${e.name} (職員番号の年月 20${e.employee_number.slice(0, 2)}-${e.employee_number.slice(2, 4)})`);
   }
-  // 入社前の月がある人だけ 計算結果と総括表を読む (DB 負荷を下げる)
-  const preMonthsById = new Map<string, string[]>();
-  for (const e of inScope) { const h = hireOf.get(e.id); if (!h) continue; const pre = MONTHS.filter((m) => monthEnd(m) < h.hire); if (pre.length) preMonthsById.set(e.id, pre); }
-  const offices = [...new Set(inScope.filter((e) => preMonthsById.has(e.id)).map((e) => poById.get(e.office_id)!.office_number))];
+  // ★ 先頭に「0 件」の意味と 判定していない人数を出す (合否とは別)
+  console.log(`★ この検査の「0 件」は 入社日が分かっている ${hireOf.size} 名について。★ 入社日が無い ${unknown.length} 名は判定していない (合否とは別。氏名は下に出す)\n`);
+
+  // 負のコントロール用: 入社日が分かっていて 期間の最初の月より前に入社した人を 1 名 (その人の事業所の計算結果も読む)
+  const firstDay = `${MONTHS[0].slice(0, 4)}-${MONTHS[0].slice(4)}-01`;
+  const ncEmp = inScope.find((e) => { const h = hireOf.get(e.id); return !!h && h.hire <= firstDay; });
+  /** 入社前の月 (月末 < 入社日) */
+  const preMonthsOf = (hires: Map<string, { hire: string; src: string }>) => {
+    const out = new Map<string, string[]>();
+    for (const e of inScope) { const h = hires.get(e.id); if (!h) continue; const pre = MONTHS.filter((m) => monthEnd(m) < h.hire); if (pre.length) out.set(e.id, pre); }
+    return out;
+  };
+  // 入社前の月がある人 (+ 負のコントロールの 1 名) の事業所だけ 計算結果と総括表を読む (DB 負荷を下げる)
+  const preMonthsById = preMonthsOf(hireOf);
+  const offices = [...new Set([...inScope.filter((e) => preMonthsById.has(e.id)), ...(ncEmp ? [ncEmp] : [])].map((e) => poById.get(e.office_id)!.office_number))];
   const inList = `office_number=in.(${offices.join(",")})&processing_month=in.(${MONTHS.join(",")})`;
   const calc = offices.length ? await restAll<Calc>(`payroll_calc_results?select=office_number,processing_month,calculated_at,monthly:payload->monthly&${inList}`) : [];
   const sou = offices.length ? await restAll<Sou>(`payroll_soukatsu_rows?select=office_number,employee_number,processing_month&${inList}`) : [];
@@ -67,19 +79,36 @@ async function main() {
   for (const c of calc) for (const m of c.monthly ?? []) paid.set(`${empKey(c.office_number, m.employee_number)}|${c.processing_month}`, Number(m.grand_total ?? 0));
   const souHas = new Set(sou.map((s) => `${empKey(s.office_number, s.employee_number)}|${s.processing_month}`));
 
-  let bad = 0, yen = 0;
-  const lines: string[] = [];
-  for (const e of inScope) {
-    const pre = preMonthsById.get(e.id); if (!pre) continue;
-    const p = poById.get(e.office_id)!; const h = hireOf.get(e.id)!;
-    for (const m of pre) {
-      const k = `${empKey(p.office_number, e.employee_number)}|${m}`;
-      const v = paid.get(k) ?? 0;
-      if (v <= 0) continue;
-      bad++; yen += v;
-      lines.push(`  ✗ ${p.office_number} #${e.employee_number} ${e.name} ${m}: 固定給 ¥${v.toLocaleString()} (入社日 ${h.hire} [${h.src}] / 総括表の行 ${souHas.has(k) ? "あり" : "なし"})`);
+  const byId = new Map(inScope.map((e) => [e.id, e]));
+  const judge = (hires: Map<string, { hire: string; src: string }>) => {
+    let bad = 0, yen = 0;
+    const lines: string[] = [];
+    for (const [id, pre] of preMonthsOf(hires)) {
+      const e = byId.get(id)!;
+      const p = poById.get(e.office_id)!; const h = hires.get(e.id)!;
+      for (const m of pre) {
+        const k = `${empKey(p.office_number, e.employee_number)}|${m}`;
+        const v = paid.get(k) ?? 0;
+        if (v <= 0) continue;
+        bad++; yen += v;
+        lines.push(`  ✗ ${p.office_number} #${e.employee_number} ${e.name} ${m}: 固定給 ¥${v.toLocaleString()} (入社日 ${h.hire} [${h.src}] / 総括表の行 ${souHas.has(k) ? "あり" : "なし"})`);
+      }
     }
+    return { bad, yen, lines };
+  };
+  // ── 負のコントロール: 1 名の入社日 (取得結果の写し) を 固定給が付いている月の翌月 1 日にずらすと 鳴ること ──
+  {
+    const p = ncEmp ? poById.get(ncEmp.office_id) : undefined;
+    const m = ncEmp && p ? MONTHS.find((x) => (paid.get(`${empKey(p.office_number, ncEmp.employee_number)}|${x}`) ?? 0) > 0) : undefined;
+    if (!ncEmp || !p || !m) { console.error("★ 負のコントロールが組めません (期間の最初より前に入社し 固定給が付いている月給者が見つからない)"); process.exit(1); }
+    const shifted = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(4)), 1)).toISOString().slice(0, 10);
+    const broken = new Map(hireOf); broken.set(ncEmp.id, { hire: shifted, src: "負のコントロール" });
+    const r = judge(broken);
+    const ok = r.bad >= 1;
+    console.log(`負のコントロール: ${p.office_number} #${ncEmp.employee_number} の入社日を (写しで) ${shifted} にずらす → ${r.bad} 件 鳴る (期待 1 以上) ${ok ? "o" : "★ FAIL"}`);
+    if (!ok) process.exit(1);
   }
+  const { bad, yen, lines } = judge(hireOf);
   console.log(`母数: 訪問介護の月給者 ${inScope.length}名 / 期間 ${MONTHS[0]}〜${MONTHS.at(-1)}`);
   console.log(`入社日: DB ${[...hireOf.values()].filter((h) => h.src === "DB").length}名 / 旧システムで補完 ${[...hireOf.values()].filter((h) => h.src !== "DB").length}名 / 不明 ${unknown.length}名`);
   unknown.forEach((u) => console.log(`  ? 入社日不明 (判定しない): ${u}`));
