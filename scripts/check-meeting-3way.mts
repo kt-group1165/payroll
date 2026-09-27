@@ -45,6 +45,7 @@ import {
   computeMeetingFee, meetingMinutes, trainingPayAmount, TRAINING_RATE_PER_HOUR, MEETING_COUNT_AS_YEN_THRESHOLD,
   type OfficeFormRecord, type MeetingUnitPrices,
 } from "../src/lib/payroll/payroll-calc.js";
+import { isEmployedInMonth, type EmploymentFields } from "../src/lib/payroll/employment-in-month.js";
 
 const UPDATE = process.argv.includes("--update");
 const DETAIL = process.argv.find((a) => a.startsWith("--detail="))?.split("=")[1];
@@ -59,6 +60,10 @@ export type Inputs = {
   officeUnit: Map<string, number>;            // payroll_offices.meeting_unit_price
   prices: Record<string, MeetingUnitPrices>;
   unpaid: Set<string>;
+  /** payroll_offices.office_type。訪問介護以外 (福祉用具貸与 等) は 総括表 ② が無く 対象外 */
+  officeType: Map<string, string>;
+  /** empKey(事業所番号, 職員番号) → 職員 (給与形態・在籍の判定に使う) */
+  emps: Map<string, EmploymentFields & { salary_type?: string | null }>;
 };
 export type Row = { key: string; office: string; countYen: number; timeYen: number; counts: number; yenInCount: boolean; l1: number | null; l2: number | null; type: string };
 
@@ -96,6 +101,26 @@ function l2Meeting(d2: Record<string, unknown>, d1: Record<string, unknown> | un
   return Math.max(0, both - (d1 ? num(d1["研修費"]) : 0));
 }
 
+/**
+ * 型を実データで細かく分ける (2026-09-27 指示役の指摘で追加)。見立てで止めない。
+ *   ・訪問介護以外の事業所 → 「対象外:訪問介護以外」(1271502500 = リンクス福祉用具 / 福祉用具貸与。② が 0 行)
+ *   ・書式だけ (当方が払い ①② が払っていない = 過払いの候補) を 3 つに:
+ *       月給者 → 対象外でよい (①② の会議費はパートのシートにしか無い)
+ *       その月に在籍していない → isEmployedInMonth (lib/payroll/employment-in-month) で決める。★ 逐語コピーしない
+ *       どちらでもない → ★ 本物の過払い候補
+ */
+function refine(type: string, key: string, inp: Inputs): string {
+  const [office, emp, month] = key.split("|");
+  const ot = inp.officeType.get(office);
+  if (ot && ot !== "訪問介護") return "対象外:訪問介護以外";
+  if (type !== "書式だけ:総括表に行が無い") return type;
+  const e = inp.emps.get(empKey(office, emp));
+  if (!e) return "書式だけ:職員マスタに無い";
+  if (e.salary_type === "月給") return "書式だけ:月給者";
+  if (!isEmployedInMonth(e, month)) return "書式だけ:在籍外";
+  return "書式だけ:説明できない";
+}
+
 export function buildRows(inp: Inputs): Row[] {
   const byKey = new Map<string, FormRec[]>();
   for (const r of inp.form) {
@@ -117,7 +142,7 @@ export function buildRows(inp: Inputs): Row[] {
     const d1 = inp.l1.get(k), d2 = inp.l2.get(k);
     const base = { key: k, office, countYen, timeYen, counts, yenInCount, l1: d1 ? num(d1["会議費"]) : null, l2: d2 ? l2Meeting(d2, d1) : null };
     const type = classify(base, inp.unpaid.has(office));
-    if (type) out.push({ ...base, type });
+    if (type) out.push({ ...base, type: refine(type, k, inp) });
   }
   return out;
 }
@@ -160,6 +185,25 @@ function negativeControl(inp: Inputs, rows: Row[]) {
   const pass = got === "B:①だけ払っている";
   if (!pass) ok = false;
   lines.push(`② の職員番号を壊す (${office} ${emp} ${month}) → ${got}${pass ? "  OK" : "  ★ NG (期待 B:①だけ払っている)"}`);
+  // 書式だけ の分け方: 月給者の職員を 時給にする / 退職日を月より前にする
+  const mg = rows.find((r) => r.type === "書式だけ:月給者");
+  if (!mg) { ok = false; lines.push("書式だけ:月給者 の人月が無く 分け方のコントロールを作れない  ★ NG"); }
+  else {
+    const [mo, me, mm] = mg.key.split("|");
+    const ek = empKey(mo, me);
+    const e0 = inp.emps.get(ek)!;
+    const prevMonthEnd = `${mm.slice(0, 4)}-${mm.slice(4, 6)}-01`;
+    const ctl: [string, EmploymentFields & { salary_type?: string | null }, string][] = [
+      ["月給者を時給にする", { ...e0, salary_type: "時給" }, "書式だけ:説明できない"],
+      ["時給にして 退職日を月初より前・退職者にする", { ...e0, salary_type: "時給", employment_status: "退職者", resignation_date: `${Number(prevMonthEnd.slice(0, 4)) - 1}-01-01` }, "書式だけ:在籍外"],
+    ];
+    for (const [label, e, want] of ctl) {
+      const got2 = buildRows({ ...inp, emps: new Map([...inp.emps, [ek, e]]) }).find((r) => r.key === mg.key)?.type;
+      const p = got2 === want;
+      if (!p) ok = false;
+      lines.push(`${label} (${mg.key}) → ${got2}${p ? "  OK" : `  ★ NG (期待 ${want})`}`);
+    }
+  }
   return { ok, lines };
 }
 
@@ -186,11 +230,16 @@ async function main() {
   for (const r of l2rows) if (r.sheet_kind === "part" && months.includes(r.processing_month)) l2.set(keyOf(r.office_number, r.employee_number, r.processing_month), r.row_data);
   const form = (await restAll<FormRec>("payroll_office_form_records?select=id,office_number,employee_number,processing_month,record_type,item_name,item_date,numeric_value,start_time,end_time,break_time&item_name=like.*会議*"))
     .filter((r) => months.includes(r.processing_month));
-  const offices = await restAll<{ office_number: string; meeting_unit_price: number | null }>("payroll_offices?select=id,office_number,meeting_unit_price");
+  const offices = await restAll<{ id: string; office_number: string; office_type: string | null; meeting_unit_price: number | null }>("payroll_offices?select=id,office_number,office_type,meeting_unit_price");
+  const officeNumOfId = new Map(offices.map((o) => [o.id, o.office_number]));
+  const empRows = await restAll<EmploymentFields & { office_id: string; employee_number: string; salary_type: string | null }>(
+    "payroll_employees?select=id,office_id,employee_number,salary_type,employment_status,resignation_date");
   const settings = await restAll<{ key: string; value: Record<string, unknown> }>("payroll_app_settings?select=key,value&key=in.(meeting_fee_unpaid_offices,meeting_unit_prices)&order=key");
   const inp: Inputs = {
     form, l1, l2,
     officeUnit: new Map(offices.map((o) => [o.office_number, Number(o.meeting_unit_price ?? 0)])),
+    officeType: new Map(offices.map((o) => [o.office_number, o.office_type ?? ""])),
+    emps: new Map(empRows.map((e) => [empKey(officeNumOfId.get(e.office_id) ?? "", e.employee_number), e])),
     prices: (settings.find((s) => s.key === "meeting_unit_prices")?.value?.prices ?? {}) as Record<string, MeetingUnitPrices>,
     unpaid: new Set((settings.find((s) => s.key === "meeting_fee_unpaid_offices")?.value?.offices ?? []) as string[]),
   };
