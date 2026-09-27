@@ -58,6 +58,7 @@
     "check:hourly-targets": "tsx scripts/check-hourly-targets.mts",
     "check:soukatsu-item-gap": "tsx scripts/check-soukatsu-item-gap.mts",
     "check:soukatsu-item-gap-monthly": "tsx scripts/check-soukatsu-item-gap-monthly.mts",
+    "check:travel-legacy-gap": "tsx scripts/check-travel-legacy-gap.mts",
     "check:soukatsu-row-only": "tsx scripts/check-soukatsu-row-only.mts",
     "check:employment-in-month": "tsx scripts/check-employment-in-month.mts",
     "check:employment-status-sites": "tsx scripts/check-employment-status-sites.mts",
