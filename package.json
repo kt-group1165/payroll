@@ -35,6 +35,7 @@
     "check:late-early": "tsx scripts/check-late-early.mts",
     "check:shoninsha-adjustment": "tsx scripts/check-shoninsha-adjustment.mts",
     "check:training-3way": "tsx scripts/check-training-3way.mts",
+    "check:meeting-3way": "tsx scripts/check-meeting-3way.mts",
     "check:distance-kind": "tsx scripts/verify-distance-kind.mts",
     "check:monthly-status": "tsx scripts/verify-monthly-status.mts",
     "check:multiday-training": "tsx scripts/verify-multiday-training.mts",
