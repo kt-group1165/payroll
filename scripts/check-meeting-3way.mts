@@ -64,6 +64,10 @@ export type Inputs = {
   officeType: Map<string, string>;
   /** empKey(事業所番号, 職員番号) → 職員 (給与形態・在籍の判定に使う) */
   emps: Map<string, EmploymentFields & { salary_type?: string | null }>;
+  /** keyOf(事業所, 職員, 月) → その月の計算で 月給 (payload.monthly) か 時給 (payload.hourly) か。
+   *  ★ 職員マスタの salary_type は「今の値」で、途中で給与形態が変わった人の過去の月を取り違える (2026-09-27 指示役の指摘)。
+   *  計算は給与履歴で月ごとに決めている (buildActiveSalaryMap / resolveEmploymentType) ので、その結果で分ける */
+  calcKind: Map<string, "月給" | "時給">;
 };
 export type Row = { key: string; office: string; countYen: number; timeYen: number; counts: number; yenInCount: boolean; l1: number | null; l2: number | null; type: string };
 
@@ -114,11 +118,12 @@ function refine(type: string, key: string, inp: Inputs): string {
   const ot = inp.officeType.get(office);
   if (ot && ot !== "訪問介護") return "対象外:訪問介護以外";
   if (type !== "書式だけ:総括表に行が無い") return type;
+  const kind = inp.calcKind.get(key);
+  if (kind === "月給") return "書式だけ:月給者";          // ★ その月の計算で月給 (マスタの今の値ではない)
   const e = inp.emps.get(empKey(office, emp));
   if (!e) return "書式だけ:職員マスタに無い";
-  if (e.salary_type === "月給") return "書式だけ:月給者";
   if (!isEmployedInMonth(e, month)) return "書式だけ:在籍外";
-  return "書式だけ:説明できない";
+  return kind === "時給" ? "書式だけ:説明できない" : "書式だけ:計算に居ない";
 }
 
 export function buildRows(inp: Inputs): Row[] {
@@ -195,14 +200,15 @@ function negativeControl(inp: Inputs, rows: Row[]) {
   else {
     const [mo, me, mm] = mg.key.split("|");
     const ek = empKey(mo, me);
-    const e0 = inp.emps.get(ek)!;
-    const prevMonthEnd = `${mm.slice(0, 4)}-${mm.slice(4, 6)}-01`;
-    const ctl: [string, EmploymentFields & { salary_type?: string | null }, string][] = [
-      ["月給者を時給にする", { ...e0, salary_type: "時給" }, "書式だけ:説明できない"],
-      ["時給にして 退職日を月初より前・退職者にする", { ...e0, salary_type: "時給", employment_status: "退職者", resignation_date: `${Number(prevMonthEnd.slice(0, 4)) - 1}-01-01` }, "書式だけ:在籍外"],
+    const e0 = inp.emps.get(ek) ?? {};
+    const hourly = new Map([...inp.calcKind, [mg.key, "時給" as const]]);
+    const ctl: [string, Inputs, string][] = [
+      ["その月の計算を時給にする", { ...inp, calcKind: hourly }, "書式だけ:説明できない"],
+      ["時給にして 退職日を月初より前・退職者にする", { ...inp, calcKind: hourly, emps: new Map([...inp.emps, [ek, { ...e0, employment_status: "退職者", resignation_date: `${Number(mm.slice(0, 4)) - 1}-01-01` }]]) }, "書式だけ:在籍外"],
+      ["その月の計算から消す (計算に居ない)", { ...inp, calcKind: new Map([...inp.calcKind].filter(([k]) => k !== mg.key)) }, "書式だけ:計算に居ない"],
     ];
-    for (const [label, e, want] of ctl) {
-      const got2 = buildRows({ ...inp, emps: new Map([...inp.emps, [ek, e]]) }).find((r) => r.key === mg.key)?.type;
+    for (const [label, broken, want] of ctl) {
+      const got2 = buildRows(broken).find((r) => r.key === mg.key)?.type;
       const p = got2 === want;
       if (!p) ok = false;
       lines.push(`${label} (${mg.key}) → ${got2}${p ? "  OK" : `  ★ NG (期待 ${want})`}`);
@@ -214,7 +220,7 @@ function negativeControl(inp: Inputs, rows: Row[]) {
 async function main() {
   console.log("=== check:meeting-3way (会議費を 書式 / ① / ② で) 2026-09-27 新設・読み取り専用 ===");
   console.log("★ check:all には入れていない (意図的)。② の手入力・書式の入力で件数が動く診断系");
-  console.log("★ payroll_calc_results は読まない。当方 = 書式から当方の式 (computeMeetingFee + meetingMinutes) で出した額");
+  console.log("★ 金額は payroll_calc_results を読まない (月給/時給の区別にだけ使う)。当方 = 書式から当方の式 (computeMeetingFee + meetingMinutes) で出した額");
   console.log("★ この検査が見ていないもの: 月給者 / どれが正しいか / 当方の payload / 研修・初任者研修 / ① の時間ぶんの置き場所");
   const dir = process.env.SOUKATSU1_DIR;
   if (!dir) { console.log("★ SOUKATSU1_DIR=<① の抽出物 soukatsu_extract_YYYYMM.json のある dir> が要る"); process.exit(1); }
@@ -238,11 +244,19 @@ async function main() {
   const officeNumOfId = new Map(offices.map((o) => [o.id, o.office_number]));
   const empRows = await restAll<EmploymentFields & { office_id: string; employee_number: string; salary_type: string | null }>(
     "payroll_employees?select=id,office_id,employee_number,salary_type,employment_status,resignation_date");
+  type CalcLite = { office_number: string; processing_month: string; payload: { monthly?: { employee_number: string }[]; hourly?: { employee_number: string }[] } | null };
+  const calc: CalcLite[] = snap?.calc ?? await restAll<CalcLite>("payroll_calc_results?select=id,office_number,processing_month,payload");
+  const calcKind = new Map<string, "月給" | "時給">();
+  for (const c of calc) {
+    for (const p of c.payload?.hourly ?? []) calcKind.set(keyOf(c.office_number, p.employee_number, c.processing_month), "時給");
+    for (const p of c.payload?.monthly ?? []) calcKind.set(keyOf(c.office_number, p.employee_number, c.processing_month), "月給");
+  }
   const settings = await restAll<{ key: string; value: Record<string, unknown> }>("payroll_app_settings?select=key,value&key=in.(meeting_fee_unpaid_offices,meeting_unit_prices)&order=key");
   const inp: Inputs = {
     form, l1, l2,
     officeUnit: new Map(offices.map((o) => [o.office_number, Number(o.meeting_unit_price ?? 0)])),
     officeType: new Map(offices.map((o) => [o.office_number, o.office_type ?? ""])),
+    calcKind,
     emps: new Map(empRows.map((e) => [empKey(officeNumOfId.get(e.office_id) ?? "", e.employee_number), e])),
     prices: (settings.find((s) => s.key === "meeting_unit_prices")?.value?.prices ?? {}) as Record<string, MeetingUnitPrices>,
     unpaid: new Set((settings.find((s) => s.key === "meeting_fee_unpaid_offices")?.value?.offices ?? []) as string[]),
