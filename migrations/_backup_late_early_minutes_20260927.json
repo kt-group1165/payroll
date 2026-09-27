@@ -1,0 +1,53 @@
+{
+  "at": "2026-09-26T22:46:11.620Z",
+  "note": "[遅刻早退の分を②から取込 2026-09-27]",
+  "inserted_ids": [
+    "f9e9b1ef-2231-4edf-9828-f2ff3d3c29c3",
+    "c4ab3d10-9157-4c2c-8d7e-e0e3fd259474",
+    "5c30b9f3-6147-4f05-8046-6ff656978fc3",
+    "6fea6375-3786-4b67-9fd5-4ad3f4f65475",
+    "46a4c832-c2eb-4219-b4a6-5995583b3625"
+  ],
+  "rows": [
+    {
+      "office_number": "1270303173",
+      "employee_number": "250202",
+      "processing_month": "202604",
+      "item_key": "late_early_minutes",
+      "numeric_value": 120,
+      "note": "[遅刻早退の分を②から取込 2026-09-27]"
+    },
+    {
+      "office_number": "1270501180",
+      "employee_number": "231204",
+      "processing_month": "202605",
+      "item_key": "late_early_minutes",
+      "numeric_value": 240,
+      "note": "[遅刻早退の分を②から取込 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "438",
+      "processing_month": "202607",
+      "item_key": "late_early_minutes",
+      "numeric_value": 30,
+      "note": "[遅刻早退の分を②から取込 2026-09-27]"
+    },
+    {
+      "office_number": "1272404508",
+      "employee_number": "260402",
+      "processing_month": "202607",
+      "item_key": "late_early_minutes",
+      "numeric_value": 120,
+      "note": "[遅刻早退の分を②から取込 2026-09-27]"
+    },
+    {
+      "office_number": "1279000366",
+      "employee_number": "260302",
+      "processing_month": "202608",
+      "item_key": "late_early_minutes",
+      "numeric_value": 180,
+      "note": "[遅刻早退の分を②から取込 2026-09-27]"
+    }
+  ]
+}

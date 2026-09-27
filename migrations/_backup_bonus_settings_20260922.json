@@ -1,0 +1,290 @@
+[
+ {
+  "id": "fd87bd03-f113-4dee-b6a6-7c6c031b4d01",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 70000
+ },
+ {
+  "id": "7e996698-2bc7-4b48-87e7-c0af5d881b96",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "1db256eb-09c4-4836-a850-105668818ac4",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 30000
+ },
+ {
+  "id": "3c8955a0-a7fc-44ba-8961-20ee9a4b79a2",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "10d4552c-cc38-43ed-9b55-e849bee5c126",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 30000
+ },
+ {
+  "id": "f42b3084-484d-4437-b06e-5a2db2ff4ac4",
+  "effective_from": "2026-04-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "1f7c5b23-77b9-4a8b-b49c-d5b1e14e48be",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 30000
+ },
+ {
+  "id": "264804d8-c7dc-42a0-886b-d9b37a40eda1",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "a0d7566d-8259-4db1-91d4-93efa9c123c6",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 90000
+ },
+ {
+  "id": "375dc3ac-76a3-4c87-b095-f64c9701296b",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 90000
+ },
+ {
+  "id": "3b232ce9-b7f0-4102-aeb6-9b862cc95c70",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 80000
+ },
+ {
+  "id": "f3fcc329-b9cc-4a72-b581-523cc4edca08",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "5f9b2bb6-009b-41bc-869d-d4da1f82366d",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 20000
+ },
+ {
+  "id": "ee2a427a-beea-4054-8254-c71e07ab9f16",
+  "effective_from": "2026-04-01",
+  "bonus_amount": 0,
+  "special_bonus": 20000
+ },
+ {
+  "id": "b062e65a-42cb-45b0-9923-50ad602c01df",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "894b4c64-fd22-4d9d-ac8a-03463f7a668d",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 10000
+ },
+ {
+  "id": "0105a0c1-c1fe-4608-9264-d2b4b07f7bf3",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 40000
+ },
+ {
+  "id": "9a7df713-b5b5-4183-b89d-a3eebce79e18",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 100000
+ },
+ {
+  "id": "02af9dd9-373e-454e-a06a-7a4565bd4f4f",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 50000
+ },
+ {
+  "id": "013b3ebe-4ff5-4d45-a0d6-ab4d8863b928",
+  "effective_from": "2026-04-01",
+  "bonus_amount": 0,
+  "special_bonus": 50000
+ },
+ {
+  "id": "ca9aa757-c36b-4541-b507-c4d37f715d99",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "1b45b324-3d45-4fd4-ada5-bebf4035bdf8",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 220000
+ },
+ {
+  "id": "9d0a1722-c4ce-4242-b346-cdbd4c41254e",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 220000
+ },
+ {
+  "id": "df94d22c-a41c-4595-9f13-481f424f2d9b",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 80000
+ },
+ {
+  "id": "956de536-fb8b-47ca-b250-c7f489bf4db3",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "4a40416b-da7c-4ad6-a36d-d391ea2f6e2d",
+  "effective_from": "2026-06-01",
+  "bonus_amount": 0,
+  "special_bonus": 80000
+ },
+ {
+  "id": "34027764-dcdf-4bfb-9b8c-c480819f5c6e",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "51089ac1-ba4b-4c60-adfd-8b5c2c1cef5f",
+  "effective_from": "2026-04-01",
+  "bonus_amount": 0,
+  "special_bonus": 50000
+ },
+ {
+  "id": "5102186f-ba13-4680-b73b-22c479136306",
+  "effective_from": "2026-06-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "8792a2f8-1c5d-473b-b80f-f9c1390fdbdb",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "abbb072e-8059-4f4d-a179-88802f8d796c",
+  "effective_from": "2026-04-01",
+  "bonus_amount": 0,
+  "special_bonus": 30000
+ },
+ {
+  "id": "69479a0c-8e38-4014-acc8-c57176352f08",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "f0e6a6bd-eb4f-4c07-b4f0-ed3d6b92c4ce",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "2a10c5dd-7e1e-4074-927d-5e9182c559dc",
+  "effective_from": "2026-04-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "5dff558c-eb53-48f0-b799-62c5b84d415c",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 50000
+ },
+ {
+  "id": "5c227fc6-c554-4cf9-bf99-ff8c97b58d95",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "49cca8ce-ae16-4ec9-b3b3-810886b835d0",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "b3a92a4b-2baa-4491-bed3-7d1dd01604fb",
+  "effective_from": "2026-05-01",
+  "bonus_amount": 0,
+  "special_bonus": 120000
+ },
+ {
+  "id": "29137dab-df05-4256-bb32-5dd69ceeb6b1",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "b3263312-4c4d-4bf4-9a78-0afb37559d0b",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "f3cc9eea-63d7-4605-957f-2696555fa004",
+  "effective_from": "2026-06-01",
+  "bonus_amount": 0,
+  "special_bonus": 80000
+ },
+ {
+  "id": "7a9b48ee-4896-431e-8821-5f808573edd5",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "c075ff00-46c0-4057-a737-36fca2e13af2",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "2f245e51-2ecf-4bd2-adb6-809b0d9bfef3",
+  "effective_from": "2026-06-01",
+  "bonus_amount": 0,
+  "special_bonus": 20000
+ },
+ {
+  "id": "4ba681cc-15f7-48cd-91df-de8ec247186b",
+  "effective_from": "2026-07-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "f03c9363-88c8-45a8-bdd7-4479b0b75384",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "3731cd83-d766-47be-8d6f-bcb102c7f46f",
+  "effective_from": "2026-06-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ },
+ {
+  "id": "65429256-4b58-445a-8b70-502f358e7137",
+  "effective_from": "1970-01-01",
+  "bonus_amount": 0,
+  "special_bonus": 0
+ }
+]

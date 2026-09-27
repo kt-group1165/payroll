@@ -1,0 +1,20 @@
+[
+ {
+  "id": "1fd8a689-f5db-49cd-ab2d-761ac314c388",
+  "office_number": "1272401967",
+  "employee_number": "260803",
+  "processing_month": "202607",
+  "item_key": "training_minutes",
+  "numeric_value": 1050,
+  "note": "総括表① の 研修・会議の時間より (事業所書式に記録が無いため。本稼働後は書式に入れる) 2026-09-23"
+ },
+ {
+  "id": "de3d72d4-5060-42d1-9653-86063a9d1aec",
+  "office_number": "1272401967",
+  "employee_number": "260802",
+  "processing_month": "202607",
+  "item_key": "business_km",
+  "numeric_value": 58.7,
+  "note": "総括表① の出張距離より (事業所書式の出張km が空のため。本稼働後は書式に入れる) 2026-09-23"
+ }
+]

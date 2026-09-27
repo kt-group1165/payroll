@@ -1,0 +1,26 @@
+{
+  "restored_at": "2026-09-27T00:21:52.572Z",
+  "note": "[通勤費の入れ漏れ是正 2026-09-27]",
+  "inserted_ids": [
+    "b6a8b69d-fe6e-4c67-ad9c-7bf2c63377ef",
+    "24a19cbc-b999-4207-958a-4b7aad8e71c0"
+  ],
+  "rows": [
+    {
+      "office_number": "1272404508",
+      "employee_number": "260402",
+      "processing_month": "202605",
+      "item_key": "commute_yen",
+      "numeric_value": 9200,
+      "note": "[通勤費の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272401967",
+      "employee_number": "231106",
+      "processing_month": "202603",
+      "item_key": "commute_yen",
+      "numeric_value": 254,
+      "note": "[通勤費の入れ漏れ是正 2026-09-27]"
+    }
+  ]
+}

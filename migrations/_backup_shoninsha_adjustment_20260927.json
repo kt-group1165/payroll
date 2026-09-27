@@ -1,0 +1,125 @@
+{
+  "at": "2026-09-27T01:23:32.615Z",
+  "note": "[初任者研修調整の旗 2026-09-27]",
+  "inserted_ids": [
+    "2de57c0f-41f9-4bb3-87e5-f35933e74ed1",
+    "7b485b53-15b1-4ee0-9e15-8277dfdff249",
+    "d73b5d04-316f-459e-96ba-52e7ff413a0d",
+    "5b065d4a-6fb2-48ec-8ebd-15e6d4e243de",
+    "e2aa9393-b694-4b9c-b2c8-c89540e00347",
+    "ba43b33d-cffd-42e5-bd15-4af630c72fa8",
+    "767ae423-7932-4dec-a265-103a2f12ac64",
+    "8fcbd3c4-6ac2-4360-91c7-f8ad75324c7e",
+    "6a27093e-f526-4016-9ba9-1f0f0d6ed890",
+    "bf91e622-cedb-4674-9d0d-9fc9367eed6c",
+    "a75b85d7-f121-48c8-8010-d00d1c1db124",
+    "03b64391-722e-4988-a995-b25b8a5186e2",
+    "aa550080-c9a0-49e9-b925-af82046583bf"
+  ],
+  "rows": [
+    {
+      "office_number": "1270906546",
+      "employee_number": "260203",
+      "processing_month": "202603",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1272603851",
+      "employee_number": "250904",
+      "processing_month": "202603",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "260102",
+      "processing_month": "202604",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270906546",
+      "employee_number": "260203",
+      "processing_month": "202604",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "260102",
+      "processing_month": "202605",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270906546",
+      "employee_number": "260203",
+      "processing_month": "202605",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "260102",
+      "processing_month": "202606",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270906546",
+      "employee_number": "260203",
+      "processing_month": "202606",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "260102",
+      "processing_month": "202607",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270906546",
+      "employee_number": "260203",
+      "processing_month": "202607",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "260603",
+      "processing_month": "202607",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1270906546",
+      "employee_number": "260203",
+      "processing_month": "202608",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "260603",
+      "processing_month": "202608",
+      "item_key": "shoninsha_adjustment",
+      "numeric_value": 1,
+      "note": "[初任者研修調整の旗 2026-09-27]"
+    }
+  ]
+}

@@ -1,0 +1,332 @@
+{
+  "restored_at": "2026-09-26T22:38:57.354Z",
+  "note": "[社保の入れ漏れ是正 2026-09-27]",
+  "inserted_ids": [
+    "4d2617c3-a1c2-455d-ab5f-3416139c3950",
+    "cbd36d81-f10b-4c63-a378-edfebceee684",
+    "5ebb13e9-2872-4783-869c-a74b678d0d54",
+    "2fcb4f67-1b34-4876-bc85-1b1d2da4f31a",
+    "dc24d3cf-5597-4a9d-af46-0a8907e49d98",
+    "8b09da87-31d5-4206-910e-3a8ff3fb7583",
+    "1ec94dc3-ceeb-4f37-afe1-8a7be108df94",
+    "c53d175f-d2ce-470b-a221-49f70387f7a5",
+    "98fa1139-7154-4171-ba3a-132a2e167306",
+    "be7eb037-996f-4130-83e7-80cba2ec4595",
+    "a9b1715d-a60e-4016-92ab-26c8aed7ee00",
+    "03260910-bfb3-4dee-be3f-962c5b1f52d9",
+    "025d3981-8583-4772-ac48-087602410484",
+    "80679c50-c630-499f-af2f-93dc8594a8b3",
+    "6997e681-584b-402b-a7d7-ebed00283d4a",
+    "61bdacff-78d1-4054-a8aa-44938652b4ca",
+    "0e27c279-43b9-4009-8b82-5aa84045f1fc",
+    "8caea0fa-d1c9-488f-a60e-e136a39712ea",
+    "2835a3c0-2f0e-44c6-bd2c-a33e39984150",
+    "10bc7806-fcb4-4494-a9bf-d56347a5e53e",
+    "c9eafbdf-b425-4cc8-87a4-6f61c8ae8490",
+    "c831e6c7-53eb-497b-8e2a-b8ea306f8124",
+    "9525cdfc-9999-483e-aacc-296221ebbb2e",
+    "c0c1b9a4-d5df-41c9-9aa2-7b2b1b83df28",
+    "2ecfb887-4ecc-4d79-a082-2e8ae026a531",
+    "66db0786-c64d-42ae-8edf-640d63993788",
+    "7bcfcaa3-ad13-4b26-ac1f-a8c232c2aff0",
+    "54018d46-edb5-405b-9152-85fb473bc442",
+    "46aefea9-f019-4142-a234-c87efeaf9ac2",
+    "8ab4a03c-5d5b-4bae-9bdc-88fc785b71f9",
+    "5a1095d6-b6f5-4234-a209-45bc47b1c522",
+    "1255b707-4738-4452-9b53-3c76c7c34f8b",
+    "639757ab-5a71-44f2-97bc-64886368efb5",
+    "7d7dbf45-476f-4853-9e1f-65beb63bf8ad",
+    "6257bfe0-dbb5-4418-b9c1-1e3a5c522d99",
+    "0258ec71-5561-41cf-b842-c1b165ede01d"
+  ],
+  "rows": [
+    {
+      "office_number": "1272404508",
+      "employee_number": "221010",
+      "processing_month": "202604",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272404508",
+      "employee_number": "221010",
+      "processing_month": "202605",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272404508",
+      "employee_number": "221010",
+      "processing_month": "202606",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272404508",
+      "employee_number": "221010",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272404508",
+      "employee_number": "221010",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "395",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "395",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "240604",
+      "processing_month": "202604",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "240604",
+      "processing_month": "202605",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "240604",
+      "processing_month": "202606",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "240604",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "240604",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "260603",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "260603",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272401967",
+      "employee_number": "260504",
+      "processing_month": "202605",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272401967",
+      "employee_number": "260504",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1272401967",
+      "employee_number": "260504",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271502518",
+      "employee_number": "210934",
+      "processing_month": "202603",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271502518",
+      "employee_number": "210934",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270105271",
+      "employee_number": "250603",
+      "processing_month": "202605",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270105271",
+      "employee_number": "250603",
+      "processing_month": "202606",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270105271",
+      "employee_number": "250603",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270105271",
+      "employee_number": "250603",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270906546",
+      "employee_number": "240301",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "260402",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271500942",
+      "employee_number": "260402",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1275800892",
+      "employee_number": "396",
+      "processing_month": "202603",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270203191",
+      "employee_number": "8036",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1278600398",
+      "employee_number": "250304",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271502518",
+      "employee_number": "230603",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1271502518",
+      "employee_number": "260503",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270303173",
+      "employee_number": "251106",
+      "processing_month": "202605",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270303173",
+      "employee_number": "251106",
+      "processing_month": "202606",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270303173",
+      "employee_number": "251106",
+      "processing_month": "202607",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1270303173",
+      "employee_number": "251106",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    },
+    {
+      "office_number": "1279000366",
+      "employee_number": "260707",
+      "processing_month": "202608",
+      "item_key": "social_insurance",
+      "numeric_value": 1,
+      "note": "[社保の入れ漏れ是正 2026-09-27]"
+    }
+  ]
+}
