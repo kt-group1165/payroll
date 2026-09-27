@@ -13,18 +13,15 @@
  * 0 件だった (2026-09-26 実測)。
  *
  * ⚠ 逐語コピー禁止 ([[feedback_test_verbatim_copy_and_wrong_expectation]])。
- *   ourItems / diffItems / pickSoukatsu は verification-content.tsx と同じ src/lib 関数を import する。
+ *   ourItems / ② の値の読み方 (verificationItems) / diffItems / pickSoukatsu は verification-content.tsx と同じ src/lib 関数を import する。
  */
 import { readFileSync } from "node:fs";
 import {
-  diffItems, pickSoukatsu, hasSoukatsuColumn, soukatsuAdjustmentParts,
+  diffItems, pickSoukatsu,
   type DiffContext, type DiffVerdict,
 } from "../src/lib/payroll/soukatsu-diff.js";
-import {
-  attendanceWorkMinutes, careOvertimePay, weekendAllowanceMinutes, weekendHolidayAllowanceAmount,
-  commuteFeeAmount, monthlyPaidLeaveAllowance, overtimeExcessPay, parseWorkHoursMinutes, travelFeeAmount,
-  yochoAllowance, type MonthlyPayroll, type OvertimeSetting,
-} from "../src/lib/payroll/payroll-calc.js";
+import { attendanceWorkMinutes, parseWorkHoursMinutes, type OvertimeSetting } from "../src/lib/payroll/payroll-calc.js";
+import { verificationItems } from "../src/lib/payroll/verification-items.js";
 
 const env: Record<string, string> = {};
 for (const p of ["../kaigo-app/.env.local", ".env.local"]) {
@@ -53,60 +50,7 @@ async function getAll<T>(q: string): Promise<T[]> {
   return out;
 }
 
-function ourItems(
-  e: Record<string, unknown>, kind: "part" | "shaseki", otSettings: Map<string, OvertimeSetting>,
-  shoninshaInSoukatsu = false,
-): { item: string; ours: number }[] {
-  if (kind === "part") {
-    return [
-      { item: "総支給額", ours: num(e.grand_total) },
-      { item: "集計項目小計", ours: num(e.totalPay) },
-      { item: "本人給", ours: num(e.totalPay) + num(e.office_work_pay) + num(e.cancel_allowance)
-        + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate))
-        + num(e.tokubi_allowance) + (shoninshaInSoukatsu ? num(e.shoninsha_pay) : 0) },
-      { item: "土日祝", ours: weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate)) },
-      { item: "移動手当", ours: num(e.travel_allowance) },
-      { item: "有給休暇手当", ours: num(e.paid_leave_allowance) },
-      { item: "通信手当", ours: num(e.communication_fee) },
-      { item: "通勤費", ours: num(e.commute_fee) },
-      { item: "出張費", ours: num(e.business_trip_fee) },
-      { item: "ドタキャン", ours: num(e.cancel_allowance) },
-      { item: "特日", ours: num(e.tokubi_allowance) },
-      { item: "調整手当(内訳計)", ours: num(e.tokubi_allowance) },
-      { item: "残業総額", ours: num(e.overtime_pay) + num(e.legal_holiday_pay) },
-      { item: "育児手当", ours: num(e.childcare_allowance) },
-      { item: "調整手当", ours: num(e.error_adjustment) },
-      { item: "処遇改善補助金手当", ours: num(e.treatment_subsidy) },
-      { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
-    ];
-  }
-  const st = (e.settings ?? {}) as Record<string, unknown>;
-  const p = e as unknown as MonthlyPayroll;
-  return [
-    { item: "総支給額", ours: num(e.grand_total) },
-    { item: "本人給", ours: num(st.base_personal_salary) },
-    { item: "職能給", ours: num(st.skill_salary) },
-    { item: "役職手当", ours: num(st.position_allowance) },
-    { item: "資格手当", ours: num(st.qualification_allowance) },
-    { item: "勤続手当", ours: num(st.tenure_allowance) },
-    { item: "処遇改善手当", ours: num(st.treatment_improvement) },
-    { item: "特別処遇改善手当", ours: num(st.specific_treatment_improvement) },
-    { item: "処遇改善補助金手当", ours: num(st.treatment_subsidy) },
-    { item: "固定残業代", ours: num(st.fixed_overtime_pay) },
-    { item: "通勤費", ours: commuteFeeAmount(p) },
-    { item: "出張費", ours: travelFeeAmount(p) + num(e.business_trip_fee) },
-    { item: "移動手当", ours: 0 },
-    { item: "介護", ours: careOvertimePay(p) + num(e.office_worker_care_pay) },
-    { item: "調整手当(内訳計)", ours: careOvertimePay(p) + num(e.office_worker_care_pay) + yochoAllowance(p) + num(e.tokubi_allowance) },
-    { item: "夜朝深夜", ours: yochoAllowance(p) },
-    { item: "有給休暇手当", ours: monthlyPaidLeaveAllowance(p) },
-    { item: "残業総額", ours: overtimeExcessPay(p, otSettings) },
-    { item: "育児手当", ours: num(e.childcare_allowance) },
-    { item: "調整手当", ours: num(e.adjustment) },
-    { item: "特日", ours: num(e.tokubi_allowance) },
-    { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
-  ];
-}
+// ourItems は src/lib/payroll/verification-items.ts (検証ページと共有。以前はここに写しがあり 初任者研修調整費・遅刻早退金額 が抜けて乖離していた)
 
 type Emp = { id: string; employee_number: string; name: string; office_id: string; employment_status: string; member_id: string | null; address: string | null };
 type Office = { id: string; office_number: string; name?: string };
@@ -173,11 +117,7 @@ async function main() {
               isOfficeWorker: false, officeNumber, officeFormEmpty: false,
               adjustmentFolded: pickSoukatsu(s.row_data, "調整手当") !== 0,
             };
-            const parts = soukatsuAdjustmentParts(s.row_data);
-            const items = ourItems(item, kind, otMap, pickSoukatsu(s.row_data, "初任者研修費") + pickSoukatsu(s.row_data, "初任者研修調整費") > 0)
-              .filter((x) => x.item === "調整手当(内訳計)" || hasSoukatsuColumn(s.row_data, x.item))
-              .map((x) => ({ ...x, soukatsu: x.item === "調整手当(内訳計)" ? parts.total : pickSoukatsu(s.row_data, x.item) }))
-              .filter((x) => !(x.item === "調整手当(内訳計)" && parts.total === 0 && x.ours === 0));
+            const { items } = verificationItems(item, kind, otMap, s.row_data);
             const diffs = diffItems(items, ctx);
             officeResults.push({
               office: officeNumber, empN: n, kind,

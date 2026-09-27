@@ -43,6 +43,8 @@ export const SOUKATSU_ALIASES: Record<string, string[]> = {
   調整手当: ["調整手当"],
   介護: ["介護"],
   夜朝深夜: ["・夜朝・深夜"],
+  // ⚠ 出勤時間は 分。pickSoukatsu (円) では読まない。verification-items.ts が soukatsuMinutes で読む。
+  //   ここに残すのは hasSoukatsuColumn の「列の有無」に使うため (消すと 検証ページから出勤時間の行が消える)
   出勤時間: ["出勤時間"],
   本人給: ["本人給"],
   事務時給: ["事務時給"],
@@ -59,7 +61,13 @@ export const SOUKATSU_ALIASES: Record<string, string[]> = {
   固定残業代: ["固定残業代"],
 };
 
-/** 総括表の 1 行から 項目の値を取り出す (別名を吸収し 数値にする) */
+/**
+ * 総括表の 1 行から 項目の値を取り出す (別名を吸収し 数値にする)。
+ * ★ これは **円** を読む関数 (parseFloat + カンマ除去)。時間は soukatsuMinutes (soukatsu-time.ts) を使う。
+ *   parseFloat は "35:00" を 35、"174..00" を 174 と黙って読む。
+ * ★ ourItems の item を 変数で渡す箇所がある (verification-items.ts)。時間の項目 (MINUTE_ITEMS) は 呼び側で分けること。
+ *   literal の grep (pickSoukatsu(…, "出勤時間")) では見つからない (2026-09-27 に 1 度見落とした)
+ */
 export function pickSoukatsu(row: Record<string, unknown>, key: string): number {
   for (const name of SOUKATSU_ALIASES[key] ?? [key]) {
     const v = row[name];

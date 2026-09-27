@@ -12,6 +12,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { soukatsuMinutes, type SoukatsuNumberUnit } from "../src/lib/payroll/soukatsu-time.js";
+import { verificationItems } from "../src/lib/payroll/verification-items.js";
 
 const UPDATE = process.argv.includes("--update");
 const BASELINE = new URL("./check-soukatsu-time-baseline.json", import.meta.url);
@@ -64,6 +65,19 @@ console.log("\n--- 負のコントロール (わざと壊した読み方で fixt
   const no1904: Reader = (v, u) => (typeof v === "string" && v.startsWith("1904-") ? null : soukatsuMinutes(v, u));
   const b = failures(no1904);
   expect(b.some((c) => c.v === "1904-01-01T07:15:00.000Z"), `③ 1904 年基準を読まないと 大網の 7:15 が落ちる (${b.length} 件)`);
+}
+
+console.log("\n--- 検証ページの組み立て (verification-items.ts) が 時間の項目を soukatsuMinutes で読むこと");
+{
+  const e = { grand_total: 0, totalPay: 0, summary: { workHoursMin: 2100 } } as Record<string, unknown>;
+  const ot = new Map();
+  const a = verificationItems(e, "part", ot, { 出勤時間: "35:00", 総支給額: 0 });
+  const b = verificationItems(e, "part", ot, { 出勤時間: "174..00", 総支給額: 0 });
+  const c = verificationItems(e, "part", ot, { 出勤時間: 2100, 総支給額: 0 });
+  const got = (r: typeof a) => r.items.find((x) => x.item === "出勤時間")?.soukatsu;
+  expect(got(a) === 2100, `② 出勤時間 "35:00" → 2,100 分 (parseFloat だと 35) (実際 ${got(a)})`);
+  expect(got(b) === undefined && b.unreadable.some((x) => x.item === "出勤時間"), `② 出勤時間 "174..00" → 比べずに「読めない」に出す (parseFloat だと 174) (items ${got(b)} / 読めない ${b.unreadable.length})`);
+  expect(got(c) === 2100, `② 出勤時間 2100 (数値 = 分) → 2,100 分 (実際 ${got(c)})`);
 }
 
 // ── 2. 実データ ──
