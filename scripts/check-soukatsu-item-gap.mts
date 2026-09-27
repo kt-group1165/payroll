@@ -22,6 +22,16 @@
  *     - 会議費              一部の事業所・月で その他手当計に出るが 総支給に入らない (残差が −575 の倍数)。
  *   → ① の総支給は「旧システムが払った額」ではなく 手で直す前の値。★ 項目の突合は ① の項目の値で行う。
  *
+ * ── ★ ② は ① の総支給セルの壊れを 自分で記録している (2026-09-27 実測) ───────────
+ *   ② の行には 「システム総支給額」(= ① の総支給をそのまま写した値) と 「誤差」列がある。
+ *     誤差 = システム総支給額 − (② が払う額)   ★ 有給がある行は 「総支給-有給」との差
+ *     ★ ② part 2,334 行のうち **2,334 行**でこの式が 1 円まで成り立つ (誤差 ≠ 0 は 451 行)。
+ *   → ① の総支給セルが項目計と合わない人月のうち、★ ② の誤差と同額のものは **① 側の壊れ**で
+ *     ② は項目計で正しく払っている。★ 当方の金額とは無関係なので 追いかけない。
+ *   実例 1271502518|210934|202604 仁見初江: ① の総支給 1,556,428 (他の月は 28〜31 万) /
+ *     項目計 299,881 / ② の誤差 1,256,547 / ② が払うのは 299,881。★ ② が既に直している。
+ *     ★ 当方 319,792 との差 +19,911 は 有給 17,651 + 土日祝 2,200 + 移動 60 で、★ 総支給セルとは別の話。
+ *
  * ── 項目の対応 (当方 → ①) ─────────────────────────────────────────────
  *   本人給系  totalPay + 土日祝 + キャンセル + 特日     → 集計項目小計 + 土日祝 + キャンセル手当（金額） + 特日
  *   初任者    shoninsha_pay                          → 初任者研修費 (★ ① の表示額。総支給には 25,875 まで)
@@ -119,7 +129,7 @@ for (const c of calc) for (const e of c.hourly ?? []) {
 const calcMonths = new Set(calc.map((c) => `${c.office_number}|${c.processing_month}`));
 
 type Result = {
-  formulaOk: number; formulaN: number; formulaBad: { key: string; diff: number }[];
+  formulaOk: number; formulaN: number; formulaBad: { key: string; diff: number; gosa: number | null }[];
   capped: { key: string; shown: number; excess: number; l2Honnin: number | null; ours: number | null }[];
   meetingExcluded: { key: string; amount: number }[];
   oursOnly: Record<string, { key: string; v: number }[]>; l1Only: Record<string, { key: string; v: number }[]>;
@@ -138,7 +148,12 @@ function run(l1rows: typeof l1, ours: typeof oursByKey): Result {
     const diff = num(d["総支給額（パート）"]) - L1_TOTAL_TERMS.reduce((s, t) => s + num(d[t]), 0);
     if (Math.abs(diff) < 1.5) r.formulaOk++;
     else if (Math.round(diff) % 575 === 0 && diff < 0 && -diff <= num(d["その他手当計"])) r.meetingExcluded.push({ key: x.key, amount: -diff });
-    else r.formulaBad.push({ key: x.key, diff });
+    else {
+      // ★ ② は自分のシートに 「誤差」列 (= システム総支給額 − ② が払う額) を持っている。
+      //   ① の総支給セルの壊れは ② が既に検知して 項目計で払っている (2026-09-27 実測: 2,334/2,334 行で式が確定)
+      const h = l2.get(x.key);
+      r.formulaBad.push({ key: x.key, diff, gosa: h && "誤差" in h ? num(h["誤差"]) : null });
+    }
     const sh = num(d["初任者研修費"]);
     if (sh > SHONINSHA_CAP) {
       const h2 = l2.get(x.key);
@@ -179,8 +194,15 @@ console.log(`\n--- ① の総支給の式: ${r0.formulaOk} / ${r0.formulaN} 人�
 console.log(`  会議費が総支給に入っていない: ${r0.meetingExcluded.length} 人月 ${yen(r0.meetingExcluded.reduce((s, x) => s + x.amount, 0))}`);
 const bOff = new Map<string, number>(); for (const x of r0.meetingExcluded) { const [on, , m] = x.key.split("|"); bOff.set(`${on} ${m}`, (bOff.get(`${on} ${m}`) ?? 0) + 1); }
 console.log(`    事業所・月: ${[...bOff].map(([k, n]) => `${k}(${n})`).join(" ")}`);
-console.log(`  説明のつかない残差: ${r0.formulaBad.length} 人月`);
-for (const x of r0.formulaBad.slice(0, 10)) console.log(`    ${x.key} 残差 ${yen(x.diff)}`);
+const gosaOk = (x: { diff: number; gosa: number | null }) => x.gosa != null && Math.abs(x.gosa - x.diff) < 1.5;
+const missOf = (res: Result) => res.formulaBad.filter((x) => !gosaOk(x)).length;
+const gosaHit = r0.formulaBad.filter(gosaOk);
+const gosaMiss = r0.formulaBad.filter((x) => !gosaOk(x));
+console.log(`  ① の総支給セルが項目計と合わない: ${r0.formulaBad.length} 人月`);
+console.log(`    うち ② が 「誤差」列で 同額を記録済み (= ① 側の壊れ・当方は無関係): ${gosaHit.length} 人月`);
+for (const x of gosaHit) console.log(`      ${x.key} 残差 ${yen(x.diff)} = ② の誤差`);
+console.log(`    ★ ② の誤差とも合わない (② が項目を手で直している): ${gosaMiss.length} 人月`);
+for (const x of gosaMiss) console.log(`      ${x.key} ① の残差 ${yen(x.diff)} / ② の誤差 ${x.gosa == null ? "行なし" : yen(x.gosa)}`);
 
 console.log(`\n--- ① の初任者研修費が 25,875 円 (22.5h) を超えた人月: ${r0.capped.length} (超えた分 計 ${yen(r0.capped.reduce((s, x) => s + x.excess, 0))})`);
 for (const x of r0.capped) console.log(`    ${x.key} ① 表示 ${yen(x.shown)} → 総支給に入るのは 25,875 / ② 初任者研修費 ${x.l2Honnin == null ? "行なし" : yen(x.l2Honnin)} / 当方 研修 (初任者込み) ${x.ours == null ? "計算なし" : yen(x.ours)}`);
@@ -194,7 +216,8 @@ for (const k of ITEMS) {
 const oursOnlySum = ITEMS.reduce((s, k) => s + r0.oursOnly[k].reduce((t, x) => t + x.v, 0), 0);
 const l1OnlySum = ITEMS.reduce((s, k) => s + r0.l1Only[k].reduce((t, x) => t + x.v, 0), 0);
 console.log(`  合計 当方だけ ${yen(oursOnlySum)} / ① だけ ${yen(l1OnlySum)}`);
-console.log("  ★ 欄違い 2 人月 (240705 202606 / 杉尾 202606): 初任者研修が 当方は研修の欄・① ② は本人給の欄。総額は一致。直さない (2026-09-27 判断)");
+console.log("  ★ 欄違い (初任者研修を 当方は研修の欄・① ② は本人給の欄) は 2026-09-27 夜に 3 人月のキーを付け替えて解消した");
+console.log("    migrations/fix_training_key_to_shoninsha.mjs (今井 1270402116|240705|202606 / 杉尾 1271500942|260603|202606 / 江波戸 1279000366|260704|202607)。総額は付け替え前後で不変");
 console.log(`  参考 (① に列が無い): ${NO_L1_COLUMN.map((k) => `${k} ${r0.noColumn[k].n} 人月 ${yen(r0.noColumn[k].sum)}`).join(" / ")}`);
 console.log(`  行ごと片側: ① だけ (総支給>0・同じ事業所月は計算済み) ${r0.rowOnlyL1} 人月 / 当方だけ ${r0.rowOnlyOurs} 人月`);
 console.log(`  当方の項目の合計 ≠ 保存された grand_total: ${r0.sanity} 人月 (0 でなければ 対応表が取りこぼしている)`);
@@ -217,8 +240,10 @@ console.log("\n--- 負のコントロール");
 {
   const i = l1.findIndex((x) => Math.abs(num(x.d["総支給額（パート）"]) - L1_TOTAL_TERMS.reduce((s, t) => s + num(x.d[t]), 0)) < 1.5 && num(x.d["総支給額（パート）"]) > 0);
   const copy = l1.map((x, j) => (j === i ? { ...x, d: { ...x.d, "総支給額（パート）": num(x.d["総支給額（パート）"]) + 1000 } } : x));
-  const n = run(copy, oursByKey).formulaOk;
-  expect(n === r0.formulaOk - 1, `① の写しの 総支給 を 1 件 +1,000 すると 式の一致が −1 (${r0.formulaOk} → ${n})`);
+  const res = run(copy, oursByKey);
+  expect(res.formulaOk === r0.formulaOk - 1, `① の写しの 総支給 を 1 件 +1,000 すると 式の一致が −1 (${r0.formulaOk} → ${res.formulaOk})`);
+  // ★ その 1 件は ② の 誤差 とも合わないので 「② の誤差にも無い」が +1 になる (分類が効いていることの確認)
+  expect(missOf(res) === gosaMiss.length + 1, `同じ 1 件が 「② の誤差にも無い」に入る (${gosaMiss.length} → ${missOf(res)})`);
 }
 
 {
@@ -232,7 +257,7 @@ console.log("\n--- 負のコントロール");
 
 // ── 基準値 ──
 type Baseline = { _readme: string[]; counts: Record<string, number> };
-const counts: Record<string, number> = { 初任者超過: r0.capped.length, 説明のつかない残差: r0.formulaBad.length };
+const counts: Record<string, number> = { 初任者超過: r0.capped.length, 説明のつかない残差: r0.formulaBad.length, "総支給セルの残差_②の誤差にも無い": gosaMiss.length };
 for (const k of ITEMS) { counts[`当方だけ:${k}`] = r0.oursOnly[k].length; counts[`①だけ:${k}`] = r0.l1Only[k].length; }
 const baseline: Baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline : { _readme: [], counts: {} };
 if (UPDATE) {
