@@ -143,7 +143,9 @@ function run(l1rows: typeof l1, ours: typeof oursByKey): Result {
     if (sh > SHONINSHA_CAP) {
       const h2 = l2.get(x.key);
       const os = oursByKey.get(x.key);
-      r.capped.push({ key: x.key, shown: sh, excess: sh - SHONINSHA_CAP, l2Honnin: h2 ? num(h2["初任者研修費"]) || null : null, ours: os ? os.reduce((s, e) => s + (e.shoninsha_pay ?? 0) + (e.training_pay ?? 0), 0) : null });
+      r.capped.push({ key: x.key, shown: sh, excess: sh - SHONINSHA_CAP, l2Honnin: h2 ? num(h2["初任者研修費"]) || null : null, // ★ shoninsha_pay は training_pay の **内訳**。足すと二重になる
+      //   (2026-09-27 実測: 研修が 0 でない時給 444 人月で shoninsha <= training が 444/444・逆転 0)
+      ours: os ? os.reduce((s, e) => s + (e.training_pay ?? 0), 0) : null });
     }
     const [on, , m] = x.key.split("|");
     const es = ours.get(x.key);
@@ -181,7 +183,7 @@ console.log(`  説明のつかない残差: ${r0.formulaBad.length} 人月`);
 for (const x of r0.formulaBad.slice(0, 10)) console.log(`    ${x.key} 残差 ${yen(x.diff)}`);
 
 console.log(`\n--- ① の初任者研修費が 25,875 円 (22.5h) を超えた人月: ${r0.capped.length} (超えた分 計 ${yen(r0.capped.reduce((s, x) => s + x.excess, 0))})`);
-for (const x of r0.capped) console.log(`    ${x.key} ① 表示 ${yen(x.shown)} → 総支給に入るのは 25,875 / ② 初任者研修費 ${x.l2Honnin == null ? "行なし" : yen(x.l2Honnin)} / 当方 研修+初任者 ${x.ours == null ? "計算なし" : yen(x.ours)}`);
+for (const x of r0.capped) console.log(`    ${x.key} ① 表示 ${yen(x.shown)} → 総支給に入るのは 25,875 / ② 初任者研修費 ${x.l2Honnin == null ? "行なし" : yen(x.l2Honnin)} / 当方 研修 (初任者込み) ${x.ours == null ? "計算なし" : yen(x.ours)}`);
 
 console.log(`\n--- 項目ごと (人月が両方にあるもの)。★ 当方だけ = 当方は払い ① は 0 / ① だけ = その逆`);
 console.log(`  項目        当方だけ              ① だけ                両方あり・額が違う (件数 / 当方−① の合計)`);
