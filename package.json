@@ -43,6 +43,7 @@
     "check:monthly-paid-leave": "tsx scripts/check-monthly-paid-leave.mts",
     "check:overtime-minutes": "tsx scripts/check-overtime-minutes.mts",
     "check:commute-monthly": "tsx scripts/check-commute-monthly.mts",
+    "check:overtime-excess-kubun": "tsx scripts/check-overtime-excess-kubun.mts",
     "check:distance-kind": "tsx scripts/verify-distance-kind.mts",
     "check:monthly-status": "tsx scripts/verify-monthly-status.mts",
     "check:multiday-training": "tsx scripts/verify-multiday-training.mts",
