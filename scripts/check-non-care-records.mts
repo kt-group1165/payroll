@@ -98,10 +98,9 @@ const pd = (s: string) => { const t = String(s ?? "").trim(); if (!t.includes(":
  *   そこから引き算していた。138 事業所月を再計算した後の payload は ★ もう 5 種が外れているので 二重に引き、
  *   「外した後」の一致が 9 → 2 に落ちて見えた (コードの回帰ではなく 検査の前提が再計算前のまま)。
  *   ★ payload を読む検査は 再計算で 基準値だけでなく ロジックの前提も崩れる。
- * 今は payload の計算時刻で 外す前/外した後 のどちらかを決め、もう一方を 実績の 5 種の分で足し戻す/引いて組み立てる:
- *   NON_CARE_FROM より後の計算 = 外した後 (外す前 = + 5 種の分) / それより前の計算 = 外す前 (外した後 = − 5 種の分)
+ * payload の care_minutes は 5 種を外した後の値 (外した後)。外す前は 実績の 5 種の分を足し戻して組み立てる。
+ * (2026-09-27: 計算時刻で 外す前/後 を分ける足場 NON_CARE_FROM を置いていたが、全 139 事業所月が d984f2b 以後の計算になったので消した)
  */
-const NON_CARE_FROM = "2026-09-26T17:15:44Z"; // d984f2b (NON_CARE_SERVICE_TYPES を入れた commit) の時刻。デプロイはこれより後
 function realData(pred: Pred) {
   const all5 = new Map<string, number>(), byPred = new Map<string, number>();
   for (const r of snap.recs) {
@@ -109,24 +108,23 @@ function realData(pred: Pred) {
     if (EXCLUDE.includes(String(r.service_type ?? "").trim())) all5.set(k, (all5.get(k) ?? 0) + pd(r.calc_duration));
     if (!pred(r)) byPred.set(k, (byPred.get(k) ?? 0) + pd(r.calc_duration));
   }
-  let n = 0, agree = 0, yen = 0, fresh = 0; const moved: string[] = [];
+  let n = 0, agree = 0, yen = 0; const moved: string[] = [];
   for (const c of snap.calc) for (const p of c.monthly ?? []) {
     const k = `${c.office_number}|${nn(p.employee_number)}|${c.processing_month}`;
     const rm5 = all5.get(k); if (!rm5 || !p.settings) continue;
     n++;
-    const isFresh = String(c.calculated_at) >= NON_CARE_FROM; if (isFresh) fresh++;
     const payloadCare = p.care_minutes ?? p.summary.visitMinutes;
-    const careBefore = isFresh ? payloadCare + rm5 : payloadCare;
+    const careBefore = payloadCare + rm5;
     const care = careBefore - (byPred.get(k) ?? 0);
     const l2 = l2care.get(k); if (l2 && Math.abs(care - l2) < 1) agree++;
     const d = careOvertimePay({ ...p, care_minutes: care }) - careOvertimePay({ ...p, care_minutes: careBefore });
     if (d !== 0) { yen += d; moved.push(`${k} ${p.employee_name} −${byPred.get(k) ?? 0}分 介護超過 ${d}`); }
   }
-  return { n, agree, yen, moved, fresh };
+  return { n, agree, yen, moved };
 }
 const after = realData(isCareRecord);
 const before = realData(() => true);
-console.log(`  5 種の行がある月給の人月: ${after.n} (うち 5 種を外した後のコードで計算済み ${after.fresh}) / ② の120h対象時間と一致: 外す前 ${before.agree} → 外した後 ${after.agree} (2026-09-27: 14 人月で 0 → 9)`);
+console.log(`  5 種の行がある月給の人月: ${after.n} / ② の120h対象時間と一致: 外す前 ${before.agree} → 外した後 ${after.agree} (2026-09-27: 14 人月で 0 → 9)`);
 console.log(`  外すことで介護超過が動く人月 ${after.moved.length} / 計 ¥${after.yen.toLocaleString()} (2026-09-27: 2 人月 −¥5,000)`);
 for (const m of after.moved) console.log(`    ${m}`);
 expect(after.agree > before.agree, `5 種を外すと ② との一致が増える (${before.agree} → ${after.agree})`);
