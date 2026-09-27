@@ -25,6 +25,10 @@
  *   (書式 CSV の空白セルは 通常の取込でも行になる。通勤km の空 3,331 行はそれ)。
  *   ★ ただし「復元で入った空の行」は 0 になるべきもの。
  *
+ * 【★ 不変条件 (常に 0)】会議N件数 が null の行がある人月で ①② のどちらも会議費を払っていないもの。
+ *   computeMeetingFee は null を 1 件と数える (numeric_value ?? 1) ので、ここに入ると 会議をしていない人に 1,500 円払う (過払いの向き)。
+ *   ★ ?? 1 自体は変えない (① との一致率に効くため・2026-09-27 指示役)。現に過大になっていないかを見張る。SOUKATSU1_DIR 必須
+ *
  * ── この検査が見ていないもの ─────────────────────────────────────────────
  *   ・空の行が お金に効くか (当方は 出張km を 手入力 > 書式 > 出勤簿 の順で取るので 書式が空でも払っていることがある)。
  *     ★ 参考として ① (旧システム出力) がその項目を払っている人月を出すが 合否には使わない
@@ -36,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { restAll } from "./_rest.mjs";
 import { num } from "./_soukatsu-items.mjs";
+import { l2Meeting } from "./check-meeting-3way.mjs";
 
 const UPDATE = process.argv.includes("--update");
 const DETAIL = process.argv.find((a) => a.startsWith("--detail="))?.split("=")[1];
@@ -71,6 +76,21 @@ export function tally(rows: FormRow[], restored: Set<string>): Record<string, St
     if (restored.has(r.id)) s.restoredEmpty++;
   }
   return out;
+}
+
+/**
+ * ★ 不変条件 (0 であること): 会議N件数 が null の行がある人月のうち ① も ② も会議費を払っていないもの。
+ * computeMeetingFee は null を 1 件と数える (numeric_value ?? 1) ので、ここに入る人月は
+ * ★ 会議をしていない人に 1,500 円を払っている = 過払いの向き。現在 0 (さつき 202606 の 14 は ①② とも払っている)。
+ * ② の会議ぶんは check:meeting-3way と同じ l2Meeting (② は列名で会議費が取れないため) を呼ぶ。
+ */
+export function nullMeetingUnpaid(rows: FormRow[], l1: Map<string, Record<string, unknown>>, l2: Map<string, Record<string, unknown>>): string[] {
+  const keys = new Set(rows.filter((r) => r.record_type === "km" && /^会議[123]件数$/.test(r.item_name) && r.numeric_value == null)
+    .map((r) => `${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`));
+  return [...keys].filter((k) => {
+    const d1 = l1.get(k), d2 = l2.get(k);
+    return !(num(d1?.["会議費"]) > 0) && !((d2 ? l2Meeting(d2, d1) : 0) > 0);
+  });
 }
 
 function negativeControl(rows: FormRow[], restored: Set<string>, base: Record<string, Stat>) {
@@ -117,6 +137,7 @@ async function main() {
   }
 
   const neg = negativeControl(rows, restored, stats);
+  let negOk = true;
   console.log("\n負のコントロール (読み込んだ写しを壊す。DB もファイルも触らない):");
   for (const l of neg.lines) console.log("  " + l);
 
@@ -126,27 +147,56 @@ async function main() {
     console.log(`  ${k.padEnd(22)} ${String(s.rows).padStart(5)} ${String(s.empty).padStart(5)} ${String(s.emptyNoSibling).padStart(8)} ${String(s.restoredEmpty).padStart(14)}${s.restoredEmpty ? "  ★" : ""}`);
   }
 
-  // 参考: ① がその項目を払っている人月 (合否に使わない)
+  // ① (必須: 過払いの不変条件に使う) と ② (パート)
   const dir = process.env.SOUKATSU1_DIR;
-  if (dir && existsSync(dir)) {
-    const col: Record<string, string> = { "km|出張km": "出張費", "km|通勤km": "通勤費", "training|HRD研修": "HRD研修費", "training|研修": "研修費", "childcare|保育料": "育児手当", "km|会議1件数": "会議費" };
-    const l1 = new Map<string, Record<string, unknown>>();
-    for (const f of readdirSync(dir).filter((f) => /^soukatsu_extract_\d{6}\.json$/.test(f))) {
-      const ym = /_(\d{6})\.json$/.exec(f)![1];
-      for (const r of JSON.parse(readFileSync(join(dir, f), "utf8")) as { office_number: string; employee_number: string; row_data: Record<string, unknown> }[]) {
-        const k = `${r.office_number}|${nn(r.employee_number)}|${ym}`;
-        if (!l1.has(k)) l1.set(k, r.row_data);
-      }
+  if (!dir || !existsSync(dir)) { console.log("★ SOUKATSU1_DIR=<① の抽出物のある dir> が要る (会議件数 null の過払いの不変条件に使う。無しで PASS を出さない)"); process.exit(1); }
+  const l1 = new Map<string, Record<string, unknown>>();      // パートだけ (会議費はパートのシートにしか無い)
+  const l1All = new Map<string, Record<string, unknown>>();   // 全シート (参考の出張・通勤は月給者が大半)
+  for (const f of readdirSync(dir).filter((f) => /^soukatsu_extract_\d{6}\.json$/.test(f))) {
+    const ym = /_(\d{6})\.json$/.exec(f)![1];
+    for (const r of JSON.parse(readFileSync(join(dir, f), "utf8")) as { office_number: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> }[]) {
+      const k = `${r.office_number}|${nn(r.employee_number)}|${ym}`;
+      if (!l1All.has(k)) l1All.set(k, r.row_data);
+      if (r.sheet_kind === "part" && !l1.has(k)) l1.set(k, r.row_data);
     }
+  }
+  if (!l1.size) { console.log(`★ ${dir} に ① のパートの行が 0 件 (0 件と出さない)`); process.exit(1); }
+  const snap2 = process.env.SNAPSHOT;
+  type R2 = { office_number: string; employee_number: string; processing_month: string; sheet_kind: string; row_data: Record<string, unknown> };
+  const l2rows: R2[] = snap2 && existsSync(snap2) ? JSON.parse(readFileSync(snap2, "utf8")).soukatsu
+    : await restAll<R2>("payroll_soukatsu_rows?select=id,office_number,employee_number,processing_month,sheet_kind,row_data&sheet_kind=eq.part");
+  const l2 = new Map<string, Record<string, unknown>>();
+  for (const r of l2rows) if (r.sheet_kind === "part") l2.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, r.row_data);
+
+  const over = nullMeetingUnpaid(rows, l1, l2);
+  const nullPm = new Set(rows.filter((r) => r.record_type === "km" && /^会議[123]件数$/.test(r.item_name) && r.numeric_value == null).map((r) => `${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`)).size;
+  console.log(`\n★ 不変条件 (0 であること): 会議N件数 が null の行がある人月 ${nullPm} のうち ①② のどちらも会議費を払っていない ${over.length}`);
+  console.log("  (当方は null を 1 件と数えて 1,500 円払う。ここに入る人月は 会議をしていない人への過払い)");
+  for (const k of over) console.log(`  ★ ${k}`);
+  {
+    // 負のコントロール: 値のある会議1件数の行を null にし、その人月の ①② の会議費を 0 にすると +1
+    const t = rows.find((r) => r.record_type === "km" && r.item_name === "会議1件数" && r.numeric_value != null);
+    const tk = t ? `${t.office_number}|${nn(t.employee_number)}|${t.processing_month}` : "";
+    const z = (m: Map<string, Record<string, unknown>>) => new Map([...m].map(([k, d]) => [k, k === tk ? { ...d, 会議費: 0, 研修: 0 } : d]));
+    const got = t ? nullMeetingUnpaid(rows.map((r) => (r === t ? { ...r, numeric_value: null } : r)), z(l1), z(l2)).length - over.length : -1;
+    const got2 = t ? nullMeetingUnpaid(rows.map((r) => (r === t ? { ...r, numeric_value: null } : r)), l1, l2).length - over.length : -1;
+    const p = got === 1 && got2 === 0;
+    if (!p) negOk = false;
+    console.log(`  負のコントロール: 1 行を null にして ①② を 0 に → +${got} (期待 +1) / null にするだけ (①② は払う) → +${got2} (期待 +0)${p ? "  OK" : "  ★ NG"}`);
+  }
+
+  // 参考: ① がその項目を払っている人月 (合否に使わない)
+  {
+    const col: Record<string, string> = { "km|出張km": "出張費", "km|通勤km": "通勤費", "training|HRD研修": "HRD研修費", "training|研修": "研修費", "childcare|保育料": "育児手当", "km|会議1件数": "会議費" };
     const valued = new Set(rows.filter((r) => !isEmpty(r)).map(pm));
     console.log("\n(参考・合否に使わない) 空で同じ人月に値も無い行のうち ① がその項目を払っている人月:");
     for (const [item, c] of Object.entries(col)) {
       const hits = rows.filter((r) => `${r.record_type}|${r.item_name}` === item && isEmpty(r) && !valued.has(pm(r)))
-        .map((r) => ({ r, v: num(l1.get(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`)?.[c]) })).filter((x) => x.v > 0);
+        .map((r) => ({ r, v: num(l1All.get(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`)?.[c]) })).filter((x) => x.v > 0);
       console.log(`  ${item.padEnd(20)} ${String(hits.length).padStart(4)} 人月  ① ${c} 計 ¥${hits.reduce((s, x) => s + x.v, 0).toLocaleString()}`);
     }
     console.log("  ★ 当方が払っていないとは限らない (出張は 手入力 > 書式 > 出勤簿 の順で取る)。お金に効くかは 計算結果で確かめる");
-  } else console.log("\n(参考の ① 突合は SOUKATSU1_DIR を指定したときだけ)");
+  }
 
   if (DETAIL) {
     console.log(`\n--- ${DETAIL} の空の行 ---`);
@@ -154,7 +204,8 @@ async function main() {
       console.log(`  ${r.processing_month} ${r.office_number} ${r.employee_number}${restored.has(r.id) ? "  ★復元" : ""}`);
   }
 
-  let failed = false;
+  let failed = over.length > 0;   // ★ 会議件数 null の過払いは 基準値ではなく常に 0 で判定
+  if (failed) console.log("\n★ FAIL: 会議N件数 が null で ①② のどちらも払っていない人月がある (当方は 1,500 円払っている = 過払い)");
   const counts = Object.fromEntries(Object.entries(stats).map(([k, s]) => [k, { empty: s.empty, restoredEmpty: s.restoredEmpty }]));
   if (existsSync(BASELINE_PATH) && !UPDATE) {
     const b = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
@@ -174,7 +225,7 @@ async function main() {
     writeFileSync(BASELINE_PATH, JSON.stringify({ _readme: prev._readme ?? "(新規)", updated_at: new Date().toISOString(), rows: rows.length, counts }, null, 2) + "\n");
     console.log(`\n基準値を更新しました: ${BASELINE_PATH}`);
   }
-  if (!neg.ok) { console.log("★ 負のコントロールが通らないので PASS を出しません"); process.exit(1); }
+  if (!neg.ok || !negOk) { console.log("★ 負のコントロールが通らないので PASS を出しません"); process.exit(1); }
   if (failed) { console.log("★ FAIL: 空の行が増えました。--detail=<record_type|item_name> で見てください"); process.exit(1); }
   console.log("PASS (★ 0 件 PASS ではない。基準値の件数を許容したうえでの PASS)");
 }

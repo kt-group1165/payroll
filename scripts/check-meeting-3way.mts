@@ -96,7 +96,7 @@ export function classify(r: Omit<Row, "type">, unpaid: boolean): string | null {
  *     ① の行が無いときは 合計のまま (研修が混ざっていても分けられない)。
  *   ⚠ ② に「会議費」と書いてあるから会議、とはしない (これで D2 が 143 件出た)。
  */
-function l2Meeting(d2: Record<string, unknown>, d1: Record<string, unknown> | undefined): number {
+export function l2Meeting(d2: Record<string, unknown>, d1: Record<string, unknown> | undefined): number {
   const both = num(d2["会議費"]) + num(d2["研修"]);
   return Math.max(0, both - (d1 ? num(d1["研修費"]) : 0));
 }
