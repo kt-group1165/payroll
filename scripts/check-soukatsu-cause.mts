@@ -305,6 +305,10 @@ async function loadSnapshot(): Promise<Snapshot> {
   if (path && existsSync(path)) {
     const s = JSON.parse(readFileSync(path, "utf8")) as Snapshot;
     console.log(`(保存済みの取得結果を使用: ${path} / 取得 ${s.fetched_at})`);
+    // ★ 基準値より古い写しで回すと 偽の悪化が出る (2026-09-27 に 11:40 の写しで 13:22 の基準値と比べて PZ当 +4 を出した)
+    const baseAt = existsSync(BASELINE_PATH) ? (JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as { updated_at?: string }).updated_at : undefined;
+    if (baseAt && s.fetched_at && s.fetched_at < baseAt)
+      console.log(`★ 注意: 写しの取得 (${s.fetched_at}) が 基準値の更新 (${baseAt}) より古い。悪化が出ても 写しが古いだけの可能性が高い。取り直してから判断すること`);
     return s;
   }
   // ★ 他セッションも同時に DB を読んでいる。並列にせず順に読む
