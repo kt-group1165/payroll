@@ -156,6 +156,10 @@ type Employee = {
   role_type: string;
   salary_type: string;
   employment_status: string;
+  resignation_date?: string | null;
+  /** 休職の期間。列が未適用の DB では キー自体が無い (undefined) */
+  leave_start_date?: string | null;
+  leave_end_date?: string | null;
   has_care_qualification: boolean;
   care_qualification_from?: string | null;
   job_type: string;
@@ -260,6 +264,8 @@ export default function PayrollPage() {
   const [rateGaps, setRateGaps] = useState<RateGap[]>([]);
   // 距離の種別のおかしさ (ヘルパーに通勤距離 / 事務員に出張距離 など)。直さずに気づけるようにするだけ
   const [distWarns, setDistWarns] = useState<{ kind: DistanceWarningKind; name: string; detail: string }[]>([]);
+  // 在職区分の警告 (休職の開始日が空・月の途中で休職の出入り・退職日が空で記録がある) (2026-09-27)
+  const [statusWarns, setStatusWarns] = useState<{ name: string; detail: string }[]>([]);
   /** 警告の行から直すための 類型の一覧 (id, name) */
   const [categoryList, setCategoryList] = useState<{ id: string; name: string }[]>([]);
 
@@ -413,6 +419,7 @@ export default function PayrollPage() {
     setHourlyResults([]); setMonthlyResults([]);
     setRateGaps([]);
     setDistWarns([]);
+    setStatusWarns([]);
     setDiscrepancies([]);
     setExpandedEmp(null); setExpandedMonthly(null);
 
@@ -518,12 +525,20 @@ export default function PayrollPage() {
       };
 
       setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
+      // 休職の期間の列 (migrations/payroll_employees_leave_dates.sql) は 未適用の DB でも動くよう、無ければ列を外して読み直す (2026-09-27)。
+      //   列が無い → 行に leave_start_date のキーが無い (undefined) → leaveInMonth は以前どおり 休職者を全部の月で外す
+      const EMP_COLS = "id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date";
+      const fetchEmployees = async () => {
+        const r = await supabase.from("payroll_employees").select(`${EMP_COLS},leave_start_date,leave_end_date`).eq("office_id", selectedOfficeId);
+        if (r.error && /leave_(start|end)_date/.test(r.error.message)) return supabase.from("payroll_employees").select(EMP_COLS).eq("office_id", selectedOfficeId);
+        return r;
+      };
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes, officePriceRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
-        supabase.from("payroll_employees").select("id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date").eq("office_id", selectedOfficeId),
+        fetchEmployees(),
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)。
           // ★ 判定は DB の .or() でなく 全員読んで isEmployedInMonth で行う (2026-09-27。月ごとの判定を 1 か所に集めるため。挙動は同じ)
         fetchAllSalarySettings(),
@@ -1698,10 +1713,23 @@ export default function PayrollPage() {
         const h = (e as { hire_date?: string | null }).hire_date;
         return !!h && h > monthEndIsoForHire;
       };
-      const monthlyEmps = employees.filter(
-        (e) => (e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number))) && !leaveInMonth(e, selectedMonth).onLeave
-          && !hiredAfterMonth(e)
-      );
+      // 休職の判定 (leaveInMonth)。外さないが人が見るべきとき (開始日が空・月の途中で出入り) は 警告に出す
+      const statusWarnList: { name: string; detail: string }[] = [];
+      const monthlyEmps = employees.filter((e) => {
+        if (!(e.salary_type === "月給" || switchByNum.has(normEmp(e.employee_number)))) return false;
+        const lv = leaveInMonth(e, selectedMonth);
+        if (lv.warning) statusWarnList.push({ name: e.name, detail: lv.warning });
+        return !lv.onLeave && !hiredAfterMonth(e);
+      });
+      // 退職者で退職日が空の人は isEmployedInMonth で全部の月から外れる。その月に働いた記録があれば 警告に出す
+      //   (旧システムにも退職日が無い人が 110 名いる。記録の無い人まで出すと 毎回 100 行を超えるので出さない)
+      for (const e of (empRes.data ?? []) as Employee[]) {
+        if (isEmployedInMonth(e, selectedMonth) || e.resignation_date) continue;
+        const k = normEmp(e.employee_number);
+        const n = (recsByEmp.get(k)?.length ?? 0) + (attByEmp.get(k)?.length ?? 0) + (ofByEmp.get(k)?.length ?? 0);
+        if (n > 0) statusWarnList.push({ name: e.name, detail: `退職者で退職日が空のため 計算から外しました。この月の実績・出勤簿・事業所書式が ${n} 行あります (職員マスタに退職日を入れてください)` });
+      }
+      setStatusWarns(statusWarnList);
       const monthlySorted = monthlyEmps.sort((a, b) => a.name.localeCompare(b.name, "ja")).map((e) => {
           const sw = switchByNum.get(normEmp(e.employee_number));
           // 切替のある人: 月給の側の給与設定 (時給→月給なら 月の途中から始まる行 / 月給→時給なら 月初の行)
@@ -2459,6 +2487,20 @@ export default function PayrollPage() {
                 <span className="font-medium">{w.name}</span>
                 <span className="text-xs text-amber-800">{w.detail}</span>
                 <span className="text-xs text-muted-foreground">— {DISTANCE_WARNING_HINT[w.kind]}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {statusWarns.length > 0 && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-400 text-amber-900 rounded text-sm">
+          <p className="font-medium">⚠ 在職区分 (休職・退職) で確かめてほしい職員が {statusWarns.length} 名います</p>
+          <p className="text-xs mt-0.5">職員マスタ (/employees) の 休職開始日・退職年月日 を入れると 正しい月だけ外れます</p>
+          <ul className="mt-2 space-y-1">
+            {statusWarns.map((w, i) => (
+              <li key={`${w.name}-${i}`} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium">{w.name}</span>
+                <span className="text-xs text-amber-800">{w.detail}</span>
               </li>
             ))}
           </ul>

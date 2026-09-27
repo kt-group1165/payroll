@@ -51,6 +51,8 @@
     "check:soukatsu-item-gap-monthly": "tsx scripts/check-soukatsu-item-gap-monthly.mts",
     "check:soukatsu-row-only": "tsx scripts/check-soukatsu-row-only.mts",
     "check:employment-in-month": "tsx scripts/check-employment-in-month.mts",
+    "check:employment-status-sites": "tsx scripts/check-employment-status-sites.mts",
+    "check:status-excluded-paid": "tsx scripts/check-status-excluded-paid.mts",
     "check:emp-number-pair": "tsx scripts/check-emp-number-pair.mts",
     "check:numeric-cell": "tsx scripts/check-numeric-cell.mts",
     "check:paging-order": "tsx scripts/check-paging-order.mts",

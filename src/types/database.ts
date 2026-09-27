@@ -121,6 +121,9 @@ export interface Employee {
   employment_status: EmploymentStatus; // 在職区分
   hire_date: string | null;            // 入社年月日
   resignation_date: string | null;     // 退職年月日
+  // 休職の期間 (payroll_employees_leave_dates.sql)。★ SQL 未適用の間は キー自体が無い (undefined)
+  leave_start_date?: string | null;    // 休職開始日
+  leave_end_date?: string | null;      // 休職終了日 (空 = 休職が続いている)
   effective_service_months: number;    // 実勤続月数
   // 給与情報は payroll_salary_settings (per-employee 詳細) で管理。
   // 旧 base_salary / hourly_rate_* / fixed_overtime_* 列は 2026-05-08 削除。

@@ -57,6 +57,8 @@ const CSV_HEADERS = [
   "在職区分", "入社年月日", "退職年月日", "実勤続月数",
   "職種", "役職", "給与形態",
   "移動手段", "介護資格", "社会保険", "有給手当単価",
+  // 休職の期間 (2026-09-27)。給与計算は 休職の期間が月の全日を覆う月だけ 月給から外す (lib/payroll/employment-in-month.ts)
+  "休職開始日", "休職終了日",
 ] as const;
 
 // ─── フォーム初期値 ───────────────────────────────────────────
@@ -72,6 +74,8 @@ const defaultForm = {
   employment_status: "在職者" as EmploymentStatus,
   hire_date: "",
   resignation_date: "",
+  leave_start_date: "",
+  leave_end_date: "",
   effective_service_months: "",
   job_type: "訪問介護" as JobType,
   role_type: "パート" as RoleType,
@@ -147,6 +151,9 @@ type ImportRow = {
   employment_status: string;
   hire_date: string;
   resignation_date: string;
+  /** CSV に列が無いときは undefined (★ 取込で既存の値を消さないため、送らない) */
+  leave_start_date?: string;
+  leave_end_date?: string;
   effective_service_months: number;
   job_type: string;
   role_type: string;
@@ -171,6 +178,9 @@ export function EmployeesList({
 }) {
   const router = useRouter();
   const employees = initialEmployees;
+  // 休職の期間の列 (payroll_employees_leave_dates.sql) が DB にあるか。select("*") で読んでいるので 行にキーがあれば入っている。
+  // ★ 列が無いうちに送ると 保存がエラーになるので、無いうちは 欄を出さず 送らない
+  const hasLeaveCols = useMemo(() => employees.some((e) => "leave_start_date" in e), [employees]);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   /**
@@ -337,6 +347,10 @@ export function EmployeesList({
       toast.error("社員番号、名前、事業所は必須です");
       return;
     }
+    if (form.leave_start_date && form.leave_end_date && form.leave_end_date < form.leave_start_date) {
+      toast.error("休職終了日が 休職開始日より前です");
+      return;
+    }
     const payload = {
       employee_number: form.employee_number,
       name: form.name,
@@ -360,6 +374,7 @@ export function EmployeesList({
       commute_unit_price: form.commute_unit_price === "" ? null : parseFloat(form.commute_unit_price),
       travel_unit_price: form.travel_unit_price === "" ? null : parseFloat(form.travel_unit_price),
       communication_fee_type: form.communication_fee_type,
+      ...(hasLeaveCols ? { leave_start_date: form.leave_start_date || null, leave_end_date: form.leave_end_date || null } : {}),
     };
 
     if (editingId) {
@@ -385,6 +400,8 @@ export function EmployeesList({
       employment_status: emp.employment_status ?? "在職者",
       hire_date: emp.hire_date ?? "",
       resignation_date: emp.resignation_date ?? "",
+      leave_start_date: emp.leave_start_date ?? "",
+      leave_end_date: emp.leave_end_date ?? "",
       effective_service_months: emp.effective_service_months?.toString() ?? "",
       job_type: emp.job_type ?? "訪問介護",
       role_type: emp.role_type,
@@ -446,6 +463,8 @@ export function EmployeesList({
         emp.has_care_qualification ? "1" : "0",
         emp.social_insurance ? "1" : "0",
         emp.paid_leave_unit_price?.toString() ?? "0",
+        emp.leave_start_date ?? "",
+        emp.leave_end_date ?? "",
       ]);
     }
     const _fo = officeMap.get(filterOfficeId);
@@ -492,6 +511,11 @@ export function EmployeesList({
 
         const errors: string[] = [];
         if (!officeByNumber.has(officeNum)) errors.push(`事業所番号「${officeNum}」が未登録`);
+        // 休職の期間: 列が無い CSV (以前の書き出し) では undefined にして 既存の値を消さない
+        const leaveStart = idx("休職開始日") >= 0 ? get("休職開始日") : undefined;
+        const leaveEnd = idx("休職終了日") >= 0 ? get("休職終了日") : undefined;
+        if ((leaveStart || leaveEnd) && !hasLeaveCols) errors.push("休職の期間の列が DB にありません (SQL 未適用)");
+        if (leaveStart && leaveEnd && leaveEnd < leaveStart) errors.push("休職終了日が 休職開始日より前");
 
         parsed.push({
           employee_number: empNum,
@@ -510,6 +534,8 @@ export function EmployeesList({
           social_insurance: get("社会保険") === "1",
           paid_leave_unit_price: parseFloat(get("有給手当単価") || "0") || 0,
           communication_fee_type: get("通信費タイプ") || "none",
+          leave_start_date: leaveStart,
+          leave_end_date: leaveEnd,
           error: errors.length > 0 ? errors.join(" / ") : undefined,
         });
       }
@@ -653,6 +679,9 @@ export function EmployeesList({
           has_care_qualification: row.has_care_qualification,
           social_insurance: row.social_insurance,
           paid_leave_unit_price: row.paid_leave_unit_price,
+          // 休職の期間は CSV に列があるときだけ送る (旧システムの CSV には列が無い)
+          ...(hasLeaveCols && row.leave_start_date !== undefined ? { leave_start_date: row.leave_start_date || null } : {}),
+          ...(hasLeaveCols && row.leave_end_date !== undefined ? { leave_end_date: row.leave_end_date || null } : {}),
         };
 
         const { error } = await supabase
@@ -826,6 +855,27 @@ export function EmployeesList({
                       <Input type="date" value={form.resignation_date} onChange={(e) => setForm({ ...form, resignation_date: e.target.value })} />
                     </div>
                   </div>
+                  {hasLeaveCols ? (
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">休職開始日</Label>
+                        <Input type="date" value={form.leave_start_date} onChange={(e) => setForm({ ...form, leave_start_date: e.target.value })} />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">休職終了日</Label>
+                        <Input type="date" value={form.leave_end_date} onChange={(e) => setForm({ ...form, leave_end_date: e.target.value })} />
+                      </div>
+                      <p className="self-end text-[11px] text-muted-foreground">
+                        {form.employment_status === "休職者" && !form.leave_start_date
+                          ? "⚠ 休職者は開始日を入れてください。空のままだと 給与計算は外さずに満額で計算し 警告を出します"
+                          : "休職の期間が月の全日を覆う月だけ 月給の計算から外します。終了日が空なら 休職が続いている扱い"}
+                      </p>
+                    </div>
+                  ) : form.employment_status === "休職者" ? (
+                    <p className="text-[11px] text-amber-700">
+                      休職の期間を入れる欄は まだありません (payroll_employees_leave_dates.sql が未適用)。今は 休職者は全部の月で月給の計算から外れます
+                    </p>
+                  ) : null}
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <Label className="text-xs text-muted-foreground">職種</Label>
