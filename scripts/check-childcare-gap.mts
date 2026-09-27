@@ -73,19 +73,23 @@ if (!L1_DIR) {
   L1_DIR = join(tmpdir(), "childcare-gap-l1");
   if (existsSync(L1_DIR)) rmSync(L1_DIR, { recursive: true, force: true });
   console.log("① を xlsm から再抽出しています (数分かかります)...");
-  execSync("node migrations/extract_soukatsu_from_xlsm.mjs --execute", { env: { ...process.env, OUT: L1_DIR, MONTHS: MONTHS.join(",") }, stdio: "inherit" });
+  // ★ 保育料の「何月分」が 対象月より前のことがあるので 202601/202602 も一緒に抽出する
+  //   (突合の母数は MONTHS のまま。参照月の訪問時間を引くためだけに使う)
+  const refMonths = [...new Set([...MONTHS, "202601", "202602"])].sort();
+  execSync("node migrations/extract_soukatsu_from_xlsm.mjs --execute", { env: { ...process.env, OUT: L1_DIR, MONTHS: refMonths.join(",") }, stdio: "inherit" });
 }
 const l1 = new Map<string, Record<string, unknown>>();
 let l1Part = 0;
 for (const f of readdirSync(L1_DIR).filter((x) => /_(\d{6})\.json$/.test(x))) {
   const m = /_(\d{6})\.json$/.exec(f)![1];
-  if (!MONTHS.includes(m)) continue;
+  // ★ MONTHS の外の月も読み込む。保育料の「何月分」が 突合の対象月より前のことがあり、
+  //   その月の訪問時間が要る (2026-09-27: 202602 を参照する人月が 3 件)。★ 突合の母数は MONTHS のまま
   for (const r of JSON.parse(readFileSync(`${L1_DIR}/${f}`, "utf8")) as L1Row[]) {
     if (r.sheet_kind !== "part") continue;
     const key = `${r.office_number}|${nn(r.employee_number)}|${m}`;
     if (l1.has(key)) continue;  // 写しのファイルからの重複行は先に読んだほうを残す
     l1.set(key, r.row_data);
-    l1Part++;
+    if (MONTHS.includes(m)) l1Part++;
   }
 }
 
