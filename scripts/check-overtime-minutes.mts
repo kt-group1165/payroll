@@ -16,7 +16,7 @@
  *   当方 = payload の overtime_minutes_override (手入力) があればそれ、無ければ summary.overtimeMinutes (computeOvertimePay と同じ)
  *   ②   = 提責_社員 シートの「残業」(分)
  *   ①   = 旧システム出力の「残業時間合計」(h:mm)
- *   出どころ = 手入力 / 旧日計 (legacy_used に 残業時間) / 推定 (estimated_used = 出勤簿なし) / 出勤簿
+ *   出どころ = 手入力 / 旧日計 (legacy_used に 残業時間) / 出勤簿 (その月に出勤簿の行がある) / 推定:訪問+移動 (社員) / 推定:出勤簿なし (sourceOf)
  *   役職・月給か は その月の計算 (payload.monthly の role_type)。★ 職員マスタの今の値では分けない
  *
  * 【型】一致 / ★当方だけ違う (① = ②) / ②だけ違う (当方 = ①) / ①だけ違う (当方 = ②) / 3つとも違う / ①無し・②と違う
@@ -67,7 +67,20 @@ export function classify(ours: number, l2: number, l1: number | null, role: stri
   return t;
 }
 
-export function build(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string, unknown>>): Row[] {
+/**
+ * 当方の残業の分の出どころ。★ page.tsx と同じ優先順: 手入力 > 旧日計 (legacy_used に 残業時間) > 出勤簿 > 推定。
+ * ★ 出勤簿があるかは payload に残らないので 出勤簿の行の有無 (attKeys) で決める。
+ *   2026-09-27 まで estimated_used で推定を見ていたが、社員は出勤簿が無くても 旧システムの移動の日計で 出勤時間が埋まり
+ *   estimated_used が立たない。★ 推定 (訪問 + 移動 − 8h) を「出勤簿」と表示していた (社員 202608 の 107 人月など)。件数は不変・ラベルのみ訂正
+ */
+export function sourceOf(p: M, key: string, attKeys: Set<string>): string {
+  if ((p.overtime_minutes_override ?? 0) > 0) return "手入力";
+  if ((p.legacy_used ?? []).includes("残業時間")) return "旧日計";
+  if (attKeys.has(key)) return "出勤簿";
+  return p.role_type === "社員" ? "推定:訪問+移動" : "推定:出勤簿なし";
+}
+
+export function build(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string, unknown>>, attKeys: Set<string>): Row[] {
   const l2 = new Map<string, Record<string, unknown>>();
   for (const r of l2rows) if (r.sheet_kind !== "part") l2.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, r.row_data);
   const out: Row[] = [];
@@ -85,7 +98,7 @@ export function build(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string,
       const role = String(p.role_type ?? "");
       const type = classify(ours, l2m, l1m, role);
       if (!type) continue;
-      const src = manual ? "手入力" : (p.legacy_used ?? []).includes("残業時間") ? "旧日計" : (p.estimated_used ?? []).length ? "推定" : "出勤簿";
+      const src = sourceOf(p, key, attKeys);
       const it = verificationItems(p, "shaseki", ot, d2).items.find((x) => x.item === "残業総額");
       out.push({ key, name: String(p.employee_name ?? "").replace(/\s+/g, " "), role, src, ours, l2: l2m, l1: l1m, money: !!it && Math.abs(it.ours - it.soukatsu) > 1, type });
     }
@@ -95,7 +108,7 @@ export function build(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string,
 
 const countOf = (rs: Row[], f: (r: Row) => string) => { const c: Record<string, number> = {}; for (const r of rs) { const k = f(r); c[k] = (c[k] ?? 0) + 1; } return c; };
 
-function negativeControl(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string, unknown>>, base: Row[]) {
+function negativeControl(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string, unknown>>, attKeys: Set<string>, base: Row[]) {
   const lines: string[] = [];
   let ok = true;
   const c0 = countOf(base, (r) => r.type);
@@ -108,11 +121,23 @@ function negativeControl(calc: Calc[], l2rows: R2[], l1: Map<string, Record<stri
     `${c.office_number}|${nn(p.employee_number)}|${c.processing_month}` === k ? { ...p, overtime_minutes_override: undefined, summary: { ...(p.summary ?? {}), overtimeMinutes: v } } : p) } }));
   const hmOf = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
   const cases: [string, Row[], string][] = [
-    ["当方の分を +60 (① ② はそのまま)", build(setOurs(hit.key, hit.ours + 60), l2rows, l1), "★当方だけ違う"],
-    ["② の分を +60", build(calc, setL2(hit.key, hit.l2 + 60), l1), "②だけ違う"],
-    ["① の分を +60", build(calc, l2rows, setL1(hit.key, hmOf((hit.l1 ?? 0) + 60))), "①だけ違う"],
-    ["提責の 当方の分を +60 → 別掲に入る", build(setOurs(hitT.key, hitT.ours + 60), l2rows, l1), "提責:意味が違う (別掲)"],
+    ["当方の分を +60 (① ② はそのまま)", build(setOurs(hit.key, hit.ours + 60), l2rows, l1, attKeys), "★当方だけ違う"],
+    ["② の分を +60", build(calc, setL2(hit.key, hit.l2 + 60), l1, attKeys), "②だけ違う"],
+    ["① の分を +60", build(calc, l2rows, setL1(hit.key, hmOf((hit.l1 ?? 0) + 60)), attKeys), "①だけ違う"],
+    ["提責の 当方の分を +60 → 別掲に入る", build(setOurs(hitT.key, hitT.ours + 60), l2rows, l1, attKeys), "提責:意味が違う (別掲)"],
   ];
+  // 出どころ: 出勤簿の行を消すと 出勤簿 → 推定 に変わる (★ 型の件数は変わらない)
+  {
+    const withAtt = base.find((r) => r.src === "出勤簿");
+    if (!withAtt) { ok = false; lines.push("出どころが 出勤簿 の人月が無く 作れない  ★ NG"); }
+    else {
+      const rs = build(calc, l2rows, l1, new Set([...attKeys].filter((k) => k !== withAtt.key)));
+      const got = rs.find((r) => r.key === withAtt.key);
+      const p = !!got && got.src.startsWith("推定") && got.type === withAtt.type;
+      if (!p) ok = false;
+      lines.push(`出勤簿の行を消す (${withAtt.key}) → 出どころ ${got?.src} / 型 ${got?.type} のまま${p ? "  OK" : "  ★ NG (期待 推定・型は不変)"}`);
+    }
+  }
   for (const [label, rs, want] of cases) {
     const c = countOf(rs, (r) => r.type);
     const got = (c[want] ?? 0) - (c0[want] ?? 0);
@@ -144,11 +169,19 @@ async function main() {
   const snap = path && existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
   const calc: Calc[] = snap ? snap.calc : await restAll<Calc>("payroll_calc_results?select=id,office_number,processing_month,payload");
   const l2rows: R2[] = snap ? snap.soukatsu : await restAll<R2>("payroll_soukatsu_rows?select=id,office_number,employee_number,processing_month,sheet_kind,row_data");
-  const rows = build(calc, l2rows, l1);
+  // 出勤簿の行がある (事業所|職員|月)。キーだけ読む。ATT_SNAPSHOT があれば DB を読まない
+  const attPath = process.env.ATT_SNAPSHOT;
+  type AttKey = { office_number: string; employee_number: string; year: number; month: number };
+  const attRows: AttKey[] = attPath && existsSync(attPath) ? JSON.parse(readFileSync(attPath, "utf8"))
+    : await restAll<AttKey>("payroll_attendance_records?select=id,office_number,employee_number,year,month");
+  if (attPath && !existsSync(attPath)) writeFileSync(attPath, JSON.stringify(attRows.map(({ office_number, employee_number, year, month }) => ({ office_number, employee_number, year, month }))));
+  if (!attRows.length) { console.log("★ 出勤簿の行が 0 件 (0 件と出さない)"); process.exit(1); }
+  const attKeys = new Set(attRows.map((a) => `${a.office_number}|${nn(a.employee_number)}|${a.year}${String(a.month).padStart(2, "0")}`));
+  const rows = build(calc, l2rows, l1, attKeys);
   const monthly = calc.reduce((s, c) => s + (c.payload?.monthly?.length ?? 0), 0);
   if (!monthly) { console.log("★ 月給者の人月が 0 件 (0 件と出さない)"); process.exit(1); }
 
-  const neg = negativeControl(calc, l2rows, l1, rows);
+  const neg = negativeControl(calc, l2rows, l1, attKeys, rows);
   console.log("\n負のコントロール (読み込んだ写しを壊す。DB もファイルも触らない):");
   for (const l of neg.lines) console.log("  " + l);
 
