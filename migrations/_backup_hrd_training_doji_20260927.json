@@ -1,0 +1,17 @@
+{
+  "restored_at": "2026-09-27T00:36:12.892Z",
+  "note": "[HRD研修の入れ漏れ是正 2026-09-27] ①② とも HRD研修 2:00 ¥2,300",
+  "inserted_ids": [
+    "d49f1454-54f6-4079-b80c-d93b23ada4db"
+  ],
+  "rows": [
+    {
+      "office_number": "1279000366",
+      "employee_number": "260707",
+      "processing_month": "202608",
+      "item_key": "training_minutes",
+      "numeric_value": 120,
+      "note": "[HRD研修の入れ漏れ是正 2026-09-27] ①② とも HRD研修 2:00 ¥2,300"
+    }
+  ]
+}
