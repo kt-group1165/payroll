@@ -22,7 +22,8 @@
  *   A:①②とも払っていない     書式にある / ①② とも 0            (里見 202606 型)
  *   B:①だけ払っている         書式にある / ① だけ               (宮﨑 202608 型)
  *   C:②だけ払っている         書式にある / ② だけ               (餅原 202608 型)
- *   D:書式に無い              書式に無い / ①② とも払っている    (当方の元データ欠け)
+ *   D:書式の件数が null        書式に会議N件数の行はあるが 値が null / ①② とも払っている (★ 2026-09-27 restore_form_meeting_counts.mts が ①由来の 1 を消して null の行を入れた さつき 202606 14 件)
+ *   D:書式に無い              書式に会議の行が無い / ①② とも払っている    (当方の元データ欠け)
  *   D1:書式に無い・①だけ     書式に無い / ① だけ
  *   D2:書式に無い・②だけ     書式に無い / ② だけ
  *   E:金額が合わない          書式にある / ①② とも払っている / ① か ② の額が 件数×単価 (+時間) と合わない (欄の取り違え・単価違い)
@@ -113,6 +114,9 @@ function refine(type: string, key: string, inp: Inputs): string {
   const [office, emp, month] = key.split("|");
   const ot = inp.officeType.get(office);
   if (ot && ot !== "訪問介護") return "対象外:訪問介護以外";
+  // 行はあるが 値が null (★「書式に無い」と読むと 事業所の入力漏れと誤解する。check:form-empty-values と同じ現象)
+  if (type === "D:書式に無い" && inp.form.some((r) => r.record_type === "km" && /^会議[123]件数$/.test(r.item_name) && r.numeric_value == null
+    && keyOf(r.office_number, r.employee_number, r.processing_month) === key)) return "D:書式の件数が null";
   if (type !== "書式だけ:総括表に行が無い") return type;
   const e = inp.emps.get(empKey(office, emp));
   if (!e) return "書式だけ:職員マスタに無い";
@@ -161,6 +165,7 @@ function negativeControl(inp: Inputs, rows: Row[]) {
   const drop = (m: Map<string, Record<string, unknown>>) => new Map([...m].map(([k, d]) => [k, k === base.key ? { ...d, 会議費: 0, 研修: 0, 研修費: 0 } : d]));
   const cases: [string, Inputs, string][] = [
     ["書式の会議行を消す", { ...inp, form: inp.form.filter((r) => !isBase(r)) }, "D:書式に無い"],
+    ["書式の件数を null にする (行は残す)", { ...inp, form: inp.form.map((r) => (isBase(r) ? { ...r, numeric_value: null } : r)) }, "D:書式の件数が null"],
     ["書式の件数を 2 にする (欄の取り違え)", { ...inp, form: inp.form.map((r) => (isBase(r) ? { ...r, numeric_value: 2 } : r)) }, "E:金額が合わない"],
     ["① の会議費を 0 にする", { ...inp, l1: drop(inp.l1) }, "C:②だけ払っている"],
     ["② の会議費を 0 にする", { ...inp, l2: drop(inp.l2) }, "B:①だけ払っている"],
