@@ -6,7 +6,7 @@
  *   L1_DIR=<抽出済みフォルダ> CALC_SNAPSHOT=<json> npm run check:soukatsu-item-gap-monthly
  *   npm run check:soukatsu-item-gap-monthly -- --update       ★ 基準値方式の数だけ更新
  *
- * ★★ 当方の数字は 2026-09-23 22:17〜22:31 (UTC) の給与計算 (payroll_calc_results) に基づく。
+ * ★★ 当方の数字は payroll_calc_results の計算に基づく (基準値は 2026-09-27 の 138 事業所月の再計算で取った)。
  *    再計算したら 1 回 --update せずに回し、増減の中身を見てから取り直すこと。
  *
  * ── ① の総支給額 (総支給額（介社）) の中身 (2026-09-27 実測・1,578 人月) ──────────────
@@ -53,7 +53,7 @@ const num = (v: unknown) => {
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
 
 console.log("=== check:soukatsu-item-gap-monthly (月給者の手当 当方 vs 総括表 ① 提責_社員・項目ごと・両方向) ===");
-console.log("★ 当方の数字は 2026-09-23 22:17〜22:31 (UTC) の給与計算に基づく");
+console.log("★ 当方の数字は payroll_calc_results の計算 (最新は 2026-09-27 の 138 事業所月の再計算) に基づく");
 
 // ── ① ──
 type L1Row = { office_number: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> };
@@ -124,18 +124,7 @@ const noWork = (p: M) => WORK_KEYS.every((k) => !Number((p.summary as unknown as
 
 // ── 項目 ──
 type Items = Record<string, number>;
-/**
- * 出張km と通勤km が同じ値のとき 出張を 0 にする修正 (tripKmExcludingCommute) より前の計算かどうか。
- * payload の grand_total は 計算した時点の式で出ているので、それより前の計算は 前の式 (重複除去なし) で項目を出す。
- * ★ この時刻 (2026-09-27 02:00 JST) より後に 修正前のコードで再計算した場合は ずれる (push → デプロイの前に再計算しないこと)
- * ★ この分岐は 検査の中だけにある (給与の計算 payroll-calc.ts / page.tsx には 時刻の分岐は無い)。
- * ★ 消す条件: 読んだ payload の calculated_at が 全部 KM_DEDUPE_FROM 以後になったら (= 138 事業所月を再計算したら)
- *   travelFeeAt を travelFeeAmount に戻し KM_DEDUPE_FROM を消す。そうなると 出力の最後に「この分岐は消せます」と出る。
- */
-const KM_DEDUPE_FROM = "2026-09-26T17:00:00Z";
-const travelFeeAt = (p: M) => (String(p.calculated_at ?? "") < KM_DEDUPE_FROM
-  ? Math.ceil((p.travel_km > 0 ? p.travel_km : p.travel_km_auto) * p.office_travel_unit_price - 1e-6)
-  : travelFeeAmount(p));
+// (2026-09-27: 出張・通勤の重複除去の前後で出張費の式を分ける足場 KM_DEDUPE_FROM は 138 事業所月の再計算で不要になったので消した)
 const ITEMS = ["本人給", "職能給", "役職", "資格", "勤続", "固定残業", "処遇改善", "特定処遇改善", "ベースアップ", "出張", "通勤", "育児", "介護超過", "夜朝深夜", "特日", "欠勤控除", "残業"] as const;
 const NO_L1_COLUMN = ["有給", "泊まり", "報奨金"] as const;
 function oursItems(es: M[]): Items {
@@ -147,14 +136,14 @@ function oursItems(es: M[]): Items {
     add("本人給", s.base_personal_salary); add("職能給", s.skill_salary); add("役職", s.position_allowance); add("資格", s.qualification_allowance);
     add("勤続", s.tenure_allowance); add("固定残業", s.fixed_overtime_pay); add("処遇改善", s.treatment_improvement);
     add("特定処遇改善", s.specific_treatment_improvement); add("ベースアップ", s.treatment_subsidy);
-    add("出張", travelFeeAt(p) + p.business_trip_fee); add("通勤", commuteFeeAmount(p)); add("育児", p.childcare_allowance);
+    add("出張", travelFeeAmount(p) + p.business_trip_fee); add("通勤", commuteFeeAmount(p)); add("育児", p.childcare_allowance);
     // 事務員の介護分は ② の「介護」列に入る (熊谷 1272404508|260402|202608 ¥40,852)
     add("介護超過", careOvertimePay(p) + (p.office_worker_care_pay ?? 0)); add("夜朝深夜", yochoAllowance(p)); add("特日", p.tokubi_allowance ?? 0);
     add("欠勤控除", absenceDeduction(p));
     add("有給", monthlyPaidLeaveAllowance(p)); add("泊まり", p.overnight_allowance ?? 0);
     add("報奨金", (p.bonus_paid ? s.bonus_amount : 0) + s.special_bonus);
     // 超過残業は 総支給から他の項目を引いた残り (overtimeExcessPay は残業設定の表が要るので 保存された総支給から逆算する)
-    const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAt(p) + commuteFeeAmount(p) + p.business_trip_fee
+    const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAmount(p) + commuteFeeAmount(p) + p.business_trip_fee
       + (p.overnight_allowance ?? 0) + p.childcare_allowance + careOvertimePay(p) + yochoAllowance(p) + monthlyPaidLeaveAllowance(p)
       + (p.tokubi_allowance ?? 0) + (p.office_worker_care_pay ?? 0) - absenceDeduction(p) + (p.adjustment ?? 0);
     add("残業", Number(p.grand_total ?? 0) - others);
@@ -176,7 +165,7 @@ for (const c of calc) {
   if (!MONTHS.includes(c.processing_month)) continue;
   for (const p of c.monthly ?? []) {
     const k = `${c.office_number}|${nn(p.employee_number)}|${c.processing_month}`;
-    oursByKey.set(k, [...(oursByKey.get(k) ?? []), { ...p, calculated_at: c.calculated_at }]);
+    oursByKey.set(k, [...(oursByKey.get(k) ?? []), p]);
   }
 }
 const calcMonths = new Set(calc.map((c) => `${c.office_number}|${c.processing_month}`));
@@ -344,11 +333,5 @@ if (UPDATE) {
   }
   expect(Object.entries(counts).every(([k, v]) => v <= (baseline.counts[k] ?? Number.POSITIVE_INFINITY)), `どの件数も基準値から増えていない (${Object.keys(counts).length} 項目)`);
 }
-{
-  const old = calc.filter((c) => String(c.calculated_at) < KM_DEDUPE_FROM).length;
-  console.log(old === 0
-    ? `\n★ 読んだ payload は全部 ${KM_DEDUPE_FROM} 以後の計算です。KM_DEDUPE_FROM と travelFeeAt の分岐は消せます (travelFeeAmount に戻す)`
-    : `\n(足場) ${KM_DEDUPE_FROM} より前の計算 ${old} / ${calc.length} 事業所月は 出張・通勤の重複除去の前の式で出張費を出している。0 になったら分岐を消す`);
-}
-console.log(fail ? `\n★ FAIL ${fail} 件` : "\nPASS (★ 2026-09-23 の計算に基づく)");
+console.log(fail ? `\n★ FAIL ${fail} 件` : "\nPASS (★ 2026-09-27 の再計算に基づく)");
 process.exit(fail ? 1 : 0);

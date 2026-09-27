@@ -7,7 +7,7 @@
  *       再抽出・再読込をせずに使い回す。CALC_SNAPSHOT / L2_SNAPSHOT は無ければ作る
  *   npm run check:soukatsu-item-gap -- --update           ★ 基準値方式の数だけ更新
  *
- * ★★ 当方の数字は 2026-09-23 22:17〜22:31 (UTC) の給与計算 (payroll_calc_results) に基づく。
+ * ★★ 当方の数字は payroll_calc_results の計算に基づく (基準値は 2026-09-27 の 138 事業所月の再計算で取った)。
  *    再計算したら 1 回 --update せずに回し、増減の中身を見てから取り直すこと。
  *
  * ── ① の総支給額 (総支給額（パート）) の中身 (2026-09-27 実測・パート 3,143 人月) ─────────
@@ -58,7 +58,7 @@ const num = (v: unknown) => {
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
 
 console.log("=== check:soukatsu-item-gap (時給者の手当 当方 vs 総括表 ①・項目ごと・両方向) ===");
-console.log("★ 当方の数字は 2026-09-23 22:17〜22:31 (UTC) の給与計算に基づく");
+console.log("★ 当方の数字は payroll_calc_results の計算 (最新は 2026-09-27 の 138 事業所月の再計算) に基づく");
 
 // ── ① ──
 type L1Row = { office_number: string; employee_number: string; sheet_kind: string; source_file: string; row_data: Record<string, unknown> };
@@ -273,5 +273,5 @@ if (UPDATE) {
   }
   expect(Object.entries(counts).every(([k, v]) => v <= (baseline.counts[k] ?? Number.POSITIVE_INFINITY)), `どの件数も基準値から増えていない (${Object.keys(counts).length} 項目)`);
 }
-console.log(fail ? `\n★ FAIL ${fail} 件` : "\nPASS (★ 2026-09-23 の計算に基づく)");
+console.log(fail ? `\n★ FAIL ${fail} 件` : "\nPASS (★ 2026-09-27 の再計算に基づく)");
 process.exit(fail ? 1 : 0);
