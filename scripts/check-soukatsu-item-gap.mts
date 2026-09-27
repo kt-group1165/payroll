@@ -41,7 +41,9 @@ import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restAll } from "./_rest.mjs";
-import { hourlyTenure, weekendHolidayAllowanceAmount, weekendAllowanceMinutes, type HourlyPayroll } from "../src/lib/payroll/payroll-calc.js";
+import { type HourlyPayroll } from "../src/lib/payroll/payroll-calc.js";
+// 項目の対応は check:soukatsu-cause と共通 (2026-09-27 給与C が切り出し。挙動は変えていない)
+import { num, HOURLY_ITEMS as ITEMS, HOURLY_NO_L1_COLUMN as NO_L1_COLUMN, hourlyItems as oursItems, l1HourlyItems as l1Items } from "./_soukatsu-items.mjs";
 
 const UPDATE = process.argv.includes("--update");
 const BASELINE = new URL("./check-soukatsu-item-gap-baseline.json", import.meta.url);
@@ -49,12 +51,6 @@ const MONTHS = (process.env.MONTHS || "202603,202604,202605,202606,202607,202608
 let fail = 0;
 const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
 const nn = (s: unknown) => String(s ?? "").trim().replace(/^0+/, "");
-/** ① の数値。"10,000" のようなカンマ付き文字列も数値に直す (2026-09-27: 読めていなかったので直した) */
-const num = (v: unknown) => {
-  if (typeof v === "number") return v;
-  if (typeof v === "string" && /^-?[\d,]+(\.\d+)?$/.test(v.trim())) return Number(v.replace(/,/g, ""));
-  return 0;
-};
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
 
 console.log("=== check:soukatsu-item-gap (時給者の手当 当方 vs 総括表 ①・項目ごと・両方向) ===");
@@ -111,30 +107,6 @@ const l2 = new Map<string, Record<string, unknown>>();
 for (const r of l2rows) if (r.sheet_kind === "part") l2.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, r.row_data);
 
 // ── 項目 ──
-type Items = Record<string, number>;
-const ITEMS = ["本人給系", "初任者", "研修会議", "勤続", "処遇改善", "移動", "通信", "残業", "育児", "通勤", "出張"] as const;
-const NO_L1_COLUMN = ["有給", "事務"] as const;
-function oursItems(es: (HourlyPayroll & { grand_total?: number })[]): Items {
-  const o: Items = {};
-  const add = (k: string, v: number) => { o[k] = (o[k] ?? 0) + (v || 0); };
-  for (const e of es) {
-    add("本人給系", e.totalPay + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate) + e.cancel_allowance + (e.tokubi_allowance ?? 0));
-    add("初任者", e.shoninsha_pay ?? 0);
-    add("研修会議", e.training_pay - (e.shoninsha_pay ?? 0) + e.meeting_fee);
-    add("勤続", hourlyTenure(e)); add("処遇改善", e.treatment_subsidy); add("移動", e.travel_allowance);
-    add("通信", e.communication_fee); add("残業", (e.overtime_pay ?? 0) + (e.legal_holiday_pay ?? 0));
-    add("育児", e.childcare_allowance); add("通勤", e.commute_fee); add("出張", e.business_trip_fee);
-    add("有給", e.paid_leave_allowance); add("事務", e.office_work_pay);
-  }
-  return o;
-}
-const l1Items = (d: Record<string, unknown>): Items => ({
-  本人給系: num(d["集計項目小計"]) + num(d["土日祝"]) + num(d["キャンセル手当（金額）"]) + num(d["特日"]),
-  初任者: num(d["初任者研修費"]) + num(d["初任者調整費"]),
-  研修会議: num(d["その他手当計"]), 勤続: num(d["勤続手当（パート）"]),
-  処遇改善: num(d["ベースアップ加算手当"]) + num(d["処遇改善"]), 移動: num(d["移動手当"]), 通信: num(d["通信手当"]),
-  残業: num(d["残業手当総額_パート"]), 育児: num(d["育児手当"]), 通勤: num(d["通勤費"]), 出張: num(d["出張費"]),
-});
 const L1_TOTAL_TERMS = ["集計項目小計（土日祝含む）", "勤続手当（パート）", "処遇改善", "移動手当", "育児手当", "その他手当計", "通信手当", "残業手当総額_パート", "通勤費", "出張費", "ベースアップ加算手当"];
 const SHONINSHA_CAP = 25875;
 

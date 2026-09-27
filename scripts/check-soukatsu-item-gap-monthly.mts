@@ -33,10 +33,11 @@ import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restAll } from "./_rest.mjs";
+import { type MonthlyPayroll } from "../src/lib/payroll/payroll-calc.js";
+// 項目の対応は check:soukatsu-cause と共通 (2026-09-27 給与C が切り出し。挙動は変えていない)
 import {
-  fixedTotal, travelFeeAmount, commuteFeeAmount, careOvertimePay, yochoAllowance, monthlyPaidLeaveAllowance, absenceDeduction,
-  type MonthlyPayroll,
-} from "../src/lib/payroll/payroll-calc.js";
+  num, MONTHLY_ITEMS as ITEMS, MONTHLY_NO_L1_COLUMN as NO_L1_COLUMN, monthlyItems, l1MonthlyItems as l1Items, L2_MONTHLY_COLS as L2_COLS,
+} from "./_soukatsu-items.mjs";
 
 const UPDATE = process.argv.includes("--update");
 const BASELINE = new URL("./check-soukatsu-item-gap-monthly-baseline.json", import.meta.url);
@@ -44,12 +45,6 @@ const MONTHS = (process.env.MONTHS || "202603,202604,202605,202606,202607,202608
 let fail = 0;
 const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
 const nn = (s: unknown) => String(s ?? "").trim().replace(/^0+/, "");
-/** ① の数値。"10,000" のようなカンマ付き文字列も数値に直す */
-const num = (v: unknown) => {
-  if (typeof v === "number") return v;
-  if (typeof v === "string" && /^-?[\d,]+(\.\d+)?$/.test(v.trim())) return Number(v.replace(/,/g, ""));
-  return 0;
-};
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
 
 console.log("=== check:soukatsu-item-gap-monthly (月給者の手当 当方 vs 総括表 ① 提責_社員・項目ごと・両方向) ===");
@@ -106,13 +101,6 @@ else {
 }
 const l2 = new Map<string, Record<string, unknown>>();
 for (const r of l2rows) if (r.sheet_kind === "shaseki") l2.set(`${r.office_number}|${nn(r.employee_number)}|${r.processing_month}`, r.row_data);
-/** 当方の項目 → ② (支払用) の列。★ 同じ項目の列名が事業所で違う (特定処遇改善 は 4 通り。2026-09-27 に 1 つ落として 1199 を誤って「② は 0」と出した) */
-const L2_COLS: Record<string, string[]> = {
-  本人給: ["本人給"], 職能給: ["職能給"], 役職: ["役職手当"], 資格: ["資格手当"], 勤続: ["勤続手当"], 固定残業: ["固定残業代"],
-  処遇改善: ["処遇改善手当"], 特定処遇改善: ["特別処遇改善手当", "特定処遇改善手当", "特別処遇改善", "特定処遇改善"], ベースアップ: ["処遇改善補助金手当"],
-  出張: ["出張費"], 通勤: ["通勤費"], 育児: ["育児手当"], 介護超過: ["介護"], 夜朝深夜: ["・夜朝・深夜"], 特日: ["・特日"],
-  欠勤控除: ["欠勤控除"], 残業: ["残業総額", "残業総額2"],
-};
 // 足さずに 最大を取る (残業総額 と 残業総額2 に同じ値が入っている行があり、足すと倍になる)
 const l2Val = (key: string, item: string): number | null => { const d = l2.get(key); return d ? Math.max(0, ...L2_COLS[item].map((c) => Math.abs(num(d[c])))) : null; };
 
@@ -124,39 +112,7 @@ const noWork = (p: M) => WORK_KEYS.every((k) => !Number((p.summary as unknown as
 
 // ── 項目 ──
 type Items = Record<string, number>;
-// (2026-09-27: 出張・通勤の重複除去の前後で出張費の式を分ける足場 KM_DEDUPE_FROM は 138 事業所月の再計算で不要になったので消した)
-const ITEMS = ["本人給", "職能給", "役職", "資格", "勤続", "固定残業", "処遇改善", "特定処遇改善", "ベースアップ", "出張", "通勤", "育児", "介護超過", "夜朝深夜", "特日", "欠勤控除", "残業"] as const;
-const NO_L1_COLUMN = ["有給", "泊まり", "報奨金"] as const;
-function oursItems(es: M[]): Items {
-  const o: Items = {};
-  const add = (k: string, v: number) => { o[k] = (o[k] ?? 0) + (v || 0); };
-  for (const p of es) {
-    const s = p.settings;
-    if (!s) continue;
-    add("本人給", s.base_personal_salary); add("職能給", s.skill_salary); add("役職", s.position_allowance); add("資格", s.qualification_allowance);
-    add("勤続", s.tenure_allowance); add("固定残業", s.fixed_overtime_pay); add("処遇改善", s.treatment_improvement);
-    add("特定処遇改善", s.specific_treatment_improvement); add("ベースアップ", s.treatment_subsidy);
-    add("出張", travelFeeAmount(p) + p.business_trip_fee); add("通勤", commuteFeeAmount(p)); add("育児", p.childcare_allowance);
-    // 事務員の介護分は ② の「介護」列に入る (熊谷 1272404508|260402|202608 ¥40,852)
-    add("介護超過", careOvertimePay(p) + (p.office_worker_care_pay ?? 0)); add("夜朝深夜", yochoAllowance(p)); add("特日", p.tokubi_allowance ?? 0);
-    add("欠勤控除", absenceDeduction(p));
-    add("有給", monthlyPaidLeaveAllowance(p)); add("泊まり", p.overnight_allowance ?? 0);
-    add("報奨金", (p.bonus_paid ? s.bonus_amount : 0) + s.special_bonus);
-    // 超過残業は 総支給から他の項目を引いた残り (overtimeExcessPay は残業設定の表が要るので 保存された総支給から逆算する)
-    const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAmount(p) + commuteFeeAmount(p) + p.business_trip_fee
-      + (p.overnight_allowance ?? 0) + p.childcare_allowance + careOvertimePay(p) + yochoAllowance(p) + monthlyPaidLeaveAllowance(p)
-      + (p.tokubi_allowance ?? 0) + (p.office_worker_care_pay ?? 0) - absenceDeduction(p) + (p.adjustment ?? 0);
-    add("残業", Number(p.grand_total ?? 0) - others);
-  }
-  return o;
-}
-const l1Items = (d: Record<string, unknown>): Items => ({
-  本人給: num(d["本人給"]), 職能給: num(d["職能給"]), 役職: num(d["役職手当"]), 資格: num(d["資格手当"]), 勤続: num(d["勤続手当"]),
-  固定残業: num(d["固定残業手当"]), 処遇改善: num(d["処遇改善"]), 特定処遇改善: num(d["特定処遇改善"]), ベースアップ: num(d["ベースアップ加算手当"]),
-  出張: num(d["出張費"]), 通勤: num(d["通勤費"]), 育児: num(d["育児手当"]), 介護超過: num(d["介護超過"]), 夜朝深夜: num(d["夜朝"]) + num(d["深夜_3"]),
-  特日: num(d["特日"]), 欠勤控除: Math.abs(num(d["欠勤控除"])),
-  残業: Math.max(0, num(d["残業手当総額"]) - num(d["固定残業手当"])),
-});
+const oursItems = (es: M[]): Items => monthlyItems(es);
 const L1_TOTAL_TERMS = ["本人給", "職能給", "役職手当", "資格手当", "勤続手当", "固定残業手当", "処遇改善", "特定処遇改善", "ベースアップ加算手当", "出張費", "通勤費", "育児手当", "介護超過", "夜朝", "深夜_3"];
 const L1_TOTAL = "総支給額（介社）";
 
