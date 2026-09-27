@@ -32,6 +32,7 @@
     "check:rate-gap": "tsx scripts/verify-rate-gap.mts",
     "check:soukatsu-source": "tsx scripts/check-soukatsu-source.mts",
     "check:soukatsu-cause": "tsx scripts/check-soukatsu-cause.mts",
+    "check:childcare-gap": "tsx scripts/check-childcare-gap.mts",
     "check:nonnumeric-cells": "tsx scripts/check-nonnumeric-cells.mts",
     "check:l1-total-residual": "tsx scripts/check-l1-total-residual.mts",
     "check:late-early": "tsx scripts/check-late-early.mts",
