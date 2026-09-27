@@ -13,6 +13,7 @@
  *   [社保の入れ漏れ是正 2026-09-27]        36 件  → 処遇改善が出る見込み
  *   [遅刻早退の分を②から取込 2026-09-27]    5 件  → 控除が出る見込み
  *   [月違い是正 2026-09-27]                2 件  → 二重払いが消える
+ *   [初任者研修調整の旗 2026-09-27]        13 件  → 無資格の減額が出る (② と ¥36,639 で対応)
  *
  * 【見ていないもの】(出力にも出す)
  *   ・コード側の是正 (km の二重 / 介護時間 / 手入力の脱落 …) — ★ note が残らないので数えられない
@@ -49,10 +50,20 @@ async function all<T>(q: string): Promise<T[]> {
   return out;
 }
 
+/**
+ * ★ fixedAt = その入力を **入れた時刻** (UTC)。これより後に計算されていれば反映済み。
+ *   ★ 種類ごとに違う。1 つの定数で済ませると、★ 先に入れた分の再計算が
+ *   後から入れた分にも「反映済み」として数えられてしまう (2026-09-27 に実際に踏みかけた)。
+ *   ★ 時刻は各 migration の控え (_backup_*.json の "at") から取る。
+ */
 const MARKERS = [
-  { note: "[社保の入れ漏れ是正 2026-09-27]", label: "社保の入れ漏れ", expect: 36, effect: "処遇改善が出る (+¥720,000 見込み)" },
-  { note: "[遅刻早退の分を②から取込 2026-09-27]", label: "遅刻早退の分", expect: 5, effect: "控除が出る (−¥15,054 見込み)" },
-  { note: "[月違い是正 2026-09-27]", label: "月違いの手入力", expect: 2, effect: "7 月と 8 月の二重が消える" },
+  { note: "[社保の入れ漏れ是正 2026-09-27]", label: "社保の入れ漏れ", expect: 36, fixedAt: "2026-09-26T21:00:00Z", effect: "処遇改善が出る (+¥720,000 見込み)" },
+  { note: "[遅刻早退の分を②から取込 2026-09-27]", label: "遅刻早退の分", expect: 5, fixedAt: "2026-09-26T21:00:00Z", effect: "控除が出る (−¥15,054 見込み)" },
+  { note: "[月違い是正 2026-09-27]", label: "月違いの手入力", expect: 2, fixedAt: "2026-09-26T21:00:00Z", effect: "7 月と 8 月の二重が消える" },
+  // 2026-09-27 10:23 JST 投入 (_backup_shoninsha_adjustment_20260927.json の at = 01:23:32Z)。
+  // ★ 旗だけ持ち、金額は当方の式 (切り捨て(同行を除く訪問分 × 100 / 60)) で出る。
+  // ★ ② の初任者研修調整費 合計 ¥36,639 と 13/13 で対応が取れている (実測 2026-09-27)。
+  { note: "[初任者研修調整の旗 2026-09-27]", label: "初任者研修調整の旗", expect: 13, fixedAt: "2026-09-27T01:23:32Z", effect: "無資格の減額が出る (−¥36,639 見込み)" },
 ];
 
 console.log("=== check:pending-effects  入力は直したが 再計算がまだ のもの ===\n");
@@ -66,14 +77,13 @@ console.log(`分母: 計算結果 ${calc.length} 事業所月 / note 付きの�
 if (calc.length === 0) { console.error("★ 計算結果を 1 件も読めていません"); process.exit(2); }
 
 // 入力を入れた時刻より後に計算されているか。★ note は入れた時刻を持たないので、
-//   「入れたのは 2026-09-27」を基準にする (この日より後の計算なら反映されている)
-const FIXED_AT = "2026-09-26T21:00:00Z";  // 実際の投入は 2026-09-26T21:5x〜22:0x UTC
+//   MARKERS の fixedAt (控えの "at") を基準にする。★ 種類ごとに別
 let pending = 0, done = 0;
 for (const m of MARKERS) {
   // ★ note は **元の文に追記される**ことがある (月違い是正がそう)。完全一致では拾えない。
   //   2026-09-27 に実際に 0 件と誤って出した。部分一致で引く
   const rows = mis.filter((x) => (x.note ?? "").includes(m.note));
-  const stale = rows.filter((x) => (calcAt.get(`${x.office_number}|${x.processing_month}`) ?? "") < FIXED_AT);
+  const stale = rows.filter((x) => (calcAt.get(`${x.office_number}|${x.processing_month}`) ?? "") < m.fixedAt);
   pending += stale.length; done += rows.length - stale.length;
   const mark = rows.length === m.expect ? "" : `  ★ 件数が期待 ${m.expect} と違う`;
   console.log(`  ${m.label.padEnd(16)} ${String(rows.length).padStart(3)} 件  うち未反映 ${String(stale.length).padStart(3)} 件${mark}`);
