@@ -11,7 +11,7 @@
  */
 import {
   hourlyTenure, weekendHolidayAllowanceAmount, weekendAllowanceMinutes,
-  fixedTotal, travelFeeAmount, commuteFeeAmount, careOvertimePay, yochoAllowance, monthlyPaidLeaveAllowance, absenceDeduction,
+  fixedTotal, travelFeeAmount, commuteFeeAmount, careOvertimePay, yochoAllowance, monthlyPaidLeaveAllowance, absenceDeduction, lateEarlyDeduction,
   type HourlyPayroll, type MonthlyPayroll,
 } from "../src/lib/payroll/payroll-calc.js";
 
@@ -73,7 +73,8 @@ export function monthlyItems(es: MonthlyPayroll[]): Items {
     // 超過残業は 総支給から他の項目を引いた残り (overtimeExcessPay は残業設定の表が要るので 保存された総支給から逆算する)
     const others = fixedTotal(s) + (p.bonus_paid ? s.bonus_amount : 0) + travelFeeAmount(p) + commuteFeeAmount(p) + p.business_trip_fee
       + (p.overnight_allowance ?? 0) + p.childcare_allowance + careOvertimePay(p) + yochoAllowance(p) + monthlyPaidLeaveAllowance(p)
-      + (p.tokubi_allowance ?? 0) + (p.office_worker_care_pay ?? 0) - absenceDeduction(p) + (p.adjustment ?? 0);
+      + (p.tokubi_allowance ?? 0) + (p.office_worker_care_pay ?? 0) - absenceDeduction(p) - lateEarlyDeduction(p) + (p.adjustment ?? 0);
+    // ⚠ monthlyGrandTotal と同じ項目を引くこと。遅刻早退控除 (8e4f6df) を足し忘れていた (2026-09-27 給与C が発見)
     add("残業", Number((p as MonthlyPayroll & { grand_total?: number }).grand_total ?? 0) - others);
   }
   return o;
