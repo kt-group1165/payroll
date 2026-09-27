@@ -37,6 +37,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { restAll, normEmpNo } from "./_rest.mjs";
+import { soukatsuMinutes } from "../src/lib/payroll/soukatsu-time.js";
 
 const BASELINE = new URL("./check-manual-input-month-baseline.json", import.meta.url);
 const UPDATE = process.argv.includes("--update");
@@ -103,7 +104,9 @@ function analyze(s: Snap) {
   const l2Months = [...new Set(s.l2.map((r) => r.processing_month))].sort();
   const cpMatch = (key: string, v: number, k: string) => {
     const c = CP[key]; const d = l2.get(k); if (!c || !d) return false;
-    if (c.cols.some((col) => eq(toNum(d[col]), v))) return true;
+    // 時間の欄 (項目が *_minutes) は 総括表の時間の読み方 (soukatsuMinutes) を通す。"35:00" / Excel 日付 / 数値 (分) を同じに読む
+    const read = (col: string) => (/minutes/.test(key) ? soukatsuMinutes(d[col], "minutes") : toNum(d[col]));
+    if (c.cols.some((col) => eq(read(col), v))) return true;
     return /minutes/.test(key) && !!c.yenCols?.some((col) => eq(toNum(d[col]), Math.round(v / 60 * 1150)));
   };
   const T: Hit[] = [], M: Hit[] = [];
