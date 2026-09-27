@@ -26,6 +26,7 @@
     "check:non-care-records": "tsx scripts/check-non-care-records.mts",
     "check:no-source-data": "tsx scripts/check-no-source-data.mts",
     "check:soukatsu-time": "tsx scripts/check-soukatsu-time.mts",
+    "check:training-time-l1": "tsx scripts/check-training-time-l1.mts",
     "check:office-input-flow": "tsx scripts/check-office-input-flow.mts",
     "check:tenure-rehire": "tsx scripts/verify-tenure-rehire.mts",
     "check:rate-gap": "tsx scripts/verify-rate-gap.mts",
