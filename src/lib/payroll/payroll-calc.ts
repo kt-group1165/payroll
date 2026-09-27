@@ -128,6 +128,11 @@ export type HourlyPayroll = {
    * ⚠ training_pay にも含まれているので **足し算するときに二重にしない**。
    */
   shoninsha_pay?: number;
+  /**
+   * 初任者研修調整 (無資格の減額) を その月に掛けるか。月ごとの手入力 (payroll_monthly_inputs shoninsha_adjustment = 1)。
+   * 金額は shoninshaAdjustmentAmount (当方の同行を除く訪問分から出す)。hourlyTotalPay で引く
+   */
+  shoninsha_adjustment_flag?: boolean;
   /** 特日手当 (tokubiAllowanceAmount)。hourlyTotalPay に含める */
   tokubi_allowance?: number;
   /** 旧システムのデータを使った項目 (例 "移動時間" "出勤時間")。use_legacy_data の切り替えまで。2026-09-22 */
@@ -855,8 +860,35 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
     e.commute_fee +
     e.business_trip_fee +
     (e.tokubi_allowance ?? 0) +
-    e.error_adjustment
+    e.error_adjustment -
+    shoninshaAdjustmentOf(e)
   );
+}
+
+/**
+ * 初任者研修調整 (無資格の減額) の 1 時間あたりの額 (円)。2026-09-27 実装 (user・指示役「案 A」)。
+ * 総括表 ② の「初任者研修調整費」(= ① の「初任者調整費」) 13 人月が すべて −切り捨て(同行を除く訪問分 × 100 ÷ 60) で 1 円一致。
+ * ★ 無資格の人の時給を 100 円下げる代わりに 実績時間ぶんを後から引いている、と読める。
+ *   ただし これは当方の解釈で、旧システムの意図は未確認。
+ */
+export const UNCERTIFIED_RATE_CUT_PER_HOUR = 100;
+
+/**
+ * 初任者研修調整の額 (円、正の数で返す。時給者の総支給から引く)。
+ *   = 切り捨て(同行を除く訪問分 × 100 ÷ 60)
+ *   ② の「実績」列 (同行を除く訪問の分) でも 当方の visitMinutesExcludingAccompanied でも 13/13 一致。
+ *   切り捨て (杉尾 202607: 1,930 分 → 3,216.67 → 3,216 / 古川 202608: 1,990 分 → 3,316)。同行は含めない。
+ * ★ 誰に掛けるかは 当方のデータでは決まらない (資格なしで実績がある 1,479 人月中 13 だけ。受講者でも掛かっていない人がいる)
+ *   ので 月ごとの手入力の旗だけで決める。金額は旗から当方の式で出す (② の額を写さない)。
+ */
+export function shoninshaAdjustmentAmount(visitMinutesExcludingAccompanied: number, flag: boolean): number {
+  if (!flag || !(visitMinutesExcludingAccompanied > 0)) return 0;
+  return Math.floor((visitMinutesExcludingAccompanied * UNCERTIFIED_RATE_CUT_PER_HOUR) / 60 + 1e-6);
+}
+
+/** 時給者 1 人月の 初任者研修調整 (円)。hourlyTotalPay / 画面 / 検証が同じ値を使う */
+export function shoninshaAdjustmentOf(e: HourlyPayroll): number {
+  return shoninshaAdjustmentAmount(e.summary?.visitMinutesExcludingAccompanied ?? 0, !!e.shoninsha_adjustment_flag);
 }
 
 /**

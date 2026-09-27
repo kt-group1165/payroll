@@ -33,6 +33,7 @@
     "check:nonnumeric-cells": "tsx scripts/check-nonnumeric-cells.mts",
     "check:l1-total-residual": "tsx scripts/check-l1-total-residual.mts",
     "check:late-early": "tsx scripts/check-late-early.mts",
+    "check:shoninsha-adjustment": "tsx scripts/check-shoninsha-adjustment.mts",
     "check:distance-kind": "tsx scripts/verify-distance-kind.mts",
     "check:monthly-status": "tsx scripts/verify-monthly-status.mts",
     "check:multiday-training": "tsx scripts/verify-multiday-training.mts",

@@ -1126,6 +1126,8 @@ export default function PayrollPage() {
       const manualLateEarlyMinByNum = new Map<string, number>();
       // 初任者研修の時間 (事業所書式に記録が無い人)。payroll_monthly_inputs shoninsha_training_minutes。2026-09-26
       const manualShoninshaMinByNum = new Map<string, number>();
+      // 初任者研修調整 (無資格の減額) を掛ける月の旗。payroll_monthly_inputs shoninsha_adjustment = 1。2026-09-27
+      const manualShoninshaAdjustmentNums = new Set<string>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
       const manualCommuteYenByNum = new Map<string, number>();
       // 泊まり手当 (円)。★規則が決まっていないので計算せず 人が入れた額をそのまま足す
@@ -1136,7 +1138,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes", "shoninsha_adjustment"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (Number(r.numeric_value ?? 0) > 0) {
@@ -1155,6 +1157,7 @@ export default function PayrollPage() {
           if (r.item_key === "absence_days" && Number(r.numeric_value ?? 0) > 0) manualAbsenceDaysByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "late_early_minutes" && Number(r.numeric_value ?? 0) > 0) manualLateEarlyMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "shoninsha_adjustment" && Number(r.numeric_value ?? 0) > 0) manualShoninshaAdjustmentNums.add(normEmp(r.employee_number));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
@@ -1378,6 +1381,8 @@ export default function PayrollPage() {
           meeting_fee: meetingFee,
           training_pay: trainingPay,
           shoninsha_pay: shoninshaPay,
+          // 初任者研修調整 (無資格の減額)。額は hourlyTotalPay が summary の 同行を除く訪問分から出す (shoninshaAdjustmentOf)
+          shoninsha_adjustment_flag: manualShoninshaAdjustmentNums.has(normEmp(empNum)),
           ...(() => { const m = (attByEmpH.get(empNum) ?? []).length === 0 ? hourlyOvertimeMinutes(empRecs) : 0; return { overtime_minutes: m, overtime_pay: hourlyOvertimePayAmount(m) }; })(),
           childcare_allowance: manualChildcareByNum.get(empNum) ?? computeChildcareAllowance(childcareRecsOf(empNum), "時給", visitMinutesByEmpMonth, empNum, selectedMonth, { limit: contractOf.get(empNum)?.childcare_limit, ratePct: contractOf.get(empNum)?.childcare_rate_pct, method: contractOf.get(empNum)?.childcare_method }),
           commute_fee: commuteFee,

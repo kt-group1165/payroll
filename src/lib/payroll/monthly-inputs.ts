@@ -61,6 +61,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "shoninsha_adjustment",
+    label: "初任者研修調整 (無資格の減額) を掛ける",
+    unit: "1=掛ける",
+    help: "時給者 (パート) で その月に 無資格の減額を掛けるなら 1。額は 当システムが 同行を除く訪問時間 × 100円/時 (切り捨て) で出して 総支給から引く。総括表の「初任者研修調整費」(マイナス) が元。★ 誰に掛けるかは資格の登録からは決まらないので 人が入れる (2026-09-27。古川詩織・吾妻娜娜・中崎亜沙美・杉尾加奈子 の 13 人月)",
+    allowNegative: false,
+  },
+  {
     key: "late_early_minutes",
     label: "遅刻早退 (分)",
     unit: "分",

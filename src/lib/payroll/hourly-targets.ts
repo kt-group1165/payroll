@@ -21,6 +21,7 @@ export const HOURLY_TARGET_EXCLUDED_ITEMS: Readonly<Record<string, string>> = {
   legal_within_overtime_minutes: "月給者の法内残業。時給者の計算は読まない",
   absence_days: "月給者の欠勤控除。時給者の計算は読まない",
   late_early_minutes: "月給者の遅刻早退控除。時給者の計算は読まない",
+  shoninsha_adjustment: "初任者研修調整の旗 (1 = 掛ける)。時給者の計算が読むが 旗だけでは払う額が無い (訪問が無ければ 0 円)。訪問がある人は実績で集合に入る",
   overnight_allowance: "泊まり手当。月給者の計算だけが読む",
 };
 

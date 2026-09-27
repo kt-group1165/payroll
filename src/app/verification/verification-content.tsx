@@ -21,6 +21,8 @@ import {
   travelFeeAmount,
   yochoAllowance,
   lateEarlyDeduction,
+  shoninshaAdjustmentOf,
+  type HourlyPayroll,
   type MonthlyPayroll,
   type OvertimeSetting,
 } from "@/lib/payroll/payroll-calc";
@@ -95,6 +97,8 @@ function ourItems(
       { item: "育児手当", ours: num(e.childcare_allowance) },
       { item: "調整手当", ours: num(e.error_adjustment) },
       { item: "処遇改善補助金手当", ours: num(e.treatment_subsidy) },
+      // ② の「初任者研修調整費」は 負の数 (−3,425 等)。当方は 引く額を正の数で持つので 符号を合わせる (2026-09-27)
+      { item: "初任者研修調整費", ours: -shoninshaAdjustmentOf(e as unknown as HourlyPayroll) },
       { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
     ];
   }

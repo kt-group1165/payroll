@@ -11,7 +11,7 @@
  */
 import {
   hourlyTenure, weekendHolidayAllowanceAmount, weekendAllowanceMinutes,
-  fixedTotal, travelFeeAmount, commuteFeeAmount, careOvertimePay, yochoAllowance, monthlyPaidLeaveAllowance, absenceDeduction, lateEarlyDeduction,
+  fixedTotal, travelFeeAmount, commuteFeeAmount, careOvertimePay, yochoAllowance, monthlyPaidLeaveAllowance, absenceDeduction, lateEarlyDeduction, shoninshaAdjustmentOf,
   type HourlyPayroll, type MonthlyPayroll,
 } from "../src/lib/payroll/payroll-calc.js";
 
@@ -35,7 +35,8 @@ export function hourlyItems(es: (HourlyPayroll & { grand_total?: number })[]): I
   const add = (k: string, v: number) => { o[k] = (o[k] ?? 0) + (v || 0); };
   for (const e of es) {
     add("本人給系", e.totalPay + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate) + e.cancel_allowance + (e.tokubi_allowance ?? 0));
-    add("初任者", e.shoninsha_pay ?? 0);
+    // ① の「初任者」は 初任者研修費 + 初任者調整費 (マイナス)。当方も 初任者研修調整 (shoninshaAdjustmentOf・2026-09-27) を引いて揃える
+    add("初任者", (e.shoninsha_pay ?? 0) - shoninshaAdjustmentOf(e));
     add("研修会議", e.training_pay - (e.shoninsha_pay ?? 0) + e.meeting_fee);
     add("勤続", hourlyTenure(e)); add("処遇改善", e.treatment_subsidy); add("移動", e.travel_allowance);
     add("通信", e.communication_fee); add("残業", (e.overtime_pay ?? 0) + (e.legal_holiday_pay ?? 0));
