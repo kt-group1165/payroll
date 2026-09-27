@@ -18,6 +18,10 @@
  * ── 型の定義 (1 人月は 1 つの型にだけ入る。上から順に判定) ───────────────────
  *   STALE  当方の計算結果より 手入力 (payroll_monthly_inputs) が新しい。再計算待ち。原因の診断から外す
  *   NaN    総括表の総支給額が数値でない (#VALUE! 等)
+ *   KX     ② の氏名に「_<事業所名>」が付いた行 (例「松元綾子_高品」「本郷美江_高品」)。★ 他事業所の兼務者の表示で、
+ *          ② の総支給は「この事業所で払った額」ではない (本郷: 総支給 0・誤差 = 当方の額 6/6 / 松元: 高品の行と同じ額を表示)。
+ *          ★ 分母には残す (比べられないだけで 当方が正しいとは限らない。一致率の頭の数字の意味を変えない)。2026-09-27 給与D
+ *          ② の全 3,699 対で 氏名に「_」を含む行は この 12 だけ。氏名の文字列が違う 208 は全部 同じ人の表記ゆれ (別人との突合は 0)
  *   ── パート ──
  *   A      総支給額の差 = ②の「調整手当」と当方の error_adjustment の差 だけで説明できる (②の手入力)
  *   B      総支給額の差 = 移動手当の差 だけで説明できる。かつ ②に同行時間がある
@@ -74,11 +78,12 @@ const UPDATE = process.argv.includes("--update");
 const DETAIL = process.argv.find((a) => a.startsWith("--detail="))?.split("=")[1];
 const BASELINE_PATH = join(dirname(fileURLToPath(import.meta.url)), "check-soukatsu-cause-baseline.json");
 
-export const TYPES = ["STALE", "NaN", "A", "B", "B2", "AB", "C", "PZ", "T", "UO", "UC", "UY", "UT", "UM", "SZ", "PZ②", "PZ当", "PZ?", "SZ②", "SZ当", "SZ?"] as const;
+export const TYPES = ["STALE", "NaN", "KX", "A", "B", "B2", "AB", "C", "PZ", "T", "UO", "UC", "UY", "UT", "UM", "SZ", "PZ②", "PZ当", "PZ?", "SZ②", "SZ当", "SZ?"] as const;
 export type CauseType = (typeof TYPES)[number];
 const TYPE_LABEL: Record<CauseType, string> = {
   STALE: "手入力が計算より新しい (再計算待ち)",
   NaN: "総括表の総支給額が数値でない",
+  KX: "② の行が 他事業所の兼務の表示 (氏名に _事業所名。比べられない)",
   A: "パート: ②の調整手当 (手入力) だけ",
   B: "パート: 移動手当だけ・同行あり",
   B2: "パート: 移動手当だけ・同行なし",
@@ -181,6 +186,7 @@ export function classify(p: Pair): CauseType | null {
   const d = p.ours - p.soukatsu;
   if (within1(d)) return null;
   if (p.stale) return "STALE";
+  if (/[_＿]/.test(String(p.name ?? ""))) return "KX";
   const r = p.row, e = p.e;
   if (p.kind === "part") {
     const adj = num(e.error_adjustment) - num(r["調整手当"]);
@@ -372,7 +378,16 @@ function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
     ok6 = t6 === "SZ当" && t7 === "SZ②" && t8 === "PZ②";
     lines.push(`⑥ 当方だけ本人給 +3,000 → ${t6} / ⑦ ②だけ本人給 +3,000 → ${t7} / ⑧ パート ②だけ通信手当 +500 → ${t8}: ${ok6 ? "OK" : "★ NG (期待 SZ当 / SZ② / PZ②)"}`);
   } else lines.push("⑥〜⑧ (その他の 3 者比較) は ① が無い (または 壊す元になる人月が無い) ので回していない");
-  return { ok: ok1 && ok2 && ok3a && ok3b && ok4 && ok5 && ok6, lines };
+  // ⑨ 一致していない パート 1 人月の ② の氏名に「_高品」を付ける → KX +1 (一致している人月は 付けても一致のまま = 分母・一致の数は変わらない)
+  const pickMis = pairs.find((p) => p.kind === "part" && !p.stale && classify(p) != null && classify(p) !== "KX");
+  let ok9 = false;
+  if (pickMis) {
+    const p9 = mutate(pickMis, (p) => ({ ...p, name: `${p.name}_高品` }));
+    const p9b = mutate(pickPart, (p) => ({ ...p, name: `${p.name}_高品` }));
+    ok9 = cnt(p9, pickMis.month, "KX") === base.get(pickMis.month)!.KX + 1 && tally(p9b).get(pickPart.month)!.exact === base.get(pickPart.month)!.exact;
+  }
+  lines.push(`⑨ 不一致の人月の ② の氏名に「_高品」→ KX +1 / 一致の人月に付けても 一致のまま: ${ok9 ? "OK" : "★ NG"}`);
+  return { ok: ok1 && ok2 && ok3a && ok3b && ok4 && ok5 && ok6 && ok9, lines };
 }
 
 const pct = (a: number, b: number) => (b === 0 ? "-" : `${((100 * a) / b).toFixed(1)}%`);
@@ -421,6 +436,14 @@ async function main() {
   console.log("  型の意味:");
   for (const t of TYPES) console.log(`    ${t.padEnd(5)} ${TYPE_LABEL[t]}`);
   console.log("");
+
+  {
+    const kx = pairs.filter((p) => classify(p) === "KX");
+    const eq = kx.filter((p) => within1(p.ours - ((p.soukatsu ?? 0) + num(p.row["誤差"]))));
+    console.log(`--- KX (② が他事業所の兼務の表示) ${kx.length} 人月: うち ② の総支給 + 誤差 = 当方 ${eq.length} (★ 一致の件数には足さない。内訳として出すだけ)`);
+    for (const p of kx.filter((q) => !eq.includes(q))) console.log(`    未解明 ${p.month} ${p.office}|${p.emp} ${p.name.replace(/\s+/g, " ")} 当方 ${p.ours} / ② ${p.soukatsu} + 誤差 ${num(p.row["誤差"])} (残差 ${p.ours - (p.soukatsu ?? 0) - num(p.row["誤差"])})`);
+    console.log("");
+  }
 
   // ── その他 (PZ / SZ) の内訳 ──
   if (l1) {
