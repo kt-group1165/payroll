@@ -4,7 +4,9 @@
  *   L1_DIR=<① の抽出フォルダ> CALC_SNAPSHOT=<json> L2_SNAPSHOT=<json> npm run check:soukatsu-row-only
  *   npm run check:soukatsu-row-only -- --update        ★ 基準値方式。型ごとの件数だけ更新
  *
- * ★★ 当方の数字は 2026-09-23 22:17〜22:31 (UTC) の給与計算 (payroll_calc_results) に基づく。
+ * ★★ 当方の数字は 読んだ給与計算 (payroll_calc_results) の計算日時に基づく (出力の 2 行目・基準値の calc_at に出る)。
+ *    基準値: 2026-09-23 の計算で 279/7 → 2026-09-27 に 138 件を再計算して 273/7
+ *    (手入力しか無い 3 と 計算より後にマスタ登録 3 が 予想どおり 0 に。他の型は変わらず)。
  *    その後のコード修正 (例: 手入力しか無い時給者を拾う hourly-targets / 入社前の月を外す) は反映されていない。
  *    再計算したら 1 回 --update せずに回し、増減の中身を見てから取り直すこと。
  *
@@ -62,7 +64,6 @@ type Kind = keyof typeof TOTAL;
 const ARR: Record<Kind, "monthly" | "hourly"> = { shaseki: "monthly", part: "hourly" };
 
 console.log("=== check:soukatsu-row-only (総括表 ① と 当方で 行ごと片側にしか居ない人月を 型に分ける) ===");
-console.log("★ 当方の数字は 2026-09-23 22:17〜22:31 (UTC) の給与計算に基づく");
 
 const L1_DIR = process.env.L1_DIR ?? "";
 const CALC_SNAPSHOT = process.env.CALC_SNAPSHOT ?? "";
@@ -98,6 +99,7 @@ else {
 }
 calc = calc.filter((c) => MONTHS.includes(c.processing_month));
 const calcAt = calc.map((c) => c.calculated_at).sort();
+console.log(`★ 当方の数字は ${calcAt[0]} 〜 ${calcAt.at(-1)} (UTC) の給与計算に基づく`);
 const ours = new Map<string, E[]>(); // kind|key
 for (const c of calc) for (const kind of ["shaseki", "part"] as Kind[]) for (const e of c[ARR[kind]] ?? []) {
   const k = `${kind}|${c.office_number}|${nn(e.employee_number)}|${c.processing_month}`;
@@ -337,11 +339,12 @@ for (const h of rest) {
 // ── 基準値 ──
 const total = { "①だけ": hits.filter((h) => h.dir === "①だけ").length, "当方だけ": hits.filter((h) => h.dir === "当方だけ").length };
 console.log(`\n合計: ① だけ ${total["①だけ"]} 人月 / 当方だけ ${total["当方だけ"]} 人月`);
-const cur = { counts, total };
+const cur = { calc_at: `${calcAt[0]} 〜 ${calcAt.at(-1)}`, counts, total };
 if (UPDATE || !existsSync(BASELINE)) {
   writeFileSync(BASELINE, JSON.stringify({
     _readme: "型ごとの人月数。★ 増えたら FAIL。「どれにも当てはまらない」は 本命 (払い漏れ候補) なので 増えたら中身を見ること。"
-      + " ★ 当方の数字は 2026-09-23 22:17〜22:31 UTC の計算に基づく。再計算したら --update せずに 1 回回して差を見る。"
+      + " ★ 当方の数字は calc_at の計算に基づく。再計算したら --update せずに 1 回回して差を見る。"
+      + " 経緯: 2026-09-23 の計算で ① だけ 279 / 当方だけ 7 → 2026-09-27 の再計算で 273 / 7 (手入力しか無い 3・計算より後にマスタ登録 3 が 0 に)。"
       + " ★ 悪化したまま --update しない (穴を焼き付ける)",
     ...cur,
   }, null, 2) + "\n");

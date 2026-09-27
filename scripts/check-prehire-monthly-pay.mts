@@ -33,8 +33,9 @@ type Sou = { office_number: string; employee_number: string; processing_month: s
 async function main() {
   // ★ 2026-09-26 指示役判断: まだ check:all に入れていない。理由は 8 件残っているから
   //   (埋め戻し → 再計算 → 0 件 を確認してから編入する)。0 件になったらこの注記ごと消す
-  console.log("⚠ この検査は まだ check:all に入れていません。理由: 8 件 (6 名) が残っているため。");
-  console.log("  手順: migrations/backfill_hire_date_from_legacy.mjs --execute → 該当月を再計算 → この検査で 0 件 → check:all に編入\n");
+  // ★ 2026-09-27: 入社日の埋め戻し (6 名) → 138 件を再計算 → 0 件になった。編入は指示役の判断待ち (編入したらこの注記ごと消す)
+  console.log("⚠ この検査は まだ check:all に入れていません。2026-09-27 の再計算で 0 件になった (以前は 8 件 6 名)。編入は指示役の判断待ち");
+  console.log("  ⚠ 入社日が不明の人 (下の「?」) は判定していない。0 件でも この人たちの入社前の月は見ていない\n");
   const po = await restAll<PO>("payroll_offices?select=id,office_number,office_id,office_type");
   const ofs = await restAll<{ id: string; name: string }>("offices?select=id,name");
   const poById = new Map(po.map((p) => [p.id, p]));
