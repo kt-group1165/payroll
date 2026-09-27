@@ -130,6 +130,10 @@ export function verificationItems(
     .filter((x) => x.item === "調整手当(内訳計)" || hasSoukatsuColumn(row, x.item))
     .flatMap((x) => {
       if (x.item === "調整手当(内訳計)") return [{ ...x, soukatsu: parts.total }];
+      // ★ 月給の法内残業: 当方は computeOvertimePay の中 (= 残業総額) に入れるが、② は「法内残業手当」の別の列で払う。
+      //   ② の 残業総額 だけと比べると お金は合っているのに不一致に出る (2026-09-27 給与D: 小原 1271500942|438|202606
+      //   総支給 ②=当方=271,807 / 江尻 917|202605 の差 2,818 = 法内残業手当)。★ 足して比べる
+      if (x.item === "残業総額" && kind === "shaseki") return [{ ...x, soukatsu: pickSoukatsu(row, "残業総額") + pickSoukatsu(row, "法内残業手当") }];
       if (!MINUTE_ITEMS.has(x.item)) return [{ ...x, soukatsu: pickSoukatsu(row, x.item) }];
       const raw = row[x.item];
       const m = soukatsuMinutes(raw, "minutes");

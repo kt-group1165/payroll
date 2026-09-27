@@ -80,6 +80,22 @@ console.log("\n--- 検証ページの組み立て (verification-items.ts) が �
   expect(got(c) === 2100, `② 出勤時間 2100 (数値 = 分) → 2,100 分 (実際 ${got(c)})`);
 }
 
+console.log("\n--- 検証ページ: 月給の 残業総額 は ② の 残業総額 + 法内残業手当 と比べる (2026-09-27 給与D)");
+{
+  // 事務員・法内残業 120 分・本人給 224,000 → 単価 round(224,000 / 159h) = 1,409 → 法内残業手当 2,818 (江尻 917|202605 と同じ額)
+  const ot = new Map([["事務", { job_type: "事務", scheduled_hours_per_month: 168, include_base_personal_salary: true, include_skill_salary: false, include_position_allowance: false,
+    include_qualification_allowance: false, include_tenure_allowance: false, include_treatment_improvement: false, include_specific_treatment: false,
+    include_treatment_subsidy: false, include_fixed_overtime_pay: false, include_special_bonus: false }]]);
+  const e = { job_type: "事務", role_type: "事務員", legal_within_minutes: 120, summary: { overtimeMinutes: 0 }, settings: { base_personal_salary: 224000, fixed_overtime_pay: 0 }, grand_total: 0 } as Record<string, unknown>;
+  const pick = (row: Record<string, unknown>, kind: "part" | "shaseki" = "shaseki") => verificationItems(e, kind, ot, row).items.find((x) => x.item === "残業総額");
+  const a = pick({ 総支給額: 0, 残業総額: "", 法内残業手当: 2818 });
+  expect(a?.ours === 2818 && a.soukatsu === 2818, `当方 2,818 (法内残業を残業総額に入れる) / ② 残業総額 空 + 法内残業手当 2,818 → 一致 (実際 当方 ${a?.ours} / ② ${a?.soukatsu})`);
+  const b = pick({ 総支給額: 0, 残業総額: "", 法内残業手当: 0 });
+  expect(b?.soukatsu === 0 && b.ours !== b.soukatsu, `負のコントロール: ② の法内残業手当を 0 にすると 不一致が出る (② ${b?.soukatsu} / 当方 ${b?.ours})`);
+  const c = pick({ 総支給額: 0, 残業総額: 1000, 法内残業手当: 2818 }, "part");
+  expect(c?.soukatsu === 1000, `パートには足さない (② 残業総額 1,000 のまま。実際 ${c?.soukatsu})`);
+}
+
 // ── 2. 実データ ──
 const L1_DIR = process.env.L1_DIR ?? "", L2_SNAPSHOT = process.env.L2_SNAPSHOT ?? "";
 /** 時間の欄と 数値のときの単位。★ 欄を足したら ここにも足す */
