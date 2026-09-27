@@ -111,6 +111,52 @@ function negativeControl(tris: Tri[]) {
   return { ok, lines };
 }
 
+/**
+ * 入力を壊して buildTris から通す負のコントロール (2026-09-27 追加)。
+ * 上の negativeControl は型の分け方だけを見る。こちらは「突き合わせのキー」と「項目の取り違え」が 件数に出るかを見る。
+ *   (a) ② の 1 行の職員番号を壊す → 当方と ② が結び付かず「片側に行が無い」が増える
+ *   (b) 当方の初任者研修を研修として持たせる (shoninsha_pay を 0 に。training_pay はそのまま)
+ *       → ① ② に研修が無い人月は「当方にだけある」が増える (今井・杉尾・江波戸 と同じ壊れ方)
+ */
+function negativeControlInputs(calc: Calc[], l2rows: R2[], l1: Map<string, Record<string, unknown>>, tris: Tri[]) {
+  const lines: string[] = [];
+  let ok = true;
+  const c0 = countOf(tris);
+  const base = tris.find((t) => classifyTri(t) === "一致" && t.ours > 0 && t.l2 != null);
+  const idx = base ? l2rows.findIndex((r) => r.sheet_kind === "part" && `${empKey(r.office_number, r.employee_number)}|${r.processing_month}` === base.key) : -1;
+  if (idx < 0) { ok = false; lines.push("(a) 一致していて ② に行がある人月が無く 作れない  ★ NG"); }
+  else {
+    const broken = l2rows.map((r, i) => (i === idx ? { ...r, employee_number: "999999999" } : r));
+    const c = countOf(buildTris(calc, broken, l1));
+    const up = (c["片側に行が無い"] ?? 0) > (c0["片側に行が無い"] ?? 0) && (c["一致"] ?? 0) < (c0["一致"] ?? 0);
+    if (!up) ok = false;
+    lines.push(`(a) ② の職員番号を 1 行壊す (${base!.key}) → 片側に行が無い ${c0["片側に行が無い"] ?? 0}→${c["片側に行が無い"] ?? 0}${up ? "  OK" : "  ★ NG"}`);
+  }
+  let hit: { ci: number; ei: number; key: string } | null = null;
+  for (let ci = 0; ci < calc.length && !hit; ci++) {
+    const es = calc[ci].payload?.hourly ?? [];
+    for (let ei = 0; ei < es.length; ei++) {
+      const e = es[ei];
+      if (!((e.shoninsha_pay ?? 0) > 0)) continue;
+      const key = `${empKey(calc[ci].office_number, e.employee_number)}|${calc[ci].processing_month}`;
+      const t = tris.find((x) => x.key === key);
+      if (t && t.ours === 0 && t.l2 === 0 && t.l1 === 0 && !t.meeting) { hit = { ci, ei, key }; break; }
+    }
+  }
+  if (!hit) { ok = false; lines.push("(b) 初任者研修があり 研修が 3 つとも 0 の人月が無く 作れない  ★ NG"); }
+  else {
+    const broken = calc.map((c, ci) => ci !== hit!.ci ? c : {
+      ...c, payload: { ...c.payload, hourly: (c.payload?.hourly ?? []).map((e, ei) => (ei === hit!.ei ? { ...e, shoninsha_pay: 0 } : e)) },
+    });
+    const c = countOf(buildTris(broken, l2rows, l1));
+    const k = "当方だけ:当方にだけある";
+    const up = (c[k] ?? 0) === (c0[k] ?? 0) + 1;
+    if (!up) ok = false;
+    lines.push(`(b) 初任者研修を研修として持たせる (${hit.key}) → 当方にだけある ${c0[k] ?? 0}→${c[k] ?? 0}${up ? "  OK" : "  ★ NG"}`);
+  }
+  return { ok, lines };
+}
+
 async function main() {
   console.log("=== check:training-3way (パートの 研修・HRD研修・会議 を 当方 / ② / ① で) 2026-09-27 新設・読み取り専用 ===");
   console.log("★ check:all には入れていない (意図的)。② の手入力・① の抽出物の更新で件数が動く診断系");
@@ -135,9 +181,13 @@ async function main() {
   const l2rows: R2[] = snap ? snap.soukatsu : await restAll<R2>("payroll_soukatsu_rows?select=id,office_number,employee_number,processing_month,sheet_kind,row_data&sheet_kind=eq.part");
   const tris = buildTris(calc, l2rows, l1);
 
-  const neg = negativeControl(tris);
+  const neg0 = negativeControl(tris);
+  const negIn = negativeControlInputs(calc, l2rows, l1, tris);
+  const neg = { ok: neg0.ok && negIn.ok };
   console.log("\n負のコントロール (写しを壊す。DB もファイルも触らない):");
-  for (const l of neg.lines) console.log("  " + l);
+  for (const l of neg0.lines) console.log("  " + l);
+  console.log("  -- 入力を壊して突き合わせから通す --");
+  for (const l of negIn.lines) console.log("  " + l);
 
   const counts = countOf(tris);
   const n = Object.values(counts).reduce((a, b) => a + b, 0);
