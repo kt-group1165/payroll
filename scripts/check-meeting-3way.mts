@@ -22,7 +22,6 @@
  *   A:①②とも払っていない     書式にある / ①② とも 0            (里見 202606 型)
  *   B:①だけ払っている         書式にある / ① だけ               (宮﨑 202608 型)
  *   C:②だけ払っている         書式にある / ② だけ               (餅原 202608 型)
- *   D:書式の件数が null        書式に会議N件数の行はあるが 値が null / ①② とも払っている (★ 2026-09-27 restore_form_meeting_counts.mts が ①由来の 1 を消して null の行を入れた さつき 202606 14 件)
  *   D:書式に無い              書式に会議の行が無い / ①② とも払っている    (当方の元データ欠け)
  *   D1:書式に無い・①だけ     書式に無い / ① だけ
  *   D2:書式に無い・②だけ     書式に無い / ② だけ
@@ -114,9 +113,6 @@ function refine(type: string, key: string, inp: Inputs): string {
   const [office, emp, month] = key.split("|");
   const ot = inp.officeType.get(office);
   if (ot && ot !== "訪問介護") return "対象外:訪問介護以外";
-  // 行はあるが 値が null (★「書式に無い」と読むと 事業所の入力漏れと誤解する。check:form-empty-values と同じ現象)
-  if (type === "D:書式に無い" && inp.form.some((r) => r.record_type === "km" && /^会議[123]件数$/.test(r.item_name) && r.numeric_value == null
-    && keyOf(r.office_number, r.employee_number, r.processing_month) === key)) return "D:書式の件数が null";
   if (type !== "書式だけ:総括表に行が無い") return type;
   const e = inp.emps.get(empKey(office, emp));
   if (!e) return "書式だけ:職員マスタに無い";
@@ -127,8 +123,11 @@ function refine(type: string, key: string, inp: Inputs): string {
 
 export function buildRows(inp: Inputs): Row[] {
   const byKey = new Map<string, FormRec[]>();
+  // ★ 値の無い行も 除かずに computeMeetingFee に渡す。給与計算 (page.tsx) は その職員の書式の行を全部渡しており、
+  //   computeMeetingFee は 会議N件数 の値が null の行を 1 件と数える (numeric_value ?? 1)。
+  //   2026-09-27 に null の行を除いて渡していたため、さつき 202606 の 14 人月を「書式の件数が null・当方 0 円」と誤って出した
+  //   (実際の計算結果は 14 人とも meeting_fee 1,500)。★ 検査は計算と同じ入力で呼ぶ
   for (const r of inp.form) {
-    if (!hasValue(r)) continue;
     const k = keyOf(r.office_number, r.employee_number, r.processing_month);
     byKey.set(k, [...(byKey.get(k) ?? []), r]);
   }
@@ -141,7 +140,7 @@ export function buildRows(inp: Inputs): Row[] {
     const recs = byKey.get(k) ?? [];
     const countYen = computeMeetingFee(recs, inp.officeUnit.get(office) ?? 0, inp.prices[office]);
     const timeYen = trainingPayAmount(meetingMinutes(recs), TRAINING_RATE_PER_HOUR) ?? 0;
-    const counts = recs.filter((r) => r.record_type === "km" && (r.numeric_value ?? 0) < MEETING_COUNT_AS_YEN_THRESHOLD).reduce((s, r) => s + Math.round(r.numeric_value ?? 0), 0);
+    const counts = recs.filter((r) => r.record_type === "km" && (r.numeric_value ?? 0) < MEETING_COUNT_AS_YEN_THRESHOLD).reduce((s, r) => s + Math.round(r.numeric_value ?? 1), 0);   // null は 1 件 (computeMeetingFee と同じ)
     const yenInCount = recs.some((r) => r.record_type === "km" && (r.numeric_value ?? 0) >= MEETING_COUNT_AS_YEN_THRESHOLD);
     const d1 = inp.l1.get(k), d2 = inp.l2.get(k);
     const base = { key: k, office, countYen, timeYen, counts, yenInCount, l1: d1 ? num(d1["会議費"]) : null, l2: d2 ? l2Meeting(d2, d1) : null };
@@ -165,7 +164,7 @@ function negativeControl(inp: Inputs, rows: Row[]) {
   const drop = (m: Map<string, Record<string, unknown>>) => new Map([...m].map(([k, d]) => [k, k === base.key ? { ...d, 会議費: 0, 研修: 0, 研修費: 0 } : d]));
   const cases: [string, Inputs, string][] = [
     ["書式の会議行を消す", { ...inp, form: inp.form.filter((r) => !isBase(r)) }, "D:書式に無い"],
-    ["書式の件数を null にする (行は残す)", { ...inp, form: inp.form.map((r) => (isBase(r) ? { ...r, numeric_value: null } : r)) }, "D:書式の件数が null"],
+    ["書式の件数を null にする (行は残す。計算は null を 1 件と数えるので 一致のまま)", { ...inp, form: inp.form.map((r) => (isBase(r) ? { ...r, numeric_value: null } : r)) }, "一致"],
     ["書式の件数を 2 にする (欄の取り違え)", { ...inp, form: inp.form.map((r) => (isBase(r) ? { ...r, numeric_value: 2 } : r)) }, "E:金額が合わない"],
     ["① の会議費を 0 にする", { ...inp, l1: drop(inp.l1) }, "C:②だけ払っている"],
     ["② の会議費を 0 にする", { ...inp, l2: drop(inp.l2) }, "B:①だけ払っている"],
@@ -258,6 +257,9 @@ async function main() {
   const counts = countOf(rows);
   const withForm = rows.filter((r) => r.countYen + r.timeYen > 0).length;
   console.log(`\n母数: 対象月 ${months.join(",")} / 書式の会議行 ${form.length} 行 (値あり ${form.filter(hasValue).length})`);
+  const nullPm = rows.filter((r) => inp.form.some((f) => f.record_type === "km" && /^会議[123]件数$/.test(f.item_name) && f.numeric_value == null
+    && keyOf(f.office_number, f.employee_number, f.processing_month) === r.key));
+  console.log(`  (参考) 会議N件数 の値が null の行がある人月 ${nullPm.length} — ★ 当方は 1 件と数えて払っている (computeMeetingFee の numeric_value ?? 1)。型: ${[...new Set(nullPm.map((r) => r.type))].join(" / ") || "-"}`);
   console.log(`  書式・①・② のどれかに会議がある パートの人月 ${rows.length} (うち 書式に会議がある ${withForm} / ① が払っている ${rows.filter((r) => (r.l1 ?? 0) > 0).length} / ② が払っている ${rows.filter((r) => (r.l2 ?? 0) > 0).length})`);
   for (const [k, c] of Object.entries(counts).sort((a, b) => b[1] - a[1])) {
     const rs = rows.filter((r) => r.type === k);
