@@ -38,6 +38,13 @@
  *          ⚠ 0.75 換算は 介護超過と特日だけ (Hana系)。夜朝・土日祝には掛けない (memory: payroll_075_conversion_scope)
  *            当方の値は careOvertimePay / yochoAllowance をそのまま呼ぶので この規則は payroll-calc 側に従う
  *   SZ     月給のその他
+ *   ── その他 (PZ / SZ) の 3 者比較 (2026-09-27。SOUKATSU1_DIR=<① の抽出物> を渡したときだけ) ──
+ *   項目ごとに 当方 / ② / ① を並べ、当方 ≠ ② の項目が 全部「当方 = ①」なら ② の手入力、
+ *   1 つでも「② = ①」(当方だけ違う) があり 判定できない項目が無ければ 直す候補、それ以外は 判定できない。
+ *     PZ② / SZ②  ② だけ違う → 直さない
+ *     PZ当 / SZ当  ★ 当方だけ違う → 直す候補 (出力に 項目ごとの件数と 当方 − ② の合計)
+ *     PZ? / SZ?   判定できない (3 つとも違う / ① に行が無い / ① に比べる列が無い 有給・遅刻早退 / 項目では説明できない)
+ *   ★ 基準値は ① ありで作ってある。① なしで回すと 分け方が違うので止まる
  *   「だけで説明できる」は ±1 円。
  *
  * ── 判定 (基準値方式) ─────────────────────────────────────────────────────
@@ -53,19 +60,21 @@
  *   ★ 型 A・C は ② の手入力そのもの。是非の判断は ① を見ること。この検査は「②と何が違うか」の分類であって
  *     当方の誤りの件数ではない。
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { restAll, empKey, normEmpNo } from "./_rest.mjs";
 import { careOvertimePay, yochoAllowance, commuteFeeAmount } from "../src/lib/payroll/payroll-calc.js";
 import { soukatsuAdjustmentParts } from "../src/lib/payroll/soukatsu-diff.js";
 import type { MonthlyPayroll } from "../src/lib/payroll/payroll-calc.js";
+import { monthlyPaidLeaveAllowance, lateEarlyDeduction } from "../src/lib/payroll/payroll-calc.js";
+import { hourlyItems, l1HourlyItems, monthlyItems, l1MonthlyItems, L2_MONTHLY_COLS, l2Pick, num as numL } from "./_soukatsu-items.mjs";
 
 const UPDATE = process.argv.includes("--update");
 const DETAIL = process.argv.find((a) => a.startsWith("--detail="))?.split("=")[1];
 const BASELINE_PATH = join(dirname(fileURLToPath(import.meta.url)), "check-soukatsu-cause-baseline.json");
 
-export const TYPES = ["STALE", "NaN", "A", "B", "B2", "AB", "C", "PZ", "T", "UO", "UC", "UY", "UT", "UM", "SZ"] as const;
+export const TYPES = ["STALE", "NaN", "A", "B", "B2", "AB", "C", "PZ", "T", "UO", "UC", "UY", "UT", "UM", "SZ", "PZ②", "PZ当", "PZ?", "SZ②", "SZ当", "SZ?"] as const;
 export type CauseType = (typeof TYPES)[number];
 const TYPE_LABEL: Record<CauseType, string> = {
   STALE: "手入力が計算より新しい (再計算待ち)",
@@ -83,6 +92,12 @@ const TYPE_LABEL: Record<CauseType, string> = {
   UT: "月給: 調整手当のうち 特日だけ",
   UM: "月給: 調整手当の部品が複数",
   SZ: "月給: その他",
+  "PZ②": "パート その他: ② だけ違う (当方 = ①)。② の手入力 → 直さない",
+  "PZ当": "パート その他: 当方だけ違う (② = ①) → ★ 直す候補",
+  "PZ?": "パート その他: 判定できない (3 つとも違う / ① が無い / 項目で説明できない)",
+  "SZ②": "月給 その他: ② だけ違う (当方 = ①)。② の手入力 → 直さない",
+  "SZ当": "月給 その他: 当方だけ違う (② = ①) → ★ 直す候補",
+  "SZ?": "月給 その他: 判定できない (3 つとも違う / ① が無い / 項目で説明できない)",
 };
 
 type Emp = Record<string, unknown> & { employee_number: unknown; grand_total?: unknown };
@@ -105,7 +120,60 @@ const numOrNull = (v: unknown): number | null => {
 };
 const within1 = (a: number) => Math.abs(a) <= 1;
 
-export type Pair = { office: string; month: string; emp: string; name: string; kind: "part" | "shaseki"; ours: number; soukatsu: number | null; stale: boolean; e: Emp; row: Record<string, unknown> };
+export type Pair = { office: string; month: string; emp: string; name: string; kind: "part" | "shaseki"; ours: number; soukatsu: number | null; stale: boolean; e: Emp; row: Record<string, unknown>;
+  /** ① (旧システムの出力) の行。SOUKATSU1_DIR を渡したときだけ。あれば その他 (PZ / SZ) を 3 者比較で分ける */
+  l1?: Record<string, unknown> | null };
+
+/**
+ * その他 (PZ / SZ) を分けるための 項目ごとの 当方 / ② / ① (2026-09-27 給与C)。
+ * 対応は scripts/_soukatsu-items.mts (給与D の check:soukatsu-item-gap の定義を共通にしたもの) + ② の列。
+ * ★ ② の列の対応は「総支給が一致している人月で 項目も一致するか」で確かめた (パート 1,952 / 月給 1,109 人月):
+ *   パートは どの項目も 99.8% 以上 / 月給は 介護超過 96.0% (② の介護列は 調整手当に畳まれるため) 以外 99.5% 以上。
+ *   → 月給の 介護超過・夜朝深夜・特日 は ② の「調整手当」(畳み込み) と 合計で比べる。
+ * ⚠ パートの「事務」(office_work_pay) は ② に対応する列が無いので比べない。
+ * ⚠ ① に列が無い項目 (有給・遅刻早退) は ① = null (判定できない側に倒れる)。
+ */
+export type ItemTriple = { item: string; ours: number; l2: number; l1: number | null };
+export function itemTriples(p: Pair): ItemTriple[] {
+  const r = p.row, l1 = p.l1 ?? null;
+  if (p.kind === "part") {
+    const o = hourlyItems([p.e as never]);
+    const a = l1 ? l1HourlyItems(l1) : null;
+    const L2: Record<string, number> = {
+      本人給系: numL(r["集計項目小計"]) + numL(r["土日祝"]) + numL(r["ドタキャン"]) + numL(r["特日"]),
+      初任者: numL(r["初任者研修費"]) + numL(r["初任者研修調整費"]),
+      研修会議: numL(r["その他手当"]) || numL(r["HRD研修"]) + numL(r["研修"]),   // ★ ② の研修列には会議費が入る事業所がある (給与D の check:no-source-data と同じ扱い)
+      勤続: l2Pick(r, ["勤続手当", "勤続手当2", "資格or勤続手当", "・勤続手当・資格手当"]),
+      処遇改善: numL(r["処遇改善補助金手当"]), 移動: numL(r["移動手当"]), 通信: numL(r["通信手当"]), 残業: numL(r["残業総額"]),
+      育児: numL(r["育児手当"]), 通勤: numL(r["通勤費"]), 出張: numL(r["出張費"]), 有給: numL(r["有給休暇手当"]),
+    };
+    return Object.keys(L2).map((k) => ({ item: k, ours: o[k] ?? 0, l2: L2[k], l1: a && k in a ? a[k] : null }));
+  }
+  const mp = p.e as unknown as MonthlyPayroll;
+  const o = monthlyItems([mp]);
+  const a = l1 ? l1MonthlyItems(l1) : null;
+  const out: ItemTriple[] = [];
+  for (const k of Object.keys(L2_MONTHLY_COLS)) {
+    if (k === "介護超過" || k === "夜朝深夜" || k === "特日") continue;
+    out.push({ item: k, ours: o[k] ?? 0, l2: l2Pick(r, L2_MONTHLY_COLS[k]), l1: a ? a[k] ?? 0 : null });
+  }
+  out.push({ item: "調整手当(介護超過+夜朝深夜+特日)", ours: (o["介護超過"] ?? 0) + (o["夜朝深夜"] ?? 0) + (o["特日"] ?? 0), l2: numL(r["調整手当"]),
+    l1: a ? (a["介護超過"] ?? 0) + (a["夜朝深夜"] ?? 0) + (a["特日"] ?? 0) : null });
+  out.push({ item: "有給", ours: monthlyPaidLeaveAllowance(mp), l2: numL(r["有給休暇手当"]), l1: null });
+  out.push({ item: "遅刻早退", ours: lateEarlyDeduction(mp), l2: Math.abs(numL(r["遅刻早退金額"])), l1: null });
+  return out;
+}
+
+/** その他を 3 者比較で分ける。① が無ければ null (PZ / SZ のまま) */
+export function splitOther(p: Pair): "②" | "当" | "?" | null {
+  if (p.l1 === undefined) return null;
+  const diffs = itemTriples(p).filter((x) => !within1(x.ours - x.l2));
+  if (!diffs.length || !p.l1) return "?";
+  const v = diffs.map((x) => (x.l1 == null ? "?" : within1(x.l2 - x.l1) ? "当" : within1(x.ours - x.l1) ? "②" : "?"));
+  if (v.every((x) => x === "②")) return "②";
+  if (v.includes("当") && !v.includes("?")) return "当";
+  return "?";
+}
 
 /** 1 人月の不一致を 型に振り分ける。一致していれば null */
 export function classify(p: Pair): CauseType | null {
@@ -121,7 +189,8 @@ export function classify(p: Pair): CauseType | null {
     if (!within1(tr) && within1(d - tr)) return num(r["同行"]) > 0 ? "B" : "B2";
     if (!within1(adj) && !within1(tr) && within1(d - adj - tr)) return "AB";
     if (num(r["誤差"]) !== 0) return "C";
-    return "PZ";
+    const sp = splitOther(p);
+    return sp ? (`PZ${sp}` as CauseType) : "PZ";
   }
   const mp = e as unknown as MonthlyPayroll;
   const commute = commuteFeeAmount(mp) - num(r["通勤費"]);
@@ -140,10 +209,11 @@ export function classify(p: Pair): CauseType | null {
     }
     return "UM";
   }
-  return "SZ";
+  const so = splitOther(p);
+  return so ? (`SZ${so}` as CauseType) : "SZ";
 }
 
-export function buildPairs(s: Snapshot): Pair[] {
+export function buildPairs(s: Snapshot, l1?: Map<string, Record<string, unknown>>): Pair[] {
   const sMap = new Map<string, SoukatsuRow>();
   for (const r of s.soukatsu) sMap.set(`${empKey(r.office_number, r.employee_number)}|${r.processing_month}|${r.sheet_kind}`, r);
   const calcAt = new Map(s.calc.map((c) => [`${c.office_number}|${c.processing_month}`, c.calculated_at]));
@@ -164,6 +234,7 @@ export function buildPairs(s: Snapshot): Pair[] {
           office: c.office_number, month: c.processing_month, emp: normEmpNo(e.employee_number as string), name: row.employee_name, kind,
           ours: typeof e.grand_total === "number" ? e.grand_total : 0, soukatsu: numOrNull(row.row_data["総支給額"]),
           stale: stale.has(`${k}|${c.processing_month}`), e, row: row.row_data,
+          ...(l1 ? { l1: l1.get(`${k}|${c.processing_month}|${kind}`) ?? null } : {}),
         });
       }
     }
@@ -200,6 +271,27 @@ export function compare(base: Record<string, MonthCell>, cur: Map<string, MonthC
   }
   for (const m of Object.keys(base)) if (!cur.has(m)) denom.push(`${m} (計算結果が無くなった)`);
   return { worse, better, denom };
+}
+
+/** ① (旧システムの出力) の抽出物。SOUKATSU1_DIR が無ければ undefined。キーは empKey|月|シート */
+function loadL1(): Map<string, Record<string, unknown>> | undefined {
+  const dir = process.env.SOUKATSU1_DIR;
+  if (!dir) return undefined;
+  const files = readdirSync(dir).filter((f) => /^soukatsu_extract_\d{6}\.json$/.test(f)).sort();
+  if (!files.length) throw new Error(`★ SOUKATSU1_DIR=${dir} に soukatsu_extract_YYYYMM.json が 1 本もありません`);
+  const m = new Map<string, Record<string, unknown>>();
+  let dup = 0;
+  for (const f of files) {
+    const ym = /_(\d{6})\.json$/.exec(f)![1];
+    for (const r of JSON.parse(readFileSync(join(dir, f), "utf8")) as { office_number: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> }[]) {
+      const k = `${empKey(r.office_number, r.employee_number)}|${ym}|${r.sheet_kind === "part" ? "part" : "shaseki"}`;
+      // ① の写しには 同じ人月の行が 2 つある (事業所の総括表が 2 ファイルに出る)。先に出たほうを使う (給与D の検査と同じ)
+      if (m.has(k)) { dup++; continue; }
+      m.set(k, r.row_data);
+    }
+  }
+  console.log(`(① 抽出物 ${files.length} 本・${m.size} 人月を使用: ${dir}${dup ? ` / 重複行 ${dup} を除いた` : ""})`);
+  return m;
 }
 
 async function loadSnapshot(): Promise<Snapshot> {
@@ -247,7 +339,9 @@ function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
 
   const p3 = mutate(pickShaseki, (p) => ({ ...p, ours: p.ours + 10000 }));
   const t3 = tally(p3);
-  const ok3a = t3.get(pickShaseki.month)!.SZ === base.get(pickShaseki.month)!.SZ + 1;
+  // その他は ① があると SZ② / SZ当 / SZ? に分かれるので 合計で見る
+  const szSum = (c: MonthCell) => c.SZ + c["SZ②"] + c["SZ当"] + c["SZ?"];
+  const ok3a = szSum(t3.get(pickShaseki.month)!) === szSum(base.get(pickShaseki.month)!) + 1;
   const ok3b = compare(Object.fromEntries(base), t3).worse.length > 0;
   lines.push(`③ 当方の月給 +10,000 → SZ +1: ${ok3a ? "OK" : "★ NG"} / 基準値比較が「悪化」を出す: ${ok3b ? "OK" : "★ NG"}`);
   const toComma = (v: unknown) => Math.round(num(v)).toLocaleString("en-US");
@@ -258,14 +352,35 @@ function negativeControl(pairs: Pair[]): { ok: boolean; lines: string[] } {
   const p4 = mutate(pickShaseki, (p) => ({ ...p, soukatsu: (p.soukatsu ?? 0) + 900, row: { ...p.row, 調整手当: num(p.row["調整手当"]) + 900 } }));
   const ok4 = cnt(p4, pickShaseki.month, "UO") === base.get(pickShaseki.month)!.UO + 1;
   lines.push(`④ ②調整手当セルを +900 (部品はそのまま) → UO +1: ${ok4 ? "OK" : "★ NG"}`);
-  return { ok: ok1 && ok2 && ok3a && ok3b && ok4 && ok5, lines };
+  // ⑥⑦ その他 (PZ / SZ) の 3 者比較。① がある時だけ
+  let ok6 = true;
+  // 壊す元は ① があって 項目がすべて 当方 = ② = ① の人月 (そうでないと 元から別の項目のずれが混ざる)
+  const clean = (q: Pair) => !!q.l1 && classify(q) == null && itemTriples(q).every((x) => within1(x.ours - x.l2) && (x.l1 == null || within1(x.l2 - x.l1)));
+  const cS = pairs.find((q) => q.kind === "shaseki" && clean(q)), cP = pairs.find((q) => q.kind === "part" && clean(q));
+  if (pickShaseki.l1 !== undefined && cS && cP) {
+    const withL1 = (p: Pair, l1: Record<string, unknown>) => ({ ...p, l1 });
+    // ⑥ 当方だけ違う: ② と ① は同じ額のまま 当方の本人給 +3,000 → SZ当
+    const e6 = { ...cS.e, settings: { ...(cS.e.settings as object), base_personal_salary: num((cS.e.settings as Record<string, unknown>)?.base_personal_salary) + 3000 } };
+    const t6 = classify(withL1({ ...cS, e: e6, ours: cS.ours + 3000 }, cS.l1!));
+    // ⑦ ② だけ違う: ② の本人給 +3,000 (総支給も) / ① は当方と同じ → SZ②
+    const r7 = { ...cS.row, 本人給: num(cS.row["本人給"]) + 3000 };
+    const t7 = classify(withL1({ ...cS, row: r7, soukatsu: (cS.soukatsu ?? 0) + 3000 }, cS.l1!));
+    // ⑧ パート: ② だけ移動手当以外 (通信手当) +500 / ① は当方と同じ → PZ②
+    const r8 = { ...cP.row, 通信手当: num(cP.row["通信手当"]) + 500, 誤差: 0 };
+    const l1p = cP.l1!;
+    const t8 = classify(withL1({ ...cP, row: r8, soukatsu: (cP.soukatsu ?? 0) + 500 }, l1p));
+    ok6 = t6 === "SZ当" && t7 === "SZ②" && t8 === "PZ②";
+    lines.push(`⑥ 当方だけ本人給 +3,000 → ${t6} / ⑦ ②だけ本人給 +3,000 → ${t7} / ⑧ パート ②だけ通信手当 +500 → ${t8}: ${ok6 ? "OK" : "★ NG (期待 SZ当 / SZ② / PZ②)"}`);
+  } else lines.push("⑥〜⑧ (その他の 3 者比較) は ① が無い (または 壊す元になる人月が無い) ので回していない");
+  return { ok: ok1 && ok2 && ok3a && ok3b && ok4 && ok5 && ok6, lines };
 }
 
 const pct = (a: number, b: number) => (b === 0 ? "-" : `${((100 * a) / b).toFixed(1)}%`);
 
 async function main() {
   const snap = await loadSnapshot();
-  const pairs = buildPairs(snap);
+  const l1 = loadL1();
+  const pairs = buildPairs(snap, l1);
   const cur = tally(pairs);
 
   console.log("=== 総括表との不一致の 原因の型 (人月・総支給額) 2026-09-26 新設・読み取り専用 ===");
@@ -307,18 +422,43 @@ async function main() {
   for (const t of TYPES) console.log(`    ${t.padEnd(5)} ${TYPE_LABEL[t]}`);
   console.log("");
 
+  // ── その他 (PZ / SZ) の内訳 ──
+  if (l1) {
+    console.log("--- その他 (PZ / SZ) を ① と 3 者比較で分けた結果 (★ ① = 給与D が 2026-09-26 に抽出した旧システムの出力) ---");
+    for (const kind of ["PZ", "SZ"] as const) {
+      const all = pairs.filter((p) => String(classify(p) ?? "").startsWith(kind));
+      console.log(`  ${kind === "PZ" ? "パート" : "月給"} その他 ${all.length} 人月: ② だけ違う (直さない) ${all.filter((p) => classify(p) === `${kind}②`).length} / ★ 当方だけ違う (直す候補) ${all.filter((p) => classify(p) === `${kind}当`).length} / 判定できない ${all.filter((p) => classify(p) === `${kind}?`).length}`);
+      const byItem: Record<string, { n: number; sum: number }> = {};
+      for (const p of all.filter((p) => classify(p) === `${kind}当`))
+        for (const x of itemTriples(p)) if (!within1(x.ours - x.l2) && x.l1 != null && within1(x.l2 - x.l1)) {
+          const b = byItem[x.item] ??= { n: 0, sum: 0 }; b.n++; b.sum += x.ours - x.l2;
+        }
+      for (const [k, b] of Object.entries(byItem).sort((a, b) => b[1].n - a[1].n))
+        console.log(`      直す候補の項目 ${k.padEnd(12)} ${String(b.n).padStart(4)} 人月  当方 − ② の合計 ${Math.round(b.sum).toLocaleString()}円`);
+    }
+    console.log("");
+  } else {
+    console.log("(その他 PZ / SZ は ① が無いので分けていない。SOUKATSU1_DIR=<① 抽出物のdir> を渡すと 3 者比較で分ける)");
+    console.log("");
+  }
+
   if (DETAIL) {
     const t = DETAIL as CauseType;
     const list = pairs.filter((p) => classify(p) === t);
     console.log(`--- 型 ${t} の人月 (${list.length}) ---`);
     for (const p of list.sort((a, b) => (a.month + a.office).localeCompare(b.month + b.office)))
-      console.log(`  ${p.month} ${p.office} ${p.emp.padStart(6)} ${p.name.replace(/\s+/g, " ").padEnd(12)} 当方 ${p.ours} / 総括② ${p.soukatsu} (差 ${p.soukatsu == null ? "-" : p.ours - p.soukatsu})`);
+      console.log(`  ${p.month} ${p.office} ${p.emp.padStart(6)} ${p.name.replace(/\s+/g, " ").padEnd(12)} 当方 ${p.ours} / 総括② ${p.soukatsu} (差 ${p.soukatsu == null ? "-" : p.ours - p.soukatsu})`
+        + (p.l1 !== undefined && /^(PZ|SZ)/.test(t) ? " | " + itemTriples(p).filter((x) => !within1(x.ours - x.l2)).map((x) => `${x.item} 当${Math.round(x.ours)}/②${Math.round(x.l2)}/①${x.l1 == null ? "-" : Math.round(x.l1)}`).join(" ") : ""));
     console.log("");
   }
 
   let failed = false;
   if (existsSync(BASELINE_PATH) && !UPDATE) {
-    const base = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as { months: Record<string, MonthCell> };
+    const base = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as { months: Record<string, MonthCell>; l1?: boolean };
+    if (base.l1 && !l1) {
+      console.log("★ 基準値は ① (SOUKATSU1_DIR) ありで作られている。① なしでは その他 (PZ / SZ) の分け方が違うので比べられない。SOUKATSU1_DIR を渡してください");
+      process.exit(1);
+    }
     const { worse, better, denom } = compare(base.months, cur);
     console.log("--- 基準値との比較 ---");
     console.log(`  ★ 悪化 ${worse.length} / 改善 ${better.length} / 分母が変わった月 ${denom.length}`);
@@ -337,6 +477,7 @@ async function main() {
       _readme: prev._readme ?? "(新規)",
       updated_at: new Date().toISOString(),
       snapshot_fetched_at: snap.fetched_at,
+      l1: !!l1,
       total: tot,
       months: Object.fromEntries(months.map((m) => [m, cur.get(m)])),
     }, null, 2) + "\n");
