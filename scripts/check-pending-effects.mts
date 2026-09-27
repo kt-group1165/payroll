@@ -14,6 +14,12 @@
  *   [遅刻早退の分を②から取込 2026-09-27]    5 件  → 控除が出る見込み
  *   [月違い是正 2026-09-27]                2 件  → 二重払いが消える
  *   [初任者研修調整の旗 2026-09-27]        13 件  → 無資格の減額が出る (② と ¥36,639 で対応)
+ *   [HRD研修の入れ漏れ是正 2026-09-27]      2 件  → 研修手当が出る
+ *   [通勤費の入れ漏れ是正 2026-09-27]       2 件  → 通勤費が出る
+ *
+ * ★ 一覧に無いマーカーが DB にあれば **自分で気づいて落ちます** (下の「見落としの自己点検」)。
+ *   ★ 2026-09-27 に実際に 60 行のうち 56 行しか見ていない状態になっていた。
+ *   ★ マーカーを足す側が この検査を直すのを忘れても、次に回した人に分かるようにする
  *
  * 【見ていないもの】(出力にも出す)
  *   ・コード側の是正 (km の二重 / 介護時間 / 手入力の脱落 …) — ★ note が残らないので数えられない
@@ -51,39 +57,49 @@ async function all<T>(q: string): Promise<T[]> {
 }
 
 /**
- * ★ fixedAt = その入力を **入れた時刻** (UTC)。これより後に計算されていれば反映済み。
- *   ★ 種類ごとに違う。1 つの定数で済ませると、★ 先に入れた分の再計算が
- *   後から入れた分にも「反映済み」として数えられてしまう (2026-09-27 に実際に踏みかけた)。
- *   ★ 時刻は各 migration の控え (_backup_*.json の "at") から取る。
+ * ★ 基準時刻は **持ちません。**行自身の payroll_monthly_inputs.updated_at と
+ *   payroll_calc_results.calculated_at を 1 行ずつ比べます。
+ *   ★ 以前は「入れたのは 2026-09-27」の定数 1 本で判定していましたが、
+ *   種類ごとに投入時刻が違うので、先に入れた分の再計算が 後から入れた分にも
+ *   「反映済み」と数えられていました (2026-09-27 に踏みかけた)。
+ *   ★ 控えの "at" を書き写す案もやめました。控えに at が無いものがあり、
+ *   写し間違えても誰も気づけないため。★ DB の行が自分で時刻を持っています。
  */
 const MARKERS = [
-  { note: "[社保の入れ漏れ是正 2026-09-27]", label: "社保の入れ漏れ", expect: 36, fixedAt: "2026-09-26T21:00:00Z", effect: "処遇改善が出る (+¥720,000 見込み)" },
-  { note: "[遅刻早退の分を②から取込 2026-09-27]", label: "遅刻早退の分", expect: 5, fixedAt: "2026-09-26T21:00:00Z", effect: "控除が出る (−¥15,054 見込み)" },
-  { note: "[月違い是正 2026-09-27]", label: "月違いの手入力", expect: 2, fixedAt: "2026-09-26T21:00:00Z", effect: "7 月と 8 月の二重が消える" },
-  // 2026-09-27 10:23 JST 投入 (_backup_shoninsha_adjustment_20260927.json の at = 01:23:32Z)。
-  // ★ 旗だけ持ち、金額は当方の式 (切り捨て(同行を除く訪問分 × 100 / 60)) で出る。
-  // ★ ② の初任者研修調整費 合計 ¥36,639 と 13/13 で対応が取れている (実測 2026-09-27)。
-  { note: "[初任者研修調整の旗 2026-09-27]", label: "初任者研修調整の旗", expect: 13, fixedAt: "2026-09-27T01:23:32Z", effect: "無資格の減額が出る (−¥36,639 見込み)" },
+  { note: "[社保の入れ漏れ是正 2026-09-27]", label: "社保の入れ漏れ", expect: 36, effect: "処遇改善が出る (+¥720,000 見込み)" },
+  { note: "[遅刻早退の分を②から取込 2026-09-27]", label: "遅刻早退の分", expect: 5, effect: "控除が出る (−¥15,054 見込み)" },
+  { note: "[月違い是正 2026-09-27]", label: "月違いの手入力", expect: 2, effect: "7 月と 8 月の二重が消える" },
+  // ★ ② の初任者研修調整費 合計 ¥36,639 と 13/13 件で対応が取れることを実測 (2026-09-27)
+  { note: "[初任者研修調整の旗 2026-09-27]", label: "初任者研修調整の旗", expect: 13, effect: "無資格の減額が出る (−¥36,639 見込み)" },
+  // 童子悦 202608 / 岩坪恵 202608。どちらも ①② とも HRD研修 4:00・¥4,600 で 2 材料一致
+  { note: "[HRD研修の入れ漏れ是正 2026-09-27]", label: "HRD研修の入れ漏れ", expect: 2, effect: "研修手当が出る (+¥6,900 見込み)" },
+  { note: "[通勤費の入れ漏れ是正 2026-09-27]", label: "通勤費の入れ漏れ", expect: 2, effect: "通勤費が出る (+¥9,454 見込み)" },
 ];
+
+// ★ 負のコントロール: DROP_MARKER=<note の一部> を付けると そのマーカーを一覧から外す。
+//   ★ 「見落としの自己点検」が本当に鳴るかを確かめるための口。★ 検査を足した人は 1 回これで鳴らすこと。
+//     DROP_MARKER=初任者研修調整 npx tsx scripts/check-pending-effects.mts   → exit 2 になるのが正しい
+const DROP = process.env.DROP_MARKER ?? "";
+const ACTIVE = DROP ? MARKERS.filter((m) => !m.note.includes(DROP)) : MARKERS;
+if (DROP) console.log(`★ 負のコントロール: "${DROP}" を一覧から外しました (${MARKERS.length} → ${ACTIVE.length} 種)`);
 
 console.log("=== check:pending-effects  入力は直したが 再計算がまだ のもの ===\n");
 
-type MI = { office_number: string; processing_month: string; note: string | null };
-const mis = await all<MI>("payroll_monthly_inputs?select=office_number,processing_month,note&note=not.is.null");
+type MI = { office_number: string; processing_month: string; note: string | null; updated_at: string | null };
+const mis = await all<MI>("payroll_monthly_inputs?select=office_number,processing_month,note,updated_at&note=not.is.null");
 type Calc = { office_number: string; processing_month: string; calculated_at: string };
 const calc = await all<Calc>("payroll_calc_results?select=office_number,processing_month,calculated_at");
 const calcAt = new Map(calc.map((c) => [`${c.office_number}|${c.processing_month}`, c.calculated_at]));
 console.log(`分母: 計算結果 ${calc.length} 事業所月 / note 付きの手入力 ${mis.length} 行\n`);
 if (calc.length === 0) { console.error("★ 計算結果を 1 件も読めていません"); process.exit(2); }
 
-// 入力を入れた時刻より後に計算されているか。★ note は入れた時刻を持たないので、
-//   MARKERS の fixedAt (控えの "at") を基準にする。★ 種類ごとに別
+// ★ 行ごとに「その行の updated_at より後に計算されているか」を見る
 let pending = 0, done = 0;
-for (const m of MARKERS) {
+for (const m of ACTIVE) {
   // ★ note は **元の文に追記される**ことがある (月違い是正がそう)。完全一致では拾えない。
   //   2026-09-27 に実際に 0 件と誤って出した。部分一致で引く
   const rows = mis.filter((x) => (x.note ?? "").includes(m.note));
-  const stale = rows.filter((x) => (calcAt.get(`${x.office_number}|${x.processing_month}`) ?? "") < m.fixedAt);
+  const stale = rows.filter((x) => (calcAt.get(`${x.office_number}|${x.processing_month}`) ?? "") < (x.updated_at ?? ""));
   pending += stale.length; done += rows.length - stale.length;
   const mark = rows.length === m.expect ? "" : `  ★ 件数が期待 ${m.expect} と違う`;
   console.log(`  ${m.label.padEnd(16)} ${String(rows.length).padStart(3)} 件  うち未反映 ${String(stale.length).padStart(3)} 件${mark}`);
@@ -99,6 +115,26 @@ console.log("   ・コード側の是正 (km の二重 / 介護時間 / 手入�
 console.log("   ・会議件数の復元 361 行 — 書式の表に note が無い。check:office-form-shrink で見る");
 console.log("   ・入社日の埋め戻し 6 名 — payroll_employees に note 列が無い");
 console.log("   ・金額が **いくら** 動くか — ここは「反映されたか」だけ");
+
+// ★ 見落としの自己点検: DB にある [.. YYYY-MM-DD] 形のマーカーで、MARKERS に無いものを挙げる
+const known = new Set(ACTIVE.map((m) => m.note));
+const seen = new Map<string, number>();
+for (const r of mis) {
+  for (const mm of String(r.note ?? "").matchAll(/\[[^\]]*\d{4}-\d{2}-\d{2}\]/g)) {
+    seen.set(mm[0], (seen.get(mm[0]) ?? 0) + 1);
+  }
+}
+const uncovered = [...seen].filter(([k]) => !known.has(k)).sort((a, b) => b[1] - a[1]);
+const coveredRows = mis.filter((x) => ACTIVE.some((m) => (x.note ?? "").includes(m.note))).length;
+console.log(`
+★ 分母の内訳: マーカー付きの行 ${[...seen.values()].reduce((a, b) => a + b, 0)} / この検査が見ている ${coveredRows}`);
+if (uncovered.length > 0) {
+  console.error(`
+★ この検査が知らないマーカーが ${uncovered.length} 種あります (MARKERS に足してください)`);
+  for (const [k, v] of uncovered) console.error(`   ${String(v).padStart(4)} 件  ${k}`);
+  console.error("★ 足さないと、その分の未反映が 0 件に見えます。exit 2 で終わります");
+  process.exit(2);
+}
 
 if (pending > 0) {
   console.log(`\n⏳ 未反映 ${pending} 件。★ 138 事業所月を再計算すると 0 になります`);
