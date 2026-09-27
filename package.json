@@ -62,6 +62,7 @@
     "check:travel-legacy-gap": "tsx scripts/check-travel-legacy-gap.mts",
     "check:overtime-deduction": "tsx scripts/check-overtime-deduction.mts",
     "check:service-type-mapping": "tsx scripts/check-service-type-mapping.mts",
+    "check:service-record-duplicates": "tsx scripts/check-service-record-duplicates.mts",
     "check:soukatsu-row-only": "tsx scripts/check-soukatsu-row-only.mts",
     "check:employment-in-month": "tsx scripts/check-employment-in-month.mts",
     "check:employment-status-sites": "tsx scripts/check-employment-status-sites.mts",
