@@ -470,14 +470,18 @@ export default function ServiceRecordsPage() {
   const clearFilters = () => { setFClient(""); setFCode(""); setFDoukou(false); setFYoruasa(false); setFShinya(false); setFHoliday(false); setSubtotalOnly(false); };
 
   return (
-    <div className="space-y-3">
+    // ★ 表を画面いっぱいまで伸ばす (2026-09-28 user「実績が表示される場所が狭すぎる」)。
+    //   以前は max-h-[calc(100vh-22rem)] の決め打ちで、上下の説明ぶんだけ表が縮んでいた。
+    //   3rem は RootShell の p-6 (上下 1.5rem ずつ)。
+    <div className="flex h-[calc(100dvh-3rem)] flex-col gap-3">
       <div>
-        <h2 className="text-2xl font-bold">サービス記録一覧</h2>
-        <p className="text-sm text-muted-foreground">旧システムの「実績確認」と同じ並び。1 行 = 1 訪問で、日付ごとに小計を出します。<b>この画面は読むだけ</b>です。</p>
+        <h2 className="text-xl font-bold">サービス記録一覧
+          <span className="ml-2 text-xs font-normal text-muted-foreground">旧システムの「実績確認」と同じ並び。1 行 = 1 訪問・日付ごとに小計。<b>読むだけ</b>の画面です</span>
+        </h2>
       </div>
 
       {/* 選ぶところ */}
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border p-3">
+      <div className="flex shrink-0 flex-wrap items-end gap-3 rounded-lg border p-3">
         <label className="text-sm">事業所
           <select className="block mt-1 h-9 w-56 rounded-md border bg-background px-2 text-sm" value={officeId} onChange={(e) => { setOfficeId(e.target.value); setRows(null); }}>
             {offices.map((o) => <option key={o.id} value={o.id}>{o.short_name || o.name}</option>)}
@@ -507,7 +511,7 @@ export default function ServiceRecordsPage() {
 
       {/* 絞りこみ */}
       {rows && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3 text-sm">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3 text-sm">
           <label>利用者 <Input value={fClient} onChange={(e) => setFClient(e.target.value)} placeholder="コード / 氏名" className="ml-1 inline-block h-8 w-40" /></label>
           <label>サービスコード <Input value={fCode} onChange={(e) => setFCode(e.target.value)} placeholder="111111" className="ml-1 inline-block h-8 w-28" /></label>
           {([["同行訪問", fDoukou, setFDoukou], ["夜朝", fYoruasa, setFYoruasa], ["深夜", fShinya, setFShinya], ["日祭・休日", fHoliday, setFHoliday]] as const).map(([label, v, set]) => (
@@ -538,7 +542,7 @@ export default function ServiceRecordsPage() {
 
       {shownRows && (
         <>
-          <div className="max-h-[calc(100vh-22rem)] overflow-auto rounded-lg border">
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
             <table className="w-full border-separate border-spacing-0 text-sm">
               <thead>
                 <tr>
@@ -630,7 +634,7 @@ export default function ServiceRecordsPage() {
           </div>
 
           {total && (
-            <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg border bg-muted/30 p-3 text-sm">
+            <div className="flex shrink-0 flex-wrap gap-x-6 gap-y-1 rounded-lg border bg-muted/30 p-3 text-sm">
               <span>件数 <b className="tabular-nums">{total.count.toLocaleString()}</b></span>
               <span>訪問時間 <b className="tabular-nums">{hm(total.visitMin)}</b></span>
               <span>金額 (当方) <b className="tabular-nums">{yen(total.pay)}円</b></span>
@@ -645,9 +649,9 @@ export default function ServiceRecordsPage() {
             </div>
           )}
 
-          <div className="rounded-lg border p-3 text-xs text-muted-foreground">
-            <p className="mb-1 font-medium text-foreground">⚠ この画面が出していないもの</p>
-            <ul className="list-disc space-y-0.5 pl-5">
+          <details className="shrink-0 rounded-lg border p-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground">⚠ この画面が出していないもの</summary>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">
               <li><b>週勤務時間・常勤換算時間</b> — 列だけ作ってあります。数値は後で (2026-09-26 user)</li>
               <li><b>休日残業時間</b> — 当方は 残業を 日/週でしか持っておらず、休日ぶんを分けて持っていません</li>
               <li><b>移動時間</b> — 距離のキャッシュにある区間だけ。無いところは空欄 (Google には取りに行きません。月の API 上限を使い切った事故があるため)</li>
@@ -655,7 +659,7 @@ export default function ServiceRecordsPage() {
               <li><b>0.75掛け・特日・法定休日の絞りこみ</b> — 旧システムにはありますが まだ付けていません</li>
               <li><b>金額</b> — 給与計算の画面と同じ引き方 (<code>visit-pay.ts</code> を共有)。月給者にも時給の金額を出すので <b>支給額ではありません</b></li>
             </ul>
-          </div>
+          </details>
         </>
       )}
     </div>
