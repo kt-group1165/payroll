@@ -821,6 +821,36 @@ export function monthlyPaidLeaveAllowance(p: MonthlyPayroll): number {
 
 // ─── 時給者 ──────────────────────────────────────────────────────────────
 
+/** 同行のサービスコード。010000/010001 = 同行、010999 = 同行ドタキャン (2026-09-28 実測) */
+const DOUKOU_SERVICE_CODES = new Set(["010000", "010001", "010999"]);
+
+/**
+ * その実績を「同行」として扱うか。★ **サービスが同行かどうかで決める。旗 (`accompanied_visit`) は見ない。**
+ *
+ * ⚠ 2026-09-28 までは 旗だけで判定していた。★ 旗は当てにならない:
+ *   ・サービスが 同行 なのに 旗が無い行が **5,570 行** (202603〜08)
+ *   ・逆に 身体介護・身体生活 の行に 旗が立っている行が 76 行 (30 人月)
+ *
+ * ★ ① (旧システムの出力) の「訪介同行時間」と突合した実測 (パート 2,293 人月):
+ *     旗だけ                         一致 1,493 (65.1%)
+ *     旗 かつ サービスが同行          一致 1,497 (65.3%)
+ *     ★ サービスが同行だけ (これ)      一致 **2,219 (96.8%)**
+ *     旗 または サービスが同行         一致 2,215 (96.6%)
+ *
+ * ★ 金額 (勤続手当 = (訪問時間 − 同行) × 単価。単価 0 を除く 718 人月で ① と突合):
+ *     旗だけ 462 / 718 一致  →  ★ サービス 674 / 718 一致
+ *     ★ 1 円一致で 直る 227 人月 / 壊れる 15 人月 (★ 5 名に固まっている:
+ *       渡辺佐和子・神山芳惠・長塚珠江・滝下恵子・村上弘子)。★ 支給額は 6 か月で −¥29,755 (過払いの是正)
+ *   土日祝手当も 直る 38 / 壊れる 4 (祝日を土日で近似した概算)。
+ *
+ * ⚠ 残る 15 人月は ★ この 5 名だけ ① が 同行ぶんも勤続の元に入れている。規則は未特定。
+ *   `npm run check:accompanied-flag` が 旗とサービスの食い違いを見張る。
+ */
+export function isAccompaniedRecord(r: { service_type?: string | null; service_code?: string | null }): boolean {
+  if ((r.service_type ?? "").includes("同行")) return true;
+  return DOUKOU_SERVICE_CODES.has(String(r.service_code ?? ""));
+}
+
 export function hourlyTenure(e: HourlyPayroll): number {
   return computeTenureAllowance(
     e.has_care_qualification,
@@ -1889,10 +1919,10 @@ export function computeSummary(
   // 訪問時間・件数は 訪問でない実績 (会議・面談 …) を数えない (NON_CARE_SERVICE_TYPES)。出勤した日 (helperDateSet) には数える
   const careRecs = empRecs.filter(isCareRecord);
   const recordCount = careRecs.length;
-  const accompaniedCount = careRecs.filter((r) => r.accompanied_visit && r.accompanied_visit.trim() !== "").length;
+  const accompaniedCount = careRecs.filter(isAccompaniedRecord).length;
   const visitMinutes = careRecs.reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   const visitMinutesExcludingAccompanied = careRecs
-    .filter((r) => !r.accompanied_visit || r.accompanied_visit.trim() === "")
+    .filter((r) => !isAccompaniedRecord(r))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   // 通勤km: 出勤簿の合計と 事業所書式のどちらを優先するかは 職種で分ける (user 2026-09-18)。
   //   事務員 = 書式優先 / 提責など = 出勤簿優先。どちらも 空・0 ならもう一方を使う。
@@ -1916,18 +1946,18 @@ export function computeSummary(
   const businessKmTotal = attDays.reduce((s, r) => s + ((r as unknown as { business_km?: number }).business_km ?? 0), 0);
   // 特日 (8/15 土曜など) は 土日祝ではなく特日として払う (Hana系パート 2026-08: 8/15 を土日祝から外すと 42 → 62/74 名一致)
   const weekendHolidayMinutes = careRecs
-    .filter((r) => isWeekendOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .filter((r) => isWeekendOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && !isAccompaniedRecord(r))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   const weekendHolidayAccompaniedMinutes = careRecs
-    .filter((r) => isWeekendOrHoliday(r.service_date) && r.accompanied_visit && r.accompanied_visit.trim() !== "")
+    .filter((r) => isWeekendOrHoliday(r.service_date) && isAccompaniedRecord(r))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   // 日曜・祝日 (カレンダー) の訪問時間。2026-09-18 までは実績の休日区分 (日祭・休日) で数えていたが、
   // カレンダーのほうが総括表と合う (やわた 4→8/8。五井・君津・姉ム・木更津は どちらでも全員一致)
   const sundayHolidayMinutes = careRecs
-    .filter((r) => isSundayOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .filter((r) => isSundayOrHoliday(r.service_date) && !isSpecialDay(r.service_date, specialDays) && !isAccompaniedRecord(r))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
   const tokubiMinutes = careRecs
-    .filter((r) => isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === ""))
+    .filter((r) => isSpecialDay(r.service_date, specialDays) && !isAccompaniedRecord(r))
     .reduce((s, r) => s + parseDurationMinutes(r.calc_duration), 0);
 
   return { workDays, helperDays, paidLeave, halfLeave, specialLeave, workHoursMin, overtimeMinutes, recordCount, accompaniedCount, visitMinutes, visitMinutesExcludingAccompanied, hrdCount, hrdMinutes, meetingCount, commuteKmTotal, commuteYenTotal, businessKmTotal, weekendHolidayMinutes, weekendHolidayAccompaniedMinutes, sundayHolidayMinutes, tokubiMinutes };
