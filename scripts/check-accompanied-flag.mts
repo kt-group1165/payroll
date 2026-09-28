@@ -41,7 +41,10 @@ const recs = await restAll<Rec>(`payroll_service_records?select=id,office_number
 const flagged = recs.filter((r) => !!r.accompanied_visit && r.accompanied_visit.trim() !== "");
 const mismatched = flagged.filter((r) => !isAccompaniedRecord(r));
 // 逆向き: サービスは同行なのに 旗が無い
-const noFlag = recs.filter((r) => (!r.accompanied_visit || r.accompanied_visit.trim() === "") && ((r.service_type ?? "").includes("同行") || ["010000", "010001", "010999"].includes(String(r.service_code ?? ""))));
+const noFlag = recs.filter((r) => (!r.accompanied_visit || r.accompanied_visit.trim() === "") && isAccompaniedRecord(r));
+// ★ サービス名は 同行 系なのに 判定に使うコード集合に無い行。新しい同行のコードが増えたら ここに出る。
+//   ⚠ 同行援護 (021008 / 021009) は 障害福祉の実務なので ★ ここに出るのが正しい (同行ではない)
+const unknownDoukou = recs.filter((r) => /同行/.test(String(r.service_type ?? "")) && !isAccompaniedRecord(r));
 
 const pm = new Set(mismatched.map((r) => `${r.office_number}|${r.employee_number}|${r.processing_month}`));
 console.log(`実績 ${recs.length} 行 (${MONTHS.join("/")}) / 同行の旗 ${flagged.length} 行`);
@@ -60,8 +63,8 @@ console.log("\n--- 負のコントロール");
   const doukou = recs.find((r) => isAccompaniedRecord(r));
   expect(!!doukou, `同行と判定される行がある (${doukou ? `${doukou.service_code} ${doukou.service_type}` : "なし"})`);
   if (doukou) {
-    expect(!isAccompaniedRecord({ service_type: "身1", service_code: "111111" }), "サービスが 身体介護 なら 同行と判定されない");
-    expect(isAccompaniedRecord({ service_type: doukou.service_type, service_code: doukou.service_code }), "旗を渡さなくても サービスだけで 同行と判定される");
+    expect(!isAccompaniedRecord({ service_code: "111111" }), "身体介護のコードなら 同行と判定されない");
+    expect(isAccompaniedRecord({ service_code: doukou.service_code }), "旗を渡さなくても コードだけで 同行と判定される");
   }
   const one = mismatched[0];
   if (one) expect(!isAccompaniedRecord(one) && !!one.accompanied_visit, `旗が立っていても サービスが同行でなければ false (${one.service_code} ${one.service_type})`);
@@ -70,7 +73,7 @@ console.log("\n--- 負のコントロール");
 }
 
 type Baseline = { _readme: string[]; counts: Record<string, number> };
-const counts: Record<string, number> = { "旗だけで同行でない行": mismatched.length, "旗だけで同行でない人月": pm.size, "同行なのに旗が無い行": noFlag.length };
+const counts: Record<string, number> = { "旗だけで同行でない行": mismatched.length, "旗だけで同行でない人月": pm.size, "同行なのに旗が無い行": noFlag.length, "名前は同行だがコード集合に無い行": unknownDoukou.length };
 const baseline: Baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline : { _readme: [], counts: {} };
 if (UPDATE) {
   baseline.counts = counts;
