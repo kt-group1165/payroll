@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
@@ -86,11 +86,23 @@ function TH({ children, right, sticky }: { children?: React.ReactNode; right?: b
 }
 
 export default function ServiceRecordsPage() {
+  // ★ 総括表の「実績へ」から ?office=<事業所番号>&month=YYYYMM&emp=<社員番号> で飛んでくる (2026-09-28)
+  //   旧システムの「実績確認」と同じ飛び方。選び直さずに その人の その月が開く
+  const linked = useMemo(() => {
+    if (typeof window === "undefined") return { office: "", month: "", emp: "" };
+    const q = new URLSearchParams(window.location.search);
+    const m = (q.get("month") ?? "").replace(/[^0-9]/g, "");
+    return {
+      office: q.get("office") ?? "",
+      month: m.length === 6 ? `${m.slice(0, 4)}-${m.slice(4)}` : "",
+      emp: q.get("emp") ?? "",
+    };
+  }, []);
   const [offices, setOffices] = useState<Office[]>([]);
   const [officeId, setOfficeId] = useState("");
-  const [month, setMonth] = useState(thisMonth());
+  const [month, setMonth] = useState(() => linked.month || thisMonth());
   const [emps, setEmps] = useState<Emp[]>([]);
-  const [empNo, setEmpNo] = useState("");
+  const [empNo, setEmpNo] = useState(linked.emp);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [travelNote, setTravelNote] = useState<string>("");
@@ -114,9 +126,13 @@ export default function ServiceRecordsPage() {
         .filter((o) => o.office_type === "訪問介護")
         .sort((a, b) => (a.short_name || a.name).localeCompare(b.short_name || b.name, "ja"));
       setOffices(list);
-      setOfficeId((p) => p || list[0]?.id || "");
+      const wanted = linked.office ? list.find((o) => o.office_number === linked.office)?.id : "";
+      // ★ 黙って 1 件目に落とさない。リンクの事業所がこの画面の一覧に無いときは理由を出す
+      //   (この画面は office_type='訪問介護' だけを出している)
+      if (linked.office && !wanted) toast.error(`事業所 ${linked.office} はこの画面の一覧にありません (訪問介護の事業所だけを出しています)`);
+      setOfficeId((p) => p || wanted || list[0]?.id || "");
     })();
-  }, []);
+  }, [linked.office]);
 
   const office = useMemo(() => offices.find((o) => o.id === officeId), [offices, officeId]);
 
@@ -352,6 +368,18 @@ export default function ServiceRecordsPage() {
       setLoading(false);
     }
   };
+
+  // ★ リンクで飛んできたときは 1 回だけ自動で検索する (総括表の「実績へ」)
+  const autoSearched = useRef(false);
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- URL 由来の 1 回きりの検索 (office-sidebar.tsx と同じ形) */
+    if (autoSearched.current) return;
+    if (!linked.emp || !office || !emp) return;
+    autoSearched.current = true;
+    void search();
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 初回 1 回だけ。search は毎レンダー作り直されるので依存に入れない
+  }, [linked.emp, office, emp]);
 
   // 表示する行 (絞りこみ)
   const shownRows = useMemo(() => {

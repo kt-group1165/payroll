@@ -159,6 +159,25 @@ function sumMonthlyPay(m: MonthlyRow): number {
   return fixed + bonus + (m.childcare_allowance ?? 0) + travelFee;
 }
 
+/**
+ * 旧システムの「実績確認」と同じ飛び方。総括表の行の左端から その人の その月の実績を開く。
+ * ★ /service-records 側が ?office=<事業所番号>&month=YYYYMM&emp=<社員番号> を読んで自動で検索する
+ *   (2026-09-28 user「左端に実績へボタン」)。
+ */
+function JissekiCell({ officeNumber, month, employeeNumber }: { officeNumber: string; month: string; employeeNumber: string }) {
+  return (
+    <td className="px-2 py-1.5">
+      <Link
+        href={`/service-records?office=${encodeURIComponent(officeNumber)}&month=${encodeURIComponent(month)}&emp=${encodeURIComponent(employeeNumber)}`}
+        className="inline-block rounded border px-2 py-0.5 text-[11px] whitespace-nowrap hover:bg-muted"
+        title="この職員のこの月の実績を開く"
+      >
+        実績へ
+      </Link>
+    </td>
+  );
+}
+
 const HOURLY_COLS: ColDef<HourlyRow>[] = [
   { key: "employee_number", label: "社員番号", always: true, render: (r) => <span className="font-mono text-xs">{r.employee_number}</span> },
   { key: "employee_name",   label: "氏名",      always: true, render: (r) => r.employee_name },
@@ -665,6 +684,7 @@ export default function PayrollSummaryPage() {
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="bg-muted/20 border-b">
                         <tr>
+                          <th className="px-2 py-2 text-left font-medium">実績</th>
                           {hourlyVisibleCols.map((c) => (
                             <th key={c.key} className={`px-3 py-2 font-medium ${c.align === "right" ? "text-right" : "text-left"}`}>
                               {c.label}
@@ -674,10 +694,11 @@ export default function PayrollSummaryPage() {
                       </thead>
                       <tbody>
                         {summary.hourly.length === 0 ? (
-                          <tr><td colSpan={hourlyVisibleCols.length} className="text-center text-muted-foreground py-4">データなし</td></tr>
+                          <tr><td colSpan={hourlyVisibleCols.length + 1} className="text-center text-muted-foreground py-4">データなし</td></tr>
                         ) : (
                           summary.hourly.map((h) => (
                             <tr key={h.employee_number} className="border-b last:border-b-0">
+                              <JissekiCell officeNumber={summary.office_number} month={summary.processing_month} employeeNumber={h.employee_number} />
                               {hourlyVisibleCols.map((c) => (
                                 <td key={c.key} className={`px-3 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
                                   {c.render(h)}
@@ -698,6 +719,7 @@ export default function PayrollSummaryPage() {
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="bg-muted/20 border-b">
                         <tr>
+                          <th className="px-2 py-2 text-left font-medium">実績</th>
                           {monthlyVisibleCols.map((c) => (
                             <th key={c.key} className={`px-3 py-2 font-medium ${c.align === "right" ? "text-right" : "text-left"}`}>
                               {c.label}
@@ -707,10 +729,11 @@ export default function PayrollSummaryPage() {
                       </thead>
                       <tbody>
                         {summary.monthly.length === 0 ? (
-                          <tr><td colSpan={monthlyVisibleCols.length} className="text-center text-muted-foreground py-4">データなし</td></tr>
+                          <tr><td colSpan={monthlyVisibleCols.length + 1} className="text-center text-muted-foreground py-4">データなし</td></tr>
                         ) : (
                           summary.monthly.map((m) => (
                             <tr key={m.employee_id} className="border-b last:border-b-0">
+                              <JissekiCell officeNumber={summary.office_number} month={summary.processing_month} employeeNumber={m.employee_number} />
                               {monthlyVisibleCols.map((c) => (
                                 <td key={c.key} className={`px-3 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
                                   {c.render(m)}
