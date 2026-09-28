@@ -88,21 +88,16 @@ function TH({ children, right, sticky }: { children?: React.ReactNode; right?: b
 export default function ServiceRecordsPage() {
   // ★ 総括表の「実績へ」から ?office=<事業所番号>&month=YYYYMM&emp=<社員番号> で飛んでくる (2026-09-28)
   //   旧システムの「実績確認」と同じ飛び方。選び直さずに その人の その月が開く
-  const linked = useMemo(() => {
-    if (typeof window === "undefined") return { office: "", month: "", emp: "" };
-    const q = new URLSearchParams(window.location.search);
-    const m = (q.get("month") ?? "").replace(/[^0-9]/g, "");
-    return {
-      office: q.get("office") ?? "",
-      month: m.length === 6 ? `${m.slice(0, 4)}-${m.slice(4)}` : "",
-      emp: q.get("emp") ?? "",
-    };
-  }, []);
+  // ⚠ useState の初期値や レンダー中の useMemo で window.location を読むと、
+  //   サーバー描画のときは空で、そのまま初期値に焼き付いて ★ URL が黙って無視される
+  //   (2026-09-28 user 報告: month=202607 なのに 2026年09月・事業所も一覧の 1 件目になった)。
+  //   ★ マウント後の effect で読んで state に入れる。
+  const [linked, setLinked] = useState<{ office: string; month: string; emp: string }>({ office: "", month: "", emp: "" });
   const [offices, setOffices] = useState<Office[]>([]);
   const [officeId, setOfficeId] = useState("");
-  const [month, setMonth] = useState(() => linked.month || thisMonth());
+  const [month, setMonth] = useState(thisMonth());
   const [emps, setEmps] = useState<Emp[]>([]);
-  const [empNo, setEmpNo] = useState(linked.emp);
+  const [empNo, setEmpNo] = useState("");
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [travelNote, setTravelNote] = useState<string>("");
@@ -126,13 +121,40 @@ export default function ServiceRecordsPage() {
         .filter((o) => o.office_type === "訪問介護")
         .sort((a, b) => (a.short_name || a.name).localeCompare(b.short_name || b.name, "ja"));
       setOffices(list);
-      const wanted = linked.office ? list.find((o) => o.office_number === linked.office)?.id : "";
-      // ★ 黙って 1 件目に落とさない。リンクの事業所がこの画面の一覧に無いときは理由を出す
-      //   (この画面は office_type='訪問介護' だけを出している)
-      if (linked.office && !wanted) toast.error(`事業所 ${linked.office} はこの画面の一覧にありません (訪問介護の事業所だけを出しています)`);
-      setOfficeId((p) => p || wanted || list[0]?.id || "");
+      setOfficeId((p) => p || list[0]?.id || "");
     })();
-  }, [linked.office]);
+  }, []);
+
+  // ① URL の指定を読む (マウント後に 1 回だけ)
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- URL は外部の入力。マウント後に 1 回だけ取り込む */
+    const q = new URLSearchParams(window.location.search);
+    const m = (q.get("month") ?? "").replace(/[^0-9]/g, "");
+    const next = {
+      office: q.get("office") ?? "",
+      month: m.length === 6 ? `${m.slice(0, 4)}-${m.slice(4)}` : "",
+      emp: q.get("emp") ?? "",
+    };
+    if (!next.office && !next.month && !next.emp) return;
+    setLinked(next);
+    if (next.month) setMonth(next.month);
+    if (next.emp) setEmpNo(next.emp);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
+  // ② 事業所が揃ったら URL の事業所に合わせる (1 回だけ)
+  const appliedOffice = useRef(false);
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- ①で取り込んだ URL を 一覧が揃ってから当てる */
+    if (appliedOffice.current || !linked.office || offices.length === 0) return;
+    appliedOffice.current = true;
+    const found = offices.find((o) => o.office_number === linked.office);
+    // ★ 黙って 1 件目のままにしない。リンクの事業所がこの画面の一覧に無いときは理由を出す
+    //   (この画面は office_type='訪問介護' だけを出している)
+    if (found) setOfficeId(found.id);
+    else toast.error(`事業所 ${linked.office} はこの画面の一覧にありません (訪問介護の事業所だけを出しています)`);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [linked.office, offices]);
 
   const office = useMemo(() => offices.find((o) => o.id === officeId), [offices, officeId]);
 
@@ -147,11 +169,17 @@ export default function ServiceRecordsPage() {
       if (error) { toast.error(`職員の取得に失敗: ${error.message}`); return; }
       const list = ((data ?? []) as Emp[]).sort((a, b) => a.name.localeCompare(b.name, "ja"));
       setEmps(list);
-      setEmpNo((p) => (list.some((e) => normEmp(e.employee_number) === normEmp(p)) ? p : ""));
+      // ★ URL 指定の職員を守る。事業所が 一覧の 1 件目 → リンク先 と 2 段階で変わるので、
+      //   途中の事業所に居ないだけで 選択が消えてしまう (2026-09-28)
+      setEmpNo((p) => {
+        const has = (n: string) => !!n && list.some((e) => normEmp(e.employee_number) === normEmp(n));
+        if (has(p)) return p;
+        return has(linked.emp) ? linked.emp : "";
+      });
       setRows(null);
     })();
     return () => { dead = true; };
-  }, [office]);
+  }, [office, linked.emp]);
 
   const emp = useMemo(() => emps.find((e) => normEmp(e.employee_number) === normEmp(empNo)), [emps, empNo]);
 
@@ -375,11 +403,13 @@ export default function ServiceRecordsPage() {
     /* eslint-disable react-hooks/set-state-in-effect -- URL 由来の 1 回きりの検索 (office-sidebar.tsx と同じ形) */
     if (autoSearched.current) return;
     if (!linked.emp || !office || !emp) return;
+    // ★ 事業所が リンク先に切り替わるまで待つ (一覧の 1 件目で検索してしまわないように)
+    if (linked.office && office.office_number !== linked.office) return;
     autoSearched.current = true;
     void search();
     /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 初回 1 回だけ。search は毎レンダー作り直されるので依存に入れない
-  }, [linked.emp, office, emp]);
+  }, [linked.emp, linked.office, office, emp]);
 
   // 表示する行 (絞りこみ)
   const shownRows = useMemo(() => {
