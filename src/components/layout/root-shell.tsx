@@ -6,12 +6,16 @@ import { OfficeSidebar } from "@/components/layout/office-sidebar";
 
 /**
  * ルートのレイアウト。URLに応じてサイドバーを出し分ける。
- *   /office/** → 事業所向け簡易メニュー
- *   それ以外   → 管理用フルメニュー
+ *   /office と /office/** → 事業所向け簡易メニュー
+ *   それ以外              → 管理用フルメニュー
+ *
+ * ⚠ startsWith("/office") だと /office-input と /office-worker-care まで
+ *   事業所向けメニューになり、★ 管理メニューに戻る導線が無くなる (2026-09-28 user 報告)。
+ *   /office ちょうど か /office/ で始まるときだけにする。
  */
 export function RootShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isOfficeView = pathname.startsWith("/office");
+  const isOfficeView = pathname === "/office" || pathname.startsWith("/office/");
   return (
     <>
       {isOfficeView ? <OfficeSidebar /> : <Sidebar />}
