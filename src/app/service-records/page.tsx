@@ -567,7 +567,7 @@ export default function ServiceRecordsPage() {
                   if (r.kind === "att") {
                     return (
                       <tr key={`a-${r.date}`} className="bg-muted/20 text-muted-foreground">
-                        <td className="sticky left-0 z-10 border-t border-r bg-background px-2 py-1 whitespace-nowrap">{mmdd(r.date)}<span className="ml-1 text-[10px]">({weekday(r.date)})</span></td>
+                        <td className="sticky left-0 z-10 border-t border-r bg-muted/40 px-2 py-1 whitespace-nowrap">{mmdd(r.date)}<span className="ml-1 text-[10px]">({weekday(r.date)})</span></td>
                         <td className="border-t px-2 py-1 text-right tabular-nums">{r.start}</td>
                         <td className="border-t px-2 py-1 text-right tabular-nums">{r.end}</td>
                         <td className="border-t px-2 py-1 text-right tabular-nums">{r.brk}</td>
@@ -582,8 +582,12 @@ export default function ServiceRecordsPage() {
                   }
                   if (r.kind === "sub") {
                     return (
-                      <tr key={`s-${r.date}`} className="bg-primary/5 font-medium">
-                        <td className="sticky left-0 z-10 border-t border-r bg-background px-2 py-1 whitespace-nowrap">小計 {mmdd(r.date)}</td>
+                      <tr key={`s-${r.date}`} className="bg-muted/70 font-medium [&>td]:border-b-2">
+                        {/* ★ 固定列は不透明な色にする。bg-background だと 日付の列だけ普通の行に見えて 小計と混じる (2026-09-28 user) */}
+                        <td className="sticky left-0 z-10 border-t border-r bg-muted px-2 py-1 whitespace-nowrap">
+                          <span className="font-bold">小計</span>
+                          <span className="ml-1 text-[11px] font-normal text-muted-foreground">{mmdd(r.date)}</span>
+                        </td>
                         <td className="border-t" /><td className="border-t" /><td className="border-t" />
                         <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.visitMin)}</td>
                         <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.travelMin)}</td>
@@ -601,7 +605,7 @@ export default function ServiceRecordsPage() {
                   const diff = r.pay != null && r.rec.amount != null && r.pay !== r.rec.amount;
                   return (
                     <tr key={r.rec.id} className="hover:bg-primary/5">
-                      <td className={`sticky left-0 z-10 border-r bg-background px-2 py-1 whitespace-nowrap ${newDay ? "border-t" : "border-t border-t-transparent"}`}>
+                      <td className={`sticky left-0 z-10 border-r bg-background px-2 py-1 whitespace-nowrap ${newDay ? "border-t-2" : "border-t border-t-transparent"}`}>
                         {newDay ? <>{mmdd(r.date)}<span className="ml-1 text-[10px] text-muted-foreground">({weekday(r.date)})</span></> : ""}
                       </td>
                       <td className="border-t px-2 py-1 text-right tabular-nums">{t5(r.rec.dispatch_start_time)}</td>
