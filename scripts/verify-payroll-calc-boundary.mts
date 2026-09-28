@@ -613,6 +613,10 @@ eq("実績1件の支給額: 30分×時給2000円 = 1000円 (端数切り上げ�
 eq("★ 実績1件の支給額: 単価が引けない(null)場合は null (未マッピング扱い)", hourlyRecordPay(60, null), null);
 
 // ── 勤怠サマリー (computeSummary) (2026-09-05 追加) ───────────────────────
+// ⚠ 2026-09-28: 同行の判定を 「旗 (accompanied_visit)」から 「サービスが同行か」に変えた。
+//   ★ 期待値は 1 つも変えていない。★ テストデータのほうに service_type/service_code を足して
+//   「同行の訪問」にした。旗だけ立てて サービスが 身体介護 のままだと、もう同行に数えない
+//   (実データでも ① はそう扱っている。根拠は payroll-calc.ts の isAccompaniedRecord のコメント)。
 // 2026-08-31に「週残業まるごと未払い」の実バグが出た箇所 (小原奈保子2026-02-07 ¥13,333)。
 const vRec = (o: Partial<VisitServiceRecord>): VisitServiceRecord =>
   ({ id: "1", employee_number: "1", employee_name: "テスト", service_date: "20260601",
@@ -708,16 +712,16 @@ eq("残業: フォールバックはmax(0,...)で負にならない (7h-8h→0)"
   computeSummary([], [aRec({ work_hours: "7:00" })], []).overtimeMinutes, 0);
 
 eq("visitMinutes: 同伴あり/なし両方を合算", computeSummary(
-  [vRec({ calc_duration: "1:00", accompanied_visit: "" }), vRec({ id: "2", calc_duration: "0:30", accompanied_visit: "同伴A" })], [], [],
+  [vRec({ calc_duration: "1:00", accompanied_visit: "" }), vRec({ id: "2", calc_duration: "0:30", accompanied_visit: "同伴A", service_type: "同行", service_code: "010001" })], [], [],
 ).visitMinutes, 90);
 eq("visitMinutesExcludingAccompanied: 同伴ありは除外", computeSummary(
-  [vRec({ calc_duration: "1:00", accompanied_visit: "" }), vRec({ id: "2", calc_duration: "0:30", accompanied_visit: "同伴A" })], [], [],
+  [vRec({ calc_duration: "1:00", accompanied_visit: "" }), vRec({ id: "2", calc_duration: "0:30", accompanied_visit: "同伴A", service_type: "同行", service_code: "010001" })], [], [],
 ).visitMinutesExcludingAccompanied, 60);
 eq("accompaniedCount: 同伴ありの件数", computeSummary(
-  [vRec({ accompanied_visit: "" }), vRec({ id: "2", accompanied_visit: "同伴A" })], [], [],
+  [vRec({ accompanied_visit: "" }), vRec({ id: "2", accompanied_visit: "同伴A", service_type: "同行", service_code: "010001" })], [], [],
 ).accompaniedCount, 1);
 eq("★ sundayHolidayMinutes: 休日区分 日祭・休日 だけ (土曜の 平日区分 は数えない、同行除く)",
-  computeSummary([vRec({ service_date: "20260606", calc_duration: "2:00", holiday_type: "平日" }), vRec({ id: "2", service_date: "20260607", calc_duration: "1:00", holiday_type: "日祭" }), vRec({ id: "3", service_date: "20260720", calc_duration: "0:45", holiday_type: "休日" }), vRec({ id: "4", service_date: "20260607", calc_duration: "1:00", holiday_type: "日祭", accompanied_visit: "同行" })], [], []).sundayHolidayMinutes, 105);
+  computeSummary([vRec({ service_date: "20260606", calc_duration: "2:00", holiday_type: "平日" }), vRec({ id: "2", service_date: "20260607", calc_duration: "1:00", holiday_type: "日祭" }), vRec({ id: "3", service_date: "20260720", calc_duration: "0:45", holiday_type: "休日" }), vRec({ id: "4", service_date: "20260607", calc_duration: "1:00", holiday_type: "日祭", accompanied_visit: "同行", service_type: "同行", service_code: "010001" })], [], []).sundayHolidayMinutes, 105);
 eq("★ 土日祝手当の対象時間: sunday_only なら日祭・休日、そうでなければ土日祝",
   [weekendAllowanceMinutes({ summary: summary({ weekendHolidayMinutes: 600, sundayHolidayMinutes: 120 }), weekend_holiday_sunday_only: true }), weekendAllowanceMinutes({ summary: summary({ weekendHolidayMinutes: 600, sundayHolidayMinutes: 120 }) })], [120, 600]);
 eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (2026-06-06は土曜)",
@@ -728,7 +732,7 @@ eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (
   const recs = [
     vRec({ id: "a", service_date: "2026/08/13", calc_duration: "1:00" }),
     vRec({ id: "b", service_date: "2026/08/15", calc_duration: "0:30" }),
-    vRec({ id: "c", service_date: "2026/08/15", calc_duration: "1:30", accompanied_visit: "同行" }),
+    vRec({ id: "c", service_date: "2026/08/15", calc_duration: "1:30", accompanied_visit: "同行", service_type: "同行", service_code: "010001" }),
     vRec({ id: "d", service_date: "2026/08/16", calc_duration: "2:00" }),
   ];
   const sm = computeSummary(recs, [], [], "attendance_first", sp);
@@ -744,7 +748,7 @@ eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (
 eq("weekendHolidayMinutes: 平日は集計しない (2026-06-01は月曜)",
   computeSummary([vRec({ service_date: "20260601", calc_duration: "1:00" })], [], []).weekendHolidayMinutes, 0);
 eq("★ weekendHolidayAccompaniedMinutes: 休日かつ同伴ありは別枠で集計",
-  computeSummary([vRec({ service_date: "20260606", calc_duration: "1:00", accompanied_visit: "同伴A" })], [], []).weekendHolidayAccompaniedMinutes, 60);
+  computeSummary([vRec({ service_date: "20260606", calc_duration: "1:00", accompanied_visit: "同伴A", service_type: "同行", service_code: "010001" })], [], []).weekendHolidayAccompaniedMinutes, 60);
 eq("commuteKmTotal: 出勤簿のcommute_km(unsafe cast経由)を合算",
   computeSummary([], [{ ...aRec({}), commute_km: 5 } as OfficeAttendanceRecord], []).commuteKmTotal, 5);
 eq("businessKmTotal: 出勤簿のbusiness_km(unsafe cast経由)を合算",
