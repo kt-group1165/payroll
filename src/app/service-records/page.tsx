@@ -473,25 +473,24 @@ export default function ServiceRecordsPage() {
     // ★ 表を画面いっぱいまで伸ばす (2026-09-28 user「実績が表示される場所が狭すぎる」)。
     //   以前は max-h-[calc(100vh-22rem)] の決め打ちで、上下の説明ぶんだけ表が縮んでいた。
     //   3rem は RootShell の p-6 (上下 1.5rem ずつ)。
-    <div className="flex h-[calc(100dvh-3rem)] flex-col gap-3">
-      <div>
-        <h2 className="text-xl font-bold">サービス記録一覧
-          <span className="ml-2 text-xs font-normal text-muted-foreground">旧システムの「実績確認」と同じ並び。1 行 = 1 訪問・日付ごとに小計。<b>読むだけ</b>の画面です</span>
-        </h2>
-      </div>
+    // ★ RootShell の p-6 を打ち消して 表の面積に回す (2026-09-28 user「もっと広く」)
+    <div className="-m-6 flex h-[calc(100dvh-1.5rem)] flex-col gap-2 p-3">
+      <h2 className="shrink-0 text-base font-bold">サービス記録一覧
+        <span className="ml-2 text-xs font-normal text-muted-foreground">旧システムの「実績確認」と同じ並び。1 行 = 1 訪問・日付ごとに小計。<b>読むだけ</b>の画面です</span>
+      </h2>
 
       {/* 選ぶところ */}
-      <div className="flex shrink-0 flex-wrap items-end gap-3 rounded-lg border p-3">
-        <label className="text-sm">事業所
-          <select className="block mt-1 h-9 w-56 rounded-md border bg-background px-2 text-sm" value={officeId} onChange={(e) => { setOfficeId(e.target.value); setRows(null); }}>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-1.5 text-sm">
+        <label className="inline-flex items-center gap-1">事業所
+          <select className="h-8 w-52 rounded-md border bg-background px-2 text-sm" value={officeId} onChange={(e) => { setOfficeId(e.target.value); setRows(null); }}>
             {offices.map((o) => <option key={o.id} value={o.id}>{o.short_name || o.name}</option>)}
           </select>
         </label>
-        <label className="text-sm">稼働年月
-          <Input type="month" value={month} onChange={(e) => { if (e.target.value) { setMonth(e.target.value); setRows(null); } }} className="mt-1 h-9 w-36" />
+        <label className="inline-flex items-center gap-1">稼働年月
+          <Input type="month" value={month} onChange={(e) => { if (e.target.value) { setMonth(e.target.value); setRows(null); } }} className="h-8 w-32" />
         </label>
-        <label className="text-sm">職員
-          <select className="block mt-1 h-9 w-56 rounded-md border bg-background px-2 text-sm" value={empNo} onChange={(e) => { setEmpNo(e.target.value); setRows(null); }}>
+        <label className="inline-flex items-center gap-1">職員
+          <select className="h-8 w-56 rounded-md border bg-background px-2 text-sm" value={empNo} onChange={(e) => { setEmpNo(e.target.value); setRows(null); }}>
             <option value="">— 選んでください ({emps.length}名) —</option>
             {emps.map((e) => (
               <option key={e.id} value={e.employee_number}>
@@ -500,32 +499,32 @@ export default function ServiceRecordsPage() {
             ))}
           </select>
         </label>
-        <Button onClick={search} disabled={loading || !emp}>{loading ? "読み込み中…" : "検 索"}</Button>
+        <Button size="sm" onClick={search} disabled={loading || !emp}>{loading ? "読み込み中…" : "検 索"}</Button>
         {emp && (
-          <p className="text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {emp.role_type || "—"} / {emp.job_type || "—"} ・ {emp.salary_type}
             {emp.salary_type === "月給" && <span className="ml-1 text-amber-700">※ 月給者ですが 時給の金額を出します (支給額ではありません)</span>}
-          </p>
+          </span>
+        )}
+        {/* ★ 絞りこみは 同じ帯に畳む。別の箱にすると 表が 1 段ぶん狭くなる */}
+        {rows && (
+          <>
+            <span className="mx-1 h-5 w-px bg-border" />
+            <label className="inline-flex items-center gap-1">利用者 <Input value={fClient} onChange={(e) => setFClient(e.target.value)} placeholder="コード / 氏名" className="h-8 w-32" /></label>
+            <label className="inline-flex items-center gap-1">コード <Input value={fCode} onChange={(e) => setFCode(e.target.value)} placeholder="111111" className="h-8 w-24" /></label>
+            {([["同行訪問", fDoukou, setFDoukou], ["夜朝", fYoruasa, setFYoruasa], ["深夜", fShinya, setFShinya], ["日祭・休日", fHoliday, setFHoliday]] as const).map(([label, v, set]) => (
+              <label key={label} className="inline-flex cursor-pointer items-center gap-1 text-xs">
+                <input type="checkbox" checked={v} onChange={(e) => set(e.target.checked)} className="h-3.5 w-3.5" />{label}
+              </label>
+            ))}
+            <label className="inline-flex cursor-pointer items-center gap-1 text-xs">
+              <input type="checkbox" checked={subtotalOnly} onChange={(e) => setSubtotalOnly(e.target.checked)} className="h-3.5 w-3.5" />小計のみ
+            </label>
+            {anyFilter && <Button variant="ghost" size="sm" onClick={clearFilters}>クリア</Button>}
+            {anyFilter && <span className="text-xs text-amber-700">⚠ 絞りこみ中は 出勤簿の行と小計を出しません</span>}
+          </>
         )}
       </div>
-
-      {/* 絞りこみ */}
-      {rows && (
-        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3 text-sm">
-          <label>利用者 <Input value={fClient} onChange={(e) => setFClient(e.target.value)} placeholder="コード / 氏名" className="ml-1 inline-block h-8 w-40" /></label>
-          <label>サービスコード <Input value={fCode} onChange={(e) => setFCode(e.target.value)} placeholder="111111" className="ml-1 inline-block h-8 w-28" /></label>
-          {([["同行訪問", fDoukou, setFDoukou], ["夜朝", fYoruasa, setFYoruasa], ["深夜", fShinya, setFShinya], ["日祭・休日", fHoliday, setFHoliday]] as const).map(([label, v, set]) => (
-            <label key={label} className="inline-flex cursor-pointer items-center gap-1">
-              <input type="checkbox" checked={v} onChange={(e) => set(e.target.checked)} className="h-3.5 w-3.5" />{label}
-            </label>
-          ))}
-          <label className="inline-flex cursor-pointer items-center gap-1">
-            <input type="checkbox" checked={subtotalOnly} onChange={(e) => setSubtotalOnly(e.target.checked)} className="h-3.5 w-3.5" />小計のみ表示
-          </label>
-          <Button variant="ghost" size="sm" onClick={clearFilters}>クリア</Button>
-          {anyFilter && <span className="text-xs text-amber-700">⚠ 絞りこみ中は 出勤簿の行と小計を出しません (絞った結果の小計ではないため)</span>}
-        </div>
-      )}
 
       {travelNote && <p className="text-xs text-amber-700">⚠ {travelNote}</p>}
       {emptyNote && <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">⚠ {emptyNote}</p>}
@@ -567,15 +566,15 @@ export default function ServiceRecordsPage() {
                   if (r.kind === "att") {
                     return (
                       <tr key={`a-${r.date}`} className="bg-muted/20 text-muted-foreground">
-                        <td className="sticky left-0 z-10 border-t border-r bg-muted/40 px-2 py-1 whitespace-nowrap">{mmdd(r.date)}<span className="ml-1 text-[10px]">({weekday(r.date)})</span></td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{r.start}</td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{r.end}</td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{r.brk}</td>
+                        <td className="sticky left-0 z-10 border-t border-r bg-muted/40 px-2 py-0.5 whitespace-nowrap">{mmdd(r.date)}<span className="ml-1 text-[10px]">({weekday(r.date)})</span></td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{r.start}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{r.end}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{r.brk}</td>
                         <td className="border-t" /><td className="border-t" />
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.workMin)}</td>
-                        <td className="border-t px-2 py-1 text-xs" colSpan={5}>出勤簿</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{hm(r.workMin)}</td>
+                        <td className="border-t px-2 py-0.5 text-xs" colSpan={5}>出勤簿</td>
                         <td className="border-t" /><td className="border-t" />
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{r.overtime}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{r.overtime}</td>
                         <td className="border-t" /><td className="border-t" /><td className="border-t" />
                       </tr>
                     );
@@ -583,19 +582,20 @@ export default function ServiceRecordsPage() {
                   if (r.kind === "sub") {
                     return (
                       <tr key={`s-${r.date}`} className="bg-muted/70 font-medium [&>td]:border-b-2">
-                        {/* ★ 固定列は不透明な色にする。bg-background だと 日付の列だけ普通の行に見えて 小計と混じる (2026-09-28 user) */}
-                        <td className="sticky left-0 z-10 border-t border-r bg-muted px-2 py-1 whitespace-nowrap">
+                        {/* ★ 日付の列は空けて 小計は右にずらす。日付の列に並ぶと 訪問の行と読み間違える (2026-09-28 user)
+                            ★ 固定列は不透明な色にする。bg-background だと 日付の列だけ普通の行に見える */}
+                        <td className="sticky left-0 z-10 border-t border-r bg-muted px-2 py-0.5" />
+                        <td className="border-t px-2 py-0.5 text-right whitespace-nowrap" colSpan={3}>
                           <span className="font-bold">小計</span>
                           <span className="ml-1 text-[11px] font-normal text-muted-foreground">{mmdd(r.date)}</span>
                         </td>
-                        <td className="border-t" /><td className="border-t" /><td className="border-t" />
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.visitMin)}</td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.travelMin)}</td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.workMin)}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{hm(r.visitMin)}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{hm(r.travelMin)}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{hm(r.workMin)}</td>
                         <td className="border-t" colSpan={5} />
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{yen(r.pay)}</td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums text-muted-foreground">{yen(r.honobono || null)}</td>
-                        <td className="border-t px-2 py-1 text-right tabular-nums">{r.overtime}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{yen(r.pay)}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums text-muted-foreground">{yen(r.honobono || null)}</td>
+                        <td className="border-t px-2 py-0.5 text-right tabular-nums">{r.overtime}</td>
                         <td className="border-t" /><td className="border-t" /><td className="border-t" />
                       </tr>
                     );
@@ -605,25 +605,25 @@ export default function ServiceRecordsPage() {
                   const diff = r.pay != null && r.rec.amount != null && r.pay !== r.rec.amount;
                   return (
                     <tr key={r.rec.id} className="hover:bg-primary/5">
-                      <td className={`sticky left-0 z-10 border-r bg-background px-2 py-1 whitespace-nowrap ${newDay ? "border-t-2" : "border-t border-t-transparent"}`}>
+                      <td className={`sticky left-0 z-10 border-r bg-background px-2 py-0.5 whitespace-nowrap ${newDay ? "border-t-2" : "border-t border-t-transparent"}`}>
                         {newDay ? <>{mmdd(r.date)}<span className="ml-1 text-[10px] text-muted-foreground">({weekday(r.date)})</span></> : ""}
                       </td>
-                      <td className="border-t px-2 py-1 text-right tabular-nums">{t5(r.rec.dispatch_start_time)}</td>
-                      <td className="border-t px-2 py-1 text-right tabular-nums">{t5(r.rec.dispatch_end_time)}</td>
+                      <td className="border-t px-2 py-0.5 text-right tabular-nums">{t5(r.rec.dispatch_start_time)}</td>
+                      <td className="border-t px-2 py-0.5 text-right tabular-nums">{t5(r.rec.dispatch_end_time)}</td>
                       <td className="border-t" />
-                      <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.visitMin)}</td>
-                      <td className="border-t px-2 py-1 text-right tabular-nums text-muted-foreground">{hm(r.travelMin)}</td>
-                      <td className="border-t px-2 py-1 text-right tabular-nums">{hm(r.workMin)}</td>
-                      <td className="border-t px-2 py-1 tabular-nums whitespace-nowrap">{r.rec.client_number}</td>
-                      <td className="border-t px-2 py-1 whitespace-nowrap">{r.rec.client_name ?? ""}</td>
-                      <td className="border-t px-2 py-1 whitespace-nowrap">
+                      <td className="border-t px-2 py-0.5 text-right tabular-nums">{hm(r.visitMin)}</td>
+                      <td className="border-t px-2 py-0.5 text-right tabular-nums text-muted-foreground">{hm(r.travelMin)}</td>
+                      <td className="border-t px-2 py-0.5 text-right tabular-nums">{hm(r.workMin)}</td>
+                      <td className="border-t px-2 py-0.5 tabular-nums whitespace-nowrap">{r.rec.client_number}</td>
+                      <td className="border-t px-2 py-0.5 whitespace-nowrap">{r.rec.client_name ?? ""}</td>
+                      <td className="border-t px-2 py-0.5 whitespace-nowrap">
                         {r.rec.service_type ?? r.rec.service_code}
                         {r.rec.accompanied_visit?.trim() && <span className="ml-1 rounded bg-muted px-1 text-[10px]">同行</span>}
                         <span className="ml-1 text-[10px] text-muted-foreground">{r.catName}</span>
                       </td>
-                      <td className="border-t px-2 py-1 whitespace-nowrap">{r.rec.holiday_type ?? ""}</td>
-                      <td className="border-t px-2 py-1 whitespace-nowrap">{r.rec.time_period ?? ""}</td>
-                      <td className="border-t px-2 py-1 text-right tabular-nums" title={r.hourlyRate != null ? `時給 ${r.hourlyRate.toLocaleString()}円` : "時給が引けません"}>
+                      <td className="border-t px-2 py-0.5 whitespace-nowrap">{r.rec.holiday_type ?? ""}</td>
+                      <td className="border-t px-2 py-0.5 whitespace-nowrap">{r.rec.time_period ?? ""}</td>
+                      <td className="border-t px-2 py-0.5 text-right tabular-nums" title={r.hourlyRate != null ? `時給 ${r.hourlyRate.toLocaleString()}円` : "時給が引けません"}>
                         {r.pay != null ? yen(r.pay) : <span className="text-amber-700">—</span>}
                       </td>
                       <td className={`border-t px-2 py-1 text-right tabular-nums ${diff ? "font-medium text-amber-700" : "text-muted-foreground"}`}>
@@ -638,7 +638,7 @@ export default function ServiceRecordsPage() {
           </div>
 
           {total && (
-            <div className="flex shrink-0 flex-wrap gap-x-6 gap-y-1 rounded-lg border bg-muted/30 p-3 text-sm">
+            <div className="flex shrink-0 flex-wrap gap-x-6 gap-y-1 rounded-lg border bg-muted/30 px-3 py-1.5 text-sm">
               <span>件数 <b className="tabular-nums">{total.count.toLocaleString()}</b></span>
               <span>訪問時間 <b className="tabular-nums">{hm(total.visitMin)}</b></span>
               <span>金額 (当方) <b className="tabular-nums">{yen(total.pay)}円</b></span>
@@ -653,7 +653,7 @@ export default function ServiceRecordsPage() {
             </div>
           )}
 
-          <details className="shrink-0 rounded-lg border p-3 text-xs text-muted-foreground">
+          <details className="shrink-0 rounded-lg border px-3 py-1.5 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">⚠ この画面が出していないもの</summary>
             <ul className="mt-1 list-disc space-y-0.5 pl-5">
               <li><b>週勤務時間・常勤換算時間</b> — 列だけ作ってあります。数値は後で (2026-09-26 user)</li>
