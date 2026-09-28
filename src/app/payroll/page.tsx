@@ -53,6 +53,7 @@ import {
   meetingMinutes,
   treatmentSubsidyAmount,
   cancelAllowanceFromCodes,
+  cancelAllowanceAmount,
   communicationFeeAmount,
   hourlyCommuteFeeAmount,
   hourlyBusinessTripFeeAmount,
@@ -1114,6 +1115,8 @@ export default function PayrollPage() {
       const manualTrainingMinByNum = new Map<string, number>();
       // 育児手当の手入力 (円)。事業所書式に保育料が無い月を補う。入っていれば 書式からの計算より優先 (2026-09-23 user)
       const manualChildcareByNum = new Map<string, number>();
+      // ★ 実績にキャンセルの行が無いのに 事業所が紙で申告している分 (2026-09-28)。実績から数えた件数に足す
+      const manualCancelExtraByNum = new Map<string, number>();
       // 事務時間の手入力 (分)。出勤簿が CSV で取り込めない事務員用 (五井 根本カオリ はスキャンPDFしか無い)
       const manualOfficeWorkMinByNum = new Map<string, number>();
       // 事務員の残業 (出勤簿が CSV に無い人)。payroll_monthly_inputs overtime_minutes。2026-09-26
@@ -1138,7 +1141,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes", "shoninsha_adjustment"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes", "shoninsha_adjustment", "cancel_count_extra"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (Number(r.numeric_value ?? 0) > 0) {
@@ -1156,6 +1159,7 @@ export default function PayrollPage() {
           if (r.item_key === "legal_within_overtime_minutes" && Number(r.numeric_value ?? 0) > 0) manualLegalWithinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "absence_days" && Number(r.numeric_value ?? 0) > 0) manualAbsenceDaysByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "late_early_minutes" && Number(r.numeric_value ?? 0) > 0) manualLateEarlyMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "cancel_count_extra" && Number(r.numeric_value ?? 0) > 0) manualCancelExtraByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_adjustment" && Number(r.numeric_value ?? 0) > 0) manualShoninshaAdjustmentNums.add(normEmp(r.employee_number));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
@@ -1320,8 +1324,12 @@ export default function PayrollPage() {
           const catId = mappingMap.get(r.service_code) ?? null;
           return catId ? categoryMap.get(catId) === "キャンセル" : false;
         });
-        const cancelCount = cancelRecs.length;
-        const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0);
+        // ★ 旧システムは キャンセルを 総括表データには出すが 実績データには出さない月がある (2026-09-28 実測)。
+        //   事業所が紙で申告した分を 手入力で足す。★ 実績にある月は入れない (二重になる)
+        const cancelExtra = manualCancelExtraByNum.get(empNum) ?? 0;
+        const cancelCount = cancelRecs.length + cancelExtra;
+        const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0)
+          + cancelAllowanceAmount(cancelExtra, empOffice?.cancel_unit_price ?? 0);
         const paidLeaveAllowance = paidLeaveAllowanceOf(info.empId, empNum, paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         // 研修・会議の時間は 全事業所 一律 1,150円/時 (総括表① で実測。以前は同行の時給で 0.75 掛けの事業所が 863円になっていた)
         const trainingRate = TRAINING_RATE_PER_HOUR;
