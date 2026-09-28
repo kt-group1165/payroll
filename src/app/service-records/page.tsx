@@ -467,10 +467,14 @@ export default function ServiceRecordsPage() {
 
       {travelNote && <p className="text-xs text-amber-700">⚠ {travelNote}</p>}
       {emptyNote && <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">⚠ {emptyNote}</p>}
-      {/* ★ 検索前を真っ白にしない。以前は 検索前・0 件・エラー が すべて同じ空白だった (2026-09-28) */}
+      {/* ★ 検索前を真っ白にしない。以前は 検索前・0 件・エラー が すべて同じ空白だった (2026-09-28)
+          ★ 何が足りないかを名指しする。職員が未選択だと 検索ボタンが disabled なので
+            「選んだのに押せない」と読めてしまう (2026-09-28 user 報告) */}
       {!rows && !loading && (
         <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-          事業所・稼働年月・職員を選んで <b>検 索</b> を押してください
+          {!office ? <>まず <b>事業所</b> を選んでください</>
+            : !emp ? <><b>職員</b> を選ぶと <b>検 索</b> が押せます</>
+            : <><b>検 索</b> を押してください</>}
         </p>
       )}
 
