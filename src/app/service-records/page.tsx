@@ -94,6 +94,8 @@ export default function ServiceRecordsPage() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [travelNote, setTravelNote] = useState<string>("");
+  // 0 件だったときに「他の事業所・他の月にはあるか」を出す (兼務者は事業所ごとに実績が分かれる)
+  const [emptyNote, setEmptyNote] = useState<string>("");
 
   // 絞りこみ
   const [fClient, setFClient] = useState("");
@@ -141,6 +143,7 @@ export default function ServiceRecordsPage() {
     if (!office || !emp) { toast.error("事業所と職員を選んでください"); return; }
     setLoading(true);
     setTravelNote("");
+    setEmptyNote("");
     try {
       const ym = month.replace("-", "");            // YYYYMM
       const year = Number(month.slice(0, 4));
@@ -312,6 +315,36 @@ export default function ServiceRecordsPage() {
         });
       }
       setRows(out);
+      // ★ 0 件のときは 真っ白にせず「どこにあるか」を出す。
+      //   兼務者は事業所ごとに実績が分かれるので、事業所を選び間違えると 0 件になる
+      //   (2026-09-28 user 報告: 永峯亜矢子 202607 は 中央 0 件 / KT姉崎 122 件)
+      if (out.length === 0) {
+        const { data: elsewhere, error: elsewhereErr } = await supabase
+          .from("payroll_service_records")
+          .select("office_number,office_name,processing_month")
+          .eq("employee_number", emp.employee_number)
+          .order("processing_month");
+        if (elsewhereErr) {
+          setEmptyNote("この事業所・この月の実績は 0 件です (他にあるかの確認は取得に失敗しました)");
+        } else {
+          const rowsE = (elsewhere ?? []) as { office_number: string; office_name: string | null; processing_month: string }[];
+          const sameMonth = new Map<string, { name: string; n: number }>();
+          const otherMonth = new Map<string, number>();
+          for (const r of rowsE) {
+            if (r.processing_month === ym) {
+              const cur = sameMonth.get(r.office_number);
+              sameMonth.set(r.office_number, { name: r.office_name ?? r.office_number, n: (cur?.n ?? 0) + 1 });
+            } else if (r.office_number === office.office_number) {
+              otherMonth.set(r.processing_month, (otherMonth.get(r.processing_month) ?? 0) + 1);
+            }
+          }
+          const parts: string[] = ["この事業所・この月の実績は 0 件です。"];
+          if (sameMonth.size > 0) parts.push(`同じ月の実績は ${[...sameMonth.values()].map((v) => `${v.name} ${v.n} 件`).join(" / ")} にあります (事業所を切り替えてください)。`);
+          if (otherMonth.size > 0) parts.push(`この事業所では ${[...otherMonth.keys()].sort().map((m) => `${m.slice(0, 4)}/${m.slice(4)}`).join("・")} に実績があります。`);
+          if (sameMonth.size === 0 && otherMonth.size === 0) parts.push("この職員の実績は どの事業所・どの月にもありません。");
+          setEmptyNote(parts.join(" "));
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
       setRows(null);
@@ -433,6 +466,13 @@ export default function ServiceRecordsPage() {
       )}
 
       {travelNote && <p className="text-xs text-amber-700">⚠ {travelNote}</p>}
+      {emptyNote && <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">⚠ {emptyNote}</p>}
+      {/* ★ 検索前を真っ白にしない。以前は 検索前・0 件・エラー が すべて同じ空白だった (2026-09-28) */}
+      {!rows && !loading && (
+        <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+          事業所・稼働年月・職員を選んで <b>検 索</b> を押してください
+        </p>
+      )}
 
       {shownRows && (
         <>
