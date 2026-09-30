@@ -9,8 +9,21 @@
  * ★ 再開: この回の開始時刻より calculated_at が新しいものは飛ばす。何度押しても同じところまで進むだけ。
  * ★ DB 負荷の手当て: 1 件ずつ・間を 3 秒あける / 各件の前に軽いクエリで応答時間を測り 2 秒を超えたら自動で一時停止 /
  *   旧システムの職員表 (1,656 行) は この回の間だけ 1 回読んで使い回す (lib/supabase/batch-cache-fetch.ts)
+ *
+ * ★ 一定件数ごとに ページを読み直す (2026-09-30)。
+ *   ★ 画面を長時間動かし続けると 1 件の計算が **8 秒 → 10 分** (75 倍) まで落ちる。実測:
+ *   ```
+ *     読み直す前  1 件 約 10 分 (44 件の途中)
+ *     読み直した後 8,8,8,8,8,20,8,8,8,8,8,8,8,8 秒
+ *   ```
+ *   ★ 原因は 1 件ごとに増える保持物 (計算の入力を丸ごと抱える) と思われるが 特定していない。
+ *   ★ 特定しなくても 読み直せば必ず戻るので、★ RELOAD_EVERY 件ごとに location.reload() して
+ *   ★ 残りの key を localStorage に置き、★ 読み直し後に自動で続ける。
+ *   ⚠ 読み直しの条件は **成功した件数**。失敗は数えない (失敗だけが続くと 進まないまま読み直し続けるため)。
+ *   ⚠ 裏タブ (document.hidden) では読み直さない。★ 読み込み自体が止まる画面があるため
+ *     ([[feedback_hidden_tab_suspense_never_reveals]])。★ 表に戻るまで そのまま続ける。
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { canOverwriteResult, type MonthlyStatus } from "@/lib/payroll/monthly-status";
@@ -27,11 +40,26 @@ type Item = {
 };
 
 const RUN_START_KEY = "payroll:batchRecalc:runStart";
+const AUTO_KEY = "payroll:batchRecalc:auto";
 const PAUSE_BETWEEN_MS = 3000;
 const SLOW_MS = 2000;
+/** ★ 何件 成功したら ページを読み直すか (長時間動かすと計算が 75 倍遅くなるため) */
+const RELOAD_EVERY = 20;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const readRunStart = (): string | null => { try { return localStorage.getItem(RUN_START_KEY); } catch { return null; } };
 const writeRunStart = (v: string | null) => { try { if (v) localStorage.setItem(RUN_START_KEY, v); else localStorage.removeItem(RUN_START_KEY); } catch { /* 保存できなくても続行 (再開の起点が画面を閉じると消えるだけ) */ } };
+
+/** 読み直しをまたいで続けるための控え。★ 残りの key を明示的に持つ (手で選んだ分も失わない) */
+type AutoPayload = { keys: string[]; cutoff: string };
+const readAuto = (): AutoPayload | null => {
+  try {
+    const s = localStorage.getItem(AUTO_KEY);
+    if (!s) return null;
+    const v = JSON.parse(s) as AutoPayload;
+    return Array.isArray(v?.keys) && v.keys.length > 0 ? { keys: v.keys.map(String), cutoff: String(v.cutoff ?? "") } : null;
+  } catch { return null; }
+};
+const writeAuto = (v: AutoPayload | null) => { try { if (v) localStorage.setItem(AUTO_KEY, JSON.stringify(v)); else localStorage.removeItem(AUTO_KEY); } catch { /* 保存できなくても続行 (読み直しでの自動再開ができないだけ) */ } };
 
 /** 1000 行ずつ全件読む (PostgREST の上限対策。order 必須) */
 async function readAll(table: string, select: string, filter: (q: ReturnType<ReturnType<typeof supabase.from>["select"]>) => typeof q, orderCol: string): Promise<Record<string, unknown>[]> {
@@ -58,10 +86,14 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
   const [cutoff, setCutoff] = useState("");
   const stopRef = useRef(false);
   const resumeRef = useRef<(() => void) | null>(null);
+  const autoStartedRef = useRef(false);   // ★ StrictMode の 2 回目で 二重に走らせない
+  const cutoffRef = useRef("");          // ★ run() は初回描画の closure で動くので cutoff を ref で持つ (読み直しをまたいでも失わない)
 
   const patch = (key: string, p: Partial<Item>) => setItems((xs) => xs.map((x) => (x.key === key ? { ...x, ...p } : x)));
 
-  async function loadList() {
+  /** 対象を読む。★ 読み直し後の自動再開から呼ぶので **戻り値でも返す** (setItems は非同期なので closure からは見えない) */
+  async function loadList(cutoffArg?: string): Promise<Item[]> {
+    const cutoffUsed = cutoffArg ?? cutoff;
     setLoadingList(true); setMessage("");
     try {
       const calc = (await readAll("payroll_calc_results", "office_number,processing_month,calculated_at", (q) => q, "office_number")) as unknown as CalcStamp[];
@@ -90,7 +122,7 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
       for (const [k, s] of person) { const [o, , m] = k.split("|"); const km = `${o}|${m}`; if (!reasonsOf.has(km)) reasonsOf.set(km, new Set()); for (const w of s) reasonsOf.get(km)!.add(w); }
       for (const [k, s] of officeMonth) { if (!reasonsOf.has(k)) reasonsOf.set(k, new Set()); for (const w of s) reasonsOf.get(k)!.add(w); }
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
-      const cutIso = cutoff ? new Date(cutoff).toISOString() : "";
+      const cutIso = cutoffUsed ? new Date(cutoffUsed).toISOString() : "";
       const list: Item[] = calc
         .filter((c) => officeByNumber.has(c.office_number))
         .map((c): Item => {
@@ -105,8 +137,10 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
         .sort((a, b) => (a.officeNumber + a.month).localeCompare(b.officeNumber + b.month));
       setItems(list);
       setMessage(`計算結果 ${calc.length} 件中、この画面の事業所 ${list.length} 件。既定で選んだもの (確定済みでなく 古いもの): ${list.filter((x) => x.selected).length} 件`);
+      return list;
     } catch (e) {
       setMessage(`★ 対象の読み込みに失敗: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
     } finally {
       setLoadingList(false);
     }
@@ -118,12 +152,14 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
     return performance.now() - t0;
   }
 
-  async function run(onlyFailed: boolean) {
-    const targets = items.filter((x) => (onlyFailed ? x.state === "失敗" : x.selected));
-    if (targets.length === 0) { setMessage("対象がありません"); return; }
+  async function run(onlyFailed: boolean, presetTargets?: Item[]) {
+    const targets = presetTargets ?? items.filter((x) => (onlyFailed ? x.state === "失敗" : x.selected));
+    if (targets.length === 0) { setMessage("対象がありません"); writeAuto(null); return; }
     let runStart = readRunStart();
     if (!runStart) { runStart = new Date().toISOString(); writeRunStart(runStart); }
     stopRef.current = false; setRunning(true); setPaused(""); setBatchCache(true);
+    let okSinceReload = 0;          // ★ 読み直しの判定は **成功した件数** だけで数える
+    let reloading = false;
     try {
       for (let i = 0; i < targets.length; i++) {
         const it = targets[i];
@@ -150,14 +186,47 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
           continue;
         }
         const { data: after } = await supabase.from("payroll_calc_results").select("calculated_at").eq("office_number", it.officeNumber).eq("processing_month", it.month).maybeSingle();
-        if (after && (after.calculated_at as string) > runStart) patch(it.key, { state: "済", calculatedAt: after.calculated_at as string });
+        if (after && (after.calculated_at as string) > runStart) { patch(it.key, { state: "済", calculatedAt: after.calculated_at as string }); okSinceReload++; }
         else patch(it.key, { state: "失敗", note: getLastError() || "計算結果が保存されませんでした (画面上部のエラー表示を確認)" });
-        if (i < targets.length - 1) await sleep(PAUSE_BETWEEN_MS);
+        const rest = targets.slice(i + 1);
+        // ★ 一定件数ごとに ページを読み直して 速度を戻す (残りは localStorage に控えて 自動で続ける)
+        if (okSinceReload >= RELOAD_EVERY && rest.length > 0 && !stopRef.current) {
+          if (typeof document !== "undefined" && document.hidden) {
+            setMessage(`裏タブなので読み直しを見送りました (表に戻すと ${RELOAD_EVERY} 件ごとに読み直します)。残り ${rest.length} 件`);
+          } else {
+            writeAuto({ keys: rest.map((t) => t.key), cutoff: cutoffRef.current });
+            reloading = true;
+            setMessage(`${RELOAD_EVERY} 件終わったのでページを読み直します (残り ${rest.length} 件は読み直したあと自動で続きます)`);
+            location.reload();
+            return;
+          }
+        }
+        if (rest.length > 0) await sleep(PAUSE_BETWEEN_MS);
       }
     } finally {
       setBatchCache(false); setRunning(false); setPaused("");
+      if (!reloading) writeAuto(null);   // ★ 終わった / 止めた ときは 自動再開を消す
     }
   }
+
+  // ★ 読み直し後の自動再開。★ localStorage に残りの key があるときだけ動く
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    const a = readAuto();
+    if (!a) return;
+    autoStartedRef.current = true;
+    void (async () => {
+      setCutoff(a.cutoff); cutoffRef.current = a.cutoff;
+      const list = await loadList(a.cutoff);
+      const want = new Set(a.keys);
+      const targets = list.filter((x) => want.has(x.key));
+      setItems(list.map((x) => ({ ...x, selected: want.has(x.key) })));
+      if (targets.length === 0) { writeAuto(null); setMessage(`★ 読み直し後に 続きの対象 ${a.keys.length} 件が見つかりませんでした。自動再開をやめます`); return; }
+      setMessage(`読み直しました。残り ${targets.length} 件を続けます`);
+      await run(false, targets);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const counts = items.reduce<Record<string, number>>((m, x) => { m[x.state] = (m[x.state] ?? 0) + 1; return m; }, {});
   const runStart = readRunStart();
@@ -167,7 +236,7 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-bold">まとめて再計算</span>
         <label className="text-xs text-muted-foreground">この日時より前に計算したものも対象
-          <input type="datetime-local" className="ml-1 border rounded px-1 py-0.5 text-xs bg-background" value={cutoff} onChange={(e) => setCutoff(e.target.value)} disabled={running} />
+          <input type="datetime-local" className="ml-1 border rounded px-1 py-0.5 text-xs bg-background" value={cutoff} onChange={(e) => { setCutoff(e.target.value); cutoffRef.current = e.target.value; }} disabled={running} />
         </label>
         <Button size="sm" variant="outline" onClick={() => void loadList()} disabled={running || loadingList}>{loadingList ? "読み込み中…" : "対象を読み込む"}</Button>
         <Button size="sm" onClick={() => void run(false)} disabled={running || items.length === 0}>{runStart ? "続きから再開" : "選んだものを再計算"}</Button>
@@ -176,10 +245,11 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
         {paused && <Button size="sm" onClick={() => resumeRef.current?.()}>再開</Button>}
         <Button size="sm" variant="ghost" onClick={() => setItems((xs) => xs.map((x) => ({ ...x, selected: x.state !== "確定のため飛ばし" })))} disabled={running || items.length === 0}>全部選ぶ</Button>
         <Button size="sm" variant="ghost" onClick={() => setItems((xs) => xs.map((x) => ({ ...x, selected: false })))} disabled={running || items.length === 0}>全部外す</Button>
-        <Button size="sm" variant="ghost" onClick={() => { writeRunStart(null); setItems((xs) => xs.map((x) => ({ ...x, state: x.state === "確定のため飛ばし" ? x.state : "待ち", note: "" }))); }} disabled={running}>新しく始める</Button>
+        <Button size="sm" variant="ghost" onClick={() => { writeRunStart(null); writeAuto(null); setItems((xs) => xs.map((x) => ({ ...x, state: x.state === "確定のため飛ばし" ? x.state : "待ち", note: "" }))); }} disabled={running}>新しく始める</Button>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
         1 件ずつ順に「給与計算を実行」と同じ計算をします。確定済みの月は触りません。間を {PAUSE_BETWEEN_MS / 1000} 秒あけ、DB の応答が {SLOW_MS / 1000} 秒を超えたら自動で止まります。
+        {" "}★ {RELOAD_EVERY} 件 終わるごとに **ページを読み直して** 続けます (長時間動かすと 1 件 8 秒 → 10 分まで遅くなるため)。読み直しの間は画面が一瞬白くなります。
         {runStart && <> この回の開始: {new Date(runStart).toLocaleString("ja-JP")} (これより後に計算済みのものは飛ばします)</>}
         ⚠ 実行中は 他の画面・セッションで 計算結果から金額を測らないでください (古い結果と新しい結果が混ざります)。
       </p>
