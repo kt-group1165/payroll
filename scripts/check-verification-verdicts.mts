@@ -107,6 +107,7 @@ async function main() {
           officeNumber: c.office_number,
           officeFormEmpty,
           adjustmentFolded: pickSoukatsu(s.row_data, "調整手当") !== 0,
+          soukatsuGosa: pickSoukatsu(s.row_data, "誤差"),
         };
         const { items } = verificationItems(e, kind, otMap, s.row_data);
         const ds = diffItems(items, ctx);
@@ -212,6 +213,13 @@ async function main() {
   expect(one("出勤時間", { ...base, attendanceGapMinutes: 30 }).verdict === "許容", "出勤時間も同じ理由で 許容");
   expect(one("特日", { ...base, adjustmentFolded: true }).verdict === "許容", "調整手当に畳み込まれていれば 特日は 許容 (突合は内訳計で)");
   expect(one("特日", base).verdict !== "許容", "★ 畳み込まれていなければ 特日の差は 許容にしない");
+  // ★ 調整手当(内訳計) の 誤差規則 (2026-10-01 追加)
+  expect(diffItems([{ item: "調整手当(内訳計)", ours: 0, soukatsu: -2300 }], { ...base, soukatsuGosa: 2300 })[0].verdict === "許容",
+    "★ 差が ②の誤差と同額なら 調整手当(内訳計) は 許容");
+  expect(diffItems([{ item: "調整手当(内訳計)", ours: 0, soukatsu: -2300 }], { ...base, soukatsuGosa: 999 })[0].verdict === "要確認",
+    "★ 誤差と額が違えば 許容にしない");
+  expect(diffItems([{ item: "調整手当(内訳計)", ours: 0, soukatsu: -2300 }], { ...base, soukatsuGosa: 0 })[0].verdict === "要確認",
+    "★ 誤差が 0 のときは 許容にしない (この規則を空打ちで使わない)");
   expect(diffItems([{ item: "残業総額", ours: 1000, soukatsu: 1000 }], base).length === 0, "差が 0 の項目は 出さない");
   expect(diffItems([{ item: "残業総額", ours: 1000, soukatsu: 1001 }], base).length === 0, "差 1 円は 許容範囲 (MONEY_TOLERANCE)");
 
