@@ -4,7 +4,7 @@
  *   SOUKATSU1_DIR=<① の抽出物の dir> node migrations/set_care_qualification_from_soukatsu_20260930.mjs            # DRY RUN
  *   SOUKATSU1_DIR=… node migrations/set_care_qualification_from_soukatsu_20260930.mjs --execute
  *   SOUKATSU1_DIR=… node migrations/set_care_qualification_from_soukatsu_20260930.mjs --siblings --execute   # 兼務先の行も立てる
- *   node migrations/set_care_qualification_from_soukatsu_20260930.mjs --revert --execute                     # 立てた行を false に戻す
+ *   node migrations/set_care_qualification_from_soukatsu_20260930.mjs --revert --execute                     # 書き込み前の値に戻す
  *
  * ── 根拠 (user 2026-09-30) ────────────────────────────────────────────────
  * ★ 「総括表で勤続手当が出てるなら資格者」。
@@ -28,17 +28,32 @@
  * ⚠ ★ 逆向き (当方 true だが 総括表が一度も払っていない) は **触らない**。
  *   勤続 1 年未満なら 資格があっても 0 円なので、★ 払っていないことは 資格が無い証拠にならない。
  *
- * 冪等。既に true の行は 触らない。--revert は この script が立てた行だけ戻す
- * (note に marker を残すのではなく care_qualification_kind の値で見分ける)。
+ * 冪等。既に true の行は 触らない。
+ * ★ --execute は 書き込む前の値を migrations/_backup_care_qualification_20260930.json に控える。
+ *   --revert はそのファイルを読んで **1 行ずつ元の値に**戻す (kind の値では見分けられないため)。
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const EXECUTE = process.argv.includes("--execute");
 const SIBLINGS = process.argv.includes("--siblings");
 const REVERT = process.argv.includes("--revert");
-/** ★ この script が立てた行の目印。--revert で これだけを戻す */
-const KIND_MARK = "総括表の勤続手当より（要件は満たす）";
+/**
+ * care_qualification_kind に入れる値。
+ * ⚠ ★ この列には CHECK 制約がある (migrations/payroll_employees_care_qualification_kind.sql):
+ *      '介護福祉士' / '実務者研修修了' / '介護支援専門員' / '不明（要件は満たす）'
+ *   ★ 2026-09-30 に 独自の値 ("総括表の勤続手当より（要件は満たす）") を入れようとして
+ *     ★ 1 行目で 23514 で落ちた (書き込みは 0 行)。★ 勝手な値を作らない。
+ */
+const KIND_ALLOWED = ["介護福祉士", "実務者研修修了", "介護支援専門員", "不明（要件は満たす）"];
+const KIND_VALUE = "不明（要件は満たす）";
+if (!KIND_ALLOWED.includes(KIND_VALUE)) { console.error(`★ care_qualification_kind の CHECK 制約に無い値です: ${KIND_VALUE}`); process.exit(2); }
+/**
+ * ★ 復元用のログ。★ kind の値では この script が立てた行を見分けられない
+ *   (既に true の 142 行も同じ '不明（要件は満たす）' を持つ) ので、
+ *   ★ 書き込む前の値を ここに控えて --revert でそのまま戻す。
+ */
+const BACKUP = "migrations/_backup_care_qualification_20260930.json";
 
 const env = {};
 for (const p of ["../kaigo-app/.env.local", ".env.local"]) {
@@ -88,13 +103,21 @@ for (const e of emps) {
 }
 
 if (REVERT) {
-  const targets = emps.filter((e) => e.care_qualification_kind === KIND_MARK);
-  console.log(`この script が立てた行 (care_qualification_kind = "${KIND_MARK}"): ${targets.length} 行`);
-  for (const e of targets.slice(0, 20)) console.log(`  ${offNumOfId.get(e.office_id)}|${nn(e.employee_number)} ${e.name}`);
-  if (targets.length > 20) console.log(`  … ほか ${targets.length - 20} 行`);
+  let log;
+  try { log = JSON.parse(readFileSync(BACKUP, "utf8")); }
+  catch { console.error(`★ ${BACKUP} が読めません。--execute をまだ回していないか、ログを消しています。★ 推測で戻しません`); process.exit(2); }
+  console.log(`${BACKUP} に控えた行: ${log.rows.length} (書き込み ${log.executed_at})`);
+  const byId = new Map(emps.map((e) => [e.id, e]));
+  const changed = log.rows.filter((r) => {
+    const now = byId.get(r.id);
+    return now && (now.has_care_qualification !== r.has_care_qualification || (now.care_qualification_kind ?? null) !== (r.care_qualification_kind ?? null));
+  });
+  console.log(`いまの値が 控えと違う行 (= 戻す対象): ${changed.length}`);
+  for (const r of changed.slice(0, 20)) console.log(`  ${r.office_number}|${r.employee_number} ${r.name} → 資格 ${r.has_care_qualification} / 種類 ${r.care_qualification_kind ?? "null"} に戻す`);
+  if (changed.length > 20) console.log(`  … ほか ${changed.length - 20} 行`);
   if (!EXECUTE) { console.log("(DRY RUN。--revert --execute で戻します)"); process.exit(0); }
-  for (const e of targets) await q(`payroll_employees?id=eq.${e.id}`, { method: "PATCH", body: JSON.stringify({ has_care_qualification: false, care_qualification_kind: null }) });
-  console.log(`${targets.length} 行を false に戻しました`);
+  for (const r of changed) await q(`payroll_employees?id=eq.${r.id}`, { method: "PATCH", body: JSON.stringify({ has_care_qualification: r.has_care_qualification, care_qualification_kind: r.care_qualification_kind ?? null }) });
+  console.log(`${changed.length} 行を 書き込み前の値に戻しました`);
   process.exit(0);
 }
 
@@ -166,16 +189,30 @@ const trueButZero = emps.filter((e) => {
 console.log(`\n参考: 当方 true だが 総括表は 0 円しか出していない ${trueButZero.length} 行 → ★ 触りません (勤続 1 年未満なら 資格があっても 0 円)`);
 
 const targets = SIBLINGS ? [...direct.map((d) => d.e), ...siblings] : direct.map((d) => d.e);
-console.log(`\n書き込む行数 ${targets.length}`);
+console.log(`\n書き込む行数 ${targets.length} / care_qualification_kind に入れる値 "${KIND_VALUE}" (★ CHECK 制約の許可値)`);
 if (!EXECUTE) { console.log("(DRY RUN。--execute で書き込みます)"); process.exit(0); }
+// ★ 書き込む前に いまの値を控える。★ これが無いと戻せない (kind の値では この script の行を見分けられない)
+writeFileSync(BACKUP, JSON.stringify({
+  executed_at: new Date().toISOString(),
+  note: "set_care_qualification_from_soukatsu_20260930.mjs が書き込む前の値。--revert --execute でこの値に戻す",
+  rows: targets.map((e) => ({
+    id: e.id, office_number: offNumOfId.get(e.office_id) ?? null, employee_number: nn(e.employee_number), name: e.name,
+    has_care_qualification: e.has_care_qualification ?? false, care_qualification_kind: e.care_qualification_kind ?? null,
+  })),
+}, null, 2) + "\n", "utf8");
+console.log(`書き込む前の値を ${BACKUP} に控えました`);
+const beforeTrue = emps.filter((e) => e.has_care_qualification).length;
 let done = 0;
 for (const e of targets) {
   const patch = { has_care_qualification: true };
-  if (!e.care_qualification_kind) patch.care_qualification_kind = KIND_MARK;
+  if (!e.care_qualification_kind) patch.care_qualification_kind = KIND_VALUE;
   await q(`payroll_employees?id=eq.${e.id}`, { method: "PATCH", body: JSON.stringify(patch) });
   done++;
   if (done % 50 === 0) console.log(`  ${done}/${targets.length}`);
 }
 console.log(`${done} 行に has_care_qualification=true を立てました`);
+// ★ 「完了」と言う前に DB で数え直す
+const after = await all("payroll_employees?select=id,has_care_qualification");
+console.log(`確認: has_care_qualification=true の行 ${after.filter((e) => e.has_care_qualification).length} (書き込み前 ${beforeTrue} / 足した ${done})`);
 console.log("★ 次に 全事業所・全月を再計算すること (時給者 5 名 約¥45,440 が ② と一致する方向へ動きます)");
-console.log(`★ 戻すときは --revert --execute (care_qualification_kind="${KIND_MARK}" の行だけ戻す)`);
+console.log("★ 戻すときは node migrations/set_care_qualification_from_soukatsu_20260930.mjs --revert --execute");
