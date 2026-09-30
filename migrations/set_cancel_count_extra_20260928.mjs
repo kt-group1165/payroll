@@ -76,7 +76,10 @@ const H = { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "applic
 const q = async (path, init) => {
   const r = await fetch(`${SB}/rest/v1/${path}`, { headers: H, ...init });
   if (!r.ok) throw new Error(`${path} ${r.status} ${await r.text()}`);
-  return r.status === 204 ? null : r.json();
+  // ⚠ PostgREST の POST/DELETE は Prefer: return=representation が無いと **本文を返さない**。
+  //   r.json() をそのまま呼ぶと 書き込みが成功したあとに SyntaxError で落ちる (2026-09-30 に踏んだ)。
+  const body = await r.text();
+  return body ? JSON.parse(body) : null;
 };
 
 console.log(`=== 実績に無いキャンセルを 手入力に入れる ${DELETE ? "【削除】" : EXECUTE ? "【実行】" : "(DRY RUN)"} ===`);
