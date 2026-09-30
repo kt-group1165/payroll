@@ -21,13 +21,14 @@
  * ── この検査が見ていないもの ──────────────────────────────────────────────
  *   ・特日の時給 200 円そのもの (→ verify-payroll-calc-boundary の 3 本)
  *   ・土日祝手当・日曜祝日 (特日の日は そちらに数えない。→ check:soukatsu-item-gap)
- *   ・会社休日マスタ (payroll_company_holidays) が正しいか。★ 人が入れるもの
+ *   ・★ 月の訪問時間そのもの (→ check:visit-time-l1。★ 特日が合わない人の半分は ここが原因)
+ *   ・★ 会社休日マスタ は 前提 (c) で 検証するようになった (2026-09-30)。★ ここには もう書かない
  *   ・202612 / 202701 の年末年始。★ まだ実績が無い
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { restAll, restOne, normEmpNo } from "./_rest.mjs";
-import { isSpecialDay, isAccompaniedRecord, tokubiAllowanceAmount, tokubiRateForHolidayNames, isCareRecord } from "../src/lib/payroll/payroll-calc.js";
+import { isSpecialDay, isAccompaniedRecord, tokubiAllowanceAmount, tokubiRateForHolidayNames, isCareRecord, parseDurationMinutes } from "../src/lib/payroll/payroll-calc.js";
 import { isCareHours075 } from "../src/lib/payroll/care-hours-075.js";
 
 const UPDATE = process.argv.includes("--update");
@@ -46,7 +47,10 @@ const pickTokubi = (d: Record<string, unknown> | undefined): number => {
   for (const k of TOKUBI_COLS) if (d && d[k] != null && String(d[k]).trim() !== "") return num(d[k]);
   return 0;
 };
-const durMin = (d: string): number => { const m = /^(\d+):(\d+)/.exec(String(d ?? "").trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; };
+/** ★ 時間は **本番の parseDurationMinutes** を使う。★ 自前の正規表現で数えると
+ *  ★ 取消・有給の行 (start==end で `024:00` になる) を 1,440 分と数えてしまう
+ *  (本番は 1440 分以上を 0 にする)。★ 2026-09-30 にこれで 上村真由美の特日が 偽の 7,200 円になった */
+const durMin = (d: string): number => parseDurationMinutes(d);
 
 type L1Row = { office_number: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> };
 type L2Row = { office_number: string; employee_number: string; processing_month: string; sheet_kind: string; row_data: Record<string, unknown> };
@@ -88,8 +92,9 @@ async function main() {
     const k = `${r.office_number}|${normEmpNo(r.employee_number)}|${r.processing_month}|${r.sheet_kind}`;
     if (!l2.has(k)) l2.set(k, r.row_data);
   }
-  const recs = (await restAll<Rec>(`payroll_service_records?select=id,office_number,employee_number,employee_name,processing_month,service_date,calc_duration,service_code,accompanied_visit,service_type&processing_month=in.(${monthsWithTokubi.join(",")})`))
-    .filter((r) => isSpecialDay(r.service_date, holidays));
+  const allRecs = await restAll<Rec>(`payroll_service_records?select=id,office_number,employee_number,employee_name,processing_month,service_date,calc_duration,service_code,accompanied_visit,service_type&processing_month=in.(${monthsWithTokubi.join(",")})`);
+  // ★ (c) の負のコントロールは **特日でない日** を測るので、絞っていない方も持つ
+  const recs = allRecs.filter((r) => isSpecialDay(r.service_date, holidays));
   const byEmp = new Map<string, Rec[]>();
   // ★ キーに **月**を入れる。★ 入れないと 202512・202601・202608 の特日が 同じ人に合算され、
   //   ★ 0.75 の判定が 134 人中 126 人「どちらでもない」に化ける (2026-09-30 に踏んだ)
@@ -100,7 +105,7 @@ async function main() {
   const counts: Record<string, number> = {};
   for (const kind of ["hourly", "monthly"] as const) {
     const sk = kind === "hourly" ? "part" : "shaseki";
-    let n = 0, ok1 = 0, ok2 = 0, no2 = 0;
+    let n = 0, ok1 = 0, ok2 = 0, no2 = 0, n2 = 0;
     const bad: string[] = [];
     for (const c of calc) for (const e of (c.payload?.[kind] ?? [])) {
       const base = `${c.office_number}|${normEmpNo(e.employee_number)}|${c.processing_month}`;
@@ -109,15 +114,18 @@ async function main() {
       const ours = Math.round(e.tokubi_allowance ?? 0), v1 = pickTokubi(d1), v2 = d2 ? pickTokubi(d2) : null;
       if (d2 == null) no2++;
       if (ours === 0 && v1 === 0 && (v2 ?? 0) === 0) continue;   // 両方 0 は 分母に入れない
-      n++; if (ours === v1) ok1++; if (v2 != null && ours === v2) ok2++;
+      n++; if (ours === v1) ok1++;
+      // ★ ② は **行があるものだけ**を分母にする。★ 「行なし」を不一致に数えると、
+      //   ② が 1 行も無い月 (202512/202601) を足しただけで 件数が増え、★ 偽の悪化になる (2026-09-30 に踏んだ)
+      if (v2 != null) { n2++; if (ours === v2) ok2++; }
       if (ours !== v1) bad.push(`    ★ ${base} ${e.employee_name} 当方 ${ours} / ① ${v1} / ② ${v2 ?? "(行なし)"}`);
     }
     const label = kind === "hourly" ? "パート(時給)" : "提責・社員(月給)";
-    console.log(`\n--- ${label}: 特日が 0 でない ${n} 人 (② の行が無い ${no2} 人)`);
-    console.log(`    当方 = ①  ${ok1}/${n}   当方 = ②  ${ok2}/${n}`);
+    console.log(`\n--- ${label}: 特日が 0 でない ${n} 人 (② の行が無い ${no2} 人 → ② の分母は ${n2} 人)`);
+    console.log(`    当方 = ①  ${ok1}/${n}   当方 = ②  ${ok2}/${n2}`);
     for (const l of bad) console.log(l);
     counts[`${label} ①と違う`] = n - ok1;
-    counts[`${label} ②と違う`] = n - ok2;
+    counts[`${label} ②と違う`] = n2 - ok2;
   }
 
   // ── 前提 (a) 0.75 掛けは 事業所フラグで説明できるか
@@ -141,6 +149,51 @@ async function main() {
   console.log(`    0.75 で値が変わる ${chg} 人 → フラグどおり ${byFlag} / ★ フラグと逆 ${against} / どちらでもない ${chg - byFlag - against}`);
   counts["0.75がフラグと逆の人月"] = against;
 
+  // ── 前提 (c) ★ 会社休日マスタ (payroll_company_holidays) が正しいか
+  //   ★ 分母は **その日を数えるかで値が変わる人** だけ。★ その日に働いていない人を入れると
+  //   ★ 判定が鈍る (2026-09-30 に踏んだ: 事業所ごとの最良組合せを見誤り「五井は 1/1 が休みかも」と誤報した)
+  console.log("\n--- 前提 (c) 会社休日マスタの日が 正しいか (★ その日で値が変わる人だけを分母にする)");
+  const dayStat = (day: string, allDays: string[], rate: number, m: string) => {
+    let inN = 0, outN = 0, noneN = 0;
+    const detail: string[] = [];
+    for (const c of calc.filter((x) => x.processing_month === m)) for (const kind of ["hourly", "monthly"] as const) {
+      const sk = kind === "hourly" ? "part" : "shaseki";
+      for (const e of (c.payload?.[kind] ?? [])) {
+        const emp = normEmpNo(e.employee_number);
+        const d1 = l1.get(`${c.office_number}|${emp}|${m}|${sk}`); if (!d1) continue;
+        const v1 = pickTokubi(d1);
+        const mine = allRecs.filter((r) => r.office_number === c.office_number && r.processing_month === m && normEmpNo(r.employee_number) === emp && isCareRecord(r) && !isAccompaniedRecord(r));
+        const amt = (use: string[]) => {
+          const rs = mine.filter((r) => use.includes(r.service_date.replace(/\D/g, "").slice(0, 8)));
+          // ★ 0.75 は 月給のときだけ (本番の page.tsx と同じ)
+          const min = kind === "monthly" && care075.has(c.office_number)
+            ? rs.reduce((t, r) => t + durMin(r.calc_duration) * (isCareHours075(r.service_code) ? 0.75 : 1), 0)
+            : rs.reduce((t, r) => t + durMin(r.calc_duration), 0);
+          return tokubiAllowanceAmount(min, rate);
+        };
+        const withDay = amt(allDays), without = amt(allDays.filter((d) => d !== day));
+        if (withDay === without) continue;              // ★ その日で値が変わらない人は 分母から外す
+        if (withDay === v1) inN++;
+        else if (without === v1) { outN++; detail.push(`      ★ 数えないほうが ① と合う ${c.office_number}|${emp} ${e.employee_name} ①${v1} / 数える${withDay} / 数えない${without}`); }
+        else noneN++;
+      }
+    }
+    return { inN, outN, noneN, detail };
+  };
+  let dayOut = 0;
+  for (const m of monthsWithTokubi) {
+    const hs = holidayRows.filter((h) => h.holiday_date.replace(/\D/g, "").startsWith(m));
+    const allDays = hs.map((h) => h.holiday_date.replace(/\D/g, "").slice(0, 8)).sort();
+    const rate = rateOfMonth(m);
+    for (const day of allDays) {
+      const { inN, outN, noneN, detail } = dayStat(day, allDays, rate, m);
+      console.log(`    ${day} 変わる ${inN + outN + noneN} 人 → 数える=① ${inN} / ★ 数えない=① ${outN} / どちらでもない ${noneN}`);
+      for (const d of detail) console.log(d);
+      dayOut += outN;
+    }
+  }
+  counts["特日マスタ: 数えないほうが①と合う人月"] = dayOut;
+
   // ── 前提 (b) 同行の除外は コード判定か (旗で落としていないか)
   console.log("\n--- 前提 (b) 同行の除外は サービスコードか (★ 旗で落としていないか)");
   const flagNotCode = recs.filter((r) => !!r.accompanied_visit && r.accompanied_visit.trim() !== "" && !isAccompaniedRecord(r));
@@ -159,6 +212,11 @@ async function main() {
   expect(pickTokubi({ "・特日": 1250 }) === 1250 && pickTokubi({ 特日: 700 }) === 700, "特日の列は 「特日」「・特日」の両方を引ける (★ 片方だけだと 月給が全員 0 になる)");
   expect(pickTokubi({ 特日2: 999 }) === 0, "似た名前の列 (特日2) は 拾わない");
   expect(!isCareRecord({ service_type: "会議" }) && isCareRecord({ service_type: "身1" }), "★ 会議は 訪問に数えない (分母を本番と揃える)");
+  // ★ (c) が効いていることの確認: **特日でない日**を特日として測ると 「数えない=①」が多数になる
+  if (monthsWithTokubi.includes("202512")) {
+    const fake = dayStat("20251230", ["20251230", "20251231"], 300, "202512");
+    expect(fake.outN > fake.inN, `★ 2025/12/30 を特日として測ると 数えない=① (${fake.outN}) が 数える=① (${fake.inN}) を上回る (= (c) が効いている)`);
+  }
 
   type Baseline = { _readme: string[]; counts: Record<string, number> };
   const baseline: Baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline : { _readme: [], counts: {} };

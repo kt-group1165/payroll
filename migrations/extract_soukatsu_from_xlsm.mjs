@@ -50,19 +50,35 @@ function resolveOffice(dirName) {
 }
 
 // 会社フォルダごとの月ディレクトリの決め方 (至誠堂だけ命名規則が違う)
+// ★ 会社ごとに 月フォルダの置き場が違う。★ しかも **同じ会社でも年で変わる** (2026-09-30 実測):
+//     10_ケイティ / 15_リンクス茂原.大網   R8.x は会社直下 / R7 以前は R7稼働/R7.x
+//     15_サービスワン                      R8.x は会社直下 / ★ R7 以前は **過去分/R7稼働/R7.x**
+//     10_至誠堂                            事業所ごと。R8.x月稼働 / ★ R7 以前は R7稼働/R7.x月稼働
+// ★ 決め打ちにせず **候補を順に試して 実在するものを使う**。
+//   ★ 無ければ その会社×月は 黙って飛ばす (= 静かに 0 行になる) ので、
+//   ★ 呼び出し側で 事業所数を必ず見ること (202512 が 13/22 事業所しか出ていなかった原因)。
 const COMPANY_DIRS = [
-  { company: "10_ケイティ", monthDir: (m) => MONTH_TO_RDIR[m] },
-  { company: "15_サービスワン", monthDir: (m) => MONTH_TO_RDIR[m] },
-  { company: "15_リンクス茂原.大網", monthDir: (m) => MONTH_TO_RDIR[m] },
+  { company: "10_ケイティ", monthDirs: (m) => [MONTH_TO_RDIR[m], `過去分/${MONTH_TO_RDIR[m]}`] },
+  { company: "15_サービスワン", monthDirs: (m) => [MONTH_TO_RDIR[m], `過去分/${MONTH_TO_RDIR[m]}`] },
+  { company: "15_リンクス茂原.大網", monthDirs: (m) => [MONTH_TO_RDIR[m], `過去分/${MONTH_TO_RDIR[m]}`, `過去/${MONTH_TO_RDIR[m]}`] },
 ];
 const SHISEIDO_OFFICES = ["03_やわた", "04_いわね"];
+/** 至誠堂の月フォルダ候補 (事業所の下)。R8.6月稼働 / R7稼働/R7.12月稼働 */
+const shiseidoMonthDirs = (m) => {
+  const r = MONTH_TO_RDIR[m];
+  if (!r) return [];
+  if (r.startsWith("R8.")) return [`R8.${r.replace("R8.", "")}月稼働`];
+  const mm = /^(R\d+)稼働\/(R\d+\.\d+)$/.exec(r);   // "R7稼働/R7.12" → "R7稼働/R7.12月稼働"
+  return mm ? [`${mm[1]}稼働/${mm[2]}月稼働`] : [];
+};
 
 function listTargetFiles() {
   const found = [];
-  for (const { company, monthDir } of COMPANY_DIRS) {
+  const missing = [];   // ★ 月フォルダが 1 つも見つからなかった 会社×月 (静かに 0 行になるのを見せる)
+  for (const { company, monthDirs } of COMPANY_DIRS) {
     for (const m of MONTHS) {
-      const rdir = monthDir(m);
-      const base = join(BOX_ROOT, company, rdir);
+      const base = monthDirs(m).filter(Boolean).map((r) => join(BOX_ROOT, company, r)).find((p) => existsSync(p));
+      if (!base) { missing.push(`${company} ${m}`); continue; }
       let officeDirs;
       try { officeDirs = readdirSync(base, { withFileTypes: true }).filter((d) => d.isDirectory()); } catch { continue; }
       for (const od of officeDirs) {
@@ -80,10 +96,9 @@ function listTargetFiles() {
   }
   for (const od of SHISEIDO_OFFICES) {
     for (const m of MONTHS) {
-      // ★ 至誠堂は「R8.<n>月稼働」という命名。R7 以前はこの規則が当てはまらないので飛ばす
-      if (!MONTH_TO_RDIR[m] || !MONTH_TO_RDIR[m].startsWith("R8.")) continue;
-      const rnum = MONTH_TO_RDIR[m].replace("R8.", "");
-      const base = join(BOX_ROOT, "10_至誠堂", od, `R8.${rnum}月稼働`);
+      // ★ 至誠堂は「R8.<n>月稼働」/「R7稼働/R7.<n>月稼働」。★ 候補を試して 実在するものを使う
+      const base = shiseidoMonthDirs(m).map((r) => join(BOX_ROOT, "10_至誠堂", od, r)).find((p) => existsSync(p));
+      if (!base) { missing.push(`10_至誠堂 ${od} ${m}`); continue; }
       let files;
       try { files = readdirSync(base); } catch { continue; }
       for (const f of files) {
@@ -94,6 +109,7 @@ function listTargetFiles() {
       }
     }
   }
+  if (missing.length) console.log(`⚠ 月フォルダが見つからない 会社×月 ${missing.length} 件: ${missing.join(" / ")}`);
   return found;
 }
 
