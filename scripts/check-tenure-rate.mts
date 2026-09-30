@@ -73,6 +73,13 @@ const l2Amount = (d: Record<string, unknown>): number | null => {
   for (const k of L2_AMOUNT_COLS) if (d[k] != null && String(d[k]).trim() !== "") return num(d[k]);
   return null;
 };
+/**
+ * ★ ② の行が 他事業所の兼務の表示か (氏名に「_<事業所名>」が付く。例「松元綾子_高品」)。
+ *   ★ その行は **その事業所の人の値ではない**ので 比べてはいけない
+ *   (check-soukatsu-cause の型 KX と同じ判定。2026-09-30 に 松元綾子で踏んだ:
+ *    ② の 1270201930 の行は 高品ぶんの 503 円で、その事業所の ① 1,820 円とは別物だった)。
+ */
+const isKengyoRow = (d: Record<string, unknown>): boolean => /[_＿]/.test(String(d?.["氏名"] ?? ""));
 /** ② の単価。★ 列名は ① と違い アンダースコアが無い (「勤続手当単価」) */
 const l2Rate = (d: Record<string, unknown>): number | null =>
   d["勤続手当単価"] == null || String(d["勤続手当単価"]).trim() === "" ? null : num(d["勤続手当単価"]);
@@ -111,7 +118,7 @@ async function main() {
 
   const counts: Record<string, number> = {};
   let n = 0, rateOk = 0, amtOk = 0, noRate = 0, noAmt1 = 0;
-  let n2 = 0, rate2Ok = 0, amt2Ok = 0, l1vs2 = 0, nAmt2 = 0, noAmt2 = 0;
+  let n2 = 0, rate2Ok = 0, amt2Ok = 0, l1vs2 = 0, nAmt2 = 0, noAmt2 = 0, kx = 0;
   const badRate: string[] = [], badTime: string[] = [], oursZero: string[] = [], l1Zero: string[] = [], bad2: string[] = [], l12diff: string[] = [];
   for (const c of calc) for (const e of (c.payload?.hourly ?? [])) {
     const k = `${c.office_number}|${normEmpNo(e.employee_number)}|${c.processing_month}`;
@@ -141,7 +148,9 @@ async function main() {
       badTime.push(`    ★ ${tag} 単価 ${r1} 一致 / 額 ① ${a1} vs 当方 ${aOurs} / 時間 ① ${min1 ?? "読めない"}分 vs 当方 ${minOurs}分 (差 ${min1 == null ? "?" : minOurs - min1}分)`);
     }
     // ── ★ 見出しは ② (実際に払う額)。① は参考 (白石則子のように ② が手で下げていることがある)
-    const d2 = l2.get(k);
+    const d2raw = l2.get(k);
+    if (d2raw && isKengyoRow(d2raw)) kx++;
+    const d2 = d2raw && !isKengyoRow(d2raw) ? d2raw : undefined;
     if (d2) {
       const r2 = l2Rate(d2), a2 = l2Amount(d2);
       n2++;
@@ -156,6 +165,7 @@ async function main() {
   console.log(`  ★ 額が ② と一致  ${amt2Ok}/${nAmt2}   単価が ② と一致 ${rate2Ok}/${n2}   ← ★ 見出し (② = 実際に払う額)`);
   console.log(`    額が ① と一致  ${amtOk}/${n - noAmt1}   単価が ① と一致 ${rateOk}/${n}   (参考)`);
   console.log(`    ★ 額の列が空: ① ${noAmt1} 行 / ② ${noAmt2} 行 → ★ 分母から外した (空 ≠ 0 円)`);
+  console.log(`    ★ ② が兼務の表示の行 (氏名に _事業所名) ${kx} 行 → ★ 分母から外した (その事業所の人の値ではない)`);
   console.log(`    ★ ① と ② の単価が食い違う ${l1vs2} 人月 = ★ ① に対する天井はここまで下がる`);
   console.log(`\n--- ★ ① と ② が食い違う ${l12diff.length} 人月 (★ ① を正にしてはいけない実例)`);
   for (const l of l12diff.slice(0, 12)) console.log(l);
@@ -199,6 +209,7 @@ async function main() {
   expect(l1Amount({ 勤続手当2: 1 }) === null, "★ 「勤続手当2」は 額ではない (1 が入る) ので 拾わない");
   expect(l2Amount({ 資格or勤続手当: 533 }) === 533, "② は 「資格or勤続手当」に入っている行がある (木津優子 202608)");
   expect(l2Rate({ 勤続手当単価: 10 }) === 10 && l2Rate({ 勤続手当_単価: 50 }) === null, "★ ② の単価の列は アンダースコア無し (「勤続手当単価」)。① の列名では引けない");
+  expect(isKengyoRow({ 氏名: "松元綾子_高品" }) && !isKengyoRow({ 氏名: "松元 綾子" }), "★ ② の兼務の表示 (氏名に _事業所名) を 見分けられる");
   expect(soukatsuMinutes("101:45", "minutes") === 6105, "① の時間は H:MM で読める (101:45 = 6,105分)");
   expect(soukatsuMinutes("1904-01-01T07:15:00.000Z", "minutes") === 435, "★ Excel の 1904 年基準の時刻も 分に読める (7:15 = 435分)");
 
