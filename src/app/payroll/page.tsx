@@ -79,6 +79,7 @@ import {
   manualTenureWithSteps,
   tokubiAllowanceAmount,
   isSpecialDay,
+  isAccompaniedRecord,
   allTrainingMinutes,
   parseDurationMinutes,
   midMonthWorkDays,
@@ -1880,9 +1881,13 @@ export default function PayrollPage() {
             overtime_offset_full_care: offsetFullCareRes.offices.has(selectedOffice.office_number),
             shinya_hours: shinyaHoursFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? []),
             // 特日手当: Hana系 (0.75 掛けの事業所) は 介護時間と同じく 0.75 掛け対象を ×0.75 した時間で払う (おゆみ野 峯島 2026-08 960分 → 2,400円)
+            //   0.75 掛けの是非は 2026-09-30 に 202608 全 186 人で掃引した。値が変わる 42 人は
+            //   ★ 0.75 事業所 30/30 が「0.75 が正」/ 通常の事業所 12/12 が「素が正」で、★ 事業所フラグどおり。
+            // ⚠ 同行の除外は ★ isAccompaniedRecord (サービスコード) で行う。★ 旗で落としてはいけない
+            //   (船橋 金子百恵・小針由美 2026-08: code=111111 身体介護 なのに 旗=同行 の 30 分が落ちて ¥100 過少だった)
             tokubi_allowance: tokubiAllowanceAmount(care075Res.offices.has(selectedOffice.office_number)
-              ? careMinutesFromRecords(withAccompanyByCode(recsByEmpM.get(normEmp(e.employee_number)) ?? [])
-                  .filter((r) => isSpecialDay(r.service_date, specialDays) && (!r.accompanied_visit || r.accompanied_visit.trim() === "")), isCareHours075)
+              ? careMinutesFromRecords((recsByEmpM.get(normEmp(e.employee_number)) ?? [])
+                  .filter((r) => isSpecialDay(r.service_date, specialDays) && !isAccompaniedRecord(r)), isCareHours075)
               : (summary.tokubiMinutes ?? 0)),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
