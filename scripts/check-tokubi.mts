@@ -27,7 +27,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { restAll, restOne, normEmpNo } from "./_rest.mjs";
-import { isSpecialDay, isAccompaniedRecord, tokubiAllowanceAmount } from "../src/lib/payroll/payroll-calc.js";
+import { isSpecialDay, isAccompaniedRecord, tokubiAllowanceAmount, tokubiRateForHolidayNames, isCareRecord } from "../src/lib/payroll/payroll-calc.js";
 import { isCareHours075 } from "../src/lib/payroll/care-hours-075.js";
 
 const UPDATE = process.argv.includes("--update");
@@ -50,7 +50,7 @@ const durMin = (d: string): number => { const m = /^(\d+):(\d+)/.exec(String(d ?
 
 type L1Row = { office_number: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> };
 type L2Row = { office_number: string; employee_number: string; processing_month: string; sheet_kind: string; row_data: Record<string, unknown> };
-type Rec = { office_number: string; employee_number: string; employee_name: string; service_date: string; calc_duration: string; service_code: string; accompanied_visit: string | null; service_type: string | null };
+type Rec = { office_number: string; processing_month: string; employee_number: string; employee_name: string; service_date: string; calc_duration: string; service_code: string; accompanied_visit: string | null; service_type: string | null };
 type Emp = { employee_number: string; employee_name: string; tokubi_allowance?: number };
 type Calc = { office_number: string; processing_month: string; payload: { hourly?: Emp[]; monthly?: Emp[] } };
 
@@ -63,8 +63,15 @@ async function main() {
   if (!files.length) { console.log(`★ ${dir} に soukatsu_extract_YYYYMM.json が 1 本もない (0 件と出さない)`); process.exit(1); }
   const months = files.map((f) => /_(\d{6})\.json$/.exec(f)![1]);
 
-  const holidays = new Set((await restAll<{ holiday_date: string }>("payroll_company_holidays?select=id,holiday_date"))
-    .map((h) => h.holiday_date.replace(/\D/g, "").slice(0, 8)));
+  const holidayRows = await restAll<{ holiday_date: string; name: string | null }>("payroll_company_holidays?select=id,holiday_date,name");
+  const holidays = new Set(holidayRows.map((h) => h.holiday_date.replace(/\D/g, "").slice(0, 8)));
+  /** ★ 月ごとの特日の時給。★ お盆 200 / 年末年始 300 で違うので 月で切り替える (本番と同じ関数で決める) */
+  const rateOfMonth = (m: string): number => {
+    const names = holidayRows.filter((h) => h.holiday_date.replace(/\D/g, "").startsWith(m)).map((h) => String(h.name ?? ""));
+    const r = tokubiRateForHolidayNames(names);
+    if (r == null) throw new Error(`${m} の特日の時給を決められません (休日の種類: ${[...new Set(names)].join(",")})`);
+    return r;
+  };
   const care075 = new Set((await restOne<{ value: { offices?: string[] } }>("payroll_app_settings?select=value&key=eq.care_075_offices"))?.value?.offices ?? []);
   console.log(`会社休日 ${holidays.size} 日 / 0.75 掛けの事業所 ${care075.size} 件`);
   const monthsWithTokubi = months.filter((m) => [...holidays].some((h) => h.startsWith(m)));
@@ -84,7 +91,9 @@ async function main() {
   const recs = (await restAll<Rec>(`payroll_service_records?select=id,office_number,employee_number,employee_name,processing_month,service_date,calc_duration,service_code,accompanied_visit,service_type&processing_month=in.(${monthsWithTokubi.join(",")})`))
     .filter((r) => isSpecialDay(r.service_date, holidays));
   const byEmp = new Map<string, Rec[]>();
-  for (const r of recs) { const k = `${r.office_number}|${normEmpNo(r.employee_number)}`; const a = byEmp.get(k) ?? []; a.push(r); byEmp.set(k, a); }
+  // ★ キーに **月**を入れる。★ 入れないと 202512・202601・202608 の特日が 同じ人に合算され、
+  //   ★ 0.75 の判定が 134 人中 126 人「どちらでもない」に化ける (2026-09-30 に踏んだ)
+  for (const r of recs) { const k = `${r.office_number}|${normEmpNo(r.employee_number)}|${r.processing_month}`; const a = byEmp.get(k) ?? []; a.push(r); byEmp.set(k, a); }
   const calc = (await restAll<Calc>("payroll_calc_results?select=id,office_number,processing_month,payload")).filter((c) => monthsWithTokubi.includes(c.processing_month));
 
   // ── 保存済の payload を ① ② と突合 (★ 再導出しない。分母を本番と揃えるため)
@@ -117,10 +126,12 @@ async function main() {
   for (const c of calc) for (const e of (c.payload?.monthly ?? [])) {
     const base = `${c.office_number}|${normEmpNo(e.employee_number)}|${c.processing_month}`;
     const d1 = l1.get(`${base}|shaseki`); if (!d1) continue;
-    const rs = (byEmp.get(`${c.office_number}|${normEmpNo(e.employee_number)}`) ?? []).filter((r) => !isAccompaniedRecord(r));
+    // ★ 本番と同じ分母にする。★ isCareRecord を忘れると 会議・面談が混ざって 126 人が「どちらでもない」に化ける
+    const rs = (byEmp.get(`${c.office_number}|${normEmpNo(e.employee_number)}|${c.processing_month}`) ?? []).filter((r) => isCareRecord(r) && !isAccompaniedRecord(r));
     const raw = rs.reduce((s, r) => s + durMin(r.calc_duration), 0);
     const m075 = rs.reduce((s, r) => s + durMin(r.calc_duration) * (isCareHours075(r.service_code) ? 0.75 : 1), 0);
-    const aRaw = tokubiAllowanceAmount(raw), a075 = tokubiAllowanceAmount(m075);
+    const rate = rateOfMonth(c.processing_month);
+    const aRaw = tokubiAllowanceAmount(raw, rate), a075 = tokubiAllowanceAmount(m075, rate);
     if (aRaw === a075) continue;
     chg++;
     const v1 = pickTokubi(d1), want075 = care075.has(c.office_number);
@@ -140,11 +151,14 @@ async function main() {
   console.log("\n--- 負のコントロール");
   expect(isSpecialDay("2026/08/13", holidays), "2026/08/13 は 特日 (スラッシュ区切りでも判定できる)");
   expect(!isSpecialDay("2026/08/12", holidays), "2026/08/12 は 特日でない");
-  expect(tokubiAllowanceAmount(215) === 717, "215分 → 717円 (200円/時 四捨五入)");
+  expect(tokubiAllowanceAmount(215) === 717, "215分 → 717円 (お盆 200円/時 四捨五入)");
+  expect(tokubiAllowanceAmount(285, 300) === 1425, "★ 285分 → 1,425円 (年末年始 300円/時)");
+  expect(rateOfMonth("202608") === 200 && rateOfMonth("202512") === 300 && rateOfMonth("202601") === 300, "★ 月で特日の時給が切り替わる (202608=200 / 202512・202601=300)");
   expect(tokubiAllowanceAmount(0) === 0, "0分 → 0円");
   expect(isAccompaniedRecord({ service_code: "010001" }) && !isAccompaniedRecord({ service_code: "111111" }), "同行の判定は コード (010001 は同行 / 111111 は同行でない)");
   expect(pickTokubi({ "・特日": 1250 }) === 1250 && pickTokubi({ 特日: 700 }) === 700, "特日の列は 「特日」「・特日」の両方を引ける (★ 片方だけだと 月給が全員 0 になる)");
   expect(pickTokubi({ 特日2: 999 }) === 0, "似た名前の列 (特日2) は 拾わない");
+  expect(!isCareRecord({ service_type: "会議" }) && isCareRecord({ service_type: "身1" }), "★ 会議は 訪問に数えない (分母を本番と揃える)");
 
   type Baseline = { _readme: string[]; counts: Record<string, number> };
   const baseline: Baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline : { _readme: [], counts: {} };
