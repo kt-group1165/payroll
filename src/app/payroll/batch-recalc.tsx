@@ -103,7 +103,13 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
       const minAt = calc.map((c) => c.calculated_at).sort()[0] ?? "";
       const rowsByTable = new Map<string, Record<string, unknown>[]>();
       for (const src of CALC_INPUT_SOURCES) {
-        rowsByTable.set(src.table, minAt ? await readAll(src.table, src.select, (q) => q.gt(src.tsCol, minAt), src.select.split(",")[0]) : []);
+        // ★ 並び順は **絞り込みに使う日時列** にする (2026-10-01)。
+        //   ★ select の 1 列目 (office_number 等) で並べると 索引が使えず、
+        //   ★ offset ページングのたびに 全件を並べ直すので 行数が増えると statement timeout になる。
+        //   ★ 実際 202512/202601 を取り込んで payroll_service_records が 40 万行になった時点で
+        //   ★ 「対象を読み込む」が 落ちるようになった (canceling statement due to statement timeout)。
+        //   ⚠ 効かせるには 日時列の索引が要る (migrations/payroll_freshness_indexes.sql)
+        rowsByTable.set(src.table, minAt ? await readAll(src.table, src.select, (q) => q.gt(src.tsCol, minAt), src.tsCol) : []);
       }
       const { data: po, error: poErr } = await supabase.from("payroll_offices").select("id,office_number");
       if (poErr) throw new Error(`事業所の取得に失敗: ${poErr.message}`);
