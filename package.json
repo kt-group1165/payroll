@@ -78,7 +78,8 @@
     "check:paging-order": "tsx scripts/check-paging-order.mts",
     "check:pending-effects": "tsx scripts/check-pending-effects.mts",
     "check:tokubi": "tsx scripts/check-tokubi.mts",
-    "check:tenure-rate": "tsx scripts/check-tenure-rate.mts"
+    "check:tenure-rate": "tsx scripts/check-tenure-rate.mts",
+    "check:legacy-daily-diff": "tsx scripts/check-legacy-daily-diff.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
