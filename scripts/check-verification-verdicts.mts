@@ -36,6 +36,8 @@ import { attendanceWorkMinutes, parseWorkHoursMinutes, type OvertimeSetting } fr
 
 const UPDATE = process.argv.includes("--update");
 const ITEM = process.env.ITEM ?? "";
+/** ★ 1 人を追うとき: EMP="<事業所番号>|<社員番号>" で その人の **全項目** を出す */
+const EMP = process.env.EMP ?? "";
 const BASELINE = new URL("./check-verification-verdicts-baseline.json", import.meta.url);
 let fail = 0;
 const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
@@ -139,7 +141,8 @@ async function main() {
             const key = String(d.reason ?? "(理由なし)");
             rm.set(key, (rm.get(key) ?? 0) + 1);
           }
-          if (ITEM && d.item === ITEM) detail.push(`    ${c.processing_month} ${c.office_number} ${n.padStart(6)} ${String(e.employee_name ?? "").replace(/\s+/g, " ").padEnd(12)} ${kind} 当方 ${Math.round(d.ours)} / ② ${Math.round(d.soukatsu)} (差 ${Math.round(d.diff)}) [${d.verdict}] ${d.reason ?? ""}`);
+          if (EMP === `${c.office_number}|${n}`) detail.push(`    ${c.processing_month} ${d.item.padEnd(20)} 当方 ${Math.round(d.ours)} / ② ${Math.round(d.soukatsu)} (差 ${Math.round(d.diff)}) [${d.verdict}] ${d.reason ?? ""}`);
+          else if (ITEM && d.item === ITEM) detail.push(`    ${c.processing_month} ${c.office_number} ${n.padStart(6)} ${String(e.employee_name ?? "").replace(/\s+/g, " ").padEnd(12)} ${kind} 当方 ${Math.round(d.ours)} / ② ${Math.round(d.soukatsu)} (差 ${Math.round(d.diff)}) [${d.verdict}] ${d.reason ?? ""}`);
         }
       }
     }
@@ -174,7 +177,7 @@ async function main() {
     console.log(`    ${item} 計 ${[...sm.values()].reduce((x, y) => x + y, 0)} 人月`);
     for (const [k, v] of [...sm].sort((a, b) => b[1] - a[1])) console.log(`      ${String(v).padStart(4)} 人月  ${k}`);
   }
-  if (ITEM) { console.log(`\n--- 項目 ${ITEM} の明細 (${detail.length})`); for (const d of detail.sort()) console.log(d); }
+  if (ITEM || EMP) { console.log(`\n--- ${EMP ? `社員 ${EMP}` : `項目 ${ITEM}`} の明細 (${detail.length})`); for (const d of detail.sort()) console.log(d); }
 
   console.log("\n--- 負のコントロール (判定が効いていることの確認)");
   const base: DiffContext = { roleType: "社員", attendanceGapMinutes: 0, noAttendance: false, hasRateGap: false, officeNumber: "1270501180", officeFormEmpty: false };
