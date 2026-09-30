@@ -217,12 +217,31 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
         }
       }
 
+      // ★ CSV の中の完全重複を落とす (2026-09-30)。★ batch を作る前に落とす (record_count に効かせるため)。
+      //   ★ 「同じ 職員・日付・派遣開始時間・利用者名・サービスコード」が 2 行あると そのまま 2 回入っていた。
+      //   実測: 202603〜08 で 41 行 / 7 人月 (やわた 202606 に 40 行・船橋 202608 に 1 行)。
+      //   ★ ① (総括表データ) ・② (支払用シート) ・旧の従業員日別 の **3 つとも 重複を含まない**ことを
+      //   7 人月すべてで確かめた (例 石本美幸 当方 13,615分 / 3 つとも 13,165分)。
+      //   ★ 金額では 当方が ¥27,429 多く出ていた (石本 +19,056 / 麻生 +6,250 / 鍬本 +1,073 / 鈴木 +1,050)。
+      const seenKeys = new Set<string>();
+      const uniqueData = allData.filter((row) => {
+        const k = `${row.職員番号}|${row.日付}|${row.派遣開始時間}|${row.利用者名}|${row.サービスコード}`;
+        if (seenKeys.has(k)) return false;
+        seenKeys.add(k);
+        return true;
+      });
+      const droppedDup = allData.length - uniqueData.length;
+      if (droppedDup > 0) {
+        console.warn(`[meisai-importer] CSV の完全重複 ${droppedDup} 行を落としました (職員・日付・開始時間・利用者・コードが同じ行)`);
+        toast(`CSV の完全重複 ${droppedDup} 行を落としました`);
+      }
+
       const { data: batch, error: batchError } = await supabase
         .from("payroll_import_batches")
         .insert({
           import_type: "meisai" as const,
           file_names: files.map((f) => f.name),
-          record_count: allData.length,
+          record_count: uniqueData.length,
           processing_month: processingMonth,
           office_number: officeNumber,
           status: "pending" as const,
@@ -240,8 +259,8 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
       // 注: chunk 失敗時は batch を error 状態にして即停止する (部分 INSERT は中途半端な状態を作るため)。
       //     上流の console.warn と batch.error_message に詳細を残す。
       const chunkSize = 500;
-      for (let i = 0; i < allData.length; i += chunkSize) {
-        const chunk = allData.slice(i, i + chunkSize);
+      for (let i = 0; i < uniqueData.length; i += chunkSize) {
+        const chunk = uniqueData.slice(i, i + chunkSize);
         const records = chunk.map((row) =>
           meisaiRowToRecord(row, { batchId: batch.id, officeNumber: officeNumber, processingMonth: processingMonth }),
         );
@@ -263,7 +282,7 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
             })
             .eq("id", batch.id);
           toast.error(
-            `データ登録エラー (${i}/${allData.length} 件登録済、残り未登録): ${insertError.message}`,
+            `データ登録エラー (${i}/${uniqueData.length} 件登録済、残り未登録): ${insertError.message}`,
           );
           return;
         }
@@ -276,7 +295,7 @@ export function MeisaiImporter({ initialOffices, initialExistingMonths }: Meisai
         .eq("id", batch.id);
 
       setImported(true);
-      toast.success(`${allData.length}件のサービス実績を登録しました`);
+      toast.success(`${uniqueData.length}件のサービス実績を登録しました${droppedDup > 0 ? ` (完全重複 ${droppedDup} 行を除外)` : ""}`);
       fetchExistingMonths();
       // 取り込み済みファイルを「これから取り込むデータ」一覧から除外
       // （次に別事業所のCSVを取り込む時に重複する事故を防止）
