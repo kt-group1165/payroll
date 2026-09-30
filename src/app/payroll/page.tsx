@@ -78,6 +78,8 @@ import {
   tenureMonthsForStep,
   manualTenureWithSteps,
   tokubiAllowanceAmount,
+  TOKUBI_RATE_PER_HOUR,
+  tokubiRateForHolidayNames,
   isSpecialDay,
   isAccompaniedRecord,
   allTrainingMinutes,
@@ -695,12 +697,22 @@ export default function PayrollPage() {
       if (care075Res.error) throw new Error(`介護超過の 0.75 掛けの設定の読み込みに失敗: ${care075Res.error}`);
       // 特日 (会社休日: お盆・年末年始)。特日手当を払い、その日は土日祝手当の対象から外す (総括表 2026-08、2026-09-22)
       const specialDays = new Set<string>();
+      // ★ 特日手当の時給は 休日の種類で違う (お盆 200 / 年末年始 300。2026-09-30 実測)。名前も読む
+      let tokubiRate = TOKUBI_RATE_PER_HOUR;
       {
         const ym = `${selectedMonth.slice(0, 4)}-${selectedMonth.slice(4, 6)}`;
         const next = new Date(Date.UTC(+selectedMonth.slice(0, 4), +selectedMonth.slice(4, 6), 1)).toISOString().slice(0, 10);
-        const { data, error } = await supabase.from("payroll_company_holidays").select("holiday_date").gte("holiday_date", `${ym}-01`).lt("holiday_date", next);
+        const { data, error } = await supabase.from("payroll_company_holidays").select("holiday_date,name").gte("holiday_date", `${ym}-01`).lt("holiday_date", next);
         if (error) throw new Error(`会社休日 (特日) の読み込みに失敗: ${error.message}`);
-        for (const r of (data ?? []) as { holiday_date: string }[]) specialDays.add(String(r.holiday_date).replace(/\D/g, ""));
+        const names: string[] = [];
+        for (const r of (data ?? []) as { holiday_date: string; name: string | null }[]) {
+          specialDays.add(String(r.holiday_date).replace(/\D/g, ""));
+          names.push(String(r.name ?? ""));
+        }
+        const rate = tokubiRateForHolidayNames(names);
+        // ★ 種類が混ざる月・知らない名前は 黙って 200 円に倒さず 止める (安いほうに倒すと過少払いになる)
+        if (rate == null) throw new Error(`特日手当の時給を決められません (会社休日の種類: ${[...new Set(names)].join(",")})。payroll_company_holidays の name を お盆 / 年末年始 にしてください`);
+        tokubiRate = rate;
       }
       const screenOfficesRes = await getVisitAttendanceScreenOffices(supabase);
       if (screenOfficesRes.error) throw new Error(`出勤簿の入力元の設定の読み込みに失敗: ${screenOfficesRes.error}`);
@@ -1383,7 +1395,7 @@ export default function PayrollPage() {
           weekend_holiday_rate: weekendRates[empOffice?.office_number ?? ""] ?? DEFAULT_WEEKEND_HOLIDAY_RATE,
           weekend_holiday_sunday_only: weekendRatesRes.sundayHolidayOnly.has(empOffice?.office_number ?? ""),
           cancel_allowance: cancelAllowance,
-          tokubi_allowance: tokubiAllowanceAmount(empSummary.tokubiMinutes ?? 0),
+          tokubi_allowance: tokubiAllowanceAmount(empSummary.tokubiMinutes ?? 0, tokubiRate),
           travel_time_sec: 0,
           travel_allowance: 0,
           communication_fee: communicationFee,
@@ -1888,7 +1900,7 @@ export default function PayrollPage() {
             tokubi_allowance: tokubiAllowanceAmount(care075Res.offices.has(selectedOffice.office_number)
               ? careMinutesFromRecords((recsByEmpM.get(normEmp(e.employee_number)) ?? [])
                   .filter((r) => isSpecialDay(r.service_date, specialDays) && !isAccompaniedRecord(r)), isCareHours075)
-              : (summary.tokubiMinutes ?? 0)),
+              : (summary.tokubiMinutes ?? 0), tokubiRate),
             // 介護時間 = 訪問 (0.75掛け対象は×0.75) + 研修・HRD研修の時間 (米倉・大治 2026-05 HRD研修1h で総括表と一致)
             // 0.75 掛けの減算は Hana 系だけ。他は 訪問時間 (同行込み) + 研修時間 (総括表 2026-03〜07、2026-09-18)
             care_minutes: careMinutesFromRecords(recsByEmpM.get(normEmp(e.employee_number)) ?? [],

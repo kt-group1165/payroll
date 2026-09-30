@@ -29,7 +29,8 @@ const MONTHS = (process.env.MONTHS || "202603,202604,202605,202606,202607,202608
 
 const BOX_ROOT = "C:/Users/domen-PC/Box/10F内共有/02_共有/10_給与/01_総括表";
 // ★ 202601/202602 は 育児手当の参照月 (何月分の保育料か) を引くために足した (2026-09-27)
-const MONTH_TO_RDIR = { "202601": "R8.1", "202602": "R8.2", "202603": "R8.3", "202604": "R8.4", "202605": "R8.5", "202606": "R8.6", "202607": "R8.7", "202608": "R8.8" };
+// ★ 202512 (R7.12) は 月フォルダが R7稼働/ の下にある (R8.x は会社フォルダ直下)。2026-09-30 追加
+const MONTH_TO_RDIR = { "202510": "R7稼働/R7.10", "202511": "R7稼働/R7.11", "202512": "R7稼働/R7.12", "202601": "R8.1", "202602": "R8.2", "202603": "R8.3", "202604": "R8.4", "202605": "R8.5", "202606": "R8.6", "202607": "R8.7", "202608": "R8.8" };
 
 // フォルダ名 (会社/事業所) → office_number。事業所名の表記ゆれを吸収するため部分一致で解決する。
 const OFFICE_NAME_TO_NUMBER = {
@@ -79,6 +80,8 @@ function listTargetFiles() {
   }
   for (const od of SHISEIDO_OFFICES) {
     for (const m of MONTHS) {
+      // ★ 至誠堂は「R8.<n>月稼働」という命名。R7 以前はこの規則が当てはまらないので飛ばす
+      if (!MONTH_TO_RDIR[m] || !MONTH_TO_RDIR[m].startsWith("R8.")) continue;
       const rnum = MONTH_TO_RDIR[m].replace("R8.", "");
       const base = join(BOX_ROOT, "10_至誠堂", od, `R8.${rnum}月稼働`);
       let files;

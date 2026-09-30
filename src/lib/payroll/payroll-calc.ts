@@ -954,11 +954,38 @@ export function weekendHolidayAllowanceAmount(weekendHolidayMinutes: number, rat
 }
 
 /**
- * 特日手当の時給 (円/時)。特日 = 会社休日 (payroll_company_holidays: お盆 8/13〜15・年末年始)。
+ * 特日手当の時給 (円/時)。特日 = 会社休日 (payroll_company_holidays: お盆・年末年始)。
  * 総括表 2026-08 (特日 8/13〜15) 全事業所の時給者 266 名中 263 名が 1 円一致 (残り 3 名は兼務者の行と 33 円差 1 名)。
  * 全事業所 同じ 200 円 (土日祝手当のような事業所差は無い)。
+ * ⚠ ★ これは **お盆の単価**。★ 年末年始は 300 円/時 (下記 TOKUBI_RATE_BY_HOLIDAY_NAME)。
  */
 export const TOKUBI_RATE_PER_HOUR = 200;
+
+/**
+ * ★ 休日の種類ごとの特日手当の時給 (2026-09-30 実測)。
+ *
+ * ★ お盆と年末年始で **単価が違う**。★ 総括表 ① から 日の組み合わせ × 単価 を掃引して確定した:
+ * ```
+ *   202512  特日 = 2025/12/31 のみ            単価 300 円/時 → 12/12 名が 1 円一致 (200 だと 0/12)
+ *   202601  特日 = 2026/01/01・01/02・01/03   単価 300 円/時 → 19/19 名が 1 円一致 (200 だと 0/19)
+ *   202608  特日 = 2026/08/13〜15             単価 200 円/時 → 267/268 名が ① と一致
+ * ```
+ * ⚠ ★ 実績があるのが リンクス茂原 1 事業所だけの月なので 分母が小さい (12 名 / 19 名)。
+ *   ★ ただし 12/12・19/19 が 1 円まで一致し、★ 200 円では 0/12・0/19 なので 取り違えようがない。
+ */
+export const TOKUBI_RATE_BY_HOLIDAY_NAME: Readonly<Record<string, number>> = { "お盆": 200, "年末年始": 300 };
+
+/**
+ * その月の特日手当の時給を 休日の名前から決める。
+ * ★ 1 つの月に 種類の違う休日が混ざったら **決められない** ので null を返す (呼ぶ側で止める)。
+ * ★ 知らない名前は お盆と同じ 200 円にせず null にする (黙って安いほうに倒さない)。
+ */
+export function tokubiRateForHolidayNames(names: readonly string[]): number | null {
+  const rates = new Set(names.map((n) => TOKUBI_RATE_BY_HOLIDAY_NAME[String(n ?? "").trim()]));
+  if (rates.size === 0) return TOKUBI_RATE_PER_HOUR;      // 特日が無い月。値は使われない
+  if (rates.size > 1 || rates.has(undefined as unknown as number)) return null;
+  return [...rates][0];
+}
 
 /**
  * 特日手当 = 特日の訪問時間 (同行を除く。同行援護は数える) × 200円/時、四捨五入。

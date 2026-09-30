@@ -86,6 +86,7 @@ import {
   tenureMonthsForStep,
   manualTenureWithSteps,
   tokubiAllowanceAmount,
+  tokubiRateForHolidayNames,
   allTrainingMinutes,
   computeSummary,
   isWeekendOrHoliday,
@@ -743,6 +744,13 @@ eq("★ weekendHolidayMinutes: 休日(土日祝)かつ同伴なしのみ集計 (
   eq("★ 特日手当 = 時間 × 200円/時 四捨五入 (KT姉崎 小倉 2026-08 215分 → 717円)", tokubiAllowanceAmount(215), 717);
   eq("特日手当: 0.75 掛け後の端数 (峯島 960分×0.75=720分 → 2,400円)", tokubiAllowanceAmount(720), 2400);
   eq("特日手当: 0分は 0円", tokubiAllowanceAmount(0), 0);
+  // ★ 特日の単価は 休日の種類で違う (2026-09-30 実測。お盆 200 / 年末年始 300)
+  eq("★ 特日の単価: お盆は 200円/時", tokubiRateForHolidayNames(["お盆"]), 200);
+  eq("★ 特日の単価: 年末年始は 300円/時", tokubiRateForHolidayNames(["年末年始"]), 300);
+  eq("★ 特日の単価: 種類が混ざる月は 決められない (null。呼ぶ側で止める)", tokubiRateForHolidayNames(["お盆", "年末年始"]), null);
+  eq("★ 特日の単価: 知らない名前は null (黙って 200 に倒さない)", tokubiRateForHolidayNames(["創立記念日"]), null);
+  eq("特日の単価: 休日が無い月は 既定値 (使われない)", tokubiRateForHolidayNames([]), 200);
+  eq("★ 年末年始 300円/時: 285分 → 1,425円 (リンクス茂原 平川礼子 2025/12/31)", tokubiAllowanceAmount(285, 300), 1425);
   eq("★ 特日手当は 時給者の総支給に入る", hourlyTotalPay(hourly({ totalPay: 10000, effective_service_months: 0, tokubi_allowance: 717 })) - hourlyTotalPay(hourly({ totalPay: 10000, effective_service_months: 0 })), 717);
 }
 eq("weekendHolidayMinutes: 平日は集計しない (2026-06-01は月曜)",
