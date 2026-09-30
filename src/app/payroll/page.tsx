@@ -290,13 +290,17 @@ export default function PayrollPage() {
       .eq("status", "completed")
       .gt("record_count", 0)
       .order("processing_month", { ascending: false })
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        // ★ error を捨てない。★ 落ちると 処理月が「(データなし)」のまま 理由が分からない (2026-09-30)
+        if (error) { console.error("[payroll] 処理月の読み込みに失敗:", error.message); toast.error(`処理月の読み込みに失敗: ${error.message}`); return; }
         if (!data) return;
         const unique = [...new Set((data as { processing_month: string }[]).map((r) => r.processing_month))];
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
-    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
+    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price, ${OFFICE_MASTER_JOIN}`).then(({ data, error }) => {
+      // ★ error を捨てない。★ 落ちると 種別が「(事業所なし)」のまま 理由が分からない (2026-09-30)
+      if (error) { console.error("[payroll] 事業所の読み込みに失敗:", error.message); toast.error(`事業所の読み込みに失敗: ${error.message}`); return; }
       if (!data) return;
       const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
       flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
