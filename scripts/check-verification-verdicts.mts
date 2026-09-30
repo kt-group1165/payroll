@@ -84,6 +84,8 @@ async function main() {
   const reasonOf = new Map<string, Map<string, number>>();
   /** 要確認 の状況別内訳 (診断用。判定規則とは別) */
   const sitOf = new Map<string, Map<string, number>>();
+  /** 要確認 × 総支給が一致しているか (金額に出ているか) */
+  const tmOf = new Map<string, Map<string, { n: number; yen: number }>>();
 
   for (const c of calc) {
     const p = c.payload ?? {};
@@ -109,12 +111,22 @@ async function main() {
         const { items } = verificationItems(e, kind, otMap, s.row_data);
         const ds = diffItems(items, ctx);
         if (ds.length) withDiff++;
+        // ★ 総支給が一致している人月の 項目差は **相殺されていて金額に出ない**。優先度が違うので分ける
+        //   (2026-10-01 追加。★ これを混ぜると「¥6.88M の要確認」が 実際は金額に出ていない分を含む)
+        const totalMatched = !ds.some((x) => x.item === "総支給額");
         for (const d of ds) {
           if (!byItem.has(d.item)) byItem.set(d.item, new Map());
           const m = byItem.get(d.item)!;
           const cell = m.get(d.verdict) ?? { n: 0, yen: 0 };
           cell.n++; cell.yen += Math.abs(d.diff); m.set(d.verdict, cell);
           // ★ 要確認 (理由が分かっていない) を **状況で** 分ける。★ 判定規則は変えない (診断だけ足す)
+          if (d.verdict === "要確認") {
+            const tk = totalMatched ? "総支給は一致 (相殺されている)" : "★ 総支給も不一致";
+            if (!tmOf.has(d.item)) tmOf.set(d.item, new Map());
+            const t2 = tmOf.get(d.item)!;
+            const cell2 = t2.get(tk) ?? { n: 0, yen: 0 };
+            cell2.n++; cell2.yen += Math.abs(d.diff); t2.set(tk, cell2);
+          }
           if (d.verdict === "要確認") {
             // ⚠ ★ 出勤簿は **提責・事務員・管理者だけ**が付ける (1 日 1 行)。
             //   ★ パート・社員は 元々無いので「出勤簿が無い」を原因として出すと 誤った宿題になる
@@ -170,6 +182,19 @@ async function main() {
     console.log(`    ${item} 計 ${[...rm.values()].reduce((s, x) => s + x, 0)} 人月`);
     for (const [r, n2] of [...rm].sort((a, b) => b[1] - a[1])) console.log(`      ${String(n2).padStart(4)} 人月  ${r}`);
   }
+  console.log(`
+--- ★ 要確認 × 総支給が一致しているか (★ 一致しているなら 項目差は相殺されて 金額に出ていない)`);
+  {
+    const a = { n: 0, yen: 0 }, b = { n: 0, yen: 0 };
+    for (const [item, t2] of [...tmOf].sort((x, y) => (y[1].get("★ 総支給も不一致")?.n ?? 0) - (x[1].get("★ 総支給も不一致")?.n ?? 0))) {
+      const m1 = t2.get("★ 総支給も不一致"), m2 = t2.get("総支給は一致 (相殺されている)");
+      if (m1) { a.n += m1.n; a.yen += m1.yen; }
+      if (m2) { b.n += m2.n; b.yen += m2.yen; }
+      console.log(`    ${item.padEnd(22)} ★ 総支給も不一致 ${String(m1?.n ?? 0).padStart(5)} 人月 ¥${Math.round(m1?.yen ?? 0).toLocaleString().padStart(12)}  /  相殺済 ${String(m2?.n ?? 0).padStart(5)} 人月 ¥${Math.round(m2?.yen ?? 0).toLocaleString().padStart(12)}`);
+    }
+    console.log(`    ${"合計".padEnd(22)} ★ 総支給も不一致 ${String(a.n).padStart(5)} 人月 ¥${Math.round(a.yen).toLocaleString().padStart(12)}  /  相殺済 ${String(b.n).padStart(5)} 人月 ¥${Math.round(b.yen).toLocaleString().padStart(12)}`);
+  }
+
   console.log(`
 --- ★ 要確認 (理由が分かっていない) の **状況別** 内訳`);
   console.log("    ★ 判定規則は変えていない。★ 「出勤簿が無い」等は 原因が分かっているので 規則を足す余地がある");
