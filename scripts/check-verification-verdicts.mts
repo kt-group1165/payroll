@@ -1,0 +1,186 @@
+/**
+ * check:verification-verdicts — ② との不一致を **既に「許容」と決めた分** と **本当に未解明** に分ける。★ 基準値方式・読み取り専用。
+ *
+ *   npm run check:verification-verdicts
+ *   npm run check:verification-verdicts -- --update
+ *   ITEM=残業総額 npm run check:verification-verdicts     … その項目の明細を出す
+ *
+ * ── なぜ要るか ────────────────────────────────────────────────────────────
+ * `check:soukatsu-cause` は 総支給の差を 原因の型 (A/B/C/PZ/SZ…) に分けるが、
+ * ★ 「その差が **すでに user と合意した許容差** なのか」は見ていない。
+ * 合意は `src/lib/payroll/soukatsu-diff.ts` の RULES にコード化されていて、★ 画面 (/verification) だけが使う。
+ * → ★ 画面を 182 事業所月ぶん開かないと 「残作業が何件か」が分からなかった。
+ *
+ * 2026-09-30 に これを作る動機になった実例:
+ *   残業総額の差 44 人月 (¥215,743) を「当方の残業が違う」と読んで追いかけたが、
+ *   ★ soukatsu-diff には 2026-09-23 に user が決めた許容規則が既に入っていた
+ *   (「出勤簿の 勤務時間の欄 と 終了−開始−休憩 が食い違う人は 当システムの時刻を正とする」)。
+ *   ★ 追う前に 許容かどうかを見るべきだった。
+ *
+ * ── 何を出すか ────────────────────────────────────────────────────────────
+ *   項目 × 判定 (許容 / 要対応 / 参考 …) の人月と金額。★ 判定は 画面と同じ関数 (judgeItem/diffItems)。
+ *   ★ 逐語コピーはしない。verificationItems / diffItems / pickSoukatsu を import する
+ *   ([[feedback_test_verbatim_copy_and_wrong_expectation]])。
+ *
+ * ── この検査が見ていないもの ──────────────────────────────────────────────
+ *   ・総支給の一致率そのもの (→ check:soukatsu-cause)
+ *   ・① (旧システムの出力) … ここは ② だけを見る。★ ①② のどちらが正かは別の話
+ *   ・片側にしか居ない人月 (→ check:soukatsu-match)
+ *   ・許容規則そのものの妥当性。★ 規則が甘いと 残作業が過少に見える (だから件数を基準値で見張る)
+ */
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { restAll, normEmpNo } from "./_rest.mjs";
+import { diffItems, pickSoukatsu, type DiffContext, type DiffVerdict } from "../src/lib/payroll/soukatsu-diff.js";
+import { verificationItems } from "../src/lib/payroll/verification-items.js";
+import { attendanceWorkMinutes, parseWorkHoursMinutes, type OvertimeSetting } from "../src/lib/payroll/payroll-calc.js";
+
+const UPDATE = process.argv.includes("--update");
+const ITEM = process.env.ITEM ?? "";
+const BASELINE = new URL("./check-verification-verdicts-baseline.json", import.meta.url);
+let fail = 0;
+const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
+
+type Calc = { office_number: string; processing_month: string; payload: Record<string, unknown> };
+type Souk = { office_number: string; processing_month: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> };
+type Emp = { employee_number: string; office_id: string; role_type: string | null; is_office_worker: boolean | null };
+type Att = Record<string, unknown> & { employee_number: string; office_number: string; year: number; month: number; work_hours: string | null };
+type OFR = { office_number: string; processing_month: string };
+const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
+
+async function main() {
+  console.log("=== check:verification-verdicts (② との差を 許容 / 要対応 に分ける) 2026-09-30 新設・読み取り専用 ===");
+  console.log("★ check:all には入れていない (許容規則は user の判断で動くため。診断系)");
+
+  const calc = await restAll<Calc>("payroll_calc_results?select=id,office_number,processing_month,payload");
+  const souk = await restAll<Souk>("payroll_soukatsu_rows?select=id,office_number,processing_month,employee_number,sheet_kind,row_data");
+  const pofs = await restAll<{ id: string; office_number: string }>("payroll_offices?select=id,office_number");
+  const offNumOf = new Map(pofs.map((o) => [o.id, o.office_number]));
+  const emps = await restAll<Emp>("payroll_employees?select=id,employee_number,office_id,role_type,is_office_worker");
+  // ★ 出勤簿は year / month 列 (processing_month でない) ・日の中の 5 区間。★ 画面と同じ列を読む
+  const att = await restAll<Att>("payroll_attendance_records?select=id,employee_number,office_number,year,month,work_hours,break_time,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5");
+  const ofr = await restAll<OFR>("payroll_office_form_records?select=id,office_number,processing_month");
+  const ofrHas = new Set(ofr.map((r) => `${r.office_number}|${r.processing_month}`));
+  console.log(`計算結果 ${calc.length} 事業所月 / ② ${souk.length} 行 / 出勤簿 ${att.length} 行 / 事業所書式のある事業所月 ${ofrHas.size}`);
+
+  const soukOf = new Map(souk.map((s) => [`${s.office_number}|${s.processing_month}|${normEmpNo(s.employee_number)}|${s.sheet_kind}`, s]));
+  const roleOf = new Map(emps.map((e) => [`${offNumOf.get(e.office_id) ?? "?"}|${normEmpNo(e.employee_number)}`, String(e.role_type ?? "")]));
+  const officeWorker = new Set(emps.filter((e) => e.is_office_worker).map((e) => `${offNumOf.get(e.office_id) ?? "?"}|${normEmpNo(e.employee_number)}`));
+  // 出勤簿の「欄」と「時刻」の食い違い (分)。★ 画面と同じ関数で出す
+  const gapOf = new Map<string, number>(), hasAtt = new Set<string>();
+  for (const r of att) {
+    const k = `${r.office_number}|${String(r.year)}${String(r.month).padStart(2, "0")}|${normEmpNo(r.employee_number)}`;
+    hasAtt.add(k);
+    const fromTimes = attendanceWorkMinutes(r as never);
+    const fromColumn = parseWorkHoursMinutes(String(r.work_hours ?? ""));
+    if (fromTimes > 0 && fromTimes !== fromColumn) gapOf.set(k, (gapOf.get(k) ?? 0) + (fromTimes - fromColumn));
+  }
+
+  type Cell = { n: number; yen: number };
+  const byItem = new Map<string, Map<DiffVerdict, Cell>>();
+  const detail: string[] = [];
+  let pairs = 0, withDiff = 0;
+  const reasonOf = new Map<string, Map<string, number>>();
+
+  for (const c of calc) {
+    const p = c.payload ?? {};
+    const otMap = new Map(((p.overtime_settings ?? []) as OvertimeSetting[]).map((r) => [r.job_type, r]));
+    const officeFormEmpty = !ofrHas.has(`${c.office_number}|${c.processing_month}`);
+    for (const [kind, list] of [["part", (p.hourly ?? []) as Record<string, unknown>[]], ["shaseki", (p.monthly ?? []) as Record<string, unknown>[]]] as const) {
+      for (const e of list) {
+        const n = normEmpNo(String(e.employee_number ?? ""));
+        const s = soukOf.get(`${c.office_number}|${c.processing_month}|${n}|${kind}`);
+        if (!s) continue;
+        pairs++;
+        const ek = `${c.office_number}|${n}`;
+        const ctx: DiffContext = {
+          roleType: roleOf.get(ek) ?? String(e.role_type ?? ""),
+          attendanceGapMinutes: gapOf.get(`${c.office_number}|${c.processing_month}|${n}`) ?? 0,
+          noAttendance: !hasAtt.has(`${c.office_number}|${c.processing_month}|${n}`),
+          hasRateGap: num(e.unmappedCount) > 0,
+          isOfficeWorker: officeWorker.has(ek),
+          officeNumber: c.office_number,
+          officeFormEmpty,
+          adjustmentFolded: pickSoukatsu(s.row_data, "調整手当") !== 0,
+        };
+        const { items } = verificationItems(e, kind, otMap, s.row_data);
+        const ds = diffItems(items, ctx);
+        if (ds.length) withDiff++;
+        for (const d of ds) {
+          if (!byItem.has(d.item)) byItem.set(d.item, new Map());
+          const m = byItem.get(d.item)!;
+          const cell = m.get(d.verdict) ?? { n: 0, yen: 0 };
+          cell.n++; cell.yen += Math.abs(d.diff); m.set(d.verdict, cell);
+          if (d.verdict === "要対応") {
+            if (!reasonOf.has(d.item)) reasonOf.set(d.item, new Map());
+            const rm = reasonOf.get(d.item)!;
+            const key = String(d.reason ?? "(理由なし)");
+            rm.set(key, (rm.get(key) ?? 0) + 1);
+          }
+          if (ITEM && d.item === ITEM) detail.push(`    ${c.processing_month} ${c.office_number} ${n.padStart(6)} ${String(e.employee_name ?? "").replace(/\s+/g, " ").padEnd(12)} ${kind} 当方 ${Math.round(d.ours)} / ② ${Math.round(d.soukatsu)} (差 ${Math.round(d.diff)}) [${d.verdict}] ${d.reason ?? ""}`);
+        }
+      }
+    }
+  }
+
+  console.log(`\n② と対になった人月 ${pairs} / ★ 何かの項目がずれている人月 ${withDiff}`);
+  const verdicts = [...new Set([...byItem.values()].flatMap((m) => [...m.keys()]))].sort();
+  console.log(`\n--- 項目 × 判定 (人月 / 差の絶対値計)`);
+  console.log(`  ${"項目".padEnd(24)}${verdicts.map((v) => String(v).padStart(18)).join("")}`);
+  const totals = new Map<DiffVerdict, Cell>();
+  for (const [item, m] of [...byItem].sort((a, b) => [...b[1].values()].reduce((s, x) => s + x.n, 0) - [...a[1].values()].reduce((s, x) => s + x.n, 0))) {
+    const cells = verdicts.map((v) => {
+      const c = m.get(v);
+      if (c) { const t = totals.get(v) ?? { n: 0, yen: 0 }; t.n += c.n; t.yen += c.yen; totals.set(v, t); }
+      return c ? `${c.n}人¥${c.yen.toLocaleString()}`.padStart(18) : "".padStart(18);
+    });
+    console.log(`  ${item.padEnd(24)}${cells.join("")}`);
+  }
+  console.log(`  ${"合計".padEnd(24)}${verdicts.map((v) => { const t = totals.get(v); return t ? `${t.n}人¥${t.yen.toLocaleString()}`.padStart(18) : "".padStart(18); }).join("")}`);
+
+  console.log(`\n--- ★ 要対応 の理由の内訳 (= これが残作業)`);
+  const needs = [...reasonOf].sort((a, b) => [...b[1].values()].reduce((s, x) => s + x, 0) - [...a[1].values()].reduce((s, x) => s + x, 0));
+  if (!needs.length) console.log("    (なし)");
+  for (const [item, rm] of needs) {
+    console.log(`    ${item} 計 ${[...rm.values()].reduce((s, x) => s + x, 0)} 人月`);
+    for (const [r, n2] of [...rm].sort((a, b) => b[1] - a[1])) console.log(`      ${String(n2).padStart(4)} 人月  ${r}`);
+  }
+  if (ITEM) { console.log(`\n--- 項目 ${ITEM} の明細 (${detail.length})`); for (const d of detail.sort()) console.log(d); }
+
+  console.log("\n--- 負のコントロール (判定が効いていることの確認)");
+  const base: DiffContext = { roleType: "社員", attendanceGapMinutes: 0, noAttendance: false, hasRateGap: false, officeNumber: "1270501180", officeFormEmpty: false };
+  const one = (item: string, ctx: DiffContext) => diffItems([{ item, ours: 1000, soukatsu: 2000 }], ctx)[0];
+  expect(one("残業総額", base).verdict === "要確認", "★ 出勤簿の食い違いが無ければ 残業総額の差は 要確認 (= 理由が分かっていない)");
+  expect(one("残業総額", { ...base, attendanceGapMinutes: 30 }).verdict === "許容", "★ 出勤簿の食い違いがあれば 残業総額の差は 許容 (user 2026-09-23)");
+  expect(one("出勤時間", { ...base, attendanceGapMinutes: 30 }).verdict === "許容", "出勤時間も同じ理由で 許容");
+  expect(one("特日", { ...base, adjustmentFolded: true }).verdict === "許容", "調整手当に畳み込まれていれば 特日は 許容 (突合は内訳計で)");
+  expect(one("特日", base).verdict !== "許容", "★ 畳み込まれていなければ 特日の差は 許容にしない");
+  expect(diffItems([{ item: "残業総額", ours: 1000, soukatsu: 1000 }], base).length === 0, "差が 0 の項目は 出さない");
+  expect(diffItems([{ item: "残業総額", ours: 1000, soukatsu: 1001 }], base).length === 0, "差 1 円は 許容範囲 (MONEY_TOLERANCE)");
+
+  const counts: Record<string, number> = {};
+  for (const [item, rm] of reasonOf) counts[`要対応:${item}`] = [...rm.values()].reduce((s, x) => s + x, 0);
+  counts["要対応 合計"] = Object.entries(counts).filter(([k]) => k.startsWith("要対応:")).reduce((s, [, v]) => s + v, 0);
+  // ★ 要確認 (= 理由が分かっていない) も 項目ごとに見張る。★ こちらが 本当の残作業
+  //   ★ 要対応 は「何をすればよいか分かっている」もの (データ入力)。★ 要確認 は「分かっていない」もの
+  for (const [item, m] of byItem) { const c = m.get("要確認"); if (c) counts[`要確認:${item}`] = c.n; }
+  counts["要確認 合計"] = [...byItem.values()].reduce((s, m) => s + (m.get("要確認")?.n ?? 0), 0);
+
+  type Baseline = { _readme: string[]; counts: Record<string, number> };
+  const baseline: Baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline : { _readme: [], counts: {} };
+  if (UPDATE) {
+    baseline.counts = counts;
+    writeFileSync(BASELINE, JSON.stringify(baseline, null, 2) + "\n", "utf8");
+    console.log("\n基準値を更新しました");
+  } else {
+    console.log("\n--- 基準値");
+    for (const [k, v] of Object.entries(counts)) {
+      const b = baseline.counts[k];
+      if (b == null) { console.log(`  ・${k} = ${v} (基準値なし)`); continue; }
+      if (v > b) expect(false, `${k} が基準値から増えた (${v} > ${b})`);
+      else console.log(`  o ${k} = ${v} (基準値 ${b})`);
+    }
+  }
+  console.log(fail ? `\n★ FAIL ${fail} 件` : "\nPASS (★ 0 件 PASS ではない。基準値の件数を許容したうえでの PASS)");
+  process.exit(fail ? 1 : 0);
+}
+await main();
