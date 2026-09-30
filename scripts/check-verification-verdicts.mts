@@ -80,6 +80,8 @@ async function main() {
   const detail: string[] = [];
   let pairs = 0, withDiff = 0;
   const reasonOf = new Map<string, Map<string, number>>();
+  /** 要確認 の状況別内訳 (診断用。判定規則とは別) */
+  const sitOf = new Map<string, Map<string, number>>();
 
   for (const c of calc) {
     const p = c.payload ?? {};
@@ -110,6 +112,27 @@ async function main() {
           const m = byItem.get(d.item)!;
           const cell = m.get(d.verdict) ?? { n: 0, yen: 0 };
           cell.n++; cell.yen += Math.abs(d.diff); m.set(d.verdict, cell);
+          // ★ 要確認 (理由が分かっていない) を **状況で** 分ける。★ 判定規則は変えない (診断だけ足す)
+          if (d.verdict === "要確認") {
+            // ⚠ ★ 出勤簿は **提責・事務員・管理者だけ**が付ける (1 日 1 行)。
+            //   ★ パート・社員は 元々無いので「出勤簿が無い」を原因として出すと 誤った宿題になる
+            //   (2026-09-30 実測: パート 3,099 人月・社員 831 人月 は 1 件も無く、それが正常)
+            const shouldHaveAtt = /提責|事務員|管理者/.test(ctx.roleType) || Boolean(ctx.isOfficeWorker);
+            // ★ 順序が大事。★ 「原因として意味のあるもの」を先に、★ 意味のないものは最後に置く。
+            //   ★ 最初に noAttendance を置くと パートの差が全部そこに吸われて 分布が見えなくなる (2026-09-30 に踏んだ)
+            const sit = ctx.noAttendance && shouldHaveAtt ? "★ 出勤簿が無い (提責・事務員は あるべき)"
+              : ctx.officeFormEmpty ? "事業所書式が 1 行も無い"
+              : ctx.hasRateGap ? "単価が引けず 0 円の訪問がある"
+              : Math.abs(d.ours) === 0 ? "当方が 0 (②だけ払っている)"
+              : Math.abs(d.soukatsu) === 0 ? "② が 0 (当方だけ払っている)"
+              : Math.abs(d.diff) <= 60 ? "差が 60 以内 (端数・休憩の取り方の疑い)"
+              : Math.abs(d.diff) / Math.max(Math.abs(d.soukatsu), 1) <= 0.02 ? "差が 2% 以内"
+              : Math.abs(d.diff) / Math.max(Math.abs(d.soukatsu), 1) <= 0.1 ? "差が 10% 以内"
+              : "★ 差が 10% 超";
+            if (!sitOf.has(d.item)) sitOf.set(d.item, new Map());
+            const sm = sitOf.get(d.item)!;
+            sm.set(sit, (sm.get(sit) ?? 0) + 1);
+          }
           if (d.verdict === "要対応") {
             if (!reasonOf.has(d.item)) reasonOf.set(d.item, new Map());
             const rm = reasonOf.get(d.item)!;
@@ -143,6 +166,13 @@ async function main() {
   for (const [item, rm] of needs) {
     console.log(`    ${item} 計 ${[...rm.values()].reduce((s, x) => s + x, 0)} 人月`);
     for (const [r, n2] of [...rm].sort((a, b) => b[1] - a[1])) console.log(`      ${String(n2).padStart(4)} 人月  ${r}`);
+  }
+  console.log(`
+--- ★ 要確認 (理由が分かっていない) の **状況別** 内訳`);
+  console.log("    ★ 判定規則は変えていない。★ 「出勤簿が無い」等は 原因が分かっているので 規則を足す余地がある");
+  for (const [item, sm] of [...sitOf].sort((a, b) => [...b[1].values()].reduce((x, y) => x + y, 0) - [...a[1].values()].reduce((x, y) => x + y, 0))) {
+    console.log(`    ${item} 計 ${[...sm.values()].reduce((x, y) => x + y, 0)} 人月`);
+    for (const [k, v] of [...sm].sort((a, b) => b[1] - a[1])) console.log(`      ${String(v).padStart(4)} 人月  ${k}`);
   }
   if (ITEM) { console.log(`\n--- 項目 ${ITEM} の明細 (${detail.length})`); for (const d of detail.sort()) console.log(d); }
 
