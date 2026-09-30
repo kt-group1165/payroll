@@ -90,10 +90,13 @@ const NOT_COVERED = [
     "manual-input-month / office-form-shrink / honobono-amount / soukatsu-row-only / status-excluded-paid。" +
     "★ どれも「いま どこまで見えているか」を測るもので、落ちる/落ちないの話ではない。手で回すこと。" +
     "(prehire-pay は 2026-09-27 に 0 件になり 負のコントロールを足して 編入した。入社日が無い人 (今 3 名) は判定していない)",
-  "★ 2026-09-30 に足した 2 本も この一覧に入れていない (① の写しの dir が要る診断系)。" +
-    "SOUKATSU1_DIR=<① の抽出物の dir> npm run check:tokubi   … 特日手当 (お盆・年末年始)。0.75 掛けと 同行の除外を見張る。" +
+  "★ 2026-09-30 に足した 3 本も この一覧に入れていない (① の写しの dir が要る診断系)。" +
+    "SOUKATSU1_DIR=<① の抽出物の dir> npm run check:tokubi   … 特日手当 (お盆・年末年始)。0.75 掛け・同行の除外・" +
+    "★ 会社休日マスタの日そのもの を見張る。" +
     "SOUKATSU1_DIR=… npm run check:tenure-rate … 勤続手当を 単価 (年数・資格) と 時間 (実績) に分ける。" +
-    "★ どちらも ② を見出しにしている。★ ① を正にすると 白石則子で 約 ¥34,000 の過大に戻る",
+    "SOUKATSU1_DIR=… npm run check:visit-time-l1 … ★ 月の訪問時間そのものを ① と突合する (手当の差と入力の差を分ける)。" +
+    "★ tokubi/tenure-rate は ② を見出しにしている。★ ① を正にすると 白石則子で 約 ¥34,000 の過大に戻る。" +
+    "★ visit-time-l1 は ② に列が無いので ① とだけ比べる (★ どちらが正しいかは決めない)",
   "★ payload を読む検査 (prehire-pay ほか) の数字は payroll_calc_results の計算日時のもの " +
     "(2026-09-27 に全 138 事業所月を再計算済み)。npm run check:calc-freshness で古さを見る。" +
     "★ 再計算したら、基準値を持つ検査は --update せずに回して中身を見てから取り直すこと",

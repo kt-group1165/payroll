@@ -82,8 +82,20 @@ console.log(`実績 ${recs.length.toLocaleString()} 件中 ${total} 件 / ${list
 for (const [, g] of list) console.log(`  ${String(g.count).padStart(5)}件  [${g.cause}] ${g.label}`);
 
 if (UPDATE) {
+  // ★ 基準値を **上げる**ときは なぜ上げてよいのかを必ず残す。
+  //   ★ UPDATE_NOTE 無しで件数が増える更新は 拒む (悪化を黙って焼き付けないため)
+  let prevTotal: number | null = null;
+  try { prevTotal = (JSON.parse(readFileSync(BASELINE, "utf8")) as { total: number }).total; } catch { prevTotal = null; }
+  const note = process.env.UPDATE_NOTE ?? "";
+  if (prevTotal != null && total > prevTotal && !note) {
+    console.log(`\n★ 件数が増えています (${prevTotal} → ${total})。UPDATE_NOTE="なぜ増えてよいか" を付けてください`);
+    console.log('  例) UPDATE_NOTE="202512/202601 を取込んだ分。202603-08 は 76 件で不変 (実測済)" npm run check:rate-gap -- --update');
+    process.exit(2);
+  }
+  const prevWhy = (() => { try { return (JSON.parse(readFileSync(BASELINE, "utf8")) as { _why?: string[] })._why ?? []; } catch { return []; } })();
   writeFileSync(BASELINE, JSON.stringify({
     _readme: "単価が引けず0円になる訪問の基準値。★0件を目指す検査ではない (自費のマスタ設計が決まるまで塞げない)。増えたら FAIL。減ったら --update で下げる",
+    _why: note ? [...prevWhy, `${new Date().toISOString().slice(0, 10)} ${prevTotal ?? "-"} → ${total}: ${note}`] : prevWhy,
     _measured: new Date().toISOString().slice(0, 10), ...current,
   }, null, 2) + "\n", "utf8");
   console.log(`\n基準値を更新しました (${total} 件)`);
