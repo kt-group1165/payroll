@@ -19,6 +19,7 @@ import {
   travelFeeAmount,
   yochoAllowance,
   lateEarlyDeduction,
+  absenceDeduction,
   shoninshaAdjustmentOf,
   hourlyTenure,
   type HourlyPayroll,
@@ -147,6 +148,12 @@ function ourItems(
     { item: "特日", ours: num(e.tokubi_allowance) },
     // ② の「遅刻早退金額」は 負の数で入っている (−660 等)。当方は 控除額を正の数で持つので 符号を合わせる (2026-09-27)
     { item: "遅刻早退金額", ours: -lateEarlyDeduction(p) },
+    // ★ 欠勤控除は 2026-09-18 に実装して monthlyGrandTotal で引いているのに、
+    //   ★ 検証項目に入っていなかった (2026-10-01 に気付いた)。② にも列がある (1,326 行中 34 行)。
+    //   ★ 足すと 5 人月が見えるようになる: 佐瀨恵子 202606 (当方だけ引いている) /
+    //     坂尾沙織 202607 (② だけ -18,333 で 当方の欠勤日数は 0) / 川嶋由希子 202603 (47円) ほか。
+    //   ★ ② は 遅刻早退金額と同じく 負の数で持つので 符号を合わせる。
+    { item: "欠勤控除", ours: -absenceDeduction(p) },
     { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
   ];
 }
