@@ -86,7 +86,8 @@
     "check:attendance-sparse": "tsx scripts/check-attendance-sparse.mts",
     "check:attendance-daily-scan": "tsx scripts/check-attendance-daily-scan.mts",
     "check:overtime-rate": "tsx scripts/check-overtime-rate.mts",
-    "check:legacy-ot-source": "tsx scripts/check-legacy-ot-source.mts"
+    "check:legacy-ot-source": "tsx scripts/check-legacy-ot-source.mts",
+    "check:part-item-sum": "tsx scripts/check-part-item-sum.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

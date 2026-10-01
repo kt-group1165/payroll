@@ -31,6 +31,14 @@ const num = (v: unknown) => (typeof v === "number" ? v : 0);
 /** 分で持っている項目 (金額ではない)。② の値は soukatsuMinutes で読む */
 export const MINUTE_ITEMS = new Set(["出勤時間"]);
 
+/**
+ * ② が 初任者研修費を 本人給の欄に入れているか。★ 入れている人だけ 当方も本人給に足す。
+ * ★ 検査 (check:part-item-sum) も ourItems を直接呼ぶので、★ 逐語コピーを作らないよう関数にした。
+ */
+export function shoninshaInSoukatsuOf(row: Record<string, unknown>): boolean {
+  return pickSoukatsu(row, "初任者研修費") + pickSoukatsu(row, "初任者研修調整費") > 0;
+}
+
 export /** 当システムの 1 人ぶんの値を 総括表の項目名に合わせて取り出す */
 function ourItems(
   e: Record<string, unknown>,
@@ -51,9 +59,14 @@ function ourItems(
       //   研修・HRD研修は「その他手当」側で本人給には入らない。
       //   実測 (2026-09-25 / パート 2,294 人月): 足さないと 95.2% → 列がある人だけ足して **96.3%**
       //   (当方の初任者研修費を全員に足すと 95.3% にしかならない。橘真悟・伊藤瑠奈・春日晶子 は足さないほうが合う)
+      // ★ 初任者研修調整費 (無資格の減額) は ② では **本人給に畳み込まれている**。
+      //   別に「初任者研修調整費」列もあるが 表示だけで 総支給には足されていない。
+      //   実測 (2026-10-01 / ★ 分母 = 調整費 ≠ 0 の 13 人月): 引くと 12 一致 / 引かないと 0 一致。
+      //   ★ 引かないと 当方の 12 項目の和 が grand_total を 調整費ぶん超える (grand_total は引いている)。
       { item: "本人給", ours: num(e.totalPay) + num(e.office_work_pay) + num(e.cancel_allowance)
         + weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate))
-        + num(e.tokubi_allowance) + (shoninshaInSoukatsu ? num(e.shoninsha_pay) : 0) },
+        + num(e.tokubi_allowance) + (shoninshaInSoukatsu ? num(e.shoninsha_pay) : 0)
+        - shoninshaAdjustmentOf(e as unknown as HourlyPayroll) },
       { item: "土日祝", ours: weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e as never), num(e.weekend_holiday_rate)) },
       { item: "移動手当", ours: num(e.travel_allowance) },
       { item: "有給休暇手当", ours: num(e.paid_leave_allowance) },
@@ -85,9 +98,13 @@ function ourItems(
       //   settings の値は時給者には入っておらず、0 と読むと 729 人月の偽陽性になる (実際に 1 度出した)。
       //   ★ hourlyTenure が見るのは 訪問時間(同行除く) であって 出勤時間ではない。
       { item: "勤続手当", ours: hourlyTenure(e as unknown as HourlyPayroll) },
-      // ⚠ ② の「その他手当」が 0 で 当方が大きい 49 人月の多くは **欄違い**
-      //   (初任者研修費を ② は本人給に入れる)。総支給が合っている行が混ざるので verdict で分ける
-      { item: "その他手当", ours: num(e.training_pay) + num(e.meeting_fee) },
+      // ⚠ training_pay は **初任者研修ぶんを既に含む** (page.tsx: trainingMinutes + shoninshaMinutes)。
+      //   ② は初任者研修費を **本人給だけ** に入れるので、本人給に足したぶんは ここから引く。
+      //   ★ 引かないと 当方の 12 項目の和 が grand_total を 26 人月で超える (二重計上。2026-10-01 実測)。
+      //   実例 杉尾加奈子 1271500942|260603|202606: ② その他手当 0 / 初任者研修費 64,975 に対し
+      //        当方は その他手当 64,975 + 本人給にも 64,975 を足していた
+      { item: "その他手当", ours: num(e.training_pay) + num(e.meeting_fee)
+        - (shoninshaInSoukatsu ? num(e.shoninsha_pay) : 0) },
       { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
     ];
   }
@@ -146,7 +163,7 @@ export function verificationItems(
 ): { items: { item: string; ours: number; soukatsu: number }[]; unreadable: { item: string; raw: unknown }[] } {
   const parts = soukatsuAdjustmentParts(row);
   const unreadable: { item: string; raw: unknown }[] = [];
-  const items = ourItems(e, kind, otSettings, pickSoukatsu(row, "初任者研修費") + pickSoukatsu(row, "初任者研修調整費") > 0)
+  const items = ourItems(e, kind, otSettings, shoninshaInSoukatsuOf(row))
     .filter((x) => x.item === "調整手当(内訳計)" || hasSoukatsuColumn(row, x.item))
     .flatMap((x) => {
       if (x.item === "調整手当(内訳計)") return [{ ...x, soukatsu: parts.total }];
