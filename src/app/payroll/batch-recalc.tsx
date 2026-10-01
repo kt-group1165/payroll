@@ -223,8 +223,12 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
   }
 
   // ★ 読み直し後の自動再開。★ localStorage に残りの key があるときだけ動く
+  // ⚠ ★ 事業所の一覧が読めるまで待つ (2026-10-01)。★ 待たないと loadList が 0 件を返し、
+  //   ★ 「読み直し後に 続きの対象 162 件が見つかりませんでした」で 自動再開が止まる。
+  //   ★ 実際に 182 件の再計算が 20 件で止まった。★ offices は 親の fetch が終わってから入る。
   useEffect(() => {
     if (autoStartedRef.current) return;
+    if (offices.length === 0) return;
     const a = readAuto();
     if (!a) return;
     autoStartedRef.current = true;
@@ -239,7 +243,7 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
       await run(false, targets);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [offices.length]);
 
   const counts = items.reduce<Record<string, number>>((m, x) => { m[x.state] = (m[x.state] ?? 0) + 1; return m; }, {});
   const runStart = readRunStart();
