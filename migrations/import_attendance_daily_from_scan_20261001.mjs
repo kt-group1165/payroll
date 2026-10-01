@@ -49,6 +49,8 @@ const q = async (path, init) => {
 };
 const nn = normEmpNo, hm = hmToMinutes;
 const NOTE = "スキャンの出勤簿 (日別) から (import_attendance_daily_from_scan_20261001.mjs)";
+/** payroll_import_batches.file_names の先頭に付ける印。★ --delete でバッチも消すために要る */
+const BATCH_TAG = "スキャン日別:";
 
 let rows = [], totals = [];
 try { ({ rows, totals } = parseAttendanceTsv(FILES)); }
@@ -82,6 +84,12 @@ for (const [k, g] of groups) {
   if (DELETE) {
     if (!EXECUTE) continue;
     for (const r of cur.filter((x) => x.remarks === NOTE)) await q(`payroll_attendance_records?id=eq.${r.id}`, { method: "DELETE" });
+    // 空になった取込バッチも消す (この script が作ったものだけ。file_names の印で判る)
+    const ym = `${y}${String(m).padStart(2, "0")}`;
+    const bs = await q(`payroll_import_batches?select=id,file_names&import_type=eq.attendance&office_number=eq.${on}&processing_month=eq.${ym}`);
+    for (const b of bs.filter((x) => (x.file_names ?? []).some((f) => String(f).startsWith(`${BATCH_TAG}${y}年${m}月_${emp}`)))) {
+      await q(`payroll_import_batches?id=eq.${b.id}`, { method: "DELETE" });
+    }
     continue;
   }
   if (cur.length > 0) { console.error(`★ ${k} に既に ${cur.length} 行あります。--delete --execute で消してから入れ直してください`); process.exit(2); }
@@ -96,11 +104,26 @@ const nameOf = new Map(emps.map((e) => [`${offIdOf.get(e.office_id) ?? "?"}|${nn
 
 // ⚠ remarks は **削除のしるし** に使うので TSV の備考 (休み/有給 …) は work_note_1 に入れる。
 //   work_note_1 は 計算には使われていない (型定義と画面表示だけ。2026-10-01 に grep で確認)。
-const body = rows.map((r) => ({ ...r, employee_name: nameOf.get(`${r.office_number}|${nn(r.employee_number)}`) ?? "",
-  substitute_date: "", work_note_1: r.remarks ?? "", work_note_2: "", work_note_3: "", work_note_4: "", work_note_5: "",
-  start_time_2: "", end_time_2: "", start_time_3: "", end_time_3: "", start_time_4: "", end_time_4: "", start_time_5: "", end_time_5: "",
-  overtime_weekly: "", overtime_daily: "", holiday_work: "", legal_overtime: "", deduction: "", remarks: NOTE }));
-for (let i = 0; i < body.length; i += 200) await q("payroll_attendance_records", { method: "POST", body: JSON.stringify(body.slice(i, i + 200)) });
-console.log(`\n${body.length} 行を入れました`);
+// ⚠ payroll_attendance_records.import_batch_id は **NOT NULL**。CSV 取込 (attendance-importer.tsx) と同じく
+//   **人月ごとに payroll_import_batches を 1 行**作ってから入れる (2026-10-01 に 400 を踏んで判明)。
+let total = 0;
+for (const [k, g] of groups) {
+  const [on, emp, y, m] = k.split("|");
+  const ym = `${y}${String(m).padStart(2, "0")}`;
+  const batch = await q("payroll_import_batches", { method: "POST", headers: { ...H, Prefer: "return=representation" },
+    body: JSON.stringify({ import_type: "attendance", file_names: [`${BATCH_TAG}${y}年${m}月_${emp}`],
+      record_count: g.length, processing_month: ym, office_number: on, status: "completed" }) });
+  const batchId = batch?.[0]?.id;
+  if (!batchId) { console.error(`★ ${k} のバッチを作れませんでした`); process.exit(2); }
+  const body = g.map((r) => ({ ...r, import_batch_id: batchId,
+    employee_name: nameOf.get(`${r.office_number}|${nn(r.employee_number)}`) ?? "",
+    substitute_date: "", work_note_1: r.remarks ?? "", work_note_2: "", work_note_3: "", work_note_4: "", work_note_5: "",
+    start_time_2: "", end_time_2: "", start_time_3: "", end_time_3: "", start_time_4: "", end_time_4: "", start_time_5: "", end_time_5: "",
+    overtime_weekly: "", overtime_daily: "", holiday_work: "", legal_overtime: "", deduction: "", remarks: NOTE }));
+  await q("payroll_attendance_records", { method: "POST", body: JSON.stringify(body) });
+  total += body.length;
+  console.log(`  ${k}  ${body.length} 行 (batch ${batchId})`);
+}
+console.log(`\n${total} 行を入れました`);
 console.log("★ 次に 対象の 事業所×月 を再計算すること");
 console.log("★ 戻すときは --delete --execute");
