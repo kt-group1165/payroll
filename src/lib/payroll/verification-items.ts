@@ -61,7 +61,13 @@ function ourItems(
       { item: "出張費", ours: num(e.business_trip_fee) },
       { item: "ドタキャン", ours: num(e.cancel_allowance) },
       { item: "特日", ours: num(e.tokubi_allowance) },
-      { item: "調整手当(内訳計)", ours: num(e.tokubi_allowance) },
+      // ⚠ ★ 「調整手当(内訳計)」は **提責_社員シート専用**。★ パートシートに当ててはいけない (2026-10-01)。
+      //   ② 側は soukatsuAdjustmentParts = 介護 + ・夜朝・深夜 + ・特日 − 誤差 だが、
+      //   ★ パートシートには その 3 列が 1 列も無い (実測 2,489 行すべて)。★ 必ず 0 になり、
+      //   ★ 当方の特日手当が まるごと「不一致」に化けていた (232 人月 ¥253,418)。
+      //   ★ しかも 同じ値を 1 つ上の「特日」行で既に比べている (パートは「特日」列 / 社員は「・特日」列)。
+      //     実測: sheet_kind=part 2,489 行 … 特日 2,489 / ・特日 0 / 介護 0 / ・夜朝・深夜 0
+      //           sheet_kind=shaseki 1,326 行 … 特日 0 / ・特日 1,326 / 介護 1,326 / ・夜朝・深夜 1,326
       { item: "残業総額", ours: num(e.overtime_pay) + num(e.legal_holiday_pay) },
       { item: "育児手当", ours: num(e.childcare_allowance) },
       { item: "調整手当", ours: num(e.error_adjustment) },
