@@ -138,6 +138,35 @@ export type DiffContext = {
    * 2026-10-01 実測: 調整手当(内訳計) の 要確認 709 人月のうち **408 (全部 時給者)** がこれ。
    */
   soukatsuGosa?: number;
+  /**
+   * その人月を指すキー (processing_month と 職員番号)。★ KNOWN_DIFFS の照合にだけ使う。
+   * ★ 渡さなくても動く (そのとき KNOWN_DIFFS は効かない)。
+   */
+  processingMonth?: string;
+  employeeNumber?: string;
+};
+
+/**
+ * ★ **1 件ずつ user が「許容」と判断した差** (2026-10-01 新設)。
+ *
+ * ⚠ 規則で説明できる差は RULES に書く。ここは **規則にならない 1 件もの**だけ。
+ * ⚠ 足すときは **必ず user の判断を得てから**。★ 勝手に増やすと「合わせただけ」になる。
+ * ⚠ 消えたときに気付けるよう、★ 該当が 0 件になったら check:verification-verdicts の件数が動く。
+ *
+ * キー: `事業所番号|処理月|職員番号|項目`
+ */
+export const KNOWN_DIFFS: Readonly<Record<string, string>> = {
+  // 袖ヶ浦ムツミ 池田麻美 202605。② 9,091 / 当方 400。
+  //   ★ 同じ人の 202606〜08 は 実績(分)÷60×単価10 で ② と 1 円まで一致する。202605 だけ外れる。
+  //   ★ 202603・202604 は ② が空 (= 払っていない)。
+  //   ★ user 2026-10-01 の見立て: **支給漏れをまとめて出した**のではないか。規模は合う:
+  //       差 8,691 円 = 869 時間 = 52,146 分。彼女の月あたり訪問は 2,400〜4,200 分なので
+  //       15〜22 か月ぶんに相当。入社 2023-02-15 → 勤続 1 年で対象 (2024-02) から
+  //       202604 までが 26 か月なので 辻褄が合う。
+  //   ⚠ ★ 当方の実績は **202604 以降しか無い**ので 正確な検算はできない (仮説どまり)。
+  //   ⚠ 確認事項: ② の「総括表データ_パート」シートで 9,091 の出どころを確認する。
+  //      まとめ払いなら 当方で再現する必要は無い (過去分の精算)。
+  "1273400844|202605|230205|勤続手当": "支給漏れのまとめ払いと見られる (前後の月は単価どおり一致・規模も 15〜22 か月ぶんで整合)。user 2026-10-01 に許容と判断。出どころは要確認",
 };
 
 /** ① が介護超過を計算していない事業所 (② 側の式で出している)。2026-09-23 実測 */
@@ -306,6 +335,11 @@ const RULES: Rule[] = [
 /** 1 項目ぶんの判定 */
 export function judgeItem(item: string, ours: number, soukatsu: number, ctx: DiffContext): ItemDiff {
   const diff = soukatsu - ours;
+  // ★ 1 件ずつ user が許容と判断したもの (規則にならないもの) を先に見る
+  if (ctx.processingMonth && ctx.employeeNumber) {
+    const known = KNOWN_DIFFS[`${ctx.officeNumber}|${ctx.processingMonth}|${ctx.employeeNumber}|${item}`];
+    if (known) return { item, ours, soukatsu, diff, verdict: "許容", reason: known };
+  }
   for (const r of RULES) {
     if (r.item !== item) continue;
     if (r.when && !r.when({ ours, soukatsu, diff, ctx })) continue;

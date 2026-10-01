@@ -140,6 +140,9 @@ async function main() {
           officeFormEmpty,
           adjustmentFolded: pickSoukatsu(s.row_data, "調整手当") !== 0,
           soukatsuGosa: pickSoukatsu(s.row_data, "誤差"),
+          // ★ KNOWN_DIFFS (1 件ずつ user が許容と判断した差) の照合に使う
+          processingMonth: c.processing_month,
+          employeeNumber: n,
         };
         const { items } = verificationItems(e, kind, otMap, s.row_data);
         const ds = diffItems(items, ctx);

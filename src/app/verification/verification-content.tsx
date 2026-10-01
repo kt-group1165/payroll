@@ -145,6 +145,9 @@ export default function VerificationContent() {
           adjustmentFolded: pickSoukatsu(s.row_data, "調整手当") !== 0,
           // ② の「誤差」列。調整手当(内訳計) の差が これと同額なら 追いかけなくてよい (2026-10-01)
           soukatsuGosa: pickSoukatsu(s.row_data, "誤差"),
+          // ★ KNOWN_DIFFS (1 件ずつ user が許容と判断した差) の照合に使う
+          processingMonth: month,
+          employeeNumber: n,
         };
         // ★ 総括表の「調整手当」= 介護超過(プラスのみ) + 夜朝深夜 + 特日 − 誤差 (2026-09-24 実測 92.7%)。
         //   当方の内訳計と この合計を突き合わせる項目を差し込む
