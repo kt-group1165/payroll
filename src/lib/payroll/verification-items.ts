@@ -21,7 +21,7 @@ import {
   lateEarlyDeduction,
   absenceDeduction,
   shoninshaAdjustmentOf,
-  hourlyTenure,
+  hourlyTenureOrQualification,
   type HourlyPayroll,
   type MonthlyPayroll,
   type OvertimeSetting,
@@ -98,7 +98,9 @@ function ourItems(
       // ⚠ 勤続手当は settings.tenure_allowance ではなく **hourlyTenure()** で出す。
       //   settings の値は時給者には入っておらず、0 と読むと 729 人月の偽陽性になる (実際に 1 度出した)。
       //   ★ hourlyTenure が見るのは 訪問時間(同行除く) であって 出勤時間ではない。
-      { item: "勤続手当", ours: hourlyTenure(e as unknown as HourlyPayroll) },
+      //   ★ 資格手当 (廃止された制度の残骸) がある人は 勤続手当を出さない (排他)。
+      //     ② の列名「資格or勤続手当」がそれを表している (user 2026-10-01)
+      { item: "勤続手当", ours: hourlyTenureOrQualification(e as unknown as HourlyPayroll) },
       // ⚠ training_pay は **初任者研修ぶんを既に含む** (page.tsx: trainingMinutes + shoninshaMinutes)。
       //   ② は初任者研修費を **本人給だけ** に入れるので、本人給に足したぶんは ここから引く。
       //   ★ 引かないと 当方の 12 項目の和 が grand_total を 26 人月で超える (二重計上。2026-10-01 実測)。

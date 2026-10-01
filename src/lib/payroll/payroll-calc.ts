@@ -135,6 +135,16 @@ export type HourlyPayroll = {
   shoninsha_adjustment_flag?: boolean;
   /** 特日手当 (tokubiAllowanceAmount)。hourlyTotalPay に含める */
   tokubi_allowance?: number;
+  /**
+   * ★ パートの **資格手当** (月額・円)。payroll_salary_settings.qualification_allowance から。
+   *
+   * 制度としては廃止されたが、当時もらっていた人からは剥奪できないので残っている「残骸」
+   * (user 2026-10-01)。★ **資格手当がある人には 勤続手当を出さない** (排他)。
+   * ② の列名「資格or勤続手当」がそのまま排他を表している。
+   * ★ その月に給与が発生していれば満額 (日割りしない)。有給だけの月も満額
+   *   (実測: いすみ 新井絹代 202606 は 訪問 0 件・有給 21 日で ② は 10,000 円を払っている)。
+   */
+  qualification_allowance?: number;
   /** 旧システムのデータを使った項目 (例 "移動時間" "出勤時間")。use_legacy_data の切り替えまで。2026-09-22 */
   legacy_used?: string[];
   /**
@@ -878,6 +888,15 @@ export function isAccompaniedRecord(r: { service_code?: string | null }): boolea
   return DOUKOU_SERVICE_CODES.has(String(r.service_code ?? ""));
 }
 
+/**
+ * パートの 勤続手当 または 資格手当 (★ 排他)。hourlyTotalPay と 検証項目が これを使う。
+ * ★ 資格手当が入っている人は 勤続手当を出さない (user 2026-10-01)。
+ */
+export function hourlyTenureOrQualification(e: HourlyPayroll): number {
+  const q = e.qualification_allowance ?? 0;
+  return q > 0 ? q : hourlyTenure(e);
+}
+
 export function hourlyTenure(e: HourlyPayroll): number {
   return computeTenureAllowance(
     e.has_care_qualification,
@@ -903,7 +922,7 @@ export function hourlyTotalPay(e: HourlyPayroll): number {
     e.totalPay +
     weekendHolidayAllowanceAmount(weekendAllowanceMinutes(e), e.weekend_holiday_rate) +
     e.office_work_pay +
-    hourlyTenure(e) +
+    hourlyTenureOrQualification(e) +
     e.treatment_subsidy +
     e.paid_leave_allowance +
     e.cancel_allowance +

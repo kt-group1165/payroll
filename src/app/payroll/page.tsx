@@ -1392,6 +1392,9 @@ export default function PayrollPage() {
           job_type: info?.jobType ?? "",
           effective_service_months: info?.serviceMonths ?? 0,
           care_plan_count: 0,
+          // ★ パートの資格手当 (廃止された制度の残骸)。値があれば 勤続手当は出さない (排他)。
+          //   hourlyTenureOrQualification が判定する (payroll-calc)。user 2026-10-01
+          qualification_allowance: sal?.qualification_allowance ?? 0,
           error_adjustment: sw && !sw.hourlyBefore ? 0 : (adjustmentByNum.get(empNum) ?? 0),
           treatment_subsidy: treatmentSubsidy,
           paid_leave_allowance: paidLeaveAllowance,
