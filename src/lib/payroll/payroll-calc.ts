@@ -540,6 +540,41 @@ export function legalWithinOvertimeMinutes(
   }, 0);
 }
 
+/**
+ * 月給者の 残業の 1 時間単価の **もと** (= 基礎 ÷ 所定時間。★ 1.25 を掛ける前)。
+ * ★ 2026-10-01 に computeOvertimePay から切り出した (挙動は 1 ミリも変えていない)。
+ *   ★ 切り出した理由: ② に「残業単価」の列があるのに、単価だけを突合する手段が無かった。
+ *   ★ 残業代の差を「単価の差」と「時間の差」に分けられないと どちらを追うか決められない
+ *   ([[feedback_check_same_input_as_calc]] / 呼べない場所のロジックは永久に検証されない)。
+ * 設定が無い / 所定時間が 0 の人は null (★ 0 を返すと 「単価 0 円」と区別が付かない)。
+ */
+export function overtimeBaseHourlyRate(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number | null {
+  const ot = otSettings.get(p.job_type);
+  const s = p.settings;
+  if (!ot || ot.scheduled_hours_per_month <= 0 || !s) return null;
+  let base = 0;
+  if (ot.include_base_personal_salary)    base += s.base_personal_salary;
+  if (ot.include_skill_salary)            base += s.skill_salary;
+  if (ot.include_position_allowance)      base += s.position_allowance;
+  if (ot.include_qualification_allowance) base += s.qualification_allowance;
+  if (ot.include_tenure_allowance)        base += s.tenure_allowance;
+  if (ot.include_treatment_improvement)   base += s.treatment_improvement;
+  if (ot.include_specific_treatment)      base += s.specific_treatment_improvement;
+  if (ot.include_treatment_subsidy)       base += s.treatment_subsidy;
+  if (ot.include_fixed_overtime_pay)      base += s.fixed_overtime_pay;
+  if (ot.include_special_bonus)           base += s.special_bonus;
+  // 総括表 (ケイティ系 11 事業所 2026-07 月給者 118名が1円一致): 単価 = round(基礎 / 所定時間)、
+  //   残業単価 = round(単価 × 1.25)。所定時間は 事務員 159h / それ以外 は設定値 (訪問介護 168h)
+  const hours = p.role_type === "事務員" ? OFFICE_WORKER_SCHEDULED_HOURS : ot.scheduled_hours_per_month;
+  return Math.round(base / hours);
+}
+
+/** ② の「残業単価」と比べる用。= round(もとの単価 × 1.25)。★ 1.25 の段 */
+export function overtimeHourlyRate(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number | null {
+  const r = overtimeBaseHourlyRate(p, otSettings);
+  return r === null ? null : Math.round(r * 1.25);
+}
+
 export function computeOvertimePay(
   p: MonthlyPayroll,
   otSettings: Map<string, OvertimeSetting>,
@@ -552,22 +587,7 @@ export function computeOvertimePay(
   const s = p.settings;
   if (!s) return 0;
 
-  let base = 0;
-  if (ot.include_base_personal_salary)    base += s.base_personal_salary;
-  if (ot.include_skill_salary)            base += s.skill_salary;
-  if (ot.include_position_allowance)      base += s.position_allowance;
-  if (ot.include_qualification_allowance) base += s.qualification_allowance;
-  if (ot.include_tenure_allowance)        base += s.tenure_allowance;
-  if (ot.include_treatment_improvement)   base += s.treatment_improvement;
-  if (ot.include_specific_treatment)      base += s.specific_treatment_improvement;
-  if (ot.include_treatment_subsidy)       base += s.treatment_subsidy;
-  if (ot.include_fixed_overtime_pay)      base += s.fixed_overtime_pay;
-  if (ot.include_special_bonus)           base += s.special_bonus;
-
-  // 総括表 (ケイティ系 11 事業所 2026-07 月給者 118名が1円一致): 単価 = round(基礎 / 所定時間)、
-  //   残業単価 = round(単価 × 1.25)。所定時間は 事務員 159h / それ以外 は設定値 (訪問介護 168h)
-  const hours = p.role_type === "事務員" ? OFFICE_WORKER_SCHEDULED_HOURS : ot.scheduled_hours_per_month;
-  const hourlyRate = Math.round(base / hours);
+  const hourlyRate = overtimeBaseHourlyRate(p, otSettings) ?? 0;
   // 労基法37条1項但書: 月 60 時間を超える時間外は 50% 割増。
   //   2026-08-31 監査まで一律 1.25 だった (実データで OT 64.0h の職員が居る)。
   const within60 = Math.min(overtimeMin, MONTHLY_OT_THRESHOLD_MIN);

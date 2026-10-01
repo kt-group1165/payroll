@@ -84,7 +84,8 @@
     "check:verification-verdicts": "tsx scripts/check-verification-verdicts.mts",
     "check:soukatsu-unread-columns": "tsx scripts/check-soukatsu-unread-columns.mts",
     "check:attendance-sparse": "tsx scripts/check-attendance-sparse.mts",
-    "check:attendance-daily-scan": "tsx scripts/check-attendance-daily-scan.mts"
+    "check:attendance-daily-scan": "tsx scripts/check-attendance-daily-scan.mts",
+    "check:overtime-rate": "tsx scripts/check-overtime-rate.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
