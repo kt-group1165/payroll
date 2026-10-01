@@ -166,6 +166,7 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
     stopRef.current = false; setRunning(true); setPaused(""); setBatchCache(true);
     let okSinceReload = 0;          // ★ 読み直しの判定は **成功した件数** だけで数える
     let reloading = false;
+    let finished = false;           // ★ 止めずに 最後まで行ったか
     try {
       for (let i = 0; i < targets.length; i++) {
         const it = targets[i];
@@ -208,10 +209,16 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
           }
         }
         if (rest.length > 0) await sleep(PAUSE_BETWEEN_MS);
+        if (i === targets.length - 1) finished = true;   // ★ 止めずに 最後まで行った
       }
     } finally {
       setBatchCache(false); setRunning(false); setPaused("");
       if (!reloading) writeAuto(null);   // ★ 終わった / 止めた ときは 自動再開を消す
+      // ★ 最後まで行ったら 再開の起点も消す (2026-10-01)。
+      //   ★ 残したままだと 次に押したとき 「この回で計算済み」で **全部飛ばされ、
+      //     ★ 再計算したつもりで 何も起きない**。★ 金額を確かめる場面で これは危ない。
+      //   ⚠ 止めた / 読み直した ときは 残す (「続きから再開」のため)。
+      if (finished && !reloading) { writeRunStart(null); setMessage((m) => `${m}${m ? " / " : ""}全部終わりました (次は新しい回になります)`); }
     }
   }
 
