@@ -25,8 +25,20 @@
  */
 import { readFileSync } from "node:fs";
 
+/**
+ * ★ 向き先の切替 (2026-10-01)
+ *   PAYROLL_ENV=staging を付けると .env.staging を先に読む。
+ *   ★ なぜ要るか: 給与計算スタッフが **本番** (kt-kyuyo.vercel.app) で実験することになった。
+ *     検証は その影響を受けない 複製 (staging) に対して回す。
+ *   ⚠ 既定は本番のまま。★ 付け忘れても壊れないが、数字が スタッフの実験込みになる。
+ */
+const STAGING = process.env.PAYROLL_ENV === "staging";
+const ENV_FILES = STAGING
+  ? [".env.staging", "apps/payroll-app/.env.staging"]
+  : ["../kaigo-app/.env.local", ".env.local", "apps/kaigo-app/.env.local"];
+
 const env: Record<string, string> = {};
-for (const p of ["../kaigo-app/.env.local", ".env.local", "apps/kaigo-app/.env.local"]) {
+for (const p of ENV_FILES) {
   let t = ""; try { t = readFileSync(p, "utf8"); } catch { continue; }
   for (const l of t.split(/\r?\n/)) {
     const m = /^([A-Z0-9_]+)=(.*)$/.exec(l.trim());
@@ -35,7 +47,16 @@ for (const p of ["../kaigo-app/.env.local", ".env.local", "apps/kaigo-app/.env.l
 }
 export const SB_URL = env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const KEY = env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-if (!SB_URL || !KEY) throw new Error("★ NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が読めません (.env.local を確認)");
+if (!SB_URL || !KEY) {
+  throw new Error(
+    STAGING
+      ? "★ PAYROLL_ENV=staging ですが apps/payroll-app/.env.staging が読めません"
+      : "★ NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が読めません (.env.local を確認)"
+  );
+}
+/** ★ どちらの DB を見ているかを 必ず出す (黙って本番を見ていた、を防ぐ) */
+export const SB_REF = /https:\/\/([a-z0-9]+)\.supabase\.co/.exec(SB_URL)?.[1] ?? SB_URL;
+if (process.env.PAYROLL_ENV_QUIET !== "1") console.error(`[DB] ${STAGING ? "staging" : "本番"} ${SB_REF}`);
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 
 const PAGE = 1000;
