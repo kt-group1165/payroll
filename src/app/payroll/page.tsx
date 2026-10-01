@@ -2296,6 +2296,24 @@ export default function PayrollPage() {
       monthlyLastIdxByAuth.set(p.auth_user_id, i);
     }
   });
+  // ── 月の途中で 時給 ↔ 月給 が切り替わった人 (2026-10-01 user 依頼) ───────────
+  //   切替のある人は hourlyResults と monthlyResults の **両方**に居る
+  //   (切替の無い人は片方だけ。上の switchByNum がそう作っている)。
+  //   どちらの表にも 「時給ぶん / 月給ぶん / 合計」 の 3 行を出す。
+  //   ★ 足した 2 行には **金額だけ** 入れる (user「合計にはそれぞれの金額のみで OK」)。
+  const midSwitchByNum = new Map<string, { hourlyTotal: number; monthlyTotal: number }>();
+  {
+    const mByNum = new Map(monthlyResults.map((m) => [normEmp(m.employee_number), m]));
+    for (const h of hourlyResults) {
+      const m = mByNum.get(normEmp(h.employee_number));
+      if (!m) continue;
+      midSwitchByNum.set(normEmp(h.employee_number), {
+        hourlyTotal: hourlyTotalPay(h),
+        monthlyTotal: monthlyGrandTotal(m, otSettings),
+      });
+    }
+  }
+
   const monthlyRowsWithSum: MonthlyRow[] = [];
   monthlyResults.forEach((p, i) => {
     monthlyRowsWithSum.push({ kind: "row", p });
@@ -2958,6 +2976,26 @@ export default function PayrollPage() {
                                 </td>
                               </tr>
                             )}
+                            {(() => {
+                              const ms = midSwitchByNum.get(normEmp(emp.employee_number));
+                              if (!ms) return null;
+                              return (
+                                <>
+                                  <tr className="border-b bg-sky-50 text-xs">
+                                    <td className="px-3 py-1.5 sticky left-0 z-10 bg-sky-50 text-muted-foreground">└ 月給ぶん</td>
+                                    <td colSpan={46}></td>
+                                    <td className="px-3 py-1.5 text-right">{yen(ms.monthlyTotal)}</td>
+                                    <td colSpan={2}></td>
+                                  </tr>
+                                  <tr className="border-b bg-sky-100 text-xs font-bold">
+                                    <td className="px-3 py-1.5 sticky left-0 z-10 bg-sky-100">└ 合計 (時給 + 月給)</td>
+                                    <td colSpan={46}></td>
+                                    <td className="px-3 py-1.5 text-right">{yen(ms.hourlyTotal + ms.monthlyTotal)}</td>
+                                    <td colSpan={2}></td>
+                                  </tr>
+                                </>
+                              );
+                            })()}
                           </>
                         );
                       })}
@@ -3334,6 +3372,26 @@ export default function PayrollPage() {
                                 </td>
                               </tr>
                             )}
+                            {(() => {
+                              const ms = midSwitchByNum.get(normEmp(p.employee_number));
+                              if (!ms) return null;
+                              return (
+                                <>
+                                  <tr className="border-b bg-sky-50 text-xs">
+                                    <td className="px-3 py-1.5 sticky left-0 z-10 bg-sky-50 text-muted-foreground">└ 時給ぶん</td>
+                                    <td colSpan={30}></td>
+                                    <td className="px-3 py-1.5 text-right">{yen(ms.hourlyTotal)}</td>
+                                    <td></td>
+                                  </tr>
+                                  <tr className="border-b bg-sky-100 text-xs font-bold">
+                                    <td className="px-3 py-1.5 sticky left-0 z-10 bg-sky-100">└ 合計 (時給 + 月給)</td>
+                                    <td colSpan={30}></td>
+                                    <td className="px-3 py-1.5 text-right">{yen(ms.hourlyTotal + ms.monthlyTotal)}</td>
+                                    <td></td>
+                                  </tr>
+                                </>
+                              );
+                            })()}
                           </>
                         );
                       })}
