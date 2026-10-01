@@ -62,8 +62,12 @@ const ROWS = [
 
 const q = async (path, init) => {
   const r = await fetch(`${SB}/rest/v1/${path}`, { headers: H, ...init });
-  if (!r.ok) throw new Error(`${path} ${r.status} ${await r.text()}`);
-  return r.status === 204 ? null : r.json();
+  const body = await r.text();
+  if (!r.ok) throw new Error(`${path} ${r.status} ${body}`);
+  // ⚠ PostgREST は POST/PATCH に Prefer: return=representation が無いと **空ボディ**で返す。
+  //   r.json() を直に呼ぶと SyntaxError: Unexpected end of JSON input で落ちる
+  //   (2026-10-01 に実際に踏んだ。INSERT 3 件は通ったあと UPDATE の前で止まった)。
+  return body ? JSON.parse(body) : null;
 };
 
 const cur = await q(`payroll_monthly_inputs?select=id,processing_month,item_key,numeric_value&office_number=eq.${OFFICE}&employee_number=eq.${EMP}`);
