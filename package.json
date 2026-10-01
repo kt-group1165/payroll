@@ -82,7 +82,8 @@
     "check:legacy-daily-diff": "tsx scripts/check-legacy-daily-diff.mts",
     "check:visit-time-l1": "tsx scripts/check-visit-time-l1.mts",
     "check:verification-verdicts": "tsx scripts/check-verification-verdicts.mts",
-    "check:soukatsu-unread-columns": "tsx scripts/check-soukatsu-unread-columns.mts"
+    "check:soukatsu-unread-columns": "tsx scripts/check-soukatsu-unread-columns.mts",
+    "check:attendance-sparse": "tsx scripts/check-attendance-sparse.mts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
