@@ -1848,8 +1848,14 @@ export default function PayrollPage() {
             ...((attByEmpM.get(normEmp(e.employee_number)) ?? []).length === 0 && e.role_type === "社員"
               ? { overtimeMinutes: hourlyOvertimeMinutes(recsByEmpM.get(normEmp(e.employee_number)) ?? [], monthlyTravelSecByDay.get(normEmp(e.employee_number)), trainingMinutesByDay(ofByEmp.get(normEmp(e.employee_number)) ?? [], selectedMonth)) }
               : {}),
-            // 旧システムの残業時間があれば それを使う (上の legacyDailyOtMin の注記)
-            ...((legacyDailyOtMin.get(normEmp(e.employee_number)) ?? 0) > 0
+            // 旧システムの残業時間があれば それを使う (上の legacyDailyOtMin の注記)。
+            // ★ ただし **事務員は 出勤簿を優先する** (2026-10-01)。旧の日別は 出勤簿の外の訪問・移動まで数えるので、
+            //   訪問に出る 提責には合うが、出勤簿が勤務のすべてである 事務員には合わない。
+            //   ★ 2 つの値が食い違う人月だけを分母にして実測 ([[feedback_discriminating_denominator]]):
+            //     提責  375 人月 … 出勤簿が一致 5 / ★ 旧が一致 245 / どちらでもない 125
+            //     事務員  16 人月 … ★ 出勤簿が一致 12 / 旧が一致 1 / どちらでもない 3
+            //   ★ 役職で分けないと 事務員 12 人月が 旧の値で上書きされて ② と合わなくなる (約 ¥21,000)。
+            ...(e.role_type !== "事務員" && (legacyDailyOtMin.get(normEmp(e.employee_number)) ?? 0) > 0
               ? { overtimeMinutes: legacyDailyOtMin.get(normEmp(e.employee_number))! }
               : {}),
           };
