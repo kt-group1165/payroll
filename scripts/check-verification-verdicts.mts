@@ -42,6 +42,24 @@ const BASELINE = new URL("./check-verification-verdicts-baseline.json", import.m
 let fail = 0;
 const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
 
+/**
+ * 要確認 を **状況** で分ける (診断だけ。判定規則は変えない)。
+ * ★ 順序が大事。★ 「原因として意味のあるもの」を先に、★ 意味のないものは最後に置く。
+ *   ★ 最初に noAttendance を置くと パートの差が全部そこに吸われて 分布が見えなくなる (2026-09-30 に踏んだ)
+ * ★ hasSubstitute = その項目の代わりになる 月ごとの手入力があるか。あるなら 出勤簿の不在は原因ではない
+ */
+function classifySituation(d: { item: string; ours: number; soukatsu: number; diff: number }, ctx: DiffContext,
+  shouldHaveAtt: boolean, hasSubstitute: boolean): string {
+  if (ctx.noAttendance && shouldHaveAtt && !hasSubstitute) return "★ 出勤簿が無い (提責・事務員は あるべき)";
+  if (ctx.officeFormEmpty) return "事業所書式が 1 行も無い";
+  if (ctx.hasRateGap) return "単価が引けず 0 円の訪問がある";
+  if (Math.abs(d.ours) === 0) return "当方が 0 (②だけ払っている)";
+  if (Math.abs(d.soukatsu) === 0) return "② が 0 (当方だけ払っている)";
+  if (Math.abs(d.diff) <= 60) return "差が 60 以内 (端数・休憩の取り方の疑い)";
+  const r = Math.abs(d.diff) / Math.max(Math.abs(d.soukatsu), 1);
+  return r <= 0.02 ? "差が 2% 以内" : r <= 0.1 ? "差が 10% 以内" : "★ 差が 10% 超";
+}
+
 type Calc = { office_number: string; processing_month: string; payload: Record<string, unknown> };
 type Souk = { office_number: string; processing_month: string; employee_number: string; sheet_kind: string; row_data: Record<string, unknown> };
 type Emp = { employee_number: string; office_id: string; role_type: string | null; is_office_worker: boolean | null };
@@ -62,6 +80,17 @@ async function main() {
   const att = await restAll<Att>("payroll_attendance_records?select=id,employee_number,office_number,year,month,work_hours,break_time,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5");
   const ofr = await restAll<OFR>("payroll_office_form_records?select=id,office_number,processing_month");
   const ofrHas = new Set(ofr.map((r) => `${r.office_number}|${r.processing_month}`));
+  // ★ 出勤簿が無くても **月ごとの手入力が代わりになる**項目がある (2026-10-01 に踏んだ)。
+  //   実例: 五井 加瀬真紀江 は 202603〜08 の 6 か月とも 出勤簿が 1 件も無いが、
+  //   ★ overtime_minutes が手入力されている 5 か月は 残業総額が ② と完全一致していて 差が無い。
+  //   → ★ 「出勤簿が無い」を原因として出してよいのは **その項目の代わりになる手入力も無いとき だけ**。
+  //   ★ これを分けないと「出勤簿を書き写せば直る件数」を 何倍にも見積もる (実際に 1 度やった)。
+  const mi = await restAll<{ office_number: string; processing_month: string; employee_number: string; item_key: string; numeric_value: number | null }>(
+    "payroll_monthly_inputs?select=id,office_number,processing_month,employee_number,item_key,numeric_value&item_key=in.(office_work_minutes,overtime_minutes,commute_yen)");
+  const manualOf = new Set(mi.filter((r) => Number(r.numeric_value ?? 0) > 0)
+    .map((r) => `${r.office_number}|${r.processing_month}|${normEmpNo(r.employee_number)}|${r.item_key}`));
+  /** その項目の「出勤簿の代わりになる手入力」のキー。★ 無い項目は 出勤簿でしか埋まらない */
+  const MANUAL_SUBSTITUTE: Record<string, string> = { 残業総額: "overtime_minutes", 出勤時間: "office_work_minutes", 通勤費: "commute_yen" };
   console.log(`計算結果 ${calc.length} 事業所月 / ② ${souk.length} 行 / 出勤簿 ${att.length} 行 / 事業所書式のある事業所月 ${ofrHas.size}`);
 
   const soukOf = new Map(souk.map((s) => [`${s.office_number}|${s.processing_month}|${normEmpNo(s.employee_number)}|${s.sheet_kind}`, s]));
@@ -152,15 +181,10 @@ async function main() {
             const shouldHaveAtt = /提責|事務員|管理者/.test(ctx.roleType) || Boolean(ctx.isOfficeWorker);
             // ★ 順序が大事。★ 「原因として意味のあるもの」を先に、★ 意味のないものは最後に置く。
             //   ★ 最初に noAttendance を置くと パートの差が全部そこに吸われて 分布が見えなくなる (2026-09-30 に踏んだ)
-            const sit = ctx.noAttendance && shouldHaveAtt ? "★ 出勤簿が無い (提責・事務員は あるべき)"
-              : ctx.officeFormEmpty ? "事業所書式が 1 行も無い"
-              : ctx.hasRateGap ? "単価が引けず 0 円の訪問がある"
-              : Math.abs(d.ours) === 0 ? "当方が 0 (②だけ払っている)"
-              : Math.abs(d.soukatsu) === 0 ? "② が 0 (当方だけ払っている)"
-              : Math.abs(d.diff) <= 60 ? "差が 60 以内 (端数・休憩の取り方の疑い)"
-              : Math.abs(d.diff) / Math.max(Math.abs(d.soukatsu), 1) <= 0.02 ? "差が 2% 以内"
-              : Math.abs(d.diff) / Math.max(Math.abs(d.soukatsu), 1) <= 0.1 ? "差が 10% 以内"
-              : "★ 差が 10% 超";
+            // ★ その項目の代わりになる手入力があるなら 出勤簿の不在は 原因ではない (上の MANUAL_SUBSTITUTE 参照)
+            const subKey = MANUAL_SUBSTITUTE[d.item];
+            const hasSubstitute = Boolean(subKey) && manualOf.has(`${c.office_number}|${c.processing_month}|${n}|${subKey}`);
+            const sit = classifySituation(d, ctx, shouldHaveAtt, hasSubstitute);
             if (!sitOf.has(d.item)) sitOf.set(d.item, new Map());
             const sm = sitOf.get(d.item)!;
             sm.set(sit, (sm.get(sit) ?? 0) + 1);
@@ -240,6 +264,15 @@ async function main() {
     "★ 差が ②の誤差と同額なら 調整手当(内訳計) は 許容");
   expect(diffItems([{ item: "調整手当(内訳計)", ours: 0, soukatsu: -2300 }], { ...base, soukatsuGosa: 999 })[0].verdict === "要確認",
     "★ 誤差と額が違えば 許容にしない");
+  // ★ 状況の分け方 (2026-10-01 追加)。★ 出勤簿が無くても 手入力が代わりになるなら 原因にしない
+  const dOt = { item: "残業総額", ours: 0, soukatsu: 2000, diff: 2000 };
+  const noAtt: DiffContext = { ...base, roleType: "事務員", noAttendance: true };
+  expect(classifySituation(dOt, noAtt, true, false) === "★ 出勤簿が無い (提責・事務員は あるべき)",
+    "★ 出勤簿も 代わりの手入力も無ければ 「出勤簿が無い」");
+  expect(classifySituation(dOt, noAtt, true, true) === "当方が 0 (②だけ払っている)",
+    "★ overtime_minutes の手入力があれば 「出勤簿が無い」とは言わない (五井 加瀬 で踏んだ)");
+  expect(classifySituation(dOt, { ...base, roleType: "パート", noAttendance: true }, false, false) === "当方が 0 (②だけ払っている)",
+    "★ パートは 出勤簿が元々無いので 原因にしない");
   expect(diffItems([{ item: "調整手当(内訳計)", ours: 0, soukatsu: -2300 }], { ...base, soukatsuGosa: 0 })[0].verdict === "要確認",
     "★ 誤差が 0 のときは 許容にしない (この規則を空打ちで使わない)");
   expect(diffItems([{ item: "残業総額", ours: 1000, soukatsu: 1000 }], base).length === 0, "差が 0 の項目は 出さない");
