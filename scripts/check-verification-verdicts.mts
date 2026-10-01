@@ -86,6 +86,9 @@ async function main() {
   const sitOf = new Map<string, Map<string, number>>();
   /** 要確認 × 総支給が一致しているか (金額に出ているか) */
   const tmOf = new Map<string, Map<string, { n: number; yen: number }>>();
+  /** ★ ② が他事業所の兼務を表示している行 (比べられない) */
+  const kenmuOf = new Map<string, { n: number; yen: number }>();
+  let kenmuRows = 0;
 
   for (const c of calc) {
     const p = c.payload ?? {};
@@ -111,6 +114,20 @@ async function main() {
         };
         const { items } = verificationItems(e, kind, otMap, s.row_data);
         const ds = diffItems(items, ctx);
+        // ★ ② の氏名に「_<事業所名>」が付いた行は **他事業所の兼務の表示**で、
+        //   ★ ② の額は「この事業所で払った額」ではない。★ 比べられないので 要確認 に数えない
+        //   (check:soukatsu-cause の 型 KX と同じ判定。2026-10-01 に ここにも入れた)
+        //   ⚠ 入れる前は 本人給の要確認 ¥990,126 のうち ★ ¥711k (72%) が この 2 名だった
+        //     (花見川 松元綾子 6 人月 / さつきが丘 本郷美江 6 人月)。★ 残作業を大きく見せていた
+        // ⚠ 接尾辞は **② の氏名** に付く (当方の payload の氏名には付かない)。2026-10-01 に 1 度間違えた
+        if (/[_＿]/.test(String(s.row_data["氏名"] ?? ""))) {
+          for (const d of ds) {
+            const c2 = kenmuOf.get(d.item) ?? { n: 0, yen: 0 };
+            c2.n++; c2.yen += Math.abs(d.diff); kenmuOf.set(d.item, c2);
+          }
+          kenmuRows++;
+          continue;
+        }
         if (ds.length) withDiff++;
         // ★ 総支給が一致している人月の 項目差は **相殺されていて金額に出ない**。優先度が違うので分ける
         //   (2026-10-01 追加。★ これを混ぜると「¥6.88M の要確認」が 実際は金額に出ていない分を含む)
@@ -183,6 +200,11 @@ async function main() {
     console.log(`    ${item} 計 ${[...rm.values()].reduce((s, x) => s + x, 0)} 人月`);
     for (const [r, n2] of [...rm].sort((a, b) => b[1] - a[1])) console.log(`      ${String(n2).padStart(4)} 人月  ${r}`);
   }
+  console.log(`
+--- ★ ② が他事業所の兼務を表示している行 (氏名に 「_事業所名」が付く)。★ 比べられないので 上の表に入れていない`);
+  console.log(`    対象 ${kenmuRows} 人月`);
+  for (const [item, c2] of [...kenmuOf].sort((a, b) => b[1].yen - a[1].yen)) console.log(`    ${item.padEnd(22)} ${String(c2.n).padStart(4)} 人月 ¥${Math.round(c2.yen).toLocaleString()}`);
+
   console.log(`
 --- ★ 要確認 × 総支給が一致しているか (★ 一致しているなら 項目差は相殺されて 金額に出ていない)`);
   {
