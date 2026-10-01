@@ -20,6 +20,7 @@ import {
   yochoAllowance,
   lateEarlyDeduction,
   shoninshaAdjustmentOf,
+  hourlyTenure,
   type HourlyPayroll,
   type MonthlyPayroll,
   type OvertimeSetting,
@@ -74,6 +75,19 @@ function ourItems(
       { item: "処遇改善補助金手当", ours: num(e.treatment_subsidy) },
       // ② の「初任者研修調整費」は 負の数 (−3,425 等)。当方は 引く額を正の数で持つので 符号を合わせる (2026-09-27)
       { item: "初任者研修調整費", ours: -shoninshaAdjustmentOf(e as unknown as HourlyPayroll) },
+      // ★ ② のパートの 総支給の式に入るのに 1 度も比べていなかった 2 列 (2026-10-01 実測)。
+      //   ② 総支給額 = 本人給 + 通勤費 + 有給休暇手当 + 出張費 + 通信手当 + 移動手当
+      //              + ★その他手当 + ★勤続手当 + 処遇改善補助金手当 + 残業総額 + 調整手当 + 育児手当
+      //   で 2,255 / 2,327 人月 (96.9%) が 1 円一致する (貪欲探索で列を 1 本ずつ足して実測)。
+      //   ★ 足して見えるようになるのは 勤続 17 人月 ¥63,592 / その他 49 人月 ¥535,236。
+      //     うち 36 人月 ¥74,419 は この 2 列だけで 総支給の差が説明できる。
+      // ⚠ 勤続手当は settings.tenure_allowance ではなく **hourlyTenure()** で出す。
+      //   settings の値は時給者には入っておらず、0 と読むと 729 人月の偽陽性になる (実際に 1 度出した)。
+      //   ★ hourlyTenure が見るのは 訪問時間(同行除く) であって 出勤時間ではない。
+      { item: "勤続手当", ours: hourlyTenure(e as unknown as HourlyPayroll) },
+      // ⚠ ② の「その他手当」が 0 で 当方が大きい 49 人月の多くは **欄違い**
+      //   (初任者研修費を ② は本人給に入れる)。総支給が合っている行が混ざるので verdict で分ける
+      { item: "その他手当", ours: num(e.training_pay) + num(e.meeting_fee) },
       { item: "出勤時間", ours: num((e.summary as Record<string, unknown> | undefined)?.workHoursMin) },
     ];
   }
