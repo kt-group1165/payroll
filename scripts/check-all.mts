@@ -97,6 +97,11 @@ const NOT_COVERED = [
     "SOUKATSU1_DIR=… npm run check:visit-time-l1 … ★ 月の訪問時間そのものを ① と突合する (手当の差と入力の差を分ける)。" +
     "★ tokubi/tenure-rate は ② を見出しにしている。★ ① を正にすると 白石則子で 約 ¥34,000 の過大に戻る。" +
     "★ visit-time-l1 は ② に列が無いので ① とだけ比べる (★ どちらが正しいかは決めない)",
+  "★ 2026-10-01 に足した check:attendance-daily-scan も この一覧に入れていない。" +
+    "★ スキャン PDF から書き写した 日別出勤簿 TSV (migrations/_attendance_tsv/daily_*.tsv) を " +
+    "本番の computeSummary に通して ② の 出勤時間・出勤日数・残業 と比べる。" +
+    "★ 見ているのは **書き写しの正しさ**であって DB の中身ではない (取込前でも回る)。" +
+    "★ TSV に無い人月 (牛来 202605・各人の 202608・大網 稲葉 全月) は 対象外。理由は各 TSV の冒頭にある",
   "★ payload を読む検査 (prehire-pay ほか) の数字は payroll_calc_results の計算日時のもの " +
     "(2026-09-27 に全 138 事業所月を再計算済み)。npm run check:calc-freshness で古さを見る。" +
     "★ 再計算したら、基準値を持つ検査は --update せずに回して中身を見てから取り直すこと",
