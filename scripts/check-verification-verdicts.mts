@@ -143,6 +143,10 @@ async function main() {
           // ★ KNOWN_DIFFS (1 件ずつ user が許容と判断した差) の照合に使う
           processingMonth: c.processing_month,
           employeeNumber: n,
+          // ★ みなし残業 (固定残業代) の判定に使う。★ 計算が使ったのと同じ payload から読む
+          fixedOvertimePay: num((e as { settings?: { fixed_overtime_pay?: number } }).settings?.fixed_overtime_pay),
+          overtimeExcessPaid: Boolean((e as { overtime_excess_paid?: boolean }).overtime_excess_paid),
+          soukatsuOvertimeExcess: pickSoukatsu(s.row_data, "残業代") - pickSoukatsu(s.row_data, "固定残業代"),
         };
         const { items } = verificationItems(e, kind, otMap, s.row_data);
         const ds = diffItems(items, ctx);
@@ -260,6 +264,18 @@ async function main() {
   expect(one("残業総額", base).verdict === "要確認", "★ 出勤簿の食い違いが無ければ 残業総額の差は 要確認 (= 理由が分かっていない)");
   expect(one("残業総額", { ...base, attendanceGapMinutes: 30 }).verdict === "許容", "★ 出勤簿の食い違いがあれば 残業総額の差は 許容 (user 2026-09-23)");
   expect(one("出勤時間", { ...base, attendanceGapMinutes: 30 }).verdict === "許容", "出勤時間も同じ理由で 許容");
+  // ★ みなし超過分の規則 (2026-10-02 追加。user「みなし超過分のみが差額なら、許容してよい」)
+  const mina = (ours: number, excess: number) =>
+    diffItems([{ item: "残業総額", ours, soukatsu: 0 }],
+      { ...base, roleType: "提責", fixedOvertimePay: 50000, overtimeExcessPaid: true, soukatsuOvertimeExcess: excess })[0];
+  expect(mina(6074, 6074).verdict === "許容", "★ 当方の額が ② 自身の超過分と同じなら 許容 (みなし超過分のみが差額)");
+  expect(mina(5511, 3218).verdict === "要確認", "★ 額が違えば 要確認 (分数の差が混ざっている)");
+  expect(diffItems([{ item: "残業総額", ours: 6074, soukatsu: 0 }],
+    { ...base, roleType: "提責", fixedOvertimePay: 0, overtimeExcessPaid: true, soukatsuOvertimeExcess: 6074 })[0].verdict === "要確認",
+    "★ 固定残業代が 0 の人には この規則を当てない (みなし残業ではない)");
+  expect(diffItems([{ item: "残業総額", ours: 6074, soukatsu: 0 }],
+    { ...base, roleType: "提責", fixedOvertimePay: 50000, overtimeExcessPaid: false, soukatsuOvertimeExcess: 6074 })[0].verdict === "要確認",
+    "★ 超過支給対象でない人には 当てない");
   expect(one("特日", { ...base, adjustmentFolded: true }).verdict === "許容", "調整手当に畳み込まれていれば 特日は 許容 (突合は内訳計で)");
   expect(one("特日", base).verdict !== "許容", "★ 畳み込まれていなければ 特日の差は 許容にしない");
   // ★ 調整手当(内訳計) の 誤差規則 (2026-10-01 追加)

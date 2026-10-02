@@ -148,6 +148,11 @@ export default function VerificationContent() {
           // ★ KNOWN_DIFFS (1 件ずつ user が許容と判断した差) の照合に使う
           processingMonth: month,
           employeeNumber: n,
+          // ★ みなし残業 (固定残業代) の判定に使う。★ 計算が使ったのと同じ payload から読む
+          fixedOvertimePay: num((e as { settings?: { fixed_overtime_pay?: number } }).settings?.fixed_overtime_pay),
+          overtimeExcessPaid: Boolean((e as { overtime_excess_paid?: boolean }).overtime_excess_paid),
+          // ★ ② 自身の みなし超過分 = ②「残業代」− ②「固定残業代」
+          soukatsuOvertimeExcess: pickSoukatsu(s.row_data, "残業代") - pickSoukatsu(s.row_data, "固定残業代"),
         };
         // ★ 総括表の「調整手当」= 介護超過(プラスのみ) + 夜朝深夜 + 特日 − 誤差 (2026-09-24 実測 92.7%)。
         //   当方の内訳計と この合計を突き合わせる項目を差し込む

@@ -144,6 +144,22 @@ export type DiffContext = {
    */
   processingMonth?: string;
   employeeNumber?: string;
+  /**
+   * その人月の **固定残業代 (みなし残業)**。payload の settings.fixed_overtime_pay。
+   * ★ 0 なら みなし残業の人ではない。
+   */
+  fixedOvertimePay?: number;
+  /**
+   * 提責・管理者でも **みなし超過分を払う人**か
+   * (payroll_app_settings `overtime_excess_paid_employees`。payload の overtime_excess_paid)。
+   */
+  overtimeExcessPaid?: boolean;
+  /**
+   * ★ **② 自身の みなし超過分** = ②「残業代」− ②「固定残業代」。
+   * ★ 正なら ② 自身の計算でも超過が出ているのに ② は **払っていない** (残業総額 0)。
+   *   = 差の正体が 分数ではなく 「みなし超過を払うか払わないか」だと言い切れる。
+   */
+  soukatsuOvertimeExcess?: number;
 };
 
 /**
@@ -206,6 +222,34 @@ const RULES: Rule[] = [
     verdict: "許容",
     reason: "出勤簿の「勤務時間の欄」ではなく 終了−開始−休憩 で出している (user 2026-09-23)。欄は手入力で実態と合わない日がある",
     when: ({ ctx }) => ctx.attendanceGapMinutes !== 0,
+  },
+  {
+    item: "残業総額",
+    verdict: "許容",
+    reason:
+      "★ みなし超過分。② は 提責・管理者に **固定残業代を超えた分を払っていない** が、当システムは払う。" +
+      "★ 差が ② 自身の超過分 (② 残業代 − ② 固定残業代) と 1 円まで同じなので、" +
+      "差の正体は 分数ではなく 「みなし超過を払うか払わないか」だけ。" +
+      "★ 労基法37条では 固定残業代が覆う時間を超えた分は 支払いが要る = 当システムが正。" +
+      "user 2026-10-02「みなし超過分のみが差額なら、許容してよい」",
+    when: ({ ctx, soukatsu, ours }) =>
+      soukatsu === 0 && ours > 0
+      && (ctx.fixedOvertimePay ?? 0) > 0
+      && ctx.overtimeExcessPaid === true
+      && Math.abs(ours - (ctx.soukatsuOvertimeExcess ?? 0)) <= MONEY_TOLERANCE,
+  },
+  {
+    item: "残業総額",
+    verdict: "要確認",
+    reason:
+      "★ みなし超過分 (② は払わない。user 2026-10-02 に許容) に **分数の差が混ざっている**。" +
+      "★ ② 自身の超過分と 当方の額が違う = 残業の分数が ② とずれている。" +
+      "★ 許容にできるのは 「みなし超過分のみが差額」のときだけなので、ここは分数を合わせる",
+    when: ({ ctx, soukatsu, ours }) =>
+      soukatsu === 0 && ours > 0
+      && (ctx.fixedOvertimePay ?? 0) > 0
+      && ctx.overtimeExcessPaid === true
+      && (ctx.soukatsuOvertimeExcess ?? 0) > 0,
   },
   {
     item: "残業総額",
