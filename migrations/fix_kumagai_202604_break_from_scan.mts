@@ -19,7 +19,7 @@
  *   ★ この 1 人月だけ、赤字の訂正があるから直す。
  * ⚠ 5 月は 勤務時間欄が 8:00 で入っていて、計算側 (attendanceWorkMinutes) が既に欄を採っている。触らない。
  *
- * 直すもの (15 行): break_time 空 → "1:00" / work_hours "9:00" → "8:00" / overtime_daily "01:00" → null
+ * 直すもの (15 行): break_time 空 → "1:00" / work_hours "9:00" → "8:00" / overtime_daily "01:00" → "" (列は NOT NULL。空は空文字)
  * 退避: migrations/_backup_kumagai_202604_attendance_<日付>.json (後で消す)
  * ⚠ 投入後に /payroll で ＫＴやわた 202604 を再計算すること。
  */
@@ -58,7 +58,7 @@ if (targets.length !== 15 || unexpected.length) {
   console.error(`★ 想定外: 9:00〜18:00 の行 ${targets.length} (期待 15) / それ以外の勤務行 ${unexpected.length}。中止します`);
   process.exit(2);
 }
-const fixed = att.map((r) => targets.includes(r) ? { ...r, break_time: "1:00", work_hours: "8:00", overtime_daily: null } : r);
+const fixed = att.map((r) => targets.includes(r) ? { ...r, break_time: "1:00", work_hours: "8:00", overtime_daily: "" } : r);
 
 // ★ 計算は本番の関数で (逐語コピーしない)
 const before = computeSummary([], att, [], "office_form_first", new Set(), YM);
@@ -80,7 +80,7 @@ const bk = `migrations/_backup_kumagai_202604_attendance_${new Date().toISOStrin
 writeFileSync(bk, JSON.stringify(pending, null, 1));
 console.log(`  退避: ${bk}`);
 const { data: upd, error: ue } = await sb.from("payroll_attendance_records")
-  .update({ break_time: "1:00", work_hours: "8:00", overtime_daily: null })
+  .update({ break_time: "1:00", work_hours: "8:00", overtime_daily: "" })
   .in("id", pending.map((r) => r.id)).select("id");
 if (ue) { console.error("更新失敗:", ue.message); process.exit(2); }
 if ((upd ?? []).length !== pending.length) { console.error(`★ 更新件数 ${upd?.length} ≠ ${pending.length}`); process.exit(2); }
