@@ -80,6 +80,16 @@ const PLAN = [
   //   ★ 同じ PDF の p24 に 4 月の出勤簿が出し直されて入っている (ピンクで丸囲み)。
   //   当方は出勤簿から 6h (360 分) までしか出せない。② は 420。
   { off: "1273001626", emp: "211102", m: "202605", min: 420, src: "君津 R8.5 p23 欄外「残 ⑤6h+④1h=7h」(4 月ぶん 1h の繰越を含む)" },
+  // 福田 八重子 (Ｈａｎａヘルパーステーション高品・事務員/月給) 2026-10-04 追加
+  //   高品 R8.5 社員.pdf p64 の欄外に青字で「残 33.5h」(用紙の残業 28:00 に「+④5.5h」)。
+  //   ★ 同じ PDF の p65 に 4 月の出勤簿 (実績) が入っていて 4/23〜30 の残業 5.5h はそちら。
+  //   当方の 4 月の取込は 4/23〜30 が 8:30-17:30 の予定値 (残業 0) なので 二重払いにはならない。
+  { off: "1270402116", emp: "221006", m: "202605", min: 2010, src: "高品 R8.5 p64 欄外 青字「残 33.5h」(28h + ④5.5h の繰越)" },
+  // 小原 奈保子 (リンクスヘルパーステーション・事務員/月給) 2026-10-04 追加
+  //   茂原 R8.5 社員.pdf p49: 5/2(土・公休) 10h の振替が 5/20・5/27 (一部振替休・不足 Δ4:30)。
+  //   日残業の合計 24:00 を消して 赤で「27:30」(5/2 の 02:00 → 7:30 等)。欄外に計算メモ。
+  //   ★ 日ごとの書き換えが複雑なので 日別には入れず 分数だけ入れる。
+  { off: "1271500942", emp: "438", m: "202605", min: 1650, src: "茂原 R8.5 p49 日残業合計 24:00 を消して 赤「27:30」(5/2 公休出勤の振替を差し引き)" },
 ];
 
 const q = async (path, init) => {
@@ -91,7 +101,10 @@ const q = async (path, init) => {
 
 // ── ② の値と突き合わせてから入れる (片方だけで入れない)
 const offs = [...new Set(PLAN.map((p) => p.off))];
-const souk = await q(`payroll_soukatsu_rows?select=office_number,processing_month,employee_number,row_data&office_number=in.(${offs.join(",")})`);
+// ★ 職員番号でも絞る (事業所だけだと 1000 行上限で切れて「② に無い」と誤報する。2026-10-04 に実際に踏んだ)
+const emps = [...new Set(PLAN.map((p) => p.emp))];
+const souk = await q(`payroll_soukatsu_rows?select=office_number,processing_month,employee_number,row_data&office_number=in.(${offs.join(",")})&employee_number=in.(${emps.join(",")})&limit=1000`);
+if (souk.length >= 1000) { console.error("★ ② が 1000 行に達しました。切れている可能性があるので中止します"); process.exit(2); }
 const sKey = (o, e, m) => `${o}|${String(e).replace(/^0+/, "")}|${m}`;
 const soukOf = new Map(souk.map((s) => [sKey(s.office_number, s.employee_number, s.processing_month), s.row_data]));
 let bad = 0;
