@@ -107,6 +107,7 @@ import {
   type DistanceWarningKind,
   NON_HOURLY_CATEGORIES,
   resolveGroupTenureMonths,
+  PREV_MONTH_ATTENDANCE_COLUMNS,
 } from "@/lib/payroll/payroll-calc";
 import {
   canOverwriteResult,
@@ -937,11 +938,13 @@ export default function PayrollPage() {
         // ★ 1000 行で切れないよう 読み切る ([[feedback_postgrest_paging_needs_order]])
         for (let from = 0; ; from += 1000) {
           const { data, error } = await supabase.from("payroll_attendance_records")
-            .select("employee_number,day,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5,break_time,work_hours")
+            // ★ 列は PREV_MONTH_ATTENDANCE_COLUMNS (検査と共通)。直書きすると 検査とずれる (2026-10-04 overtime_daily で踏んだ)
+            .select(PREV_MONTH_ATTENDANCE_COLUMNS.join(","))
             .eq("year", py).eq("month", pmo).eq("office_number", selectedOffice.office_number).gte("day", 23)
             .order("id").range(from, from + 999);
           if (error) throw new Error(`前月の出勤簿の読み込みに失敗: ${error.message}`);
-          for (const r of (data ?? []) as AttendanceRecord[]) {
+          // 列名を join した文字列で渡すので supabase の型推論が効かない → unknown 経由
+          for (const r of (data ?? []) as unknown as AttendanceRecord[]) {
             const k = normEmp(r.employee_number);
             if (!prevAttByEmp.has(k)) prevAttByEmp.set(k, []);
             prevAttByEmp.get(k)!.push(r);

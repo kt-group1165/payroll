@@ -28,7 +28,7 @@
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { restAll, normEmpNo, SB_REF } from "./_rest.mjs";
-import { computeSummary, type OfficeAttendanceRecord } from "../src/lib/payroll/payroll-calc.js";
+import { computeSummary, PREV_MONTH_ATTENDANCE_COLUMNS, type OfficeAttendanceRecord } from "../src/lib/payroll/payroll-calc.js";
 
 const UPDATE = process.argv.includes("--update");
 const BASELINE = "scripts/check-weekly-40h-carry-baseline.json";
@@ -60,6 +60,8 @@ async function main() {
     return `${o}|${e}|${py}${String(pm).padStart(2, "0")}`;
   };
 
+  const pickPrevCols = (r: Att): Att => Object.fromEntries(PREV_MONTH_ATTENDANCE_COLUMNS.map((c) => [c, (r as unknown as Record<string, unknown>)[c]])) as unknown as Att;
+
   type Row = { k: string; name: string; target: number; without: number; withPrev: number };
   function measure(mutatePrev?: (rows: Att[]) => Att[]) {
     const rows: Row[] = [];
@@ -68,7 +70,9 @@ async function main() {
       const k = `${s.office_number}|${normEmpNo(s.employee_number)}|${s.processing_month}`;
       if (roleOf.get(k) !== "事務員") continue;
       const cur = byPM.get(k); if (!cur?.length) continue;
-      const prev0 = byPM.get(prevKey(k)) ?? [];
+      // ★ 前月は 画面 (page.tsx) と同じ列だけに絞って渡す。全列を渡すと 画面が読んでいない列で「直った」と出る
+      //   (2026-10-04: 画面が overtime_daily を読んでおらず 森田 202606 が画面だけ直らなかった)
+      const prev0 = (byPM.get(prevKey(k)) ?? []).map(pickPrevCols);
       const prev = mutatePrev ? mutatePrev(prev0) : prev0;
       const ym = s.processing_month;
       rows.push({
@@ -102,6 +106,12 @@ async function main() {
   const juneHasOwFirstWeek = june.filter((r) => (byPM.get(r.k) ?? []).some((a) => a.day <= 6 && String(a.overtime_weekly ?? "").trim() && a.overtime_weekly !== "0:00"));
   expect(juneHasOwFirstWeek.length > 0 && juneHasOwFirstWeek.every((r) => r.withPrev === r.without),
     `★ 月初の週に 週残業欄がある人月 (${juneHasOwFirstWeek.length} 件・202606) は 前月を渡しても 値が変わらない (二重計上しない)`);
+  // ⑤ 前月の日残業を落とすと 森田 202606 (5/31 日曜 5h を前月に払い済み) が 二重に数えて 10h になる
+  const noOd = measure((rs) => rs.map((r) => ({ ...r, overtime_daily: "" })));
+  const moriA = rows.find((x) => x.k.endsWith("|202606") && x.name.includes("森田"));
+  const moriB = noOd.find((x) => x.k.endsWith("|202606") && x.name.includes("森田"));
+  expect(!!moriA && !!moriB && moriB.withPrev - moriA.withPrev === 300,
+    `★ 前月の日残業 (overtime_daily) を落とすと 森田 202606 が +5h になる (${moriA ? hm(moriA.withPrev) : "?"} → ${moriB ? hm(moriB.withPrev) : "?"})`);
   // ④ 実例 3 件が ② と完全一致する
   for (const nm of ["相原", "中村", "相川"]) {
     const r = rows.find((x) => x.k.endsWith("|202608") && x.name.includes(nm));

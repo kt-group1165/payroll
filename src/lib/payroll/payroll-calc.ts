@@ -1898,6 +1898,18 @@ export function listedDateCount(itemDate: string | null | undefined): number {
 /** 週の法定労働時間 (分)。40 時間 */
 export const WEEKLY_WORK_MINUTES = 2400;
 
+/**
+ * computeSummary の prevMonthAttDays (前月末の出勤簿) が読む列。page.tsx の select と
+ * check:weekly-40h-carry の両方がこれを使う (2026-10-04)。
+ * ★ 片方だけ列を足すと 検査は直っているのに 画面の計算だけ直らない (overtime_daily で実際に踏んだ)
+ */
+export const PREV_MONTH_ATTENDANCE_COLUMNS = [
+  "employee_number", "day",
+  "start_time_1", "end_time_1", "start_time_2", "end_time_2", "start_time_3", "end_time_3",
+  "start_time_4", "end_time_4", "start_time_5", "end_time_5",
+  "break_time", "work_hours", "overtime_daily",
+] as const;
+
 export function computeSummary(
   empRecs: VisitServiceRecord[],
   attDays: OfficeAttendanceRecord[],
