@@ -2011,7 +2011,14 @@ export function computeSummary(
         let pre = 0;
         for (const r of prevMonthAttDays) {
           const d = new Date(y, mo - 2, r.day);
-          if (weekKeyOf(d) === firstWeek) pre += Math.min(attendanceWorkMinutes(r), 480);
+          // ★ 前月の出勤簿が「日残業」として既に払った時間は 週40時間に数えない (2026-10-04)。
+          //   君津 森田 5/31(日・公休) 8:00-13:00 は 5 月の出勤簿で 日残業 05:00 = 5 月に残業として払い済み。
+          //   これを 6 月の週 (5/31〜6/6) の 40 時間に数えると 同じ 5 時間を 6 月にも払う
+          //   (当方 10h / 用紙の赤字「残 5h」)。
+          if (weekKeyOf(d) === firstWeek) {
+            const paidAsOt = parseWorkHoursMinutes(r.overtime_daily ?? "");
+            pre += Math.min(Math.max(0, attendanceWorkMinutes(r) - paidAsOt), 480);
+          }
         }
         const cur = inFirstWeek.reduce((s, r) => s + Math.min(attendanceWorkMinutes(r), 480), 0);
         if (pre > 0) firstWeekShare = Math.max(0, pre + cur - WEEKLY_WORK_MINUTES) - Math.max(0, pre - WEEKLY_WORK_MINUTES);
