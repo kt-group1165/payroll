@@ -1908,6 +1908,16 @@ export function computeSummary(
    * 金額とみなす推測を止める (船橋 金子百恵 = 電車代。単価 1 円/km にして 入力値をそのまま円にする)。
    */
   skipCommuteYenHeuristic = false,
+  /**
+   * ★ 前月の出勤簿 (月初の週に掛かる 前月末の日だけ使う)。2026-10-04
+   *
+   * 週40時間超は **暦の週 (日曜起算)** で判定するので、月をまたぐ週は 前月末の勤務も足さないと
+   * 月初の週の残業を数え落とす。実例 2026-08-01 (土): 7/27〜31 で既に 40 時間の人は
+   * 8/1 の勤務が丸ごと週40時間超になる (相原康子 ② 10:00 = 平日 2:00 + 8/1 8:00、中村美彌子 7:30、相川晴代 3:30)。
+   * ★ 規則の変更ではない (日曜起算の週40時間は 2026-09-23 に決めて実装済み)。★ 月の境目の取りこぼしを直すだけ。
+   * 渡さなければ 従来どおり (当月の行だけで数える)。
+   */
+  prevMonthAttDays: OfficeAttendanceRecord[] = [],
 ): AttendanceSummary {
   // ヘルパー日数：service_date をそのまま Set のキーにして重複排除
   const helperDateSet = new Set(empRecs.map((r) => r.service_date));
@@ -1974,19 +1984,47 @@ export function computeSummary(
     //   例) 高品 長谷川 8/22 (土): 移動0分・勤務8時間だが 月〜金で34.5時間 → 土曜の残り 150分が残業
     const hasOtColumns = attDays.some((r) =>
       parseWorkHoursMinutes(r.overtime_daily ?? "") > 0 || parseWorkHoursMinutes(r.overtime_weekly ?? "") > 0);
-    if (!yearMonth || hasOtColumns) return daily;
+    if (!yearMonth) return daily;
     const y = Number(yearMonth.slice(0, 4)), mo = Number(yearMonth.slice(4, 6));
     if (!y || !mo) return daily;
+    const weekKeyOf = (d: Date) => Math.floor(d.getTime() / 86400000) - d.getDay();   // 日曜起算
+    // ★ 月初の週 (月をまたぐ週) のうち 当月に帰属する 週40時間超 (2026-10-04)。
+    //   = 週の合計の超過 − 前月の時点で既に超えていた分 (それは前月の残業)。
+    //   ★ 出勤簿 (Excel) は 自分で週40時間超を計算して 週の最後の土曜の行に「週残業」欄として書く
+    //     (前月末の日も込み。例 中村美彌子 5/31(日)+6/1〜5 → 6/6(土) の行に 週残業 4:00)。
+    //     ★ その週の当月の行に 週残業欄が既にあれば 出勤簿が計算済みなので **足さない** (二重計上しない)。
+    //     8/1 のように 週の土曜が 1 日目の行だと 取込で列がずれて欄が入らないので、そのときだけ ここで足す。
+    //   実測 (事務員 93 人月・② の残業(分) と完全一致): 従来 74 → 79。提責 202603〜07 は 壊れる 0 件。
+    const d1 = new Date(y, mo - 1, 1);
+    const firstWeek = weekKeyOf(d1);
+    let firstWeekShare: number | null = null;          // null = 月をまたがない / 計算済み
+    if (d1.getDay() !== 0 && prevMonthAttDays.length > 0) {
+      const inFirstWeek = attDays.filter((r) => weekKeyOf(new Date(y, mo - 1, r.day)) === firstWeek);
+      const alreadyByExcel = inFirstWeek.some((r) => parseWorkHoursMinutes(r.overtime_weekly ?? "") > 0);
+      if (!alreadyByExcel) {
+        let pre = 0;
+        for (const r of prevMonthAttDays) {
+          const d = new Date(y, mo - 2, r.day);
+          if (weekKeyOf(d) === firstWeek) pre += Math.min(attendanceWorkMinutes(r), 480);
+        }
+        const cur = inFirstWeek.reduce((s, r) => s + Math.min(attendanceWorkMinutes(r), 480), 0);
+        if (pre > 0) firstWeekShare = Math.max(0, pre + cur - WEEKLY_WORK_MINUTES) - Math.max(0, pre - WEEKLY_WORK_MINUTES);
+      }
+    }
+    // 書式 B (残業の欄がある) は 週40時間の段を通らない。月初の週の分だけ 足す
+    if (hasOtColumns) return daily + (firstWeekShare ?? 0);
     const byWeek = new Map<number, number>();
     for (const r of attDays) {
       const w = attendanceWorkMinutes(r);
       if (w <= 0) continue;
-      const d = new Date(y, mo - 1, r.day);
-      const weekKey = Math.floor(d.getTime() / 86400000) - d.getDay();   // 日曜起算
+      const weekKey = weekKeyOf(new Date(y, mo - 1, r.day));
       byWeek.set(weekKey, (byWeek.get(weekKey) ?? 0) + Math.min(w, 480)); // 日8h超は上で数えている
     }
     let weekly = 0;
-    for (const v of byWeek.values()) weekly += Math.max(0, v - WEEKLY_WORK_MINUTES);
+    for (const [k, v] of byWeek) {
+      // ★ 月初の週は 前月分を含めて数えた 当月の取り分に置き換える
+      weekly += k === firstWeek && firstWeekShare !== null ? firstWeekShare : Math.max(0, v - WEEKLY_WORK_MINUTES);
+    }
     return daily + weekly;
   })();
   // 訪問時間・件数は 訪問でない実績 (会議・面談 …) を数えない (NON_CARE_SERVICE_TYPES)。出勤した日 (helperDateSet) には数える

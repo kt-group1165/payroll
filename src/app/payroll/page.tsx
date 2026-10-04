@@ -929,11 +929,32 @@ export default function PayrollPage() {
         if (c != null) empCommuteRate.set(normEmp(e.employee_number), Number(c));
         if (tr != null) empTravelRate.set(normEmp(e.employee_number), Number(tr));
       }
+      // ★ 前月末の出勤簿 (月をまたぐ週の 週40時間超 を数えるため。2026-10-04)。
+      //   月初の週に掛かる前月の日は 最大 6 日 (= 23 日以降で足りる)。画面入力の事業所は 範囲を広げて読んでいるので対象外
+      const prevAttByEmp = new Map<string, AttendanceRecord[]>();
+      if (!screenOfficesRes.offices.has(selectedOffice.office_number)) {
+        const py = month === 1 ? year - 1 : year, pmo = month === 1 ? 12 : month - 1;
+        // ★ 1000 行で切れないよう 読み切る ([[feedback_postgrest_paging_needs_order]])
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase.from("payroll_attendance_records")
+            .select("employee_number,day,start_time_1,end_time_1,start_time_2,end_time_2,start_time_3,end_time_3,start_time_4,end_time_4,start_time_5,end_time_5,break_time,work_hours")
+            .eq("year", py).eq("month", pmo).eq("office_number", selectedOffice.office_number).gte("day", 23)
+            .order("id").range(from, from + 999);
+          if (error) throw new Error(`前月の出勤簿の読み込みに失敗: ${error.message}`);
+          for (const r of (data ?? []) as AttendanceRecord[]) {
+            const k = normEmp(r.employee_number);
+            if (!prevAttByEmp.has(k)) prevAttByEmp.set(k, []);
+            prevAttByEmp.get(k)!.push(r);
+          }
+          if (!data || data.length < 1000) break;
+        }
+      }
       const computeSummaryOf = (empNum: string, empRecs: ServiceRecord[], att?: AttendanceRecord[]): AttendanceSummary =>
         computeSummary(withAccompanyByCode(empRecs), att ?? attByEmp.get(normEmp(empNum)) ?? [], ofByEmp.get(normEmp(empNum)) ?? [],
           officeWorkerNums.has(normEmp(empNum)) ? "office_form_first" : "attendance_first", specialDays, selectedMonth,
           // 自分の通勤単価がある人は その単価で掛けるのが正。「金額とみなす」推測を止める
-          empCommuteRate.has(normEmp(empNum)));
+          empCommuteRate.has(normEmp(empNum)),
+          prevAttByEmp.get(normEmp(empNum)) ?? []);
 
       // ── 保育手当：参照月ごとの実績時間を事前取得 ──────────────
       // childcareレコードの year_month が処理月と異なる場合、その月のサービス実績を取得する
