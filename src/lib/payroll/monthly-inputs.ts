@@ -96,6 +96,13 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: false,
   },
   {
+    key: "commute_km_carry",
+    label: "通勤km の繰越 (前月の出し直し分)",
+    unit: "km",
+    help: "月給者の通勤km に足す。前月の出勤簿を 月末前に予定値で出し、実績との差を翌月に払うときに使う (2026-10-04。君津 森田 202605「通 ⑤72km+④14.4km」/ 高品 福田 202605「+④18km」で総括表と 1 円まで一致)。★ 通勤費だけに足し、「出張km = 通勤km なら出張を払わない」の判定には使わない",
+    allowNegative: false,
+  },
+  {
     key: "overnight_allowance",
     label: "泊まり手当 (日をまたぐ訪問)",
     unit: "円",

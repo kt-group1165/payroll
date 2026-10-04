@@ -1171,6 +1171,8 @@ export default function PayrollPage() {
       const manualShoninshaAdjustmentNums = new Set<string>();
       // 通勤費の手入力 (円)。出勤簿が当システムに無い職員 (スキャンPDFしか無い事務員など) のため
       const manualCommuteYenByNum = new Map<string, number>();
+      // 前月から繰り越した通勤km (月給者)。payroll_monthly_inputs commute_km_carry。通勤費だけに足す。2026-10-04
+      const manualCommuteKmCarryByNum = new Map<string, number>();
       // 泊まり手当 (円)。★規則が決まっていないので計算せず 人が入れた額をそのまま足す
       const manualOvernightByNum = new Map<string, number>();
       // 項目 → 値>0 の職員番号 (時給者の計算対象の集合に使う。項目を列挙しない。src/lib/payroll/hourly-targets.ts)
@@ -1179,7 +1181,7 @@ export default function PayrollPage() {
         const { data, error } = await supabase.from("payroll_monthly_inputs")
           .select("employee_number,item_key,numeric_value")
           .eq("office_number", selectedOffice.office_number).eq("processing_month", selectedMonth)
-          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes", "shoninsha_adjustment", "cancel_count_extra"]);
+          .in("item_key", ["adjustment", "social_insurance", BONUS_PAID_KEY, "business_km", "training_minutes", "childcare_allowance", "office_work_minutes", "commute_yen", "commute_km_carry", "overnight_allowance", "overtime_minutes", "shoninsha_training_minutes", "legal_within_overtime_minutes", "absence_days", "late_early_minutes", "shoninsha_adjustment", "cancel_count_extra"]);
         if (error) throw new Error(`調整手当の取得に失敗: ${error.message}`);
         for (const r of (data ?? []) as { employee_number: string; item_key: string; numeric_value: number | null }[]) {
           if (Number(r.numeric_value ?? 0) > 0) {
@@ -1201,6 +1203,7 @@ export default function PayrollPage() {
           if (r.item_key === "shoninsha_training_minutes" && Number(r.numeric_value ?? 0) > 0) manualShoninshaMinByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "shoninsha_adjustment" && Number(r.numeric_value ?? 0) > 0) manualShoninshaAdjustmentNums.add(normEmp(r.employee_number));
           if (r.item_key === "commute_yen" && Number(r.numeric_value ?? 0) > 0) manualCommuteYenByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
+          if (r.item_key === "commute_km_carry" && Number(r.numeric_value ?? 0) > 0) manualCommuteKmCarryByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
           if (r.item_key === "overnight_allowance" && Number(r.numeric_value ?? 0) > 0) manualOvernightByNum.set(normEmp(r.employee_number), Number(r.numeric_value));
         }
       }
@@ -1903,6 +1906,7 @@ export default function PayrollPage() {
             office_travel_unit_price: empTravelRate.get(normEmp(e.employee_number)) ?? office?.travel_unit_price ?? 0,
             office_commute_unit_price: empCommuteRate.get(normEmp(e.employee_number)) ?? office?.commute_unit_price ?? 0,
             commute_fee_override: manualCommuteYenByNum.get(normEmp(e.employee_number)) ?? null,
+            commute_km_carry: manualCommuteKmCarryByNum.get(normEmp(e.employee_number)) ?? 0,
             overnight_allowance: manualOvernightByNum.get(normEmp(e.employee_number)) ?? 0,
             business_trip_fee: 0,
             childcare_allowance: manualChildcareByNum.get(normEmp(e.employee_number)) ?? computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),

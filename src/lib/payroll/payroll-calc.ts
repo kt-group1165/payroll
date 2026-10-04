@@ -222,6 +222,8 @@ export type MonthlyPayroll = {
   office_commute_unit_price: number;
   /** 通勤費の手入力 (円)。出勤簿が当システムに無い職員に使う。0/未設定なら 出勤簿から出す */
   commute_fee_override?: number | null;
+  /** 前月から繰り越した通勤km (月ごとの手入力 commute_km_carry)。通勤費だけに足す (2026-10-04) */
+  commute_km_carry?: number;
   /** 泊まり手当 (円)。月ごとの手入力。★規則が無いので計算せず 人が入れた額をそのまま足す (2026-09-24) */
   overnight_allowance?: number;
   business_trip_fee: number;
@@ -653,7 +655,11 @@ export function commuteFeeAmount(p: MonthlyPayroll): number {
   //   km × 単価 では再現できない (三島由佳 花見川 6,510円 ÷ 21日 = 310円/日。
   //   事業所の通勤単価 12.3円/km に割り戻すと 25.2km/日 という 作り物の距離になる)
   if ((p.commute_fee_override ?? 0) > 0) return Math.round(p.commute_fee_override!);
-  return Math.ceil(p.summary.commuteKmTotal * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
+  // 前月の繰越 km (commute_km_carry) は km のまま足してから 切り上げる。② は「⑤72km + ④14.4km = 86.4km」× 単価 で払っている
+  //   (森田 202605 86.4 × 12.5 = 1,080 円 / 福田 202605 87 × 12.3 = 1,070.1 → 1,071 円。どちらも総括表と一致)。
+  //   ★ effectiveTravelKm (出張 = 通勤なら出張を落とす) は summary.commuteKmTotal で比べるので 繰越は混ぜない
+  const km = p.summary.commuteKmTotal + (p.commute_km_carry ?? 0);
+  return Math.ceil(km * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
 }
 
 /**
