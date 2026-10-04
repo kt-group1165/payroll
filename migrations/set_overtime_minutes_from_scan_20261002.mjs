@@ -52,6 +52,7 @@ const H = { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "applic
 console.log(`[DB] ${STAGING ? "staging" : "本番"} ${/https:\/\/([a-z0-9]+)\./.exec(SB)?.[1]}`);
 
 const ITEM = "overtime_minutes";
+const LEGAL_ITEM = "legal_within_overtime_minutes";
 
 /**
  * ★ 1 行 = 1 人月。★ min は **用紙の欄外に手書きされた残業時間**。
@@ -89,6 +90,18 @@ const PLAN = [
   //   茂原 R8.5 社員.pdf p49: 5/2(土・公休) 10h の振替が 5/20・5/27 (一部振替休・不足 Δ4:30)。
   //   日残業の合計 24:00 を消して 赤で「27:30」(5/2 の 02:00 → 7:30 等)。欄外に計算メモ。
   //   ★ 日ごとの書き換えが複雑なので 日別には入れず 分数だけ入れる。
+  //   高品 R8.8 社員.pdf p33 の欄外に赤で「残 32h」「法内 0.5h」「通 66km」「出 3km」(週残業 02:30 → 3:30 に訂正)。
+  //   ★ 当方の取込行には 日残業・週残業の欄が入っておらず 日 8h 超 + 週 40h 超 で 31h (1,860 分) になる。法内 30 分と km は当方も一致
+  { off: "1270402116", emp: "221006", m: "202608", min: 1920, src: "高品 R8.8 p33 欄外「残 32h」「法内 0.5h」(週残業 02:30→3:30)" },
+  // 黒田 美和 (リンクスヘルパーステーション山武・事務員/月給) 2026-10-04 追加
+  //   山武 R8.8 社員.pdf p41: 8/10 8:20→8:00・8/24 8:15→8:00 と 日残業 00:20 / 00:15 を赤で消し、欄外に「残 12.5h」「早 3h」。
+  //   (8/1 土 の 週残 08:00 + 日残 03:00 は「11h」と認めている。30 分未満の端数だけ消した)
+  //   ★ 時刻 (18:20 / 18:15) は直していないので 出勤簿からは出せない。分数だけ入れる
+  { off: "1279000366", emp: "260302", m: "202608", min: 750, src: "山武 R8.8 p41 欄外「残 12.5h」(8/10・8/24 の 日残 00:20/00:15 を赤で消し)" },
+  // 小原 奈保子 202603 — 茂原 R8.3 社員.pdf p53。3/1(日・公休) 8.5h の振替が 3/11・3/26 (一部振替休)。
+  //   3/7 の 週残業 08:00 に赤の ×。最終的に丸で囲んだ数字が「12.5h」(残業) と「7.5h」(法内)。
+  //   (赤の「残 16.5h→16h」「法内 3h」は途中の計算で消されている)。legal = 法内残業 (legal_within_overtime_minutes)
+  { off: "1271500942", emp: "438", m: "202603", min: 750, legal: 450, src: "茂原 R8.3 p53 欄外 丸囲み「12.5h」「7.5h」(3/7 週残業 08:00 に赤×)" },
   { off: "1271500942", emp: "438", m: "202605", min: 1650, src: "茂原 R8.5 p49 日残業合計 24:00 を消して 赤「27:30」(5/2 公休出勤の振替を差し引き)" },
 ];
 
@@ -108,34 +121,43 @@ if (souk.length >= 1000) { console.error("★ ② が 1000 行に達しました
 const sKey = (o, e, m) => `${o}|${String(e).replace(/^0+/, "")}|${m}`;
 const soukOf = new Map(souk.map((s) => [sKey(s.office_number, s.employee_number, s.processing_month), s.row_data]));
 let bad = 0;
-console.log("\n事業所        職員     月       手書き(分)  ② 残業(分)  ② 出勤時間  氏名");
+console.log("\n事業所        職員     月       手書き(分)  ② 残業(分)  手書き法内  ② 法内  ② 出勤時間  氏名");
 for (const p of PLAN) {
   const d = soukOf.get(sKey(p.off, p.emp, p.m));
-  const ot2 = Number(d?.["残業"] ?? 0), w2 = Number(d?.["出勤時間"] ?? 0);
-  const ok = d && ot2 === p.min;
+  const ot2 = Number(d?.["残業"] ?? 0), w2 = Number(d?.["出勤時間"] ?? 0), lw2 = Number(d?.["法内残業"] ?? 0);
+  // ★ 法内残業 (legal) は 書いてある人月だけ 比べて入れる (2026-10-04 小原 202603 で追加)
+  const ok = d && ot2 === p.min && (p.legal === undefined || lw2 === p.legal);
   if (!ok) bad++;
-  console.log(`${p.off}  ${String(p.emp).padEnd(7)} ${p.m}  ${String(p.min).padStart(8)}  ${String(ot2).padStart(9)}  ${String(w2).padStart(9)}  ${d?.["氏名"] ?? "★ ② に無い"}${ok ? "" : "   ★ 不一致"}`);
+  console.log(`${p.off}  ${String(p.emp).padEnd(7)} ${p.m}  ${String(p.min).padStart(8)}  ${String(ot2).padStart(9)}  ${String(p.legal ?? "-").padStart(9)}  ${String(lw2).padStart(6)}  ${String(w2).padStart(9)}  ${d?.["氏名"] ?? "★ ② に無い"}${ok ? "" : "   ★ 不一致"}`);
 }
 if (bad) { console.error(`\n★ ${bad} 件で 手書き と ② が違います。★ 読み違いの可能性。中止します`); process.exit(2); }
 
-const cur = await q(`payroll_monthly_inputs?select=office_number,employee_number,processing_month,numeric_value&item_key=eq.${ITEM}&office_number=in.(${offs.join(",")})`);
-const curOf = new Map(cur.map((r) => [sKey(r.office_number, r.employee_number, r.processing_month), Number(r.numeric_value ?? 0)]));
-const todo = PLAN.filter((p) => curOf.get(sKey(p.off, p.emp, p.m)) !== p.min);
-console.log(`\n対象 ${PLAN.length} 人月 / 入れる・直すもの ${todo.length} 人月`);
+// 入れるもの = (人月, 項目, 値)。残業は全件、法内残業は legal を書いた人月だけ
+const items = PLAN.flatMap((p) => [
+  { p, key: ITEM, val: p.min, what: "残業" },
+  ...(p.legal !== undefined ? [{ p, key: LEGAL_ITEM, val: p.legal, what: "法内残業" }] : []),
+]);
+const cur = await q(`payroll_monthly_inputs?select=office_number,employee_number,processing_month,item_key,numeric_value&item_key=in.(${ITEM},${LEGAL_ITEM})&office_number=in.(${offs.join(",")})&employee_number=in.(${emps.join(",")})&limit=1000`);
+if (cur.length >= 1000) { console.error("★ 手入力が 1000 行に達しました。中止します"); process.exit(2); }
+const curOf = new Map(cur.map((r) => [`${sKey(r.office_number, r.employee_number, r.processing_month)}|${r.item_key}`, Number(r.numeric_value ?? 0)]));
+const iKey = (t) => `${sKey(t.p.off, t.p.emp, t.p.m)}|${t.key}`;
+const todo = items.filter((t) => curOf.get(iKey(t)) !== t.val);
+console.log(`\n対象 ${PLAN.length} 人月 (${items.length} 項目) / 入れる・直すもの ${todo.length} 項目`);
+for (const t of todo) console.log(`  ${EXECUTE ? "実行" : "予定"} ${t.p.off} ${t.p.emp} ${t.p.m} ${t.what} → ${t.val} 分`);
 if (!todo.length) { console.log("既に入っています。何もしません"); process.exit(0); }
 if (!EXECUTE) { console.log("\n(DRY RUN。--execute で実行します)"); process.exit(0); }
 
-for (const p of todo) {
-  const note = `スキャンPDF (欄外の手書き) ${p.src}。② の残業 ${p.min}分 と一致。2026-10-02`;
-  const k = sKey(p.off, p.emp, p.m);
-  if (curOf.has(k)) {
-    await q(`payroll_monthly_inputs?office_number=eq.${p.off}&employee_number=eq.${p.emp}&processing_month=eq.${p.m}&item_key=eq.${ITEM}`,
-      { method: "PATCH", body: JSON.stringify({ numeric_value: p.min, note }) });
-    console.log(`  更新 ${p.off} ${p.emp} ${p.m} → ${p.min} 分`);
+for (const t of todo) {
+  const { p } = t;
+  const note = `スキャンPDF (欄外の手書き) ${p.src}。② の${t.what} ${t.val}分 と一致。2026-10-02`;
+  if (curOf.has(iKey(t))) {
+    await q(`payroll_monthly_inputs?office_number=eq.${p.off}&employee_number=eq.${p.emp}&processing_month=eq.${p.m}&item_key=eq.${t.key}`,
+      { method: "PATCH", body: JSON.stringify({ numeric_value: t.val, note }) });
+    console.log(`  更新 ${p.off} ${p.emp} ${p.m} ${t.what} → ${t.val} 分`);
   } else {
-    await q("payroll_monthly_inputs", { method: "POST", body: JSON.stringify({ office_number: p.off, employee_number: p.emp, processing_month: p.m, item_key: ITEM, numeric_value: p.min, note }) });
-    console.log(`  追加 ${p.off} ${p.emp} ${p.m} → ${p.min} 分`);
+    await q("payroll_monthly_inputs", { method: "POST", body: JSON.stringify({ office_number: p.off, employee_number: p.emp, processing_month: p.m, item_key: t.key, numeric_value: t.val, note }) });
+    console.log(`  追加 ${p.off} ${p.emp} ${p.m} ${t.what} → ${t.val} 分`);
   }
 }
 console.log("\n⚠ /payroll で 該当の 事業所 × 月 を再計算してください:");
-for (const o of offs) console.log(`   ${o}  ${[...new Set(todo.filter((p) => p.off === o).map((p) => p.m))].join(" ")}`);
+for (const o of offs) { const ms = [...new Set(todo.filter((t) => t.p.off === o).map((t) => t.p.m))]; if (ms.length) console.log(`   ${o}  ${ms.join(" ")}`); }
