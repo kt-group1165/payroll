@@ -18,7 +18,7 @@ import { resolveVisitPay, type VisitRateContext } from "@/lib/payroll/visit-pay"
 import { BONUS_PAID_KEY } from "@/lib/payroll/monthly-inputs";
 import { hourlyTargetEmployeeNumbers } from "@/lib/payroll/hourly-targets";
 import Link from "next/link";
-import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingUnitPrices, getBathCareModes, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
+import { getWeekendHolidayRates, getCareOvertimeLowerTiers, getMeetingFeeUnpaidOffices, getVisitAttendanceScreenOffices, getKmAnomalyLines, getCare075Offices, getJuhoShortVisitRates, getMeetingUnitPrices, getBathCareModes, getSougouSeikatsuRates, getDoukouEngoFlatRates, getOvertimeExcessPaidEmployees, getOvertimeOffsetFullCareOffices, getCommuteKmIncludesTripEmployees, getMonthlyTenureManualBase, getUseLegacyData, getOfficeWorkerCarePay } from "@/lib/app-settings";
 import { findKmAnomalies, DEFAULT_KM_LINE, type KmAnomaly } from "@/lib/payroll/km-anomaly";
 import { screenAttendanceToVisitRecords, type ScreenAttendanceRow } from "@/lib/payroll/visit-attendance-adapter";
 import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
@@ -108,6 +108,7 @@ import {
   NON_HOURLY_CATEGORIES,
   resolveGroupTenureMonths,
   PREV_MONTH_ATTENDANCE_COLUMNS,
+  paidCommuteKm,
 } from "@/lib/payroll/payroll-calc";
 import {
   canOverwriteResult,
@@ -1760,6 +1761,8 @@ export default function PayrollPage() {
       if (overtimeExcessPaidRes.error) throw new Error(`固定残業の超過を払う提責の設定の読み込みに失敗: ${overtimeExcessPaidRes.error}`);
       const offsetFullCareRes = await getOvertimeOffsetFullCareOffices(supabase);
       if (offsetFullCareRes.error) throw new Error(`残業代から介護超過を差し引く事業所の設定の読み込みに失敗: ${offsetFullCareRes.error}`);
+      const commuteIncludesTripRes = await getCommuteKmIncludesTripEmployees(supabase);
+      if (commuteIncludesTripRes.error) throw new Error(`通勤km に出張を含む職員の設定の読み込みに失敗: ${commuteIncludesTripRes.error}`);
       // 月給者
       // ⚠ 退職日は DB 側の .or() で見ているのに **入社日を見ていなかった** (2026-09-26 是正)。
       //   入社前の月まで固定給を満額出していた。実測: 9 人月 ¥2,586,112
@@ -1910,6 +1913,7 @@ export default function PayrollPage() {
             office_commute_unit_price: empCommuteRate.get(normEmp(e.employee_number)) ?? office?.commute_unit_price ?? 0,
             commute_fee_override: manualCommuteYenByNum.get(normEmp(e.employee_number)) ?? null,
             commute_km_carry: manualCommuteKmCarryByNum.get(normEmp(e.employee_number)) ?? 0,
+            commute_km_includes_trip: commuteIncludesTripRes.keys.has(`${selectedOffice.office_number}|${normEmp(e.employee_number)}`),
             overnight_allowance: manualOvernightByNum.get(normEmp(e.employee_number)) ?? 0,
             business_trip_fee: 0,
             childcare_allowance: manualChildcareByNum.get(normEmp(e.employee_number)) ?? computeChildcareAllowance(childcareRecsOf(normEmp(e.employee_number)), "月給", visitMinutesByEmpMonth, normEmp(e.employee_number), selectedMonth, { limit: contractOf.get(normEmp(e.employee_number))?.childcare_limit, ratePct: contractOf.get(normEmp(e.employee_number))?.childcare_rate_pct, method: contractOf.get(normEmp(e.employee_number))?.childcare_method }),
@@ -2019,7 +2023,7 @@ export default function PayrollPage() {
         const tripKmOfHourly = (empNum: string, s: AttendanceSummary) => tripKmOf(empNum, s.businessKmTotal);
         setKmWarnings(findKmAnomalies([
           ...hourlySorted.map((e) => ({ employee_number: e.employee_number, employee_name: e.employee_name, commute_km: e.summary.commuteKmTotal, trip_km: tripKmOfHourly(e.employee_number, e.summary), work_days: e.summary.workDays })),
-          ...monthlySorted.map((p) => ({ employee_number: String(p.employee_number), employee_name: p.employee_name, commute_km: p.summary.commuteKmTotal, trip_km: effectiveTravelKm(p), work_days: p.summary.workDays })),
+          ...monthlySorted.map((p) => ({ employee_number: String(p.employee_number), employee_name: p.employee_name, commute_km: paidCommuteKm(p), trip_km: effectiveTravelKm(p), work_days: p.summary.workDays })),
         ], line));
       }
 
@@ -2204,7 +2208,7 @@ export default function PayrollPage() {
         String(sm.workDays), String(sm.helperDays), String(sm.paidLeave), String(sm.halfLeave), String(sm.specialLeave),
         formatWorkHours(sm.workHoursMin),
         formatMinutes(sm.visitMinutesExcludingAccompanied), formatMinutes(sm.visitMinutes - sm.visitMinutesExcludingAccompanied), formatMinutes(sm.visitMinutes), String(sm.hrdCount),
-        String(effectiveTravelKm(p)), String(travelFeeAmount(p)), String(sm.commuteKmTotal), String(commuteFeeAmount(p)),
+        String(effectiveTravelKm(p)), String(travelFeeAmount(p)), String(paidCommuteKm(p)), String(commuteFeeAmount(p)),
         String(s?.base_personal_salary ?? 0),
         String(s?.skill_salary ?? 0),
         String(s?.position_allowance ?? 0),
@@ -2248,7 +2252,7 @@ export default function PayrollPage() {
         cur.visitMin += sm.visitMinutes;
         cur.hrdCount += sm.hrdCount;
         cur.travelKm += effectiveTravelKm(p); cur.travelFee += travelFeeAmount(p);
-        cur.commuteKm += sm.commuteKmTotal; cur.commuteFee += commuteFeeAmount(p);
+        cur.commuteKm += paidCommuteKm(p); cur.commuteFee += commuteFeeAmount(p);
         cur.base += s?.base_personal_salary ?? 0;
         cur.skill += s?.skill_salary ?? 0;
         cur.position += s?.position_allowance ?? 0;
@@ -3248,7 +3252,7 @@ export default function PayrollPage() {
                               <td className="px-3 py-2 text-right">{sm.visitMinutes ? formatMinutes(sm.visitMinutes) : "—"}</td>
                               <td className="px-3 py-2 text-right">{sm.hrdCount || "—"}</td>
                               <td className="px-3 py-2 text-right">{effectiveTravelKm(p) > 0 ? `${formatKm(effectiveTravelKm(p))}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
-                              <td className="px-3 py-2 text-right">{sm.commuteKmTotal > 0 ? `${formatKm(sm.commuteKmTotal)}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
+                              <td className="px-3 py-2 text-right">{paidCommuteKm(p) > 0 ? `${formatKm(paidCommuteKm(p))}km` : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.base_personal_salary > 0 ? yen(s.base_personal_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.skill_salary > 0 ? yen(s.skill_salary) : <span className="text-muted-foreground text-xs">—</span>}</td>
                               <td className="px-3 py-2 text-right">{s && s.position_allowance > 0 ? yen(s.position_allowance) : <span className="text-muted-foreground text-xs">—</span>}</td>
@@ -3442,7 +3446,7 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-right">{formatMinutes(monthlyResults.reduce((s, p) => s + p.summary.visitMinutes, 0))}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.hrdCount, 0) || "—"}</td>
                         <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0) > 0 ? `${formatKm(monthlyResults.reduce((s, p) => s + effectiveTravelKm(p), 0))}km` : "—"}</td>
-                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0) > 0 ? `${formatKm(monthlyResults.reduce((s, p) => s + p.summary.commuteKmTotal, 0))}km` : "—"}</td>
+                        <td className="px-3 py-2 text-right">{monthlyResults.reduce((s, p) => s + paidCommuteKm(p), 0) > 0 ? `${formatKm(monthlyResults.reduce((s, p) => s + paidCommuteKm(p), 0))}km` : "—"}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.base_personal_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.skill_salary ?? 0), 0))}</td>
                         <td className="px-3 py-2 text-right">{yen(monthlyResults.reduce((s, p) => s + (p.settings?.position_allowance ?? 0), 0))}</td>

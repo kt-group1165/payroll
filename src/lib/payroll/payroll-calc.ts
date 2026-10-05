@@ -224,6 +224,8 @@ export type MonthlyPayroll = {
   commute_fee_override?: number | null;
   /** 前月から繰り越した通勤km (月ごとの手入力 commute_km_carry)。通勤費だけに足す (2026-10-04) */
   commute_km_carry?: number;
+  /** 出勤簿の通勤km 欄に 出張km が含まれている人 (payroll_app_settings commute_km_includes_trip_employees)。paidCommuteKm 参照 */
+  commute_km_includes_trip?: boolean;
   /** 泊まり手当 (円)。月ごとの手入力。★規則が無いので計算せず 人が入れた額をそのまま足す (2026-09-24) */
   overnight_allowance?: number;
   business_trip_fee: number;
@@ -611,8 +613,26 @@ export function computeOvertimePay(
   ) + Math.round((legalWithin / 60) * hourlyRate);
 }
 
+// ★ 通勤欄に出張を含む人 (commute_km_includes_trip) も この判定は通す。出張 = 通勤 ちょうどの月は
+//   「同じ km を両方に書いた」型で 出張を落とし 通勤として払う (八千代 五十嵐 202604 100.8km)
 export function effectiveTravelKm(p: MonthlyPayroll): number {
   return tripKmExcludingCommute(p.travel_km > 0 ? p.travel_km : p.travel_km_auto, p.summary.commuteKmTotal, (p.commute_fee_override ?? 0) > 0);
+}
+
+/**
+ * 月給者に 通勤費として払う km = 出勤簿の通勤km (− 出張km: 通勤欄に出張を含む人だけ) + 前月の繰越 (2026-10-04)。
+ * 通勤費の計算と 画面・CSV の「通勤km」は 必ずこれを使う (出勤簿の生の値を出すと 払った額と km が合わなくなる)。
+ *
+ * ★ 出勤簿の通勤km 欄に その日の出張も足して書く人がいる (山武 黒田 8/6 3.2km → 16.8km 等)。出張は事業所書式にも
+ *   書かれるので そのまま払うと二重になる。② は「通勤 = 出勤簿の通勤km − 書式の出張km」で払っている
+ *   (黒田 202608 用紙の赤字「勤 64km」「出 24.8km」= ② 距離(通) 64 / 距離(出) 24.8)。
+ *   実測: 4 事業所 4 名 15 人月で ② と完全一致 (四街道 池谷 / 八千代 五十嵐 / 袖ヶ浦 中村美彌子 / 山武 黒田)。
+ *   出張がある他の 41 人月 (9 事業所) は 通勤と出張が別建てで 引くと壊れる → 人ごとの設定
+ *   (payroll_app_settings commute_km_includes_trip_employees)。
+ */
+export function paidCommuteKm(p: MonthlyPayroll): number {
+  const trip = p.commute_km_includes_trip ? effectiveTravelKm(p) : 0;
+  return Math.max(0, p.summary.commuteKmTotal - trip) + (p.commute_km_carry ?? 0);
 }
 
 /**
@@ -658,8 +678,8 @@ export function commuteFeeAmount(p: MonthlyPayroll): number {
   // 前月の繰越 km (commute_km_carry) は km のまま足してから 切り上げる。② は「⑤72km + ④14.4km = 86.4km」× 単価 で払っている
   //   (森田 202605 86.4 × 12.5 = 1,080 円 / 福田 202605 87 × 12.3 = 1,070.1 → 1,071 円。どちらも総括表と一致)。
   //   ★ effectiveTravelKm (出張 = 通勤なら出張を落とす) は summary.commuteKmTotal で比べるので 繰越は混ぜない
-  const km = p.summary.commuteKmTotal + (p.commute_km_carry ?? 0);
-  return Math.ceil(km * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
+  //   通勤欄に出張を含む人は 出張km を引く (paidCommuteKm)
+  return Math.ceil(paidCommuteKm(p) * p.office_commute_unit_price - 1e-6) + Math.round(p.summary.commuteYenTotal ?? 0);
 }
 
 /**
