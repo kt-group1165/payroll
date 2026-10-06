@@ -113,6 +113,17 @@ export default function ServiceRecordsPage() {
   const [fYoruasa, setFYoruasa] = useState(false);
   const [fShinya, setFShinya] = useState(false);
   const [fHoliday, setFHoliday] = useState(false);
+  // 表を画面いっぱいに広げる (列が多くサイドバーを畳んでも横に切れるため。2026-10-06 user)
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFull(false); };
+    window.addEventListener("keydown", onKey);
+    // 背後のページがスクロールしないように
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [full]);
 
   useEffect(() => {
     (async () => {
@@ -547,6 +558,20 @@ export default function ServiceRecordsPage() {
 
       {shownRows && (
         <>
+          {/* ★ 全画面のときは 表と合計だけを 画面いっぱいの重ね表示にする。検索条件・絞りこみはそのまま */}
+          <div className={full ? "fixed inset-0 z-50 flex flex-col gap-2 bg-background p-3" : "contents"}
+            role={full ? "dialog" : undefined} aria-modal={full || undefined} aria-label={full ? "サービス記録一覧 (全画面)" : undefined}>
+          <div className="flex shrink-0 items-center gap-2">
+            {full && (
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {office?.short_name || office?.name} ／ {month.replace("-", "年")}月 ／ {emp?.name ?? ""}
+              </span>
+            )}
+            <Button variant="outline" size="sm" className={full ? "" : "ml-auto"} onClick={() => setFull((v) => !v)}
+              title={full ? "全画面を閉じる (Esc)" : "表を画面いっぱいに広げる"}>
+              {full ? "✕ 閉じる (Esc)" : "⛶ 全画面"}
+            </Button>
+          </div>
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
             <table className="w-full border-separate border-spacing-0 text-sm">
               <thead>
@@ -658,6 +683,7 @@ export default function ServiceRecordsPage() {
               )}
             </div>
           )}
+          </div>
 
           <details className="shrink-0 rounded-lg border px-3 py-1.5 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">⚠ この画面が出していないもの</summary>
