@@ -21,6 +21,8 @@ export default async function OfficeInputPage() {
     .from("payroll_offices")
     .select(`*, ${OFFICE_MASTER_JOIN}`);
 
+  // ★ 失敗を握りつぶさない (以前は 失敗すると 事業所が空のまま黙って出ていた)
+  if (offRes.error) throw new Error(`事業所の取得に失敗: ${offRes.error.message}`);
   let offices: Office[] = [];
   if (offRes.data) {
     offices = flattenOfficeMaster(offRes.data as never) as unknown as Office[];

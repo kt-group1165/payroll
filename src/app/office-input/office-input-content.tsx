@@ -21,10 +21,14 @@ import {
   deleteEntries,
   deleteEntry,
   getEntriesByEmployeesMonth,
+  getFormRecordsByOfficeMonth,
   insertEntries,
   listEmployeesByOffice,
   upsertEntry,
 } from "@/lib/office-input/queries";
+import { planAdoptFromFormRecords, type AdoptPlan } from "@/lib/office-input/from-form-records";
+import { billingToProcessingMonth, normEmp } from "@/lib/office-input/to-form-records";
+import type { OfficeFormRecord } from "@/lib/payroll/payroll-calc";
 import { ItemPanel } from "./category-section";
 
 /** "YYYY-MM" の今月 */
@@ -44,12 +48,16 @@ function withLocalKey(entry: OfficeInputEntry): OfficeInputRow {
   return { ...entry, localKey: nextLocalKey() };
 }
 
+const EMPTY_PLANS: Map<string, AdoptPlan> = new Map();
+
 /** 項目ごとの集計 (= 入力漏れに気づくための数字) */
 type ItemSummary = {
   /** 行数 */
   count: number;
   /** 入力のある職員数 */
   employees: number;
+  /** 画面の入力が無く ファイル取込の値だけがある職員数 */
+  fileOnly: number;
   /** 合計の表示文字列 (空なら合計の概念が無い) */
   totalLabel: string;
 };
@@ -108,6 +116,7 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
     () => offices.find((o) => o.id === officeId) ?? null,
     [offices, officeId],
   );
+  const selectedOfficeNumber = selectedOffice?.office_number ?? "";
 
   // ─── 事業所変更時: スタッフ一覧 load ─────────────────────────
   useEffect(() => {
@@ -118,7 +127,7 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
       return;
     }
     setEmployeesLoading(true);
-    listEmployeesByOffice(officeId)
+    listEmployeesByOffice(officeId, billingMonth)
       .then((list) => {
         if (cancelled) return;
         setEmployees(list);
@@ -133,7 +142,26 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
     return () => {
       cancelled = true;
     };
-  }, [officeId]);
+  }, [officeId, billingMonth]);
+
+  // ─── ファイルで取り込んだ事業所書式 (2026-10-06) ───────────────
+  //   画面とファイルの両方から入れられる。給与計算は (職員 × 項目) 単位で 画面の入力がファイルに勝つ。
+  //   ★ 画面にファイルの値を出さないと、画面で 1 項目入れたとき ファイルの値が見えないまま置き換わる
+  const [fileRecords, setFileRecords] = useState<OfficeFormRecord[]>([]);
+  const [fileVersion, setFileVersion] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const officeNumber = selectedOfficeNumber;
+    if (!officeNumber) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFileRecords([]);
+      return;
+    }
+    getFormRecordsByOfficeMonth(officeNumber, billingToProcessingMonth(billingMonth))
+      .then((list) => { if (!cancelled) setFileRecords(list); })
+      .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : "ファイル取込の値の取得に失敗しました"); });
+    return () => { cancelled = true; };
+  }, [selectedOfficeNumber, billingMonth, fileVersion]);
 
   // ─── スタッフ or 月変更時: その事業所の全エントリを load ──────
   //     項目ごとに全職員を並べるので、1 人ぶんではなく事業所ぶんまとめて読む。
@@ -170,6 +198,40 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
       cancelled = true;
     };
   }, [employeeIdsKey, billingMonth]);
+
+  // ─── ファイルの値を (職員 × 項目) の「写す計画」にする ───────────────
+  //   画面の入力が既にある (職員 × 項目) は 給与計算で画面が勝つので ファイルの値は出さない
+  const filePlans = useMemo(() => {
+    const empIdByNum = new Map(employees.map((e) => [normEmp(e.employee_number), e.id]));
+    const webKeys = new Set(rows.map((r) => `${r.employee_id}|${r.item_name}`));
+    const { plans } = planAdoptFromFormRecords(fileRecords, billingMonth);
+    const byItem = new Map<string, Map<string, AdoptPlan>>();
+    const unresolved = new Set<string>();
+    for (const p of plans) {
+      const empId = empIdByNum.get(normEmp(p.employee_number));
+      if (!empId) { unresolved.add(p.employee_number); continue; }
+      if (webKeys.has(`${empId}|${p.item_name}`)) continue;
+      if (!byItem.has(p.item_name)) byItem.set(p.item_name, new Map());
+      byItem.get(p.item_name)!.set(empId, p);
+    }
+    return { byItem, unresolved: [...unresolved].sort() };
+  }, [fileRecords, employees, rows, billingMonth]);
+
+  /** ファイルの値を そのまま画面の入力に写す (給与計算の結果は変わらない。check:office-input-roundtrip) */
+  const adoptPlans = useCallback(
+    (targets: { plan: AdoptPlan; employeeId: string }[]) => {
+      const ok = targets.filter((t) => t.plan.canAdopt && t.plan.entries.length > 0);
+      if (ok.length === 0) return;
+      runQueued("adopt", async () => {
+        const saved = await insertEntries(ok.flatMap((t) => t.plan.entries.map((e) => ({ ...e, employee_id: t.employeeId }))));
+        applyRows((prev) => [...prev, ...saved.map(withLocalKey)]);
+        // 入力欄は開いた時点の値を持つので 作り直して 写した値を出す
+        setDataVersion((v) => v + 1);
+        toast.success(`${ok.length} 人ぶん 画面の入力に写しました`);
+      });
+    },
+    [applyRows, runQueued],
+  );
 
   // ─── 表示する項目 ────────────────────────────────────────
   const visibleItems = useMemo(
@@ -218,14 +280,15 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
       map.set(item.name, {
         count: target.length,
         employees: empIds.size,
+        fileOnly: filePlans.byItem.get(item.name)?.size ?? 0,
         totalLabel,
       });
     }
     return map;
-  }, [rows]);
+  }, [rows, filePlans]);
 
   const filledItemCount = useMemo(
-    () => visibleItems.filter((it) => (summaries.get(it.name)?.count ?? 0) > 0).length,
+    () => visibleItems.filter((it) => (summaries.get(it.name)?.count ?? 0) > 0 || (summaries.get(it.name)?.fileOnly ?? 0) > 0).length,
     [visibleItems, summaries],
   );
 
@@ -444,6 +507,18 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
             <span className="font-bold text-foreground">{employees.length}</span>人
           </span>
           {entriesLoading && <span>読み込み中…</span>}
+          {fileRecords.length > 0 && (
+            <span title="この事業所・この月に ファイルで取り込んだ事業所書式の行数">
+              ファイル取込 <span className="font-bold text-foreground">{fileRecords.length}</span>行
+            </span>
+          )}
+          {filePlans.unresolved.length > 0 && (
+            <span className="text-amber-700" title={`社員番号 ${filePlans.unresolved.join(", ")}`}>
+              ⚠ ファイルにあるが 職員一覧に居ない {filePlans.unresolved.length}人
+            </span>
+          )}
+          <a href="/csv-import?tab=office_form" className="underline hover:text-foreground">ファイルから取り込む</a>
+          <button type="button" className="underline hover:text-foreground" onClick={() => setFileVersion((v) => v + 1)}>読み直す</button>
         </div>
       </div>
 
@@ -479,6 +554,7 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
                       const s = summaries.get(item.name);
                       const isActive = item.name === selectedItemName;
                       const filled = (s?.count ?? 0) > 0;
+                      const fileOnly = s?.fileOnly ?? 0;
                       return (
                         <li key={item.name}>
                           <button
@@ -512,7 +588,12 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
                             >
                               {filled
                                 ? `${s?.employees}人${s?.totalLabel ? ` / ${s.totalLabel}` : ""}`
-                                : "—"}
+                                : fileOnly > 0 ? "" : "—"}
+                              {fileOnly > 0 && (
+                                <span className={cn("ml-1", isActive ? "text-primary-foreground/70" : "text-sky-700")} title="ファイルで取り込んだ値だけがある職員">
+                                  ファイル{fileOnly}人
+                                </span>
+                              )}
                             </span>
                           </button>
                         </li>
@@ -539,7 +620,7 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
           ) : employees.length === 0 ? (
             <div className="p-4 text-sm text-muted-foreground">
               {officeId
-                ? "在職中のスタッフがいません"
+                ? "この月に在籍していたスタッフがいません"
                 : "事業所を選択してください"}
             </div>
           ) : (
@@ -550,6 +631,8 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
               billingMonth={billingMonth}
               employees={employees}
               rows={selectedRows}
+              filePlans={filePlans.byItem.get(selectedItem.name) ?? EMPTY_PLANS}
+              onAdopt={adoptPlans}
               onSetScalar={handleSetScalar}
               onSetDates={handleSetDates}
               onAddRow={handleAddRow}

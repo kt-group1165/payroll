@@ -17,6 +17,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 
+const TAB_VALUES = new Set(["kaigo", "meisai", "attendance", "office_form", "kyotaku", "yobou", "clients"]);
 const KYOTAKU_TENANT_ID = "kt-group"; // payroll_kyotaku_records.tenant_id (seed と整合)
 
 interface OfficeForImporters {
@@ -37,7 +38,13 @@ interface OfficeForImporters {
  * client importer を tab で並べる。3 importer の事業所一覧と既存件数集計は
  * Server Component で並列 fetch し、initial props として渡す。
  */
-export default async function CsvImportPage() {
+export default async function CsvImportPage({
+  searchParams,
+}: {
+  // ?tab=office_form などで 開くタブを指定できる (/office-input の「ファイルから取り込む」から来る。2026-10-06)
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
   const supabase = await createClient();
 
   const [officesRes, attendanceCounts, meisaiMonths, officeFormMonths, sourceMode] = await Promise.all([
@@ -79,7 +86,7 @@ export default async function CsvImportPage() {
           一括取込 (フォルダ) ページへ →
         </Link>
       </div>
-      <Tabs defaultValue={sourceMode === "kaigo" ? "kaigo" : "meisai"}>
+      <Tabs defaultValue={TAB_VALUES.has(tab ?? "") ? tab : sourceMode === "kaigo" ? "kaigo" : "meisai"}>
         <TabsList>
           <TabsTrigger value="kaigo">介護システム連携</TabsTrigger>
           <TabsTrigger value="meisai">介護ソフトCSV</TabsTrigger>

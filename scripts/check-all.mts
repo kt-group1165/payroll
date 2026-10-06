@@ -41,6 +41,7 @@ const CHECKS: Check[] = [
   // 2026-09-24: 職員マスタ未登録 3 組 (2026-08 入社) を登録して 基準値が 0 になったので strict に戻した。
   // 基準値ファイル (check-office-input-flow-baseline.json) 自体は残っているが 期待値は 0 = 増えたら落ちる。
   { name: "office-input-flow", script: "check:office-input-flow", why: "★ 事業所書式 Web 入力 (/office-input) が 給与計算に届く経路。射影・合流・実データ合流 (職員マスタ未登録 0 組が期待値)" },
+  { name: "office-input-roundtrip", script: "check:office-input-roundtrip", why: "★ /office-input の「画面で直す」(ファイルの値を画面の入力に写す) で 給与計算が事業所書式から読む値が変わらないこと (実データ全件)" },
   { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)",
     kind: "baseline", knownDiff: 9 }, // 実績0件月の基本給の扱い (既知・B-2y。user判断待ち)
 

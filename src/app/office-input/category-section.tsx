@@ -33,6 +33,7 @@ import {
   type OfficeInputMode,
   type OfficeInputRow,
 } from "@/lib/office-input/types";
+import type { AdoptPlan } from "@/lib/office-input/from-form-records";
 
 const SAVE_DEBOUNCE_MS = 800;
 
@@ -43,6 +44,13 @@ type PanelProps = {
   employees: Employee[];
   /** この項目の行だけ */
   rows: OfficeInputRow[];
+  /**
+   * ファイルで取り込んだ値 (画面の入力が無い職員だけ)。employee_id → 写す計画 (2026-10-06)。
+   * 給与計算は 画面の入力が無い (職員 × 項目) では ファイルの値を使う
+   */
+  filePlans: Map<string, AdoptPlan>;
+  /** ファイルの値を そのまま画面の入力に写す */
+  onAdopt: (targets: { plan: AdoptPlan; employeeId: string }[]) => void;
   onSetScalar: (item: OfficeInputItem, employeeId: string, value: number | null) => void;
   onSetDates: (item: OfficeInputItem, employeeId: string, dates: string[]) => void;
   onAddRow: (item: OfficeInputItem, employeeId: string) => void;
@@ -81,6 +89,21 @@ export function ItemPanel(props: PanelProps) {
           <h3 className="text-lg font-bold">{item.name}</h3>
           {item.hint && (
             <span className="text-xs text-muted-foreground">{item.hint}</span>
+          )}
+          {props.filePlans.size > 0 && (
+            <span className="text-xs text-sky-800">
+              ファイル取込の値だけの人 {props.filePlans.size}人
+              {[...props.filePlans.values()].some((p) => p.canAdopt) && (
+                <button
+                  type="button"
+                  className="ml-2 underline"
+                  title="ファイルの値を そのまま画面の入力に写します (給与計算の結果は変わりません)"
+                  onClick={() => props.onAdopt([...props.filePlans].map(([employeeId, plan]) => ({ plan, employeeId })))}
+                >
+                  全員ぶん画面に写す
+                </button>
+              )}
+            </span>
           )}
           <span className="ml-auto text-sm">
             <span className="text-muted-foreground">入力済 </span>
@@ -145,6 +168,28 @@ function useEmployeeFilter(employees: Employee[], hasValue: (empId: string) => b
   return { filtered, toolbar };
 }
 
+/**
+ * ファイルで取り込んだ値の表示 + 「画面で直す」(2026-10-06)。
+ * 画面の入力が無い職員にだけ出す。写すと 以後は画面の入力が使われる (給与計算の結果は同じ)
+ */
+function FileNote({ plan, employeeId, onAdopt }: { plan: AdoptPlan; employeeId: string; onAdopt: PanelProps["onAdopt"] }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs">
+      <span className="rounded bg-sky-100 px-1.5 py-0.5 text-sky-900" title="ファイルで取り込んだ値 (給与計算はこの値を使っています)">
+        ファイル: {plan.summary}
+      </span>
+      {plan.canAdopt ? (
+        <button type="button" className="text-sky-800 underline" onClick={() => onAdopt([{ plan, employeeId }])}
+          title="この値を画面の入力に写して 画面で直せるようにします (写しただけでは給与計算は変わりません)">
+          画面で直す
+        </button>
+      ) : (
+        <span className="text-amber-700" title={plan.reason}>画面に写せません ({plan.reason})</span>
+      )}
+    </span>
+  );
+}
+
 /** 全モード共通の職員セル (= 社員番号・氏名・職種を 1 行で揃える) */
 function EmployeeCells({ employee }: { employee: Employee }) {
   return (
@@ -162,7 +207,7 @@ function EmployeeCells({ employee }: { employee: Employee }) {
 
 // ─── scalar: 数値項目 / 時間項目 ────────────────────────────
 
-function ScalarTable({ item, employees, rows, onSetScalar }: PanelProps) {
+function ScalarTable({ item, employees, rows, onSetScalar, filePlans, onAdopt }: PanelProps) {
   const byEmployee = useMemo(() => {
     const m = new Map<string, OfficeInputRow>();
     for (const r of rows) {
@@ -172,8 +217,8 @@ function ScalarTable({ item, employees, rows, onSetScalar }: PanelProps) {
   }, [rows]);
 
   const hasValue = useCallback(
-    (empId: string) => byEmployee.has(empId),
-    [byEmployee],
+    (empId: string) => byEmployee.has(empId) || filePlans.has(empId),
+    [byEmployee, filePlans],
   );
   const { filtered, toolbar } = useEmployeeFilter(employees, hasValue);
 
@@ -202,6 +247,8 @@ function ScalarTable({ item, employees, rows, onSetScalar }: PanelProps) {
                 item={item}
                 row={byEmployee.get(emp.id) ?? null}
                 onSetScalar={onSetScalar}
+                filePlan={filePlans.get(emp.id) ?? null}
+                onAdopt={onAdopt}
               />
             ))}
           </tbody>
@@ -228,11 +275,15 @@ function ScalarRow({
   item,
   row,
   onSetScalar,
+  filePlan,
+  onAdopt,
 }: {
   employee: Employee;
   item: OfficeInputItem;
   row: OfficeInputRow | null;
   onSetScalar: (item: OfficeInputItem, employeeId: string, value: number | null) => void;
+  filePlan: AdoptPlan | null;
+  onAdopt: PanelProps["onAdopt"];
 }) {
   const isTime = item.category === "時間項目";
 
@@ -315,6 +366,7 @@ function ScalarRow({
               クリア
             </Button>
           )}
+          {!filled && filePlan && <FileNote plan={filePlan} employeeId={employee.id} onAdopt={onAdopt} />}
         </div>
       </td>
     </tr>
@@ -329,6 +381,8 @@ function DateListTable({
   employees,
   rows,
   onSetDates,
+  filePlans,
+  onAdopt,
 }: PanelProps) {
   const byEmployee = useMemo(() => {
     const m = new Map<string, OfficeInputRow[]>();
@@ -341,8 +395,8 @@ function DateListTable({
   }, [rows]);
 
   const hasValue = useCallback(
-    (empId: string) => (byEmployee.get(empId)?.length ?? 0) > 0,
-    [byEmployee],
+    (empId: string) => (byEmployee.get(empId)?.length ?? 0) > 0 || filePlans.has(empId),
+    [byEmployee, filePlans],
   );
   const { filtered, toolbar } = useEmployeeFilter(employees, hasValue);
 
@@ -373,6 +427,8 @@ function DateListTable({
                 billingMonth={billingMonth}
                 rows={byEmployee.get(emp.id) ?? []}
                 onSetDates={onSetDates}
+                filePlan={filePlans.get(emp.id) ?? null}
+                onAdopt={onAdopt}
               />
             ))}
           </tbody>
@@ -393,12 +449,16 @@ function DateListRow({
   billingMonth,
   rows,
   onSetDates,
+  filePlan,
+  onAdopt,
 }: {
   employee: Employee;
   item: OfficeInputItem;
   billingMonth: string;
   rows: OfficeInputRow[];
   onSetDates: (item: OfficeInputItem, employeeId: string, dates: string[]) => void;
+  filePlan: AdoptPlan | null;
+  onAdopt: PanelProps["onAdopt"];
 }) {
   const initial = formatDayList(rows.map((r) => r.date_value));
   const [text, setText] = useState(initial);
@@ -466,6 +526,7 @@ function DateListRow({
               </span>
             )
           )}
+          {rows.length === 0 && text.trim() === "" && filePlan && <FileNote plan={filePlan} employeeId={employee.id} onAdopt={onAdopt} />}
         </div>
       </td>
       <td className="px-3 py-1 text-right text-sm tabular-nums">
@@ -485,6 +546,8 @@ function EntryRowsTable({
   onUpdateLocal,
   onSaveRow,
   onDeleteRow,
+  filePlans,
+  onAdopt,
 }: PanelProps) {
   const [addEmployeeId, setAddEmployeeId] = useState<string>(
     employees[0]?.id ?? "",
@@ -540,9 +603,29 @@ function EntryRowsTable({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {filePlans.size > 0 && (
+          <div className="border-b bg-sky-50/50 px-4 py-2">
+            <div className="mb-1 text-xs font-medium text-sky-900">
+              ファイルで取り込んだ値 (画面の入力が無い人だけ。給与計算はこの値を使っています)
+            </div>
+            <ul className="space-y-0.5">
+              {[...filePlans].map(([empId, plan]) => {
+                const emp = employeeById.get(empId);
+                return (
+                  <li key={empId} className="flex items-center gap-3 text-sm">
+                    <span className="w-56 truncate">{emp?.employee_number} {emp?.name}</span>
+                    <FileNote plan={plan} employeeId={empId} onAdopt={onAdopt} />
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
         {sorted.length === 0 ? (
           <div className="p-4 text-sm text-muted-foreground">
-            まだ入力がありません。上でスタッフを選んで「+ {item.name}を追加」してください。
+            {filePlans.size > 0
+              ? <>画面の入力はまだありません。ファイルの値を直すときは「画面で直す」を押してください。</>
+              : <>まだ入力がありません。上でスタッフを選んで「+ {item.name}を追加」してください。</>}
           </div>
         ) : (
           <table className="w-full border-collapse">

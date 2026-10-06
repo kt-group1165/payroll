@@ -9,6 +9,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Employee } from "@/types/database";
 import type { OfficeInputEntry, OfficeInputEntryInput } from "./types";
+import type { OfficeFormRecord } from "@/lib/payroll/payroll-calc";
 
 /**
  * `.in()` に渡す ID の chunk 上限。
@@ -175,17 +176,21 @@ export async function deleteEntries(ids: string[]): Promise<void> {
 }
 
 /**
- * 指定事業所所属のスタッフ一覧を取得 (在職者のみ)。
+ * 指定事業所所属のスタッフ一覧を取得。
  * 既存 employees パターンを踏襲 (= payroll_employees.office_id 一致)。
+ *
+ * ★ その月に在籍していた人を出す (2026-10-06)。以前は在職者だけで、
+ *   月の途中で辞めた人の書式が画面から入れられなかった (給与計算は 退職日が月初以降の人も含める)。
+ *   = 在職者 + 退職日がその月の 1 日以降の人。入社日がその月の末日より後の人は出さない。
  */
 export async function listEmployeesByOffice(
   officeId: string,
+  billingMonth?: string,
 ): Promise<Employee[]> {
   const { data, error } = await supabase
     .from("payroll_employees")
     .select("*")
     .eq("office_id", officeId)
-    .eq("employment_status", "在職者")
     .order("employee_number");
 
   if (error) {
@@ -193,7 +198,46 @@ export async function listEmployeesByOffice(
     throw new Error(`スタッフ一覧取得失敗: ${error.message}`);
   }
 
-  return (data ?? []) as Employee[];
+  const list = (data ?? []) as Employee[];
+  if (!billingMonth || !/^\d{4}-\d{2}$/.test(billingMonth)) {
+    return list.filter((e) => e.employment_status === "在職者");
+  }
+  const first = `${billingMonth}-01`;
+  const [y, m] = billingMonth.split("-").map(Number);
+  const last = `${billingMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+  return list.filter((e) => {
+    if (e.hire_date && e.hire_date > last) return false;
+    if (e.employment_status === "在職者") return true;
+    return !!e.resignation_date && e.resignation_date >= first;
+  });
+}
+
+/**
+ * ファイルで取り込んだ事業所書式 (payroll_office_form_records) を 事業所 × 処理月 で読む (2026-10-06)。
+ * 画面にファイルの値を出し、「画面で直す」で画面の入力に写すために使う。
+ */
+export async function getFormRecordsByOfficeMonth(
+  officeNumber: string,
+  processingMonth: string,
+): Promise<OfficeFormRecord[]> {
+  const rows: OfficeFormRecord[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("payroll_office_form_records")
+      .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,break_time,year_month,child_name,amount")
+      .eq("office_number", officeNumber)
+      .eq("processing_month", processingMonth)
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getFormRecordsByOfficeMonth failed:", error.message);
+      throw new Error(`ファイル取込の事業所書式の取得に失敗: ${error.message}`);
+    }
+    const page = (data ?? []) as OfficeFormRecord[];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return rows;
 }
 
 /**
