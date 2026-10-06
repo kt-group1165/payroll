@@ -518,6 +518,11 @@ export function SalaryList({
       toast.error("適用開始月を入力してください");
       return;
     }
+    // 過去の月から の設定は 給与計算済みの月も変わる (計算し直したとき)。黙って書かない (2026-10-06)
+    if (settings.effective_from < `${currentMonthJst()}-01`) {
+      const d = settings.effective_from;
+      if (!confirm(`給与設定を ${d.slice(0, 4)}年${Number(d.slice(5, 7))}月${d.endsWith("-01") ? "" : `${Number(d.slice(8, 10))}日`}分から にします。\n過去の月を含むので、その月々の給与も (計算し直したときに) 変わります。よいですか？`)) return;
+    }
     setSaving(true);
     const { id: _id, ...payload } = settings;
     void _id;
