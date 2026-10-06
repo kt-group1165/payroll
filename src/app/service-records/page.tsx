@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { parseDurationMinutes } from "@/lib/payroll/payroll-calc";
+import { attendanceWorkMinutes, parseDurationMinutes, type OfficeAttendanceRecord } from "@/lib/payroll/payroll-calc";
 import { resolveVisitPay, type VisitRateContext } from "@/lib/payroll/visit-pay";
 import { getDoukouEngoFlatRates, getJuhoShortVisitRates, getSougouSeikatsuRates } from "@/lib/app-settings";
 import { calcDayRoute, type VisitForRoute } from "@/lib/distance-calculator";
@@ -27,6 +27,7 @@ import { calcDayRoute, type VisitForRoute } from "@/lib/distance-calculator";
  *   ⚠ 出勤簿行の「勤務時間」が何かは **未特定**。拘束 − 休憩 − (訪問+移動) にならない
  *     (07/01 は 11:30 − 0 − 09:18 = 02:12 のはずが 02:52)。当方は推測で埋めず、
  *     出勤簿から出した当方の勤務時間を出す (列の見出しにその旨を書く)。
+ *   ★ 小計の勤務時間は 出勤簿がある日は 出勤簿の時間だけ。訪問・移動を足さない (2026-10-06 user「時間かぶってる」)
  */
 
 type Office = { id: string; office_number: string; name: string; short_name: string; office_type: string };
@@ -330,11 +331,13 @@ export default function ServiceRecordsPage() {
         const dayRecs = mine
           .filter((r) => String(r.service_date).replace(/\//g, "-").slice(0, 10) === d)
           .sort((x, y) => t5(x.dispatch_start_time).localeCompare(t5(y.dispatch_start_time)));
+        // ★ 出勤簿の勤務時間は 給与計算と同じ関数で出す (終了 − 開始 − 休憩。欄が読めないときだけ欄)
+        const attMin = a ? attendanceWorkMinutes(a as unknown as OfficeAttendanceRecord) : 0;
         if (a) {
           const sp = attSpan(a);
           out.push({
             kind: "att", date: d, start: sp.start, end: sp.end, brk: t5(a.break_time),
-            workMin: a.work_hours ? parseDurationMinutes(a.work_hours) : null,
+            workMin: attMin > 0 ? attMin : (a.work_hours ? parseDurationMinutes(a.work_hours) : null),
             overtime: t5(a.overtime_daily),
           });
         }
@@ -354,7 +357,10 @@ export default function ServiceRecordsPage() {
         }
         out.push({
           kind: "sub", date: d, visitMin: vSum, travelMin: tKnown ? tSum : null,
-          workMin: (tKnown ? vSum + tSum : vSum) + (a?.work_hours ? parseDurationMinutes(a.work_hours) : 0),
+          // ★ 出勤簿がある日は 出勤簿の時間だけ (訪問・移動はその中に入っているので 足すと二重。2026-10-06 user)。
+          //   給与計算の出勤時間も 出勤簿のある人 (提責・事務員) は出勤簿だけで出している (宇野澤 202606 177:10 = ②)。
+          //   出勤簿が無い日・無い人は 訪問 + 移動
+          workMin: attMin > 0 ? attMin : (tKnown ? vSum + tSum : vSum),
           pay: paySum, honobono: honoSum, overtime: t5(a?.overtime_daily),
         });
       }
