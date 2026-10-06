@@ -25,6 +25,8 @@ import {
   type Confirmation,
   type EmployeeSetting,
   type KyotakuRecord,
+  activeKyotakuRate,
+  activeKyotakuUnits,
   type RegionalRate,
   type ServiceUnit,
   type YobouRecord,
@@ -46,6 +48,7 @@ import type {
   PlanAccumulatorRow,
 } from "@/lib/swr/use-kyotaku-dashboard-data";
 import { KyotakuSettingsModal } from "./kyotaku-settings-modal";
+import { HistoryButton, type HistoryColumn } from "./history-table";
 
 /**
  * 居宅介護支援 給与計算 dashboard (Phase 2 / 全社横断 view)
@@ -156,12 +159,6 @@ function deriveAllPayMonths(months: string[]): string[] {
   return Array.from(s).sort();
 }
 
-/** 保険者名 → rate map (見つからなければ 10.0) */
-function makeRateMap(rates: RegionalRate[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const r of rates) m.set(r.insurer_name, r.rate);
-  return m;
-}
 
 /** records を office_number 別に partition */
 function partitionByOffice<T extends { office_number: string }>(
@@ -290,6 +287,25 @@ function countCells(
 // 売上表 (項目別売上、地域加算込)
 // =====================================================================
 
+/** 単位数の履歴の表: 行 = 改定日、列 = 項目。各行は その日に有効だった単位数 (2026-10-06) */
+type UnitHistoryRow = { effective_from: string; units: Record<string, number> };
+function unitHistoryRows(units: ServiceUnit[]): UnitHistoryRow[] {
+  const dates = [...new Set(units.map((u) => u.effective_from ?? "1970-01-01"))].sort();
+  return dates.map((d) => ({
+    effective_from: d,
+    units: Object.fromEntries(activeKyotakuUnits(units, d).map((u) => [u.item_name, u.unit_count])),
+  }));
+}
+function unitHistoryColumns(rows: UnitHistoryRow[]): HistoryColumn<UnitHistoryRow>[] {
+  const names = [...new Set(rows.flatMap((r) => Object.keys(r.units)))];
+  return names.map((n) => ({
+    key: n,
+    label: n,
+    value: (r: UnitHistoryRow) => r.units[n] ?? null,
+    format: (r: UnitHistoryRow) => (r.units[n] != null ? `${r.units[n].toLocaleString()}単位` : "—"),
+  }));
+}
+
 /**
  * care_level (records 由来、全角想定: 要介護１/要介護２/.../要支援１/要支援２) を
  * 売上表 master の item_name (要介護１～２ / 要介護３～５ / 要支援１ / 要支援２) に
@@ -324,8 +340,10 @@ function mapCareLevelToMasterItem(
 
 function resolveRecordUnit(
   r: FullRecord,
-  units: ServiceUnit[],
+  allUnits: ServiceUnit[],
 ): { itemName: string; unit: number } | null {
+  // 単位数は その行の提供月に有効な値 (報酬改定の履歴。2026-10-06)
+  const units = activeKyotakuUnits(allUnits, r.service_month);
   if (r.detail_row_no === "1") {
     if (!r.care_level) return null;
     const u = getBaseUnit(r.care_level, units);
@@ -588,11 +606,10 @@ export function KyotakuPayrollDashboard({
     () => deriveAllPayMonths(allMonths),
     [allMonths],
   );
-  const rateMap = useMemo(() => makeRateMap(rates), [rates]);
 
-  // ITEMS = display_order でソートした units 全部
+  // ITEMS = display_order でソートした units (項目ごとに 1 行。履歴は いちばん新しい行)
   const items = useMemo(() => {
-    return [...units].sort((a, b) => {
+    return activeKyotakuUnits(units, "9999-12-31").sort((a, b) => {
       const ao = (a as unknown as { display_order?: number }).display_order ?? 999;
       const bo = (b as unknown as { display_order?: number }).display_order ?? 999;
       if (ao !== bo) return ao - bo;
@@ -1439,6 +1456,12 @@ export function KyotakuPayrollDashboard({
         >
           ⚙ 設定
         </Button>
+        <HistoryButton<UnitHistoryRow>
+          title="介護報酬の単位数"
+          label="単位数の履歴"
+          load={async () => unitHistoryRows(units)}
+          columnsFrom={unitHistoryColumns}
+        />
       </header>
 
       <Tabs defaultValue="kyuyo">
@@ -1493,7 +1516,7 @@ export function KyotakuPayrollDashboard({
             allStaffKeys={allStaffKeys}
             officeMap={officeMap}
             items={items}
-            rateMap={rateMap}
+            rates={rates}
             units={units}
           />
         </TabsContent>
@@ -2426,7 +2449,7 @@ function UriageTab({
   allStaffKeys,
   officeMap,
   items,
-  rateMap,
+  rates,
   units,
 }: {
   records: FullRecord[];
@@ -2435,7 +2458,8 @@ function UriageTab({
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
   officeMap: Map<string, KyotakuOffice>;
   items: ServiceUnit[];
-  rateMap: Map<string, number>;
+  /** 地域単価 (履歴つき)。提供月ごとに activeKyotakuRate で引く */
+  rates: RegionalRate[];
   units: ServiceUnit[];
 }) {
   // revenue[month][office|staff][item] を作る
@@ -2464,7 +2488,7 @@ function UriageTab({
     for (const r of records) {
       const resolved = resolveRecordUnit(r, units);
       if (!resolved) continue;
-      const chiiki = rateMap.get(r.insurer_name ?? "") ?? 10.0;
+      const chiiki = activeKyotakuRate(rates, r.insurer_name ?? "", r.service_month) ?? 10.0;
       const yen = resolved.unit * chiiki;
       const sk = staffKey(r.office_number, r.staff_name);
       bump(r.service_month, sk, resolved.itemName, yen);
@@ -2472,11 +2496,11 @@ function UriageTab({
 
     // 2) yobouRecords (介護予防支援): 要支援1/2 件数 × 単位 × 10 円
     //    master に「要支援１」「要支援２」が無ければ skip (= 未投入)。
-    const yobou1Unit =
-      units.find((u) => u.item_name === "要支援１")?.unit_count ?? 0;
-    const yobou2Unit =
-      units.find((u) => u.item_name === "要支援２")?.unit_count ?? 0;
     for (const yr of yobouRecords) {
+      // 単位数は 提供月に有効な値 (報酬改定の履歴)
+      const unitsM = activeKyotakuUnits(units, yr.service_month);
+      const yobou1Unit = unitsM.find((u) => u.item_name === "要支援１")?.unit_count ?? 0;
+      const yobou2Unit = unitsM.find((u) => u.item_name === "要支援２")?.unit_count ?? 0;
       const sk = staffKey(yr.office_number, yr.staff_name);
       const chiiki = 10.0; // yobou_records は insurer_name を持たないため default
       const c1 = yr.yobou1_count ?? 0;
@@ -2489,7 +2513,7 @@ function UriageTab({
       }
     }
     return m;
-  }, [records, yobouRecords, units, rateMap]);
+  }, [records, yobouRecords, units, rates]);
 
   // office 表示順 (allStaffKeys 出現順)
   const officeOrderArr = useMemo(() => {

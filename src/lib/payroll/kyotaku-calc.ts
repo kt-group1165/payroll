@@ -48,12 +48,44 @@ export type ServiceUnit = {
   unit_count: number;
   is_addition: boolean;
   is_office_addition: boolean;
+  /** いつから (報酬改定の履歴。無い行 = 最初から。2026-10-06) */
+  effective_from?: string | null;
 };
 
 export type RegionalRate = {
   insurer_name: string;
   rate: number;
+  /** いつから (履歴。無い行 = 最初から) */
+  effective_from?: string | null;
 };
+
+/**
+ * 介護報酬の単位数を 提供月に有効な行だけにする (item_name ごとに effective_from <= 月初 の最新)。2026-10-06
+ * ★ 単位数は報酬改定 (例 令和 8 年 6 月) で変わる。履歴を持たずに上書きしていたので 過去の月まで新しい単位数になっていた。
+ *   履歴の行が混ざったまま渡すと find は最初の行を取り、calcKazan は同じ項目を二重に数えるので 必ずここを通す。
+ */
+export function activeKyotakuUnits(units: ServiceUnit[], monthStart: string): ServiceUnit[] {
+  const m = new Map<string, ServiceUnit>();
+  for (const u of units) {
+    const f = u.effective_from ?? "1970-01-01";
+    if (f > monthStart) continue;
+    const cur = m.get(u.item_name);
+    if (!cur || f > (cur.effective_from ?? "1970-01-01")) m.set(u.item_name, u);
+  }
+  return [...m.values()];
+}
+
+/** 地域単価 (保険者名 → 円/単位) を 提供月に有効な値で。無ければ null */
+export function activeKyotakuRate(rates: RegionalRate[], insurerName: string, monthStart: string): number | null {
+  let best: RegionalRate | null = null;
+  for (const r of rates) {
+    if (r.insurer_name !== insurerName) continue;
+    const f = r.effective_from ?? "1970-01-01";
+    if (f > monthStart) continue;
+    if (!best || f > (best.effective_from ?? "1970-01-01")) best = r;
+  }
+  return best ? Number(best.rate) : null;
+}
 
 export type Confirmation = {
   staff_name: string;
@@ -577,7 +609,8 @@ export function calcSalary(
   const chosei1 = Math.max(0, inc1 - base) - Math.max(0, inc0 - base);
   const chosei2 = Math.max(0, inc2 - base) - Math.max(0, inc1 - base);
 
-  const kazan = calcKazan(records, staffName, serviceMonth, config.units);
+  // 単位数は 提供月に有効な行 (報酬改定の履歴)。config は複数の提供月で使い回されるので ここで絞る
+  const kazan = calcKazan(records, staffName, serviceMonth, activeKyotakuUnits(config.units, serviceMonth));
 
   const business_trip_teate = calcBusinessTripTeate(
     staffName,

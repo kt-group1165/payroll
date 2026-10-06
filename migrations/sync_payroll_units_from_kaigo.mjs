@@ -9,9 +9,13 @@
 //       要支援１/２ は kaigo master の居宅介護支援系に存在しないため対象外
 //       (= 暫定値 514 のまま、別途設定 modal で個別管理)。
 //
+// ★ 2026-10-06: 単位数は「何月分から」の履歴で持つ (payroll_kyotaku_service_units.effective_from)。
+//   以前は 既存の行を UPDATE していたので、改定すると 過去の月まで新しい単位数で計算されていた。
+//   今は EFFECTIVE_FROM (改定月の 1 日) の行を足す。kaigo 側も その月に有効な世代 (valid_from / valid_to) を見る。
+//
 // 使い方:
-//   DRY_RUN=true  node apps/payroll-app/migrations/sync_payroll_units_from_kaigo.mjs
-//   DRY_RUN=false node apps/payroll-app/migrations/sync_payroll_units_from_kaigo.mjs
+//   EFFECTIVE_FROM=2026-06-01 DRY_RUN=true  node apps/payroll-app/migrations/sync_payroll_units_from_kaigo.mjs
+//   EFFECTIVE_FROM=2026-06-01 DRY_RUN=false node apps/payroll-app/migrations/sync_payroll_units_from_kaigo.mjs
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -22,6 +26,11 @@ if (!SB_URL || !KEY) {
   process.exit(1);
 }
 const DRY_RUN = process.env.DRY_RUN !== "false";
+const EFFECTIVE_FROM = process.env.EFFECTIVE_FROM ?? "";
+if (!/^\d{4}-\d{2}-01$/.test(EFFECTIVE_FROM)) {
+  console.error("env EFFECTIVE_FROM=YYYY-MM-01 (改定月の 1 日) が必要。この月の給与から新しい単位数になる");
+  process.exit(1);
+}
 console.log(DRY_RUN ? "*** DRY RUN ***" : "*** LIVE ***");
 
 const admin = createClient(SB_URL, KEY, {
@@ -50,7 +59,7 @@ async function main() {
   // 1. kaigo から最新単位数を fetch
   const { data: kaigoData, error: kaigoErr } = await admin
     .from("kaigo_service_codes")
-    .select("service_code, service_name, units")
+    .select("service_code, service_name, units, valid_from, valid_to")
     .in("service_code", codes)
     .eq("system", "介護")
     .eq("service_category", "43");
@@ -58,20 +67,33 @@ async function main() {
     console.error("kaigo fetch error:", kaigoErr.message);
     process.exit(1);
   }
-  const kaigoByCode = new Map((kaigoData ?? []).map(r => [r.service_code, r]));
+  // kaigo のサービスコードは世代管理。改定月に有効な世代を使う (valid_from <= 月初 <= valid_to)
+  const kaigoByCode = new Map();
+  for (const r of kaigoData ?? []) {
+    if (r.valid_from && r.valid_from > EFFECTIVE_FROM) continue;
+    if (r.valid_to && r.valid_to < EFFECTIVE_FROM) continue;
+    const cur = kaigoByCode.get(r.service_code);
+    if (!cur || (r.valid_from ?? "") > (cur.valid_from ?? "")) kaigoByCode.set(r.service_code, r);
+  }
 
   // 2. payroll の現状 fetch
   const items = Object.keys(ITEM_TO_KAIGO_CODE);
   const { data: payData, error: payErr } = await admin
     .from("payroll_kyotaku_service_units")
-    .select("id, item_name, unit_count")
+    .select("*")
     .in("item_name", items)
     .eq("tenant_id", TENANT);
   if (payErr) {
     console.error("payroll fetch error:", payErr.message);
     process.exit(1);
   }
-  const payByItem = new Map((payData ?? []).map(r => [r.item_name, r]));
+  // 改定月の時点で有効な行 (item_name ごとに effective_from <= 改定月 の最新) と比べる
+  const payByItem = new Map();
+  for (const r of payData ?? []) {
+    if ((r.effective_from ?? "1970-01-01") > EFFECTIVE_FROM) continue;
+    const cur = payByItem.get(r.item_name);
+    if (!cur || r.effective_from > cur.effective_from) payByItem.set(r.item_name, r);
+  }
 
   // 3. 差分検出
   const diffs = [];
@@ -91,7 +113,7 @@ async function main() {
         item, status: "diff", code,
         payrollUnits: payRow.unit_count,
         kaigoUnits: kaigoRow.units,
-        payrollId: payRow.id,
+        payrollRow: payRow,
       });
     } else {
       diffs.push({ item, status: "match", code, units: payRow.unit_count });
@@ -115,23 +137,25 @@ async function main() {
   console.log(`\n更新候補: ${toUpdate.length} 件`);
 
   if (DRY_RUN || toUpdate.length === 0) {
-    if (DRY_RUN) console.log("\nDRY_RUN なので UPDATE しません。");
+    if (DRY_RUN) console.log(`\nDRY_RUN なので書きません。(書くと ${EFFECTIVE_FROM} からの行を足す。前の月は今までの単位数のまま)`);
     return;
   }
 
-  // 4. UPDATE
+  // 4. 改定月の行を足す (同じ月の行があれば上書き)。前の月の行は触らない
   for (const d of toUpdate) {
+    const { id: _id, created_at: _c, ...base } = d.payrollRow;
+    void _id; void _c;
     const { error } = await admin
       .from("payroll_kyotaku_service_units")
-      .update({ unit_count: d.kaigoUnits, updated_at: new Date().toISOString() })
-      .eq("id", d.payrollId);
+      .upsert({ ...base, unit_count: d.kaigoUnits, effective_from: EFFECTIVE_FROM, updated_at: new Date().toISOString() },
+        { onConflict: "tenant_id,item_name,effective_from" });
     if (error) {
       console.error(`update error (${d.item}):`, error.message);
       process.exit(1);
     }
     console.log(`  ✓ ${d.item}: ${d.payrollUnits} → ${d.kaigoUnits}`);
   }
-  console.log(`\n✓ ${toUpdate.length} 件 UPDATE 完了`);
+  console.log(`\n✓ ${toUpdate.length} 件 ${EFFECTIVE_FROM} からの行を足しました`);
 }
 
 main().catch(e => { console.error("fatal:", e); process.exit(1); });
