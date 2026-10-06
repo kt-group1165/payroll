@@ -23,6 +23,33 @@ import {
   type Company,
 } from "@/types/database";
 import { compareOffices, compareOfficesDefault } from "@/lib/office-order";
+import { OFFICE_PRICE_KEYS, type OfficePriceKey } from "@/lib/payroll/office-price-history";
+import {
+  changedPriceKeys, currentMonthJst, insertInitialPriceRow, priceValuesOf,
+  recordOfficePriceRevision, revisionMonthToDate,
+} from "@/lib/payroll/office-price-revision";
+
+/** 単価の項目名 (改定の確認・履歴の表示用) */
+const PRICE_LABEL: Record<OfficePriceKey, string> = {
+  travel_unit_price: "出張",
+  commute_unit_price: "通勤",
+  treatment_subsidy_amount: "処遇補助金",
+  cancel_unit_price: "キャンセル",
+  doukou_cancel_unit_price: "同行キャンセル",
+  travel_allowance_rate: "移動手当",
+  communication_fee_amount: "通信費",
+  meeting_unit_price: "会議1",
+  distance_adjustment_rate: "距離調整",
+};
+/** 単価の表示 (移動手当は DB が 円/時 なので 円/分 に直す) */
+const priceText = (k: OfficePriceKey, v: number | null | undefined): string => {
+  if (v == null) return "—";
+  if (k === "travel_allowance_rate") return `${Math.round((Number(v) / 60) * 100) / 100}円/分`;
+  if (k === "distance_adjustment_rate") return `${Number(v)}%`;
+  if (k === "travel_unit_price" || k === "commute_unit_price") return `${Number(v)}円/km`;
+  return `${Number(v)}円`;
+};
+type PriceHistoryRow = { effective_from: string } & Partial<Record<OfficePriceKey, number | null>>;
 
 const OFFICE_TYPES: OfficeType[] = [
   "訪問介護",
@@ -156,34 +183,61 @@ export function OfficesList({
     setEditingId(null);
   };
 
+  // 単価の改定月 (編集のとき)。単価を変えたら この月の給与から新しい単価にする。それより前の月は今までの単価
+  const [revisionMonth, setRevisionMonth] = useState(currentMonthJst());
+  const [priceHistory, setPriceHistory] = useState<PriceHistoryRow[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const editingOffice = editingId ? initialOffices.find((o) => o.id === editingId) ?? null : null;
+  const changedInForm = editingOffice ? changedPriceKeys(priceValuesOf(editingOffice), priceValuesOf(form)) : [];
+
   const handleSubmit = async () => {
     if (!form.office_id) { toast.error("事業所(マスタ)を選択してください"); return; }
     if (!form.office_number) { toast.error("事業所番号は必須です"); return; }
 
-    if (editingId) {
+    const nonPrice = {
+      short_name: form.short_name,
+      office_type: form.office_type,
+      shogai_office_number: form.shogai_office_number || null,
+      work_week_start: form.work_week_start,
+      company_id: form.company_id || null,
+    };
+    const after = priceValuesOf(form);
+
+    if (editingId && editingOffice) {
+      const changed = changedInForm;
+      let writePricesToCurrent = true;
+      if (changed.length > 0) {
+        const eff = revisionMonthToDate(revisionMonth);
+        if (!eff) { toast.error("単価の改定月を入れてください (例: 2026-11)"); return; }
+        const list = changed.map((k) => `${PRICE_LABEL[k]} ${priceText(k, editingOffice[k])} → ${priceText(k, after[k])}`).join("\n");
+        if (!confirm(`${revisionMonth.replace("-", "年")}月分の給与から 単価を変えます。\n${list}\n\nそれより前の月は 今までの単価のまま計算されます。よいですか？`)) return;
+        setSaving(true);
+        try {
+          const { laterFrom } = await recordOfficePriceRevision(
+            supabase, editingId, priceValuesOf(editingOffice), after, eff, `事業所の編集画面から改定 (${new Date().toISOString().slice(0, 10)})`,
+          );
+          if (laterFrom.length > 0) {
+            // もっと後の改定がある → 今の値はそちらのまま (今の値 = いちばん新しい改定)
+            writePricesToCurrent = false;
+            toast.warning(`${laterFrom.map((d) => d.slice(0, 7)).join("・")} からの改定が既にあるため、その月以降は そちらの単価のままです`);
+          }
+        } catch (e) {
+          setSaving(false);
+          console.error("price revision failed:", e);
+          toast.error(e instanceof Error ? e.message : String(e));
+          return;
+        }
+      }
       const { error } = await supabase
         .from("payroll_offices")
-        .update({
-          short_name: form.short_name,
-          office_type: form.office_type,
-          shogai_office_number: form.shogai_office_number || null,
-          work_week_start: form.work_week_start,
-          travel_unit_price: form.travel_unit_price,
-          commute_unit_price: form.commute_unit_price,
-          treatment_subsidy_amount: form.treatment_subsidy_amount,
-          cancel_unit_price: form.cancel_unit_price,
-          doukou_cancel_unit_price: form.doukou_cancel_unit_price,
-          travel_allowance_rate: form.travel_allowance_rate,
-          communication_fee_amount: form.communication_fee_amount,
-          meeting_unit_price: form.meeting_unit_price,
-          distance_adjustment_rate: form.distance_adjustment_rate,
-          company_id: form.company_id || null,
-        })
+        .update(writePricesToCurrent ? { ...nonPrice, ...after } : nonPrice)
         .eq("id", editingId);
+      setSaving(false);
       if (error) { toast.error(`更新エラー: ${error.message}`); return; }
-      toast.success("事業所を更新しました");
+      toast.success(changed.length > 0 ? `事業所を更新しました (単価は ${revisionMonth.replace("-", "年")}月分から)` : "事業所を更新しました");
     } else {
-      const { error } = await supabase.from("payroll_offices").insert({
+      setSaving(true);
+      const { data: created, error } = await supabase.from("payroll_offices").insert({
         office_id: form.office_id,
         office_number: form.office_number,
         shogai_office_number: form.shogai_office_number || null,
@@ -200,8 +254,19 @@ export function OfficesList({
         meeting_unit_price: form.meeting_unit_price,
         distance_adjustment_rate: form.distance_adjustment_rate,
         company_id: form.company_id || null,
-      });
-      if (error) { toast.error(`登録エラー: ${error.message}`); return; }
+      }).select("id").single();
+      if (error || !created) { setSaving(false); toast.error(`登録エラー: ${error?.message ?? "登録した行が返りませんでした"}`); return; }
+      // 単価を入れて登録したときは 履歴にも初期値を入れる (無いと給与計算が「単価の履歴なし」になる)。
+      // 全部 0 のまま登録したときは入れない (「未設定」と分かる形で残す)
+      if (OFFICE_PRICE_KEYS.some((k) => k !== "distance_adjustment_rate" && after[k] !== 0)) {
+        try {
+          await insertInitialPriceRow(supabase, created.id, after, `事業所の登録時の単価 (${new Date().toISOString().slice(0, 10)})`);
+        } catch (e) {
+          console.error("initial price row failed:", e);
+          toast.error(`事業所は登録しましたが ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      setSaving(false);
       toast.success("事業所を登録しました");
     }
 
@@ -231,6 +296,17 @@ export function OfficesList({
     });
     setEditingId(office.id);
     setIsOpen(true);
+    setRevisionMonth(currentMonthJst());
+    setPriceHistory(null);
+    void supabase
+      .from("payroll_office_unit_prices")
+      .select(`effective_from, ${OFFICE_PRICE_KEYS.join(", ")}`)
+      .eq("office_id", office.id)
+      .order("effective_from")
+      .then(({ data, error }) => {
+        if (error) { console.error("price history read failed:", error.message); toast.error(`単価の履歴を読めませんでした: ${error.message}`); return; }
+        setPriceHistory((data ?? []) as unknown as PriceHistoryRow[]);
+      });
   };
 
   const handleDelete = async (id: string) => {
@@ -581,8 +657,53 @@ export function OfficesList({
         toast.warning(`事業所番号重複${duplicates.size}件を後勝ちで統合（例: ${[...duplicates].slice(0, 3).join(", ")}）`);
       }
 
-      const { error } = await supabase.from("payroll_offices").upsert(deduped, { onConflict: "office_number" });
+      // 単価が変わる既存の事業所は 改定月を聞いて 履歴に書く (書かないと給与計算に効かない。office-price-revision.ts)
+      const existingByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const revisions = deduped
+        .map((p) => ({ p, ex: existingByNumber.get(p.office_number as string) }))
+        .filter((x): x is { p: typeof x.p; ex: Office } => !!x.ex)
+        .map(({ p, ex }) => ({ ex, before: priceValuesOf(ex), after: priceValuesOf(p as Partial<Record<OfficePriceKey, number>>) }))
+        .filter((x) => changedPriceKeys(x.before, x.after).length > 0);
+      if (revisions.length > 0) {
+        const lines = revisions.slice(0, 8).map((r) =>
+          `${r.ex.short_name || r.ex.name}: ${changedPriceKeys(r.before, r.after).map((k) => `${PRICE_LABEL[k]} ${priceText(k, r.before[k])}→${priceText(k, r.after[k])}`).join(" / ")}`);
+        const month = window.prompt(
+          `${revisions.length} 事業所の単価が変わります。\n${lines.join("\n")}${revisions.length > 8 ? "\n…" : ""}\n\n何月分の給与から新しい単価にしますか？ (例: ${currentMonthJst()})\nそれより前の月は今までの単価のまま計算されます。`,
+          currentMonthJst(),
+        );
+        if (month === null) { toast.info("取り込みをやめました"); return; }
+        const eff = revisionMonthToDate(month.trim());
+        if (!eff) { toast.error(`改定月「${month}」は 2026-11 の形で入れてください。取り込みはしていません`); return; }
+        const laterAll: string[] = [];
+        for (const r of revisions) {
+          try {
+            const { laterFrom } = await recordOfficePriceRevision(supabase, r.ex.id, r.before, r.after, eff, `CSV取込で改定 (${new Date().toISOString().slice(0, 10)})`);
+            if (laterFrom.length > 0) laterAll.push(`${r.ex.short_name || r.ex.name} (${laterFrom.map((d) => d.slice(0, 7)).join("・")})`);
+          } catch (e) {
+            console.error("price revision failed:", e);
+            toast.error(`${r.ex.short_name || r.ex.name}: ${e instanceof Error ? e.message : String(e)}。取り込みを中止しました`);
+            return;
+          }
+        }
+        if (laterAll.length > 0) toast.warning(`もっと後の改定が既にある事業所は その月以降 そちらの単価のままです: ${laterAll.join(" / ")}`);
+      }
+
+      const { data: upserted, error } = await supabase.from("payroll_offices").upsert(deduped, { onConflict: "office_number" }).select("id, office_number");
       if (error) { toast.error(`取り込みエラー: ${error.message}`); return; }
+      // 新しく増えた事業所は 単価の初期値を履歴に入れる (全部 0 なら入れない)
+      for (const row of (upserted ?? []) as { id: string; office_number: string }[]) {
+        if (existingByNumber.has(row.office_number)) continue;
+        const p = deduped.find((d) => d.office_number === row.office_number);
+        if (!p) continue;
+        const vals = priceValuesOf(p as Partial<Record<OfficePriceKey, number>>);
+        if (!OFFICE_PRICE_KEYS.some((k) => k !== "distance_adjustment_rate" && vals[k] !== 0)) continue;
+        try {
+          await insertInitialPriceRow(supabase, row.id, vals, `CSV取込で登録 (${new Date().toISOString().slice(0, 10)})`);
+        } catch (e) {
+          console.error("initial price row failed:", e);
+          toast.error(`${row.office_number}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       toast.success(`${deduped.length}件を取り込みました`);
       setLocalOrder(null);   // ドラッグ直後の並びではなく 取り込んだ表示順で出し直す
       router.refresh();
@@ -962,9 +1083,48 @@ export function OfficesList({
                       <span className="text-sm text-muted-foreground">%（例: 125 = 125%）</span>
                     </div>
                   </FormRow>
+                  {editingId && (
+                    <FormRow
+                      label="単価の改定月"
+                      note={changedInForm.length > 0
+                        ? `変えた単価 (${changedInForm.map((k) => PRICE_LABEL[k]).join("・")}) は この月の給与から。前の月は今までの単価のまま`
+                        : "単価を変えたときだけ使います。この月の給与から新しい単価になり、前の月は今までの単価のまま"}
+                    >
+                      <Input
+                        className="w-40"
+                        type="month"
+                        value={revisionMonth}
+                        onChange={(e) => setRevisionMonth(e.target.value)}
+                      />
+                    </FormRow>
+                  )}
+                  {editingId && (
+                    <FormRow label="単価の改定履歴">
+                      {priceHistory === null ? (
+                        <p className="text-xs text-muted-foreground">読み込み中…</p>
+                      ) : priceHistory.length === 0 ? (
+                        <p className="text-xs text-destructive">履歴がありません (給与計算は 上の単価をそのまま使います)</p>
+                      ) : (
+                        <ul className="space-y-1 text-xs">
+                          {priceHistory.map((r, i) => {
+                            const prev = i > 0 ? priceHistory[i - 1] : null;
+                            const keys = OFFICE_PRICE_KEYS.filter((k) => r[k] != null && (!prev || Number(prev[k]) !== Number(r[k])));
+                            return (
+                              <li key={r.effective_from}>
+                                <span className="font-medium">{r.effective_from === "1970-01-01" ? "初期値" : `${r.effective_from.slice(0, 7).replace("-", "年")}月分から`}</span>
+                                <span className="ml-2 text-muted-foreground">
+                                  {keys.length === 0 ? "変更なし" : keys.map((k) => `${PRICE_LABEL[k]} ${priceText(k, r[k])}`).join(" / ")}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </FormRow>
+                  )}
                 </div>
-                <Button onClick={handleSubmit} className="w-full" disabled={!form.office_id}>
-                  {editingId ? "更新" : "登録"}
+                <Button onClick={handleSubmit} className="w-full" disabled={!form.office_id || saving}>
+                  {saving ? "保存中…" : editingId ? "更新" : "登録"}
                 </Button>
               </div>
             </DialogContent>
