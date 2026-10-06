@@ -1346,15 +1346,23 @@ export function treatmentSubsidyAmount(
 }
 
 /**
- * 同行ドタキャン (010999) は 600円。ドタキャン・キャンセル (010386/013052/010008/019007) は全事業所共通の 800円 (事業所のキャンセル単価)。
- * 総括表 2026-03〜07 全事業所: 010999 の 5 件がすべて 600円、010386/013052/010008/019007 は 800円
- *   (ちはら台 鈴木恵子 010999+013052 = 1,400円)。
+ * 同行ドタキャン (010999) は 同行キャンセル単価 (事業所の設定。既定 600円)。
+ * ドタキャン・キャンセル (010386/013052/010008/019007) は 事業所のキャンセル単価 (全事業所 800円)。
+ * 総括表 2026-03〜08 全事業所: 同行キャンセル 18 人月がすべて 600円、通常 280 人月がすべて 800円、
+ *   両方ある 5 人月は 1,400円 (ちはら台 鈴木恵子 010999+013052)。例外 0。
+ * 2026-10-06: 600円の直書きを payroll_offices.doukou_cancel_unit_price に移した (user「同行キャンセル単価も追加して」)。
  */
 export const CANCEL_600_CODES = new Set(["010999"]);
+/** 同行キャンセル単価が事業所に無いとき (列の追加前のデータ等) の既定値 */
+export const DOUKOU_CANCEL_UNIT_PRICE_DEFAULT = 600;
 
-/** キャンセル手当 (時給者): キャンセル明細のサービスコードごとに 600円 / 事業所単価 */
-export function cancelAllowanceFromCodes(cancelCodes: string[], officeCancelUnitPrice: number): number {
-  return cancelCodes.reduce((s, code) => s + (CANCEL_600_CODES.has(code) ? 600 : officeCancelUnitPrice), 0);
+/** キャンセル手当 (時給者): キャンセル明細のサービスコードごとに 同行キャンセル単価 / 事業所のキャンセル単価 */
+export function cancelAllowanceFromCodes(
+  cancelCodes: string[],
+  officeCancelUnitPrice: number,
+  officeDoukouCancelUnitPrice: number = DOUKOU_CANCEL_UNIT_PRICE_DEFAULT,
+): number {
+  return cancelCodes.reduce((s, code) => s + (CANCEL_600_CODES.has(code) ? officeDoukouCancelUnitPrice : officeCancelUnitPrice), 0);
 }
 
 /** キャンセル手当 (時給者) */

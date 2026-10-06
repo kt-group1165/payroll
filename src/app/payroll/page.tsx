@@ -53,6 +53,7 @@ import {
   meetingMinutes,
   treatmentSubsidyAmount,
   cancelAllowanceFromCodes,
+  DOUKOU_CANCEL_UNIT_PRICE_DEFAULT,
   cancelAllowanceAmount,
   communicationFeeAmount,
   hourlyCommuteFeeAmount,
@@ -151,7 +152,7 @@ type RateGap = {
   category_id: string | null;
 };
 type CategoryHourlyRate  = { category_id: string; office_id: string; hourly_rate: number; effective_from?: string | null };
-type Office              = { id: string; office_number: string; name: string; short_name: string; office_type: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
+type Office              = { id: string; office_number: string; name: string; short_name: string; office_type: string; travel_unit_price: number; commute_unit_price: number; treatment_subsidy_amount: number; cancel_unit_price: number; doukou_cancel_unit_price: number; travel_allowance_rate: number; communication_fee_amount: number; meeting_unit_price: number; distance_adjustment_rate: number };
 type ServiceCategory     = { id: string; name: string };
 
 type Employee = {
@@ -300,7 +301,7 @@ export default function PayrollPage() {
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
-    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,meeting_unit_price, ${OFFICE_MASTER_JOIN}`).then(({ data, error }) => {
+    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,meeting_unit_price, ${OFFICE_MASTER_JOIN}`).then(({ data, error }) => {
       // ★ error を捨てない。★ 落ちると 種別が「(事業所なし)」のまま 理由が分からない (2026-09-30)
       if (error) { console.error("[payroll] 事業所の読み込みに失敗:", error.message); toast.error(`事業所の読み込みに失敗: ${error.message}`); return; }
       if (!data) return;
@@ -546,7 +547,7 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes, officePriceRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
         supabase.from("payroll_service_categories").select("id,name"),
-        supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
+        supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
         fetchEmployees(),
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)。
@@ -558,7 +559,7 @@ export default function PayrollPage() {
         getCareOvertimeLowerTiers(supabase),
         getMeetingFeeUnpaidOffices(supabase),
         // 事業所の単価の履歴 (effective_from 方式)。対象月で有効な行を後で重ねる (2026-09-26)
-        supabase.from("payroll_office_unit_prices").select("office_id,effective_from,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
+        supabase.from("payroll_office_unit_prices").select("office_id,effective_from,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
       ]);
       // 基本のデータの読み込みエラーを見逃さない (2026-09-19: 同時計算で読み込みが失敗し、時給・実績が欠けたまま計算していた)
       for (const [label, r] of [["サービス区分の対応", mappingRes], ["サービス区分", catRes], ["事業所", officeRes], ["区分の時給", rateRes], ["職員", empRes]] as const) {
@@ -1373,7 +1374,7 @@ export default function PayrollPage() {
         //   事業所が紙で申告した分を 手入力で足す。★ 実績にある月は入れない (二重になる)
         const cancelExtra = manualCancelExtraByNum.get(empNum) ?? 0;
         const cancelCount = cancelRecs.length + cancelExtra;
-        const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0)
+        const cancelAllowance = cancelAllowanceFromCodes(cancelRecs.map((r) => r.service_code), empOffice?.cancel_unit_price ?? 0, empOffice?.doukou_cancel_unit_price ?? DOUKOU_CANCEL_UNIT_PRICE_DEFAULT)
           + cancelAllowanceAmount(cancelExtra, empOffice?.cancel_unit_price ?? 0);
         const paidLeaveAllowance = paidLeaveAllowanceOf(info.empId, empNum, paidLeaveDays(empSummary.paidLeave, empSummary.halfLeave), info?.paidLeaveUnitPrice ?? 0);
         // 研修・会議の時間は 全事業所 一律 1,150円/時 (総括表① で実測。以前は同行の時給で 0.75 掛けの事業所が 863円になっていた)

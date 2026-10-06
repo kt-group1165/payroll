@@ -36,7 +36,7 @@ const OFFICE_TYPES: OfficeType[] = [
 
 const CSV_HEADERS = [
   "事業所番号", "正式名称", "略称", "住所", "種別", "週起算曜日",
-  "出張単価", "通勤単価", "処遇補助金", "キャンセル単価",
+  "出張単価", "通勤単価", "処遇補助金", "キャンセル単価", "同行キャンセル単価",
   "移動手当単価(円/分)", "通信費", "会議1単価", "距離調整係数", "法人名",
 ] as const;
 
@@ -120,6 +120,7 @@ export function OfficesList({
     commute_unit_price: 0,
     treatment_subsidy_amount: 0,
     cancel_unit_price: 0,
+    doukou_cancel_unit_price: 0,
     travel_allowance_rate: 0,
     communication_fee_amount: 0,
     meeting_unit_price: 0,
@@ -139,6 +140,7 @@ export function OfficesList({
       commute_unit_price: 0,
       treatment_subsidy_amount: 0,
       cancel_unit_price: 0,
+      doukou_cancel_unit_price: 0,
       travel_allowance_rate: 0,
       communication_fee_amount: 0,
       meeting_unit_price: 0,
@@ -164,6 +166,7 @@ export function OfficesList({
           commute_unit_price: form.commute_unit_price,
           treatment_subsidy_amount: form.treatment_subsidy_amount,
           cancel_unit_price: form.cancel_unit_price,
+          doukou_cancel_unit_price: form.doukou_cancel_unit_price,
           travel_allowance_rate: form.travel_allowance_rate,
           communication_fee_amount: form.communication_fee_amount,
           meeting_unit_price: form.meeting_unit_price,
@@ -185,6 +188,7 @@ export function OfficesList({
         commute_unit_price: form.commute_unit_price,
         treatment_subsidy_amount: form.treatment_subsidy_amount,
         cancel_unit_price: form.cancel_unit_price,
+        doukou_cancel_unit_price: form.doukou_cancel_unit_price,
         travel_allowance_rate: form.travel_allowance_rate,
         communication_fee_amount: form.communication_fee_amount,
         meeting_unit_price: form.meeting_unit_price,
@@ -212,6 +216,7 @@ export function OfficesList({
       commute_unit_price: office.commute_unit_price ?? 0,
       treatment_subsidy_amount: office.treatment_subsidy_amount ?? 0,
       cancel_unit_price: office.cancel_unit_price ?? 0,
+      doukou_cancel_unit_price: office.doukou_cancel_unit_price ?? 0,
       travel_allowance_rate: office.travel_allowance_rate ?? 0,
       communication_fee_amount: office.communication_fee_amount ?? 0,
       meeting_unit_price: office.meeting_unit_price ?? 0,
@@ -379,11 +384,12 @@ export function OfficesList({
         o.short_name ?? "",
         o.address,
         o.office_type,
-        String(o.work_week_start ?? 0),
+        ["日", "月", "火", "水", "木", "金", "土"][o.work_week_start ?? 0] ?? "日",   // 曜日の字で出す (取込は 日〜土 / 0-6 / 「金曜日」のどれでも読める)
         String(o.travel_unit_price ?? 0),
         String(o.commute_unit_price ?? 0),
         String(o.treatment_subsidy_amount ?? 0),
         String(o.cancel_unit_price ?? 0),
+        String(o.doukou_cancel_unit_price ?? 0),
         String(Math.round(((o.travel_allowance_rate ?? 0) / 60) * 100) / 100),   // 画面と同じ 円/分 で出す (DB は 円/時)
         String(o.communication_fee_amount ?? 0),
         String(o.meeting_unit_price ?? 0),
@@ -510,6 +516,8 @@ export function OfficesList({
           commute_unit_price: numOr(get(cols, headers, "通勤単価"), 0),
           treatment_subsidy_amount: numOr(get(cols, headers, "処遇補助金"), 0),
           cancel_unit_price: numOr(get(cols, headers, "キャンセル単価"), 0),
+          // 旧形式の CSV (列なし) は 既定 600 円 (総括表② 全事業所 600 円)
+          doukou_cancel_unit_price: headers.includes("同行キャンセル単価") ? numOr(get(cols, headers, "同行キャンセル単価"), 0) : 600,
           // 円/分 の列 (今の出力) を優先。旧形式の「移動手当単価」列は 円/時 のまま読む
           travel_allowance_rate: headers.includes("移動手当単価(円/分)")
             ? numOr(get(cols, headers, "移動手当単価(円/分)"), 0) * 60
@@ -870,6 +878,18 @@ export function OfficesList({
                       <span className="text-sm text-muted-foreground">円/件</span>
                     </div>
                   </FormRow>
+                  <FormRow label="同行キャンセル手当単価" note="同行ドタキャン (010999) 1件あたり">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0}
+                        value={form.doukou_cancel_unit_price || ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, doukou_cancel_unit_price: parseFloat(e.target.value) || 0 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/件</span>
+                    </div>
+                  </FormRow>
                   {/* 移動手当: DB は 円/時 で持つ (計算は travelAllowanceAmount が 円/時)。画面は 円/分 で入力する: 20円/分 = 1200円/時 */}
                   <FormRow label="移動手当単価">
                     <div className="flex items-center gap-2">
@@ -932,6 +952,7 @@ export function OfficesList({
             <TableHead className="text-right">通勤単価</TableHead>
             <TableHead className="text-right">処遇補助金</TableHead>
             <TableHead className="text-right">キャンセル単価</TableHead>
+            <TableHead className="text-right">同行キャンセル単価</TableHead>
             <TableHead className="text-right">移動手当単価</TableHead>
             <TableHead className="text-right">会議1単価</TableHead>
             <TableHead className="text-right">距離調整係数</TableHead>
@@ -942,7 +963,7 @@ export function OfficesList({
         <TableBody>
           {offices.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={15} className="text-center text-muted-foreground">
+              <TableCell colSpan={16} className="text-center text-muted-foreground">
                 事業所が登録されていません
               </TableCell>
             </TableRow>
@@ -970,6 +991,9 @@ export function OfficesList({
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.cancel_unit_price ? `${office.cancel_unit_price}円/件` : "—"}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {office.doukou_cancel_unit_price ? `${office.doukou_cancel_unit_price}円/件` : "—"}
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.travel_allowance_rate ? `${Math.round((office.travel_allowance_rate / 60) * 100) / 100}円/分` : "—"}

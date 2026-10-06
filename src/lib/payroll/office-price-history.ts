@@ -25,6 +25,7 @@ export type OfficeUnitPriceRow = {
   commute_unit_price?: number | null;
   treatment_subsidy_amount?: number | null;
   cancel_unit_price?: number | null;
+  doukou_cancel_unit_price?: number | null;
   travel_allowance_rate?: number | null;
   communication_fee_amount?: number | null;
   meeting_unit_price?: number | null;
@@ -37,6 +38,7 @@ export const OFFICE_PRICE_KEYS = [
   "commute_unit_price",
   "treatment_subsidy_amount",
   "cancel_unit_price",
+  "doukou_cancel_unit_price",
   "travel_allowance_rate",
   "communication_fee_amount",
   "meeting_unit_price",

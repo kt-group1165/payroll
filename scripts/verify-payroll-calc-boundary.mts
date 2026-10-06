@@ -521,6 +521,7 @@ eq("処遇改善支援費: 社保未加入 → 給与設定の額", treatmentSub
 eq("キャンセル手当: 3件×500円", cancelAllowanceAmount(3, 500), 1500);
 eq("キャンセル手当: 0件は0円", cancelAllowanceAmount(0, 500), 0);
 eq("★ ドタキャン: 010999 は600円、他のキャンセルコードは事業所単価 (ちはら台 鈴木恵子 010999+013052 = 1,400)", cancelAllowanceFromCodes(["010999", "013052"], 800), 1400);
+eq("同行キャンセル単価は事業所の値を使う (010999 ×2 を 700円 → 1,400 / 通常 013052 は 800)", cancelAllowanceFromCodes(["010999", "010999", "013052"], 800, 700), 2200);
 eq("ドタキャン: 010386 ×2 = 1,600 / 無し = 0", [cancelAllowanceFromCodes(["010386", "010386"], 800), cancelAllowanceFromCodes([], 800)], [1600, 0]);
 eq("有給手当: 2.5日×1000円 (半休を含む端数)", paidLeaveAllowanceAmount(2.5, 1000), 2500);
 

@@ -64,6 +64,8 @@ export interface Office {
   commute_unit_price: number;
   treatment_subsidy_amount: number;
   cancel_unit_price: number;
+  /** 同行キャンセル単価 (円/件)。010999 同行ドタキャンに掛ける。migrations/payroll_offices_doukou_cancel_unit_price.sql */
+  doukou_cancel_unit_price: number;
   travel_allowance_rate: number;
   communication_fee_amount: number;
   meeting_unit_price: number;
