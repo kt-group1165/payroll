@@ -1,5 +1,5 @@
 /**
- * check:office-price-revision — 事業所の単価を画面・CSV で変えたとき 改定月から効き、前の月は変わらないか (2026-10-06 新設)
+ * check:office-price-revision — 事業所の単価・残業設定を変えたとき 改定月から効き、前の月は変わらないか (2026-10-06 新設)
  *
  *   npm run check:office-price-revision
  *
@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyOfficeUnitPrices, type OfficeUnitPriceRow } from "../src/lib/payroll/office-price-history.js";
 import { priceValuesOf, recordOfficePriceRevision, type OfficePriceValues } from "../src/lib/payroll/office-price-revision.js";
+import { activeOvertimeRow, buildActiveOvertimeMap } from "../src/lib/payroll/overtime-settings-history.js";
 
 type Row = OfficeUnitPriceRow & { id: string; note?: string; updated_at?: string };
 
@@ -107,6 +108,20 @@ const main = async () => {
 
   const unchanged = await recordOfficePriceRevision(sb, OFFICE, after2, after2, "2026-12-01", "test");
   eq("変えていなければ 何も書かない", [unchanged.laterFrom, rows.length], [[], 3]);
+
+  // 残業設定の履歴 (2026-10-06): 改定月より前は旧設定・後は新設定。job_type だけの Map (旧実装) だと 後の行が常に勝つ
+  const ot = [
+    { job_type: "訪問介護", effective_from: "1970-01-01", scheduled_hours_per_month: 168 },
+    { job_type: "訪問介護", effective_from: "2026-11-01", scheduled_hours_per_month: 160 },
+    { job_type: "本社", effective_from: "1970-01-01", scheduled_hours_per_month: 160 },
+  ];
+  eq("残業設定: 10月分は 168h のまま", buildActiveOvertimeMap(ot, "2026-10-01").get("訪問介護")?.scheduled_hours_per_month, 168);
+  eq("残業設定: 11月分から 160h", buildActiveOvertimeMap(ot, "2026-11-01").get("訪問介護")?.scheduled_hours_per_month, 160);
+  eq("残業設定: 改定の無い職種は初期値", activeOvertimeRow(ot, "本社", "2026-12-01")?.scheduled_hours_per_month, 160);
+  const oldStyle = new Map(ot.map((r) => [r.job_type, r]));
+  const negOt = oldStyle.get("訪問介護")?.scheduled_hours_per_month === 160;
+  if (negOt) pass++; else fail++;
+  console.log(`${negOt ? "✓" : "✗"} 負のコントロール: job_type だけの Map だと 10月分も 160h になる (= 旧実装の誤りを検査が捉える)`);
 
   // 負のコントロール: null 埋めをしない版では ② が落ちる (10月分が新しい 650 になってしまう)
   const neg = await scenario(false);

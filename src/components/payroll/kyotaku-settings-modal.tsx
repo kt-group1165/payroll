@@ -590,7 +590,7 @@ export function KyotakuSettingsModal({
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                      {history.map((r) => (
+                                      {history.map((r, hi) => (
                                         <TableRow key={r.id}>
                                           <TableCell className="whitespace-nowrap">
                                             {fmtDate(r.effective_from)}
@@ -598,12 +598,17 @@ export function KyotakuSettingsModal({
                                           {INPUT_COLS.map((c) => (
                                             <TableCell
                                               key={c.key}
-                                              className="whitespace-nowrap text-right tabular-nums"
+                                              className={`whitespace-nowrap text-right tabular-nums ${
+                                                // 1 つ古い行 (新しい順なので次の要素) から変わった値に色 (2026-10-06)
+                                                history[hi + 1] && history[hi + 1][c.key] !== r[c.key] ? "bg-amber-100 font-semibold dark:bg-amber-900/40" : ""
+                                              }`}
                                             >
                                               {r[c.key].toLocaleString("ja-JP")}
                                             </TableCell>
                                           ))}
-                                          <TableCell className="whitespace-nowrap">
+                                          <TableCell className={`whitespace-nowrap ${
+                                            history[hi + 1] && (history[hi + 1].plan_payment_cycle ?? "monthly") !== (r.plan_payment_cycle ?? "monthly") ? "bg-amber-100 font-semibold dark:bg-amber-900/40" : ""
+                                          }`}>
                                             {(r.plan_payment_cycle ?? "monthly") === "semi_annual"
                                               ? "半期締め"
                                               : "毎月"}

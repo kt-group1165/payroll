@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { HistoryButton, type HistoryColumn } from "@/components/payroll/history-table";
+import { buildActiveOvertimeMap } from "@/lib/payroll/overtime-settings-history";
+import { currentMonthJst, revisionMonthToDate } from "@/lib/payroll/office-price-revision";
 import type { Employee, Office, JobType } from "@/types/database";
 import {
   buildActiveSalaryMap,
@@ -80,6 +83,8 @@ function thisMonthStart(): string {
 type OvertimeSetting = {
   id?: string;
   job_type: string;
+  /** いつから有効か (履歴。同じ job_type に複数行ありうる) */
+  effective_from?: string;
   scheduled_hours_per_month: number;
   include_base_personal_salary: boolean;
   include_skill_salary: boolean;
@@ -223,13 +228,22 @@ const INCLUDE_FIELDS: { key: keyof OvertimeSetting; label: string }[] = [
   { key: "include_special_bonus",           label: "特別報奨金" },
 ];
 
+/** 残業設定の履歴の表示列 (HistoryTable) */
+const OVERTIME_HISTORY_COLUMNS: HistoryColumn<OvertimeSetting & { effective_from: string }>[] = [
+  { key: "scheduled_hours_per_month", label: "月所定", format: (r) => `${r.scheduled_hours_per_month}h` },
+  ...INCLUDE_FIELDS.map((f) => ({ key: f.key, label: f.label, format: (r: OvertimeSetting) => (r[f.key] ? "✓" : "—") })),
+];
+
 function OvertimeSettingsPanel({
-  settings, onUpdate, onSave, saving,
+  settings, onUpdate, onSave, saving, revisionMonth, onRevisionMonth, changedJobTypes,
 }: {
   settings: Map<string, OvertimeSetting>;
   onUpdate: (jobType: string, patch: Partial<OvertimeSetting>) => void;
   onSave: () => void;
   saving: boolean;
+  revisionMonth: string;
+  onRevisionMonth: (m: string) => void;
+  changedJobTypes: string[];
 }) {
   return (
     <div className="space-y-4">
@@ -247,14 +261,15 @@ function OvertimeSettingsPanel({
               {INCLUDE_FIELDS.map((f) => (
                 <th key={f.key} className="text-center px-3 py-2 font-medium text-xs">{f.label}</th>
               ))}
+              <th className="text-center px-3 py-2 font-medium text-xs">履歴</th>
             </tr>
           </thead>
           <tbody>
             {JOB_TYPES_FOR_OVERTIME.map((jt) => {
               const s = settings.get(jt) ?? emptyOvertimeSetting(jt);
               return (
-                <tr key={jt} className="border-b hover:bg-muted/20">
-                  <td className="px-4 py-2 font-medium">{jt}</td>
+                <tr key={jt} className={`border-b hover:bg-muted/20 ${changedJobTypes.includes(jt) ? "bg-amber-50 dark:bg-amber-900/20" : ""}`}>
+                  <td className="px-4 py-2 font-medium">{jt}{changedJobTypes.includes(jt) && <span className="ml-1 text-xs text-amber-700">変更あり</span>}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center justify-end gap-1">
                       <Input
@@ -277,6 +292,17 @@ function OvertimeSettingsPanel({
                       />
                     </td>
                   ))}
+                  <td className="text-center px-2 py-1">
+                    <HistoryButton
+                      title={`残業設定 (${jt})`}
+                      columns={OVERTIME_HISTORY_COLUMNS}
+                      load={async () => {
+                        const { data, error } = await supabase.from("payroll_overtime_settings").select("*").eq("job_type", jt).order("effective_from");
+                        if (error) throw new Error(error.message);
+                        return (data ?? []) as (OvertimeSetting & { effective_from: string })[];
+                      }}
+                    />
+                  </td>
                 </tr>
               );
             })}
@@ -284,8 +310,13 @@ function OvertimeSettingsPanel({
         </table>
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={onSave} disabled={saving}>
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <span className="font-medium">改定月</span>
+          <Input type="month" value={revisionMonth} onChange={(e) => onRevisionMonth(e.target.value)} className="h-8 w-40" />
+        </label>
+        <span className="text-xs text-muted-foreground">変えた設定は この月の給与から。前の月は今までの設定のまま</span>
+        <Button onClick={onSave} disabled={saving || changedJobTypes.length === 0}>
           {saving ? "保存中…" : "💾 残業設定を保存"}
         </Button>
       </div>
@@ -398,10 +429,26 @@ export function SalaryList({
   const [importing, setImporting] = useState(false);
 
   // ─── 残業設定 ────────────────────────────────────────────────
-  const [overtimeSettings, setOvertimeSettings] = useState<Map<string, OvertimeSetting>>(() => {
-    const map = new Map<string, OvertimeSetting>();
-    for (const r of initialOvertimeSettings) map.set(r.job_type, r);
-    return map;
+  // 残業設定は履歴 (job_type × effective_from)。画面は 改定月の時点で有効な行を出し、変えた職種だけ 改定月の行として保存する
+  const [overtimeRevisionMonth, setOvertimeRevisionMonth] = useState(currentMonthJst());
+  const [overtimeRows, setOvertimeRows] = useState<OvertimeSetting[]>(initialOvertimeSettings);
+  const activeOvertime = useMemo(
+    () => buildActiveOvertimeMap(overtimeRows, revisionMonthToDate(overtimeRevisionMonth) ?? `${currentMonthJst()}-01`),
+    [overtimeRows, overtimeRevisionMonth],
+  );
+  // 編集中の値 (職種ごと)。保存するまで activeOvertime との差が「変更あり」
+  const [overtimeEdits, setOvertimeEdits] = useState<Map<string, OvertimeSetting>>(new Map());
+  const overtimeSettings = useMemo(() => {
+    const m = new Map(activeOvertime);
+    for (const [k, v] of overtimeEdits) m.set(k, v);
+    return m;
+  }, [activeOvertime, overtimeEdits]);
+  const overtimeFieldKeys = ["scheduled_hours_per_month", ...INCLUDE_FIELDS.map((f) => f.key)] as (keyof OvertimeSetting)[];
+  const changedOvertimeJobTypes = JOB_TYPES_FOR_OVERTIME.filter((jt) => {
+    const e = overtimeEdits.get(jt);
+    if (!e) return false;
+    const a = activeOvertime.get(jt) ?? emptyOvertimeSetting(jt);
+    return overtimeFieldKeys.some((k) => e[k] !== a[k]);
   });
   const [savingOvertime, setSavingOvertime] = useState(false);
 
@@ -425,12 +472,9 @@ export function SalaryList({
     }
     setAllSettings(all);
     // overtime も再取得
-    const { data: otData } = await supabase.from("payroll_overtime_settings").select("*");
-    if (otData) {
-      const map = new Map<string, OvertimeSetting>();
-      for (const r of otData as OvertimeSetting[]) map.set(r.job_type, r);
-      setOvertimeSettings(map);
-    }
+    const { data: otData, error: otErr } = await supabase.from("payroll_overtime_settings").select("*");
+    if (otErr) toast.error(`残業設定の読み込みに失敗: ${otErr.message}`);
+    else if (otData) { setOvertimeRows(otData as OvertimeSetting[]); setOvertimeEdits(new Map()); }
     // employees / offices は server 由来。 router.refresh で server 再評価
     router.refresh();
   }, [router]);
@@ -713,26 +757,36 @@ export function SalaryList({
   // ─── 残業設定 保存 ───────────────────────────────────────────
 
   const updOvertime = (jobType: string, patch: Partial<OvertimeSetting>) => {
-    setOvertimeSettings((prev) => {
+    setOvertimeEdits((prev) => {
       const next = new Map(prev);
-      next.set(jobType, { ...(prev.get(jobType) ?? emptyOvertimeSetting(jobType)), ...patch });
+      next.set(jobType, { ...(overtimeSettings.get(jobType) ?? emptyOvertimeSetting(jobType)), ...patch });
       return next;
     });
   };
 
+  /**
+   * ★ 2026-10-06: その場で UPDATE するのをやめた (1970-01-01 の行を書き換えると 過去の月の残業単価まで変わる)。
+   *   変えた職種だけ 改定月の 1 日の行として upsert (同じ月なら上書き)。前の月は今までの設定のまま。
+   */
   const handleSaveOvertime = async () => {
+    const eff = revisionMonthToDate(overtimeRevisionMonth);
+    if (!eff) { toast.error("改定月を入れてください (例: 2026-11)"); return; }
+    if (changedOvertimeJobTypes.length === 0) { toast.info("変更はありません"); return; }
+    const later = overtimeRows.filter((r) => (changedOvertimeJobTypes as string[]).includes(r.job_type) && (r.effective_from ?? "1970-01-01") > eff);
+    if (!confirm(
+      `${overtimeRevisionMonth.replace("-", "年")}月分の給与から 残業設定を変えます: ${changedOvertimeJobTypes.join("・")}\n` +
+      `それより前の月は 今までの設定のまま計算されます。` +
+      (later.length > 0 ? `\n\n⚠ もっと後の改定 (${[...new Set(later.map((r) => `${r.job_type} ${String(r.effective_from).slice(0, 7)}`))].join(" / ")}) があるため、その月以降は そちらの設定のままです。` : "") +
+      `\n\nよいですか？`,
+    )) return;
     setSavingOvertime(true);
     let fail = 0;
     const errSamples: string[] = [];
-    for (const jt of JOB_TYPES_FOR_OVERTIME) {
+    for (const jt of changedOvertimeJobTypes) {
       const s = overtimeSettings.get(jt) ?? emptyOvertimeSetting(jt);
-      const { id, ...payload } = s;
-      let error;
-      if (id) {
-        ({ error } = await supabase.from("payroll_overtime_settings").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id));
-      } else {
-        ({ error } = await supabase.from("payroll_overtime_settings").insert(payload));
-      }
+      const payload: Record<string, unknown> = { job_type: jt, effective_from: eff, updated_at: new Date().toISOString() };
+      for (const k of overtimeFieldKeys) payload[k] = s[k];
+      const { error } = await supabase.from("payroll_overtime_settings").upsert(payload, { onConflict: "job_type,effective_from" });
       if (error) {
         fail++;
         console.warn(`[salary-list] handleSaveOvertime 失敗 (jobType=${jt}):`, error.message);
@@ -1055,6 +1109,9 @@ export function SalaryList({
             onUpdate={updOvertime}
             onSave={handleSaveOvertime}
             saving={savingOvertime}
+            revisionMonth={overtimeRevisionMonth}
+            onRevisionMonth={(m) => { setOvertimeRevisionMonth(m); setOvertimeEdits(new Map()); }}
+            changedJobTypes={changedOvertimeJobTypes}
           />
         </TabsContent>
       </Tabs>
@@ -1317,31 +1374,36 @@ function SalaryHistoryDialog({
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((r) => (
+                {sortedRows.map((r, i) => {
+                  // 1 つ古い行 (DESC なので次の要素) から変わったセルに色を付ける (2026-10-06 user「履歴が見れるように」)
+                  const prev = sortedRows[i + 1];
+                  const chg = (f: (x: SalarySettings) => unknown) =>
+                    prev && JSON.stringify(f(prev) ?? null) !== JSON.stringify(f(r) ?? null) ? " bg-amber-100 font-semibold dark:bg-amber-900/40" : "";
+                  return (
                   <tr key={r.id ?? r.effective_from} className="border-b hover:bg-muted/20">
                     <td className="px-2 py-1.5 font-mono">{r.effective_from}</td>
-                    <td className="px-2 py-1.5">{r.salary_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className="px-2 py-1.5">{r.role_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className="px-2 py-1.5 text-right">{r.base_personal_salary.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.skill_salary.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.position_allowance.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.qualification_allowance.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.tenure_allowance.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.treatment_improvement.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.specific_treatment_improvement.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.treatment_subsidy.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.fixed_overtime_pay.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.special_bonus.toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right font-semibold">{fixedTotal(r).toLocaleString()}</td>
-                    <td className="px-2 py-1.5 text-right">{r.care_overtime_threshold_hours > 0 || r.care_overtime_unit_price > 0
+                    <td className={"px-2 py-1.5" + chg((x) => x.salary_type)}>{r.salary_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className={"px-2 py-1.5" + chg((x) => x.role_type)}>{r.role_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.base_personal_salary)}>{r.base_personal_salary.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.skill_salary)}>{r.skill_salary.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.position_allowance)}>{r.position_allowance.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.qualification_allowance)}>{r.qualification_allowance.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.tenure_allowance)}>{r.tenure_allowance.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.treatment_improvement)}>{r.treatment_improvement.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.specific_treatment_improvement)}>{r.specific_treatment_improvement.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.treatment_subsidy)}>{r.treatment_subsidy.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.fixed_overtime_pay)}>{r.fixed_overtime_pay.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.special_bonus)}>{r.special_bonus.toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right font-semibold" + chg((x) => fixedTotal(x))}>{fixedTotal(r).toLocaleString()}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => [x.care_overtime_threshold_hours, x.care_overtime_unit_price])}>{r.care_overtime_threshold_hours > 0 || r.care_overtime_unit_price > 0
                       ? `${r.care_overtime_threshold_hours}h / ${r.care_overtime_unit_price.toLocaleString()}`
                       : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className="px-2 py-1.5 text-right">{r.yocho_unit_price > 0 ? r.yocho_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className="px-2 py-1.5 text-right">{r.office_work_hourly_rate > 0 ? r.office_work_hourly_rate.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className="px-2 py-1.5 text-right">{r.paid_leave_unit_price ? r.paid_leave_unit_price.toLocaleString() : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className="px-2 py-1.5">{r.communication_fee_type ? COMM_FEE_LABEL[r.communication_fee_type] ?? r.communication_fee_type : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className="px-2 py-1.5 text-right">{r.travel_unit_price > 0 ? r.travel_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className="px-2 py-1.5 text-right">{r.bonus_amount > 0 ? r.bonus_amount.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.yocho_unit_price)}>{r.yocho_unit_price > 0 ? r.yocho_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.office_work_hourly_rate)}>{r.office_work_hourly_rate > 0 ? r.office_work_hourly_rate.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.paid_leave_unit_price)}>{r.paid_leave_unit_price ? r.paid_leave_unit_price.toLocaleString() : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className={"px-2 py-1.5" + chg((x) => x.communication_fee_type)}>{r.communication_fee_type ? COMM_FEE_LABEL[r.communication_fee_type] ?? r.communication_fee_type : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.travel_unit_price)}>{r.travel_unit_price > 0 ? r.travel_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
+                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.bonus_amount)}>{r.bonus_amount > 0 ? r.bonus_amount.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
                     <td className="px-2 py-1.5 text-center">
                       {r.id ? (
                         <button
@@ -1356,7 +1418,8 @@ function SalaryHistoryDialog({
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

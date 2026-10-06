@@ -17,6 +17,7 @@ import {
   type KyotakuSalary,
 } from "@/lib/payroll/kyotaku-salary-history";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
+import { activeOvertimeRow } from "@/lib/payroll/overtime-settings-history";
 
 /**
  * 居宅介護支援 労働時間チェック用データ取得 hook (SWR ベース)。
@@ -253,14 +254,15 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
   }
 
   // 4c) overtime_settings (job_type='居宅介護支援') を 1 件取得
-  const { data: otData } = await supabase
+  const { data: otData, error: otErr } = await supabase
     .from("payroll_overtime_settings")
     .select(
-      "job_type, scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
+      "job_type, effective_from, scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
     )
-    .eq("job_type", "居宅介護支援")
-    .maybeSingle();
-  const otSetting = (otData ?? null) as OvertimeSettingForCalc | null;
+    .eq("job_type", "居宅介護支援");
+  if (otErr) throw new Error(`残業設定の読み込みに失敗: ${otErr.message}`);
+  // 残業設定は履歴 (effective_from)。月ごとに 有効な行を使う (下のループで解決)
+  const otRows = (otData ?? []) as (OvertimeSettingForCalc & { job_type: string; effective_from: string })[];
 
   // 4d) 会社休日 (お盆 / 年末年始) を fetch
   //     祝日と同様に「所定労働日でない日」として absence 判定から除外する。
@@ -295,7 +297,7 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
       const salary = kyotakuToSalarySettings(emp.id, ym);
 
       const hasAbsence = sum.total_absence > 0;
-      const ot = calcOvertimePayBreakdown(sum, salary, otSetting);
+      const ot = calcOvertimePayBreakdown(sum, salary, activeOvertimeRow(otRows, "居宅介護支援", `${ym}-01`));
       const hasFixedOvertimeExceeded = ot.isExceeding;
 
       if (!hasAbsence && !hasFixedOvertimeExceeded) continue;

@@ -58,6 +58,7 @@ import {
 import { useKyotakuAttendanceRows } from "@/lib/swr/use-kyotaku-attendance-rows";
 import { useKyotakuMonthly } from "@/lib/swr/use-kyotaku-attendance-monthly";
 import { useCompanyHolidays } from "@/lib/swr/use-company-holidays";
+import { activeOvertimeRow } from "@/lib/payroll/overtime-settings-history";
 
 /**
  * 居宅介護支援ケアマネ 出勤簿入力画面
@@ -713,7 +714,7 @@ export function KyotakuAttendanceContent() {
     //   を取得して salary 構築する (旧 payroll_employees.kyotaku_* は obsolete)。
     //   overtime_settings は共通 (job_type='居宅介護支援')。
     if (isKyotaku) try {
-      const [{ data: salaryRows }, { data: otRow }] = await Promise.all([
+      const [{ data: salaryRows }, { data: otRows }] = await Promise.all([
         supabase
           .from("payroll_kyotaku_salary")
           .select(
@@ -724,11 +725,12 @@ export function KyotakuAttendanceContent() {
         supabase
           .from("payroll_overtime_settings")
           .select(
-            "scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
+            "job_type, effective_from, scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
           )
-          .eq("job_type", "居宅介護支援")
-          .maybeSingle(),
+          .eq("job_type", "居宅介護支援"),
       ]);
+      // 残業設定は履歴 (effective_from)。対象月で有効な行を使う (maybeSingle だと 履歴が 2 行で落ちる)
+      const otRow = activeOvertimeRow((otRows ?? []) as { job_type: string; effective_from: string }[], "居宅介護支援", `${month}-01`);
       const allRows = (salaryRows ?? []) as unknown as KyotakuSalary[];
       const active = getActiveKyotakuSalary(
         allRows,

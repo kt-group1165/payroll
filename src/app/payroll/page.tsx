@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calculator";
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
+import { buildActiveOvertimeMap } from "@/lib/payroll/overtime-settings-history";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { applyOfficeUnitPrices, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
@@ -745,7 +746,8 @@ export default function PayrollPage() {
         ) as unknown as AttendanceRecord[];
       }
       const ofRecords  = allOfRecords;
-      const otMap = new Map((otRes.data ?? []).map((r: OvertimeSetting) => [r.job_type, r]));
+      // 対象月で有効な行 (effective_from <= 月初の最新)。job_type だけで Map にすると 履歴が 2 行以上で不定になる
+      const otMap = buildActiveOvertimeMap((otRes.data ?? []) as (OvertimeSetting & { effective_from?: string })[], selectedMonthToMonthStart(selectedMonth));
       setOtSettings(otMap);
 
       // 出勤簿・実績・事業所書式を職員番号でグループ化
