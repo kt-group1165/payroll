@@ -7,6 +7,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
+import { isEmployedInMonth, type EmploymentFields } from "@/lib/payroll/employment-in-month";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { toast } from "sonner";
 import {
@@ -79,10 +80,10 @@ export default function DistancePage() {
       setProgress("職員情報を取得中...");
       const { data: empData } = await supabase
         .from("payroll_employees")
-        .select("id,employee_number,name,address,office_id")
-        .eq("office_id", selectedOfficeId)
-        .neq("employment_status", "退職者");
-      const employees = (empData ?? []) as Employee[];
+        .select("id,employee_number,name,address,office_id,employment_status,resignation_date")
+        .eq("office_id", selectedOfficeId);
+      // ★ その月に在籍していた人 (給与計算と同じ isEmployedInMonth)。後から辞めた人の過去月の距離も出せるように (2026-10-06)
+      const employees = ((empData ?? []) as (Employee & EmploymentFields)[]).filter((e) => isEmployedInMonth(e, selectedMonth));
       const empWithAddress = employees.filter((e) => e.address?.trim());
       if (empWithAddress.length === 0) { toast.error("住所が登録されている職員がいません"); return; }
 

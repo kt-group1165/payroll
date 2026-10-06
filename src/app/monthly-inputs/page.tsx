@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MONTHLY_INPUT_ITEMS } from "@/lib/payroll/monthly-inputs";
+import { isEmployedInMonth } from "@/lib/payroll/employment-in-month";
 
 /**
  * /monthly-inputs 月ごとの手入力 (2026-09-18)
@@ -17,7 +18,7 @@ import { MONTHLY_INPUT_ITEMS } from "@/lib/payroll/monthly-inputs";
  */
 
 type OfficeRow = { id: string; office_number: string; name: string; office_type: string };
-type EmpRow = { id: string; employee_number: string; name: string; salary_type: string; role_type: string; employment_status: string };
+type EmpRow = { id: string; employee_number: string; name: string; salary_type: string; role_type: string; employment_status: string; resignation_date: string | null };
 type InputRow = { employee_number: string; item_key: string; numeric_value: number | null };
 
 function monthOptions(): string[] {
@@ -58,15 +59,16 @@ export default function MonthlyInputsPage() {
     let cancelled = false;
     (async () => {
       const [empRes, inRes] = await Promise.all([
-        supabase.from("payroll_employees").select("id,employee_number,name,salary_type,role_type,employment_status")
-          .eq("office_id", office.id).neq("employment_status", "退職者"),
+        // ★ その月に在籍していた人 (給与計算と同じ isEmployedInMonth)。後から辞めた人の過去月も直せるように (2026-10-06)
+        supabase.from("payroll_employees").select("id,employee_number,name,salary_type,role_type,employment_status,resignation_date")
+          .eq("office_id", office.id),
         supabase.from("payroll_monthly_inputs").select("employee_number,item_key,numeric_value")
           .eq("office_number", office.office_number).eq("processing_month", month),
       ]);
       if (cancelled) return;
       if (empRes.error) { toast.error(`職員の取得に失敗: ${empRes.error.message}`); return; }
       if (inRes.error) { toast.error(`手入力の取得に失敗: ${inRes.error.message}`); return; }
-      const list = ((empRes.data ?? []) as EmpRow[]).sort((a, b) =>
+      const list = ((empRes.data ?? []) as EmpRow[]).filter((e) => isEmployedInMonth(e, month)).sort((a, b) =>
         (a.salary_type === "月給" ? 0 : 1) - (b.salary_type === "月給" ? 0 : 1) || a.name.localeCompare(b.name, "ja"));
       const v: Record<string, string> = {};
       for (const r of (inRes.data ?? []) as InputRow[]) v[`${r.employee_number}|${r.item_key}`] = r.numeric_value == null ? "" : String(r.numeric_value);

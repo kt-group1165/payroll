@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import type { Employee } from "@/types/database";
 import type { OfficeInputEntry, OfficeInputEntryInput } from "./types";
 import type { OfficeFormRecord } from "@/lib/payroll/payroll-calc";
+import { isEmployedInMonth, monthBounds } from "@/lib/payroll/employment-in-month";
 
 /**
  * `.in()` に渡す ID の chunk 上限。
@@ -180,8 +181,8 @@ export async function deleteEntries(ids: string[]): Promise<void> {
  * 既存 employees パターンを踏襲 (= payroll_employees.office_id 一致)。
  *
  * ★ その月に在籍していた人を出す (2026-10-06)。以前は在職者だけで、
- *   月の途中で辞めた人の書式が画面から入れられなかった (給与計算は 退職日が月初以降の人も含める)。
- *   = 在職者 + 退職日がその月の 1 日以降の人。入社日がその月の末日より後の人は出さない。
+ *   月の途中で辞めた人・休職者の書式が画面から入れられなかった (給与計算は 退職日が月初以降の人も含める)。
+ *   判定は給与計算と同じ isEmployedInMonth。入社日がその月の末日より後の人は出さない。
  */
 export async function listEmployeesByOffice(
   officeId: string,
@@ -199,17 +200,17 @@ export async function listEmployeesByOffice(
   }
 
   const list = (data ?? []) as Employee[];
-  if (!billingMonth || !/^\d{4}-\d{2}$/.test(billingMonth)) {
-    return list.filter((e) => e.employment_status === "在職者");
-  }
-  const first = `${billingMonth}-01`;
-  const [y, m] = billingMonth.split("-").map(Number);
-  const last = `${billingMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
-  return list.filter((e) => {
-    if (e.hire_date && e.hire_date > last) return false;
-    if (e.employment_status === "在職者") return true;
-    return !!e.resignation_date && e.resignation_date >= first;
-  });
+  // ★ 在籍の判定は 給与計算と同じ関数 (isEmployedInMonth。在職区分を直接比べない。
+  //   check:employment-status-sites)。休職者も出る (書式を入れることがある)
+  const ym = billingMonth && /^\d{4}-\d{2}$/.test(billingMonth) ? billingMonth.replace("-", "") : currentYM();
+  const { end } = monthBounds(ym);
+  return list.filter((e) => isEmployedInMonth(e, ym) && !(e.hire_date && e.hire_date > end));
+}
+
+/** 今月 "YYYYMM" */
+function currentYM(): string {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /**

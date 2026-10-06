@@ -35,10 +35,9 @@ const ALLOW: Record<string, [number, string]> = {
   "lib/kaigo-import/build-records.ts": [3, "同じ番号が複数いるときの優先順 (在職者を優先)。影響は小"],
   // ★ 過去の月を選んで入力する画面が 今の状態で人を絞っている → 後から退職した人の過去月を直せない。
   //   isEmployedInMonth に揃える予定 (2026-09-27 時点は未着手)。揃えたら件数を減らす
-  "app/monthly-inputs/page.tsx": [3, "★ 過去月の入力を今の状態で絞っている (揃える予定)"],
-  "app/distance/page.tsx": [1, "★ 過去月の距離計算を今の状態で絞っている (揃える予定)"],
-  "app/office-worker-care/page.tsx": [3, "★ 過去月の入力を今の状態で絞っている (揃える予定)"],
-  "lib/office-input/queries.ts": [1, "★ 事業所書式の入力を 在職者だけに絞っている (休職者も出ない。揃える予定)"],
+  "app/office-worker-care/page.tsx": [3, "月を持たない設定画面 (払うかのステータス)。今の状態で絞るのが正しい (2026-10-06 確認)"],
+  "app/monthly-inputs/page.tsx": [2, "型の定義と select の列名だけ (判定は isEmployedInMonth。2026-10-06 に揃えた)"],
+  "app/distance/page.tsx": [1, "select の列名だけ (判定は isEmployedInMonth。2026-10-06 に揃えた)"],
   "lib/swr/use-kyotaku-employees.ts": [2, "★ 出勤簿の入力を今の状態で絞っている (揃える予定)"],
 };
 const CALC = (f: string) => (f.startsWith("app/payroll/") || f.startsWith("lib/payroll/")) && f !== FN_FILE;
