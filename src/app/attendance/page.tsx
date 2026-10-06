@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { officePriceAt, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import {
@@ -115,6 +116,15 @@ export default async function AttendancePage({
       allEmployees.map((e) => [`${officeNumOfId.get((e as { office_id?: string }).office_id ?? "") ?? ""}|${e.employee_number}`, e]),
     );
     const officeRows = (flattenOfficeMaster(offRes.data as never) as unknown as OfficeRow[]);
+    // 週起算曜日は 対象月に有効な値 (事業所の単価の履歴。2026-10-06)。履歴が無ければ 今の値
+    const { data: priceData, error: priceErr } = await supabase
+      .from("payroll_office_unit_prices")
+      .select("office_id, effective_from, work_week_start");
+    if (priceErr) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceErr.message}`);
+    const monthStart = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-01`;
+    for (const o of officeRows) {
+      o.work_week_start = officePriceAt((priceData ?? []) as OfficeUnitPriceRow[], o.id, "work_week_start", monthStart, o.work_week_start ?? 0);
+    }
     const officeMap = new Map(officeRows.map((o) => [o.office_number, o]));
 
     const firstOfficeNum = records[0]?.office_number;

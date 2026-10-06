@@ -1,5 +1,6 @@
 "use client";
 
+import { officePriceAt, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
 import {
@@ -276,13 +277,19 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
   );
 
   // 5) 各 employee × 各月 で集計 → 警告条件に合致するものだけ収集
+  const { data: priceData, error: priceErr } = await supabase
+    .from("payroll_office_unit_prices")
+    .select("office_id, effective_from, work_week_start");
+  if (priceErr) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceErr.message}`);
+  const officePriceRows = (priceData ?? []) as OfficeUnitPriceRow[];
+
   const result: LaborCheckRow[] = [];
   for (const emp of employees) {
     const monthSet = monthsByEmp.get(emp.id);
     if (!monthSet || monthSet.size === 0) continue;
     const office = officeById.get(emp.office_id);
     if (!office) continue;
-    const weekStart = office.work_week_start ?? 0;
+    const weekStartNow = office.work_week_start ?? 0;
 
     for (const ym of monthSet) {
       const empRecords = recordsForMonth(emp.id, ym);
@@ -291,6 +298,8 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
       const hasCurrentMonth = empRecords.some((r) => r.work_date.slice(0, 7) === ym);
       if (!hasCurrentMonth) continue;
       const records = empRecords.map(dbToAttendanceRecord);
+      // 週起算曜日は その月に有効な値 (事業所の単価の履歴。2026-10-06)
+      const weekStart = officePriceAt(officePriceRows, office.id, "work_week_start", `${ym}-01`, weekStartNow);
       const sum = calcMonthlySummary(records, weekStart, ym, companyHolidayDates);
 
       // 対象月の active salary 履歴 row で固定残業代 等を解決

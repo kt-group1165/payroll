@@ -549,7 +549,7 @@ export default function PayrollPage() {
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes, officePriceRes] = await Promise.all([
         supabase.from("payroll_service_type_mappings").select("service_code,category_id,effective_from"),
         supabase.from("payroll_service_categories").select("id,name"),
-        supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
+        supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate,work_week_start, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
         fetchEmployees(),
           // 退職者でも 退職日が計算月の初日以降なら その月は在籍していたので含める (2026-09-17)。
@@ -561,7 +561,7 @@ export default function PayrollPage() {
         getCareOvertimeLowerTiers(supabase, selectedMonthToMonthStart(selectedMonth)),
         getMeetingFeeUnpaidOffices(supabase, selectedMonthToMonthStart(selectedMonth)),
         // 事業所の単価の履歴 (effective_from 方式)。対象月で有効な行を後で重ねる (2026-09-26)
-        supabase.from("payroll_office_unit_prices").select("office_id,effective_from,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
+        supabase.from("payroll_office_unit_prices").select("office_id,effective_from,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate,work_week_start"),
       ]);
       // 基本のデータの読み込みエラーを見逃さない (2026-09-19: 同時計算で読み込みが失敗し、時給・実績が欠けたまま計算していた)
       for (const [label, r] of [["サービス区分の対応", mappingRes], ["サービス区分", catRes], ["事業所", officeRes], ["区分の時給", rateRes], ["職員", empRes]] as const) {
@@ -728,9 +728,8 @@ export default function PayrollPage() {
       if (screenOfficesRes.error) throw new Error(`出勤簿の入力元の設定の読み込みに失敗: ${screenOfficesRes.error}`);
       if (screenOfficesRes.offices.has(selectedOffice.office_number)) {
         const ym = `${year}-${String(month).padStart(2, "0")}`;
-        const { data: wk, error: wkErr } = await supabase.from("payroll_offices").select("work_week_start").eq("id", selectedOfficeId).maybeSingle();
-        if (wkErr) throw new Error(`週の起算曜日の読み込みに失敗: ${wkErr.message}`);
-        const weekStart = (wk?.work_week_start as number | null) ?? 0;
+        // 週起算曜日は 対象月に有効な値 (事業所の単価の履歴に入っている。2026-10-06)
+        const weekStart = Number((officeByIdMap.get(selectedOfficeId) as (Office & { work_week_start?: number | null }) | undefined)?.work_week_start ?? 0);
         const { start, end } = extendedMonthRange(ym, weekStart);
         const screenRows: ScreenAttendanceRow[] = [];
         for (let from = 0; ; from += 1000) {

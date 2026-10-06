@@ -151,10 +151,12 @@ async function fetchKyotakuSummary(
   // 出張単価は 対象月に有効な値 (単価の履歴)。今の値だと 改定後に過去の月まで新しい単価になる (2026-10-06)
   const { data: priceRows, error: priceErr } = await supabase
     .from("payroll_office_unit_prices")
-    .select("office_id, effective_from, travel_unit_price")
+    .select("office_id, effective_from, travel_unit_price, work_week_start")
     .eq("office_id", officeId);
   if (priceErr) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceErr.message}`);
   const travelRate = officePriceAt((priceRows ?? []) as OfficeUnitPriceRow[], officeId, "travel_unit_price", `${month}-01`, currentTravelRate);
+  // 週起算曜日も 対象月に有効な値 (事業所の単価の履歴。引数の weekStart は 今の値 = 履歴が無いときの代わり)
+  const ws = officePriceAt((priceRows ?? []) as OfficeUnitPriceRow[], officeId, "work_week_start", `${month}-01`, weekStart);
 
   // 1b) 並列 fetch
   //   居宅ケアマネ給与設定は payroll_employees.kyotaku_* (旧) から
@@ -211,7 +213,7 @@ async function fetchKyotakuSummary(
     : ((salaryRes.data ?? []) as unknown as KyotakuSalary[]);
 
   // 2) 出勤簿 (extended range)
-  const { start: extStart, end: extEnd } = extendedMonthRange(month, weekStart);
+  const { start: extStart, end: extEnd } = extendedMonthRange(month, ws);
   const { data: attData, error: attErr } = await supabase
     .from("payroll_kyotaku_attendance_records")
     .select(
@@ -276,8 +278,8 @@ async function fetchKyotakuSummary(
   return employees.map((emp) => {
     const empAttRows = byEmp.get(emp.id) ?? [];
     const records = empAttRows.map(dbToAttendanceRecord);
-    const dailies = calcDailyListWithWeekly(records, weekStart);
-    const summary = calcMonthlySummary(records, weekStart, month);
+    const dailies = calcDailyListWithWeekly(records, ws);
+    const summary = calcMonthlySummary(records, ws, month);
     const workDays = dailies.filter(
       (d) => d.work_minutes > 0 && d.work_date.startsWith(month),
     ).length;

@@ -40,12 +40,14 @@ const PRICE_LABEL: Record<OfficePriceKey, string> = {
   communication_fee_amount: "通信費",
   meeting_unit_price: "会議1",
   distance_adjustment_rate: "距離調整",
+  work_week_start: "週起算",
 };
 /** 単価の表示 (移動手当は DB が 円/時 なので 円/分 に直す) */
 const priceText = (k: OfficePriceKey, v: number | null | undefined): string => {
   if (v == null) return "—";
   if (k === "travel_allowance_rate") return `${Math.round((Number(v) / 60) * 100) / 100}円/分`;
   if (k === "distance_adjustment_rate") return `${Number(v)}%`;
+  if (k === "work_week_start") return `${["日", "月", "火", "水", "木", "金", "土"][Number(v)] ?? "?"}曜`;
   if (k === "travel_unit_price" || k === "commute_unit_price") return `${Number(v)}円/km`;
   return `${Number(v)}円`;
 };
@@ -198,9 +200,8 @@ export function OfficesList({
       short_name: form.short_name,
       office_type: form.office_type,
       shogai_office_number: form.shogai_office_number || null,
-      work_week_start: form.work_week_start,
       company_id: form.company_id || null,
-    };
+    };   // ★ 週起算曜日は 単価と同じく 改定月の履歴で書く (下の after に入る。2026-10-06)
     const after = priceValuesOf(form);
 
     if (editingId && editingOffice) {
@@ -1085,7 +1086,7 @@ export function OfficesList({
                   </FormRow>
                   {editingId && (
                     <FormRow
-                      label="単価の改定月"
+                      label="単価・週起算の改定月"
                       note={changedInForm.length > 0
                         ? `変えた単価 (${changedInForm.map((k) => PRICE_LABEL[k]).join("・")}) は この月の給与から。前の月は今までの単価のまま`
                         : "単価を変えたときだけ使います。この月の給与から新しい単価になり、前の月は今までの単価のまま"}

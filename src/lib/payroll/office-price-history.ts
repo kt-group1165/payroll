@@ -30,6 +30,8 @@ export type OfficeUnitPriceRow = {
   communication_fee_amount?: number | null;
   meeting_unit_price?: number | null;
   distance_adjustment_rate?: number | null;
+  /** 週起算曜日 (0=日 … 6=土)。週 40h の残業の区切り。2026-10-06 から履歴 */
+  work_week_start?: number | null;
 };
 
 /** 履歴が上書きする単価の列 */
@@ -43,6 +45,7 @@ export const OFFICE_PRICE_KEYS = [
   "communication_fee_amount",
   "meeting_unit_price",
   "distance_adjustment_rate",
+  "work_week_start",
 ] as const;
 
 export type OfficePriceKey = (typeof OFFICE_PRICE_KEYS)[number];

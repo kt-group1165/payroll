@@ -1,5 +1,7 @@
 "use client";
 
+import { officePriceAt, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
+import useSWR from "swr";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Download, Upload } from "lucide-react";
@@ -435,11 +437,24 @@ export function KyotakuAttendanceContent() {
   // ---------------- 月 row build + DB 読み込み ----------------
   const dates = useMemo(() => monthDates(month), [month]);
 
-  // 選択中 office の週起算曜日 (loadRows + 計算 両方で使用)
+  // 選択中 office の週起算曜日 (loadRows + 計算 両方で使用)。
+  // ★ 対象月に有効な値 (事業所の単価の履歴。2026-10-06)。履歴が無ければ 今の値
+  const { data: officePriceRows } = useSWR(
+    selectedOfficeId ? `office-price-history:${selectedOfficeId}` : null,
+    async () => {
+      const { data, error } = await supabase
+        .from("payroll_office_unit_prices")
+        .select("office_id, effective_from, work_week_start")
+        .eq("office_id", selectedOfficeId);
+      if (error) throw new Error(`事業所の単価の履歴を読めませんでした: ${error.message}`);
+      return (data ?? []) as OfficeUnitPriceRow[];
+    },
+  );
   const selectedOfficeWeekStart = useMemo(() => {
     const o = offices.find((x) => x.id === selectedOfficeId);
-    return o?.work_week_start ?? 0;
-  }, [offices, selectedOfficeId]);
+    const now = o?.work_week_start ?? 0;
+    return o ? officePriceAt(officePriceRows ?? [], o.id, "work_week_start", `${month}-01`, now) : now;
+  }, [offices, selectedOfficeId, officePriceRows, month]);
 
   // ---------------- 出勤簿 SWR fetch ----------------
   // SWR が DB 上の「真実」を保持。表示用 rows は SWR data を base に組み立てる。
