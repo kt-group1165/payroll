@@ -102,7 +102,13 @@ export function OfficesList({
   const companyNameById = new Map(companies.map((c) => [c.id, c.name]));
   const companyNameOf = (o: Office) => (o.company_id ? companyNameById.get(o.company_id) : null);
   // 並び順: sort_order (画面で並べ替えた順) → 無ければ 既定の順 (法人 → 種別)。src/lib/office-order.ts
+  // ドラッグで並べ替えた直後の並び (保存と再読込が終わるまで 画面をこの順で出す。戻ってちらつかないように)
+  const [localOrder, setLocalOrder] = useState<string[] | null>(null);
   const offices = [...initialOffices].sort((a, b) => compareOffices(a, b, companyNameOf));
+  if (localOrder) {
+    const pos = new Map(localOrder.map((id, i) => [id, i]));
+    offices.sort((a, b) => (pos.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (pos.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  }
   // sort_order 列があるか (migrations/payroll_offices_sort_order.sql の適用前は 並べ替えボタンを出さない)
   const canReorder = initialOffices.length > 0 && initialOffices.every((o) => "sort_order" in o);
   const [reordering, setReordering] = useState(false);
@@ -238,6 +244,7 @@ export function OfficesList({
   // ─── 並び替え ─────────────────────────────────────────
   /** 新しい並びで sort_order を 10 刻みに振り直し、変わった行だけ保存 */
   const saveOrder = async (next: Office[]) => {
+    setLocalOrder(next.map((o) => o.id));
     const changed = next
       .map((o, i) => ({ id: o.id, sort_order: (i + 1) * 10, prev: o.sort_order ?? null }))
       .filter((x) => x.prev !== x.sort_order);
@@ -255,12 +262,22 @@ export function OfficesList({
     router.refresh();
   };
 
-  const moveOffice = (id: string, dir: -1 | 1) => {
-    const i = offices.findIndex((o) => o.id === id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= offices.length) return;
+  /**
+   * ドラッグで並べ替え (2026-10-06 user「一つずつ変えていくより ドラッグで」)。ライブラリは使わず HTML 標準のドラッグ。
+   * 左端の ⠿ をつかんだときだけ行をドラッグできる (行のどこでもにすると 文字を選べなくなる)。
+   */
+  const [dragArmedId, setDragArmedId] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const endDrag = () => { setDragArmedId(null); setDragId(null); setOverId(null); };
+  const dropOn = (targetId: string) => {
+    const from = offices.findIndex((o) => o.id === dragId);
+    const to = offices.findIndex((o) => o.id === targetId);
+    endDrag();
+    if (from < 0 || to < 0 || from === to) return;
     const next = [...offices];
-    [next[i], next[j]] = [next[j], next[i]];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);                 // 下へ動かすと 落とした行の下、上へ動かすと 落とした行の上に入る
     void saveOrder(next);
   };
 
@@ -942,6 +959,7 @@ export function OfficesList({
       <Table>
         <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_var(--border)]">
           <TableRow>
+            {canReorder && <TableHead className="w-8 px-1" title="⠿ をつかんで上下にドラッグすると並びを変えられます" />}
             <TableHead>事業所番号</TableHead>
             <TableHead>正式名称(マスタ)</TableHead>
             <TableHead>略称</TableHead>
@@ -957,19 +975,44 @@ export function OfficesList({
             <TableHead className="text-right">会議1単価</TableHead>
             <TableHead className="text-right">距離調整係数</TableHead>
             <TableHead>住所(マスタ)</TableHead>
-            <TableHead className={canReorder ? "w-[190px]" : "w-[120px]"}>操作</TableHead>
+            <TableHead className="w-[120px]">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {offices.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={16} className="text-center text-muted-foreground">
+              <TableCell colSpan={canReorder ? 17 : 16} className="text-center text-muted-foreground">
                 事業所が登録されていません
               </TableCell>
             </TableRow>
           ) : (
-            offices.map((office, idx) => (
-              <TableRow key={office.id}>
+            offices.map((office) => (
+              <TableRow
+                key={office.id}
+                draggable={canReorder && !reordering && dragArmedId === office.id}
+                onDragStart={(e) => { setDragId(office.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", office.id); }}
+                onDragOver={(e) => { if (!dragId) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (overId !== office.id) setOverId(office.id); }}
+                onDrop={(e) => { e.preventDefault(); if (dragId) dropOn(office.id); }}
+                onDragEnd={endDrag}
+                className={
+                  dragId === office.id ? "opacity-40"
+                    : overId === office.id && dragId
+                      ? (offices.findIndex((o) => o.id === dragId) < offices.findIndex((o) => o.id === office.id)
+                          ? "shadow-[inset_0_-2px_0_var(--primary)]"   // 下へ動かす: この行の下に入る
+                          : "shadow-[inset_0_2px_0_var(--primary)]")   // 上へ動かす: この行の上に入る
+                      : undefined
+                }
+              >
+                {canReorder && (
+                  <TableCell
+                    className="w-8 cursor-grab select-none px-1 text-center text-muted-foreground active:cursor-grabbing"
+                    title="つかんで上下にドラッグすると並びを変えられます"
+                    onPointerDown={() => setDragArmedId(office.id)}
+                    onPointerUp={() => { if (!dragId) setDragArmedId(null); }}
+                  >
+                    ⠿
+                  </TableCell>
+                )}
                 <TableCell>{office.office_number}</TableCell>
                 <TableCell>{office.name || "(未紐付け)"}</TableCell>
                 <TableCell className="font-medium">{office.short_name || "—"}</TableCell>
@@ -1009,12 +1052,6 @@ export function OfficesList({
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    {canReorder && (
-                      <>
-                        <Button variant="ghost" size="sm" title="1つ上へ" disabled={reordering || idx === 0} onClick={() => moveOffice(office.id, -1)}>↑</Button>
-                        <Button variant="ghost" size="sm" title="1つ下へ" disabled={reordering || idx === offices.length - 1} onClick={() => moveOffice(office.id, 1)}>↓</Button>
-                      </>
-                    )}
                     <Button variant="ghost" size="sm" onClick={() => handleEdit(office)}>編集</Button>
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(office.id)}>削除</Button>
                   </div>
