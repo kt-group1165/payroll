@@ -77,11 +77,14 @@ export function HistoryTable<R extends { effective_from: string }>({
 
 /** 「履歴を見る」ボタン + ダイアログ。開いたときに load() で読む (一覧の表示を重くしないため) */
 export function HistoryButton<R extends { effective_from: string }>({
-  title, load, columns, size = "sm", label = "履歴",
+  title, load, columns, columnsFrom, size = "sm", label = "履歴",
 }: {
   title: string;
   load: () => Promise<R[]>;
-  columns: HistoryColumn<R>[];
+  /** 列が決まっているとき */
+  columns?: HistoryColumn<R>[];
+  /** 列が読んだ行で決まるとき (設定の値の中の事業所など) */
+  columnsFrom?: (rows: R[]) => HistoryColumn<R>[];
   size?: "sm" | "default";
   label?: string;
 }) {
@@ -100,7 +103,7 @@ export function HistoryButton<R extends { effective_from: string }>({
           <DialogHeader><DialogTitle>{title} の履歴</DialogTitle></DialogHeader>
           {err ? <p className="text-sm text-destructive">履歴を読めませんでした: {err}</p>
             : rows === null ? <p className="text-sm text-muted-foreground">読み込み中…</p>
-              : <HistoryTable rows={rows} columns={columns} />}
+              : <HistoryTable rows={rows} columns={columnsFrom ? columnsFrom(rows) : (columns ?? [])} />}
         </DialogContent>
       </Dialog>
     </Fragment>

@@ -238,9 +238,9 @@ export default function ServiceRecordsPage() {
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select("id,office_number"),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
-        getJuhoShortVisitRates(supabase),
-        getSougouSeikatsuRates(supabase),
-        getDoukouEngoFlatRates(supabase),
+        getJuhoShortVisitRates(supabase, monthStart),
+        getSougouSeikatsuRates(supabase, monthStart),
+        getDoukouEngoFlatRates(supabase, monthStart),
       ]);
       for (const [label, r] of [["類型の対応", mapRes], ["類型", catRes], ["事業所", offRes], ["時給", rateRes]] as const) {
         if (r.error) throw new Error(`${label}の読み込みに失敗: ${r.error.message}`);

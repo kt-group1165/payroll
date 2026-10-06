@@ -43,6 +43,7 @@ const CHECKS: Check[] = [
   { name: "office-input-flow", script: "check:office-input-flow", why: "★ 事業所書式 Web 入力 (/office-input) が 給与計算に届く経路。射影・合流・実データ合流 (職員マスタ未登録 0 組が期待値)" },
   { name: "office-input-roundtrip", script: "check:office-input-roundtrip", why: "★ /office-input の「画面で直す」(ファイルの値を画面の入力に写す) で 給与計算が事業所書式から読む値が変わらないこと (実データ全件)" },
   { name: "office-price-revision", script: "check:office-price-revision", why: "★ 事業所の単価を画面・CSV で変えたとき 改定月から効き、前の月の給与が変わらないこと (偽の表で 書く側と給与計算が読む側を通す)" },
+  { name: "setting-history-sync", script: "check:setting-history-sync", why: "★ 設定の今の値と履歴の最新が一致 (今の値だけ書き換えると 画面は変わるのに給与計算に効かない)" },
   { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)",
     kind: "baseline", knownDiff: 9 }, // 実績0件月の基本給の扱い (既知・B-2y。user判断待ち)
 

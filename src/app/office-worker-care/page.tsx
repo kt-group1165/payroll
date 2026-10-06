@@ -6,13 +6,16 @@ import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { getOfficeWorkerCarePay, setOfficeWorkerCarePay } from "@/lib/app-settings";
+import { getOfficeWorkerCarePay, setOfficeWorkerCarePay, OFFICE_WORKER_CARE_PAY_KEY } from "@/lib/app-settings";
+import { currentMonthJst } from "@/lib/payroll/office-price-revision";
+import { SettingHistoryButton, useOfficeNames } from "@/components/payroll/setting-history";
 
 /**
  * /office-worker-care 事務員の訪問分 (介護) (2026-09-22 user「事務員については介護分を出すか出さないかのステータス」)
  *
- * 月給の事務員が訪問もしたとき、その訪問を「介護」として払うかを 事務員ごとに決める (続く設定。月ごとではない)。
+ * 月給の事務員が訪問もしたとき、その訪問を「介護」として払うかを 事務員ごとに決める。
  * 払う人は 訪問を時給者と同じ計算 (同行は割増なし) + 土日祝手当 で出す。保存先 payroll_app_settings office_worker_care_pay。
+ * ★ 2026-10-06: 「何月分から」で保存する (履歴 payroll_app_setting_history)。前の月は今までのまま。
  */
 
 type OfficeRow = { id: string; office_number: string; name: string; office_type: string };
@@ -27,12 +30,16 @@ export default function OfficeWorkerCarePage() {
   const [byOffice, setByOffice] = useState<Record<string, string[]>>({});
   const [on, setOn] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  // 何月分から (この月に有効な設定を出し、保存すると この月から効く)
+  const [month, setMonth] = useState(currentMonthJst());
+  const officeNames = useOfficeNames();
 
   useEffect(() => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
     (async () => {
       const [offRes, setRes] = await Promise.all([
         supabase.from("payroll_offices").select(`id,office_number,office_type, ${OFFICE_MASTER_JOIN}`),
-        getOfficeWorkerCarePay(supabase),
+        getOfficeWorkerCarePay(supabase, `${month}-01`),
       ]);
       if (offRes.error) { toast.error(`事業所の取得に失敗: ${offRes.error.message}`); return; }
       if (setRes.error) { toast.error(`設定の取得に失敗: ${setRes.error}`); return; }
@@ -43,7 +50,7 @@ export default function OfficeWorkerCarePage() {
       setByOffice(setRes.byOffice);
       setOfficeId((prev) => prev || list[0]?.id || "");
     })();
-  }, []);
+  }, [month]);
 
   const office = useMemo(() => offices.find((o) => o.id === officeId), [offices, officeId]);
 
@@ -75,7 +82,9 @@ export default function OfficeWorkerCarePage() {
     setSaving(true);
     const next = { ...byOffice, [office.office_number]: [...on].sort() };
     if (next[office.office_number].length === 0) delete next[office.office_number];
-    const err = await setOfficeWorkerCarePay(supabase, next);
+    const ymText = `${month.slice(0, 4)}年${Number(month.slice(5, 7))}月`;
+    if (!confirm(`${ymText}分の給与から この設定にします。前の月は 今までの設定のまま計算されます。よいですか？`)) { setSaving(false); return; }
+    const err = await setOfficeWorkerCarePay(supabase, next, `${month}-01`);
     setSaving(false);
     if (err) { toast.error(`保存に失敗: ${err}`); return; }
     setByOffice(next);
@@ -86,7 +95,7 @@ export default function OfficeWorkerCarePage() {
     <div className="p-6 max-w-3xl">
       <h1 className="text-2xl font-bold mb-1">事務員の訪問分 (介護)</h1>
       <p className="text-sm text-muted-foreground mb-4">
-        月給の事務員が訪問もしたときに、その訪問を「介護」として払うかを決めます (月ごとではなく、変えるまで続きます)。
+        月給の事務員が訪問もしたときに、その訪問を「介護」として払うかを決めます。選んだ月の給与から効き、次に変えるまで続きます (前の月は変わりません)。
         払う人は、訪問を時給者と同じ計算 (同行は割増なし) + 土日祝手当 で出します。給与計算をやり直すと反映されます。
       </p>
       <Card className="mb-4">
@@ -96,7 +105,11 @@ export default function OfficeWorkerCarePage() {
               {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </label>
+          <label className="text-sm">何月分から
+            <input type="month" className="block h-9 rounded-md border bg-background px-2 text-sm mt-1" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} />
+          </label>
           <Button onClick={save} disabled={saving || dirty === 0}>{saving ? "保存中…" : `保存${dirty ? ` (${dirty})` : ""}`}</Button>
+          <SettingHistoryButton settingKey={OFFICE_WORKER_CARE_PAY_KEY} title="事務員の訪問分を払う" officeNames={officeNames} />
         </CardContent>
       </Card>
       <Card>

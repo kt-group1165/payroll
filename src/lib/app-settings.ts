@@ -11,6 +11,79 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type JissekiSourceMode = "csv" | "kaigo";
 
 /**
+ * 設定の値を読む。monthStart (YYYY-MM-01) を渡すと 履歴 (payroll_app_setting_history) の その月に有効な値。
+ * 渡さないとき・履歴にその月以前の行が無いときは 今の値 (payroll_app_settings)。
+ * ★ 2026-10-06: 金額に効く設定は 1 つの値しか持たず、変えると 過去の月まで新しい値で計算されていた
+ *   (user「履歴持つべきものは全部」)。給与計算は 必ず対象月を渡して読む。
+ * 返り値は 既存の getter がそのまま使えるよう { data: { value } | null, error: { message } | null } の形。
+ */
+async function readSettingRow(
+  supabase: SupabaseClient,
+  key: string,
+  monthStart?: string,
+): Promise<{ data: { value: unknown } | null; error: { message: string } | null }> {
+  if (monthStart) {
+    const { data, error } = await supabase
+      .from("payroll_app_setting_history")
+      .select("value, effective_from")
+      .eq("key", key)
+      .lte("effective_from", monthStart)
+      .order("effective_from", { ascending: false })
+      .limit(1);
+    if (error) return { data: null, error: { message: `設定の履歴 (${key}) を読めませんでした: ${error.message}` } };
+    if (data && data.length > 0) return { data: { value: data[0].value }, error: null };
+  }
+  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", key).maybeSingle();
+  return { data: (data as { value: unknown } | null) ?? null, error: error ? { message: error.message } : null };
+}
+
+/**
+ * 設定を「何月分から」で書く (履歴に 1 行 + 今の値)。同じ月なら上書き。
+ * ★ 今の値 (payroll_app_settings) は いちばん新しい改定のときだけ書く (過去の月の訂正で 今の値を戻さない)。
+ * 成功時 null、失敗時 error message。
+ */
+export async function setSettingFrom(
+  supabase: SupabaseClient,
+  key: string,
+  value: unknown,
+  monthStart: string,
+  note?: string,
+): Promise<string | null> {
+  const now = new Date().toISOString();
+  const { error: hErr } = await supabase
+    .from("payroll_app_setting_history")
+    .upsert({ key, effective_from: monthStart, value, note: note ?? null, updated_at: now }, { onConflict: "key,effective_from" });
+  if (hErr) return `設定の履歴を保存できませんでした: ${hErr.message}`;
+  const { data: later, error: lErr } = await supabase
+    .from("payroll_app_setting_history").select("effective_from").eq("key", key).gt("effective_from", monthStart).limit(1);
+  if (lErr) return `設定の履歴を読めませんでした: ${lErr.message}`;
+  if ((later ?? []).length > 0) return null;   // もっと後の改定がある → 今の値はそちらのまま
+  const { error } = await supabase.from("payroll_app_settings").upsert({ key, value, updated_at: now });
+  return error ? error.message : null;
+}
+
+/**
+ * 金額に効く設定 (履歴を持つもの) と 画面での名前。/settings-history で一覧する。
+ * ★ ここに無い設定 (実績の取込元・旧システムのデータを使うか・距離 API の上限 など) は 運用の切替なので 今の値だけで持つ。
+ */
+export const MONEY_SETTING_LABELS: Record<string, string> = {
+  weekend_holiday_allowance_rates: "土日祝手当の時給 (事業所別)",
+  care_overtime_lower_tiers: "介護超過の下の段 (事業所別)",
+  meeting_unit_prices: "会議の単価 (事業所別)",
+  meeting_fee_unpaid_offices: "会議費を払わない事業所",
+  meeting_count_items: "会議費で数える項目 (事業所別)",
+  bath_care_modes: "入浴を介護時間に足す方式 (事業所別)",
+  care_075_offices: "介護超過で 0.75 掛けを引く事業所",
+  sougou_seikatsu_rates: "総合事業 生活援助の時給 (事業所別)",
+  doukou_engo_flat_rates: "同行援護の定額の時給 (事業所別)",
+  juho_short_visit_rates: "重度訪問の短時間の時給 (事業所別)",
+  overtime_excess_paid_employees: "固定残業代の超過を払う提責 (事業所別)",
+  commute_km_includes_trip_employees: "通勤km に出張km を含めて書く職員 (事業所別)",
+  overtime_offset_full_care_offices: "残業代から介護超過の全額を引く事業所",
+  office_worker_care_pay: "事務員の訪問分を払う (事業所別)",
+};
+
+/**
  * 土日祝手当の時給 (事業所番号 → 円/時)。無い事業所は 50円。
  * 総括表 2026-07: Hana系 (花見川・船橋・おゆみ野・高品・中央・さつき・八千代・四街道) は 50円、
  * いすみ・山武・東郷・大網・茂原・市原・KT姉崎・姉崎ムツミ・五井・木更津・ちはら台・袖ケ浦・君津・やわた は 100円 (当方50円のちょうど2倍)。
@@ -21,15 +94,15 @@ export const WEEKEND_HOLIDAY_RATES_KEY = "weekend_holiday_allowance_rates";
 export const CARE_OVERTIME_LOWER_TIERS_KEY = "care_overtime_lower_tiers";
 export type CareOvertimeLowerTier = { from_hours: number; unit_price: number };
 
-export async function getCareOvertimeLowerTiers(supabase: SupabaseClient): Promise<{ tiers: Record<string, CareOvertimeLowerTier>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", CARE_OVERTIME_LOWER_TIERS_KEY).maybeSingle();
+export async function getCareOvertimeLowerTiers(supabase: SupabaseClient, monthStart?: string): Promise<{ tiers: Record<string, CareOvertimeLowerTier>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, CARE_OVERTIME_LOWER_TIERS_KEY, monthStart);
   if (error) return { tiers: {}, error: error.message };
   return { tiers: ((data?.value as { tiers?: Record<string, CareOvertimeLowerTier> } | null)?.tiers) ?? {}, error: null };
 }
 
 /** sunday_holiday_only = 土曜を含まず 実績の休日区分 日祭・休日 だけを対象にする事業所番号 */
-export async function getWeekendHolidayRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; sundayHolidayOnly: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", WEEKEND_HOLIDAY_RATES_KEY).maybeSingle();
+export async function getWeekendHolidayRates(supabase: SupabaseClient, monthStart?: string): Promise<{ rates: Record<string, number>; sundayHolidayOnly: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, WEEKEND_HOLIDAY_RATES_KEY, monthStart);
   if (error) return { rates: {}, sundayHolidayOnly: new Set(), error: error.message };
   const v = data?.value as { rates?: Record<string, number>; sunday_holiday_only?: string[] } | null;
   return { rates: v?.rates ?? {}, sundayHolidayOnly: new Set(v?.sunday_holiday_only ?? []), error: null };
@@ -57,8 +130,8 @@ export const MEETING_UNIT_PRICES_KEY = "meeting_unit_prices";
 
 export type MeetingUnitPriceMap = Record<string, { 会議1?: number; 会議2?: number; 会議3?: number }>;
 
-export async function getMeetingUnitPrices(supabase: SupabaseClient): Promise<{ prices: MeetingUnitPriceMap; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MEETING_UNIT_PRICES_KEY).maybeSingle();
+export async function getMeetingUnitPrices(supabase: SupabaseClient, monthStart?: string): Promise<{ prices: MeetingUnitPriceMap; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, MEETING_UNIT_PRICES_KEY, monthStart);
   if (error) return { prices: {}, error: error.message };
   return { prices: ((data?.value as { prices?: MeetingUnitPriceMap } | null)?.prices) ?? {}, error: null };
 }
@@ -76,8 +149,8 @@ export async function getMeetingUnitPrices(supabase: SupabaseClient): Promise<{ 
  */
 export const BATH_CARE_MODES_KEY = "bath_care_modes";
 
-export async function getBathCareModes(supabase: SupabaseClient): Promise<{ modes: Record<string, "minutes" | "count" | "none">; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", BATH_CARE_MODES_KEY).maybeSingle();
+export async function getBathCareModes(supabase: SupabaseClient, monthStart?: string): Promise<{ modes: Record<string, "minutes" | "count" | "none">; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, BATH_CARE_MODES_KEY, monthStart);
   if (error) return { modes: {}, error: error.message };
   return { modes: ((data?.value as { modes?: Record<string, "minutes" | "count" | "none"> } | null)?.modes) ?? {}, error: null };
 }
@@ -88,8 +161,8 @@ export async function getBathCareModes(supabase: SupabaseClient): Promise<{ mode
  */
 export const MEETING_FEE_UNPAID_OFFICES_KEY = "meeting_fee_unpaid_offices";
 
-export async function getMeetingFeeUnpaidOffices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MEETING_FEE_UNPAID_OFFICES_KEY).maybeSingle();
+export async function getMeetingFeeUnpaidOffices(supabase: SupabaseClient, monthStart?: string): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, MEETING_FEE_UNPAID_OFFICES_KEY, monthStart);
   if (error) return { offices: new Set(), error: error.message };
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
@@ -99,8 +172,8 @@ export async function getMeetingFeeUnpaidOffices(supabase: SupabaseClient): Prom
  * おゆみ野の総括表「研修」列 = 研修費 + 会議費 = (会議2件数 + 会議3件数) × 1,150 + 会議時間 × 1,150 (2026-07 25 人中 23 人一致)
  */
 export const MEETING_COUNT_ITEMS_KEY = "meeting_count_items";
-export async function getMeetingCountItems(supabase: SupabaseClient): Promise<{ items: Record<string, string[]>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", MEETING_COUNT_ITEMS_KEY).maybeSingle();
+export async function getMeetingCountItems(supabase: SupabaseClient, monthStart?: string): Promise<{ items: Record<string, string[]>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, MEETING_COUNT_ITEMS_KEY, monthStart);
   if (error) return { items: {}, error: error.message };
   return { items: ((data?.value as Record<string, string[]> | null) ?? {}), error: null };
 }
@@ -162,8 +235,8 @@ export async function getMonthlyTenureManualBase(supabase: SupabaseClient): Prom
   return { month: m && /^\d{6}$/.test(m) ? m : DEFAULT_MONTHLY_TENURE_MANUAL_BASE, error: null };
 }
 
-export async function getCare075Offices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", CARE_075_OFFICES_KEY).maybeSingle();
+export async function getCare075Offices(supabase: SupabaseClient, monthStart?: string): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, CARE_075_OFFICES_KEY, monthStart);
   if (error) return { offices: new Set(), error: error.message };
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
@@ -181,8 +254,8 @@ export async function getCare075Offices(supabase: SupabaseClient): Promise<{ off
  * 根拠: 旧システムの確認用ブック 202608「総合事業身なし」のシステム単価。2026-07 の総括表で 船橋の小計 4 → 17 / 19 人一致
  */
 export const SOUGOU_SEIKATSU_RATES_KEY = "sougou_seikatsu_rates";
-export async function getSougouSeikatsuRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", SOUGOU_SEIKATSU_RATES_KEY).maybeSingle();
+export async function getSougouSeikatsuRates(supabase: SupabaseClient, monthStart?: string): Promise<{ rates: Record<string, number>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, SOUGOU_SEIKATSU_RATES_KEY, monthStart);
   if (error) return { rates: {}, error: error.message };
   return { rates: ((data?.value as Record<string, number> | null) ?? {}), error: null };
 }
@@ -194,16 +267,16 @@ export async function getSougouSeikatsuRates(supabase: SupabaseClient): Promise<
  *   2026-07 の総括表で 五井 0/2 → 2/2・KT姉崎 0/2 → 2/2 人一致
  */
 export const DOUKOU_ENGO_FLAT_RATES_KEY = "doukou_engo_flat_rates";
-export async function getDoukouEngoFlatRates(supabase: SupabaseClient): Promise<{ rates: Record<string, number>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", DOUKOU_ENGO_FLAT_RATES_KEY).maybeSingle();
+export async function getDoukouEngoFlatRates(supabase: SupabaseClient, monthStart?: string): Promise<{ rates: Record<string, number>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, DOUKOU_ENGO_FLAT_RATES_KEY, monthStart);
   if (error) return { rates: {}, error: error.message };
   return { rates: ((data?.value as Record<string, number> | null) ?? {}), error: null };
 }
 
 export const JUHO_SHORT_VISIT_RATES_KEY = "juho_short_visit_rates";
 export type JuhoShortVisitRates = Record<string, Record<string, number>>;
-export async function getJuhoShortVisitRates(supabase: SupabaseClient): Promise<{ rates: JuhoShortVisitRates; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", JUHO_SHORT_VISIT_RATES_KEY).maybeSingle();
+export async function getJuhoShortVisitRates(supabase: SupabaseClient, monthStart?: string): Promise<{ rates: JuhoShortVisitRates; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, JUHO_SHORT_VISIT_RATES_KEY, monthStart);
   if (error) return { rates: {}, error: error.message };
   return { rates: ((data?.value as JuhoShortVisitRates | null) ?? {}), error: null };
 }
@@ -246,8 +319,8 @@ export async function setJissekiSourceMode(
  * (大網 髙橋久江 2026-07: 残業代 69,686 − 固定 50,000 = 19,686 / 八千代 田中恵 2026-05: 298)。
  */
 export const OVERTIME_EXCESS_PAID_KEY = "overtime_excess_paid_employees";
-export async function getOvertimeExcessPaidEmployees(supabase: SupabaseClient): Promise<{ keys: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", OVERTIME_EXCESS_PAID_KEY).maybeSingle();
+export async function getOvertimeExcessPaidEmployees(supabase: SupabaseClient, monthStart?: string): Promise<{ keys: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, OVERTIME_EXCESS_PAID_KEY, monthStart);
   if (error) return { keys: new Set(), error: error.message };
   const v = (data?.value as Record<string, string[]> | null) ?? {};
   return { keys: new Set(Object.entries(v).flatMap(([off, nums]) => nums.map((n) => `${off}|${String(n).replace(/^0+/, "")}`))), error: null };
@@ -259,8 +332,8 @@ export async function getOvertimeExcessPaidEmployees(supabase: SupabaseClient): 
  * 根拠: 山武 黒田 202608 用紙の赤字「勤 64km」「出 24.8km」= 総括表 距離(通) 64 / 距離(出) 24.8。4 名 15 人月で総括表と一致。
  */
 export const COMMUTE_KM_INCLUDES_TRIP_KEY = "commute_km_includes_trip_employees";
-export async function getCommuteKmIncludesTripEmployees(supabase: SupabaseClient): Promise<{ keys: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", COMMUTE_KM_INCLUDES_TRIP_KEY).maybeSingle();
+export async function getCommuteKmIncludesTripEmployees(supabase: SupabaseClient, monthStart?: string): Promise<{ keys: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, COMMUTE_KM_INCLUDES_TRIP_KEY, monthStart);
   if (error) return { keys: new Set(), error: error.message };
   const v = (data?.value as Record<string, string[]> | null) ?? {};
   return { keys: new Set(Object.entries(v).flatMap(([off, nums]) => nums.map((n) => `${off}|${String(n).replace(/^0+/, "")}`))), error: null };
@@ -272,8 +345,8 @@ export async function getCommuteKmIncludesTripEmployees(supabase: SupabaseClient
  * (寺内 2026-06: 生 76,042 + HRD 1h 2,500 = 78,542 / HO 2026-07: 入浴 2,310分 + HRD 込みで 107,292)。
  */
 export const OVERTIME_OFFSET_FULL_CARE_OFFICES_KEY = "overtime_offset_full_care_offices";
-export async function getOvertimeOffsetFullCareOffices(supabase: SupabaseClient): Promise<{ offices: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", OVERTIME_OFFSET_FULL_CARE_OFFICES_KEY).maybeSingle();
+export async function getOvertimeOffsetFullCareOffices(supabase: SupabaseClient, monthStart?: string): Promise<{ offices: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, OVERTIME_OFFSET_FULL_CARE_OFFICES_KEY, monthStart);
   if (error) return { offices: new Set(), error: error.message };
   return { offices: new Set(((data?.value as { offices?: string[] } | null)?.offices) ?? []), error: null };
 }
@@ -286,15 +359,14 @@ export async function getOvertimeOffsetFullCareOffices(supabase: SupabaseClient)
  */
 export const OFFICE_WORKER_CARE_PAY_KEY = "office_worker_care_pay";
 
-export async function getOfficeWorkerCarePay(supabase: SupabaseClient): Promise<{ byOffice: Record<string, string[]>; keys: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.from("payroll_app_settings").select("value").eq("key", OFFICE_WORKER_CARE_PAY_KEY).maybeSingle();
+export async function getOfficeWorkerCarePay(supabase: SupabaseClient, monthStart?: string): Promise<{ byOffice: Record<string, string[]>; keys: Set<string>; error: string | null }> {
+  const { data, error } = await readSettingRow(supabase, OFFICE_WORKER_CARE_PAY_KEY, monthStart);
   if (error) return { byOffice: {}, keys: new Set(), error: error.message };
   const v = (data?.value as Record<string, string[]> | null) ?? {};
   return { byOffice: v, keys: new Set(Object.entries(v).flatMap(([off, nums]) => nums.map((n) => `${off}|${String(n).replace(/^0+/, "")}`))), error: null };
 }
 
-/** 成功時 null、失敗時 error message */
-export async function setOfficeWorkerCarePay(supabase: SupabaseClient, byOffice: Record<string, string[]>): Promise<string | null> {
-  const { error } = await supabase.from("payroll_app_settings").upsert({ key: OFFICE_WORKER_CARE_PAY_KEY, value: byOffice, updated_at: new Date().toISOString() });
-  return error ? error.message : null;
+/** 成功時 null、失敗時 error message。monthStart (YYYY-MM-01) の月の給与から効く (前の月は今までのまま) */
+export async function setOfficeWorkerCarePay(supabase: SupabaseClient, byOffice: Record<string, string[]>, monthStart: string): Promise<string | null> {
+  return setSettingFrom(supabase, OFFICE_WORKER_CARE_PAY_KEY, byOffice, monthStart, "事務員の訪問分の画面から");
 }

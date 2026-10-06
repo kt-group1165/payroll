@@ -556,9 +556,9 @@ export default function PayrollPage() {
         fetchAllSalarySettings(),
         fetchAllAttendance(),
         supabase.from("payroll_overtime_settings").select("*"),
-        getWeekendHolidayRates(supabase),
-        getCareOvertimeLowerTiers(supabase),
-        getMeetingFeeUnpaidOffices(supabase),
+        getWeekendHolidayRates(supabase, selectedMonthToMonthStart(selectedMonth)),
+        getCareOvertimeLowerTiers(supabase, selectedMonthToMonthStart(selectedMonth)),
+        getMeetingFeeUnpaidOffices(supabase, selectedMonthToMonthStart(selectedMonth)),
         // 事業所の単価の履歴 (effective_from 方式)。対象月で有効な行を後で重ねる (2026-09-26)
         supabase.from("payroll_office_unit_prices").select("office_id,effective_from,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate"),
       ]);
@@ -683,22 +683,22 @@ export default function PayrollPage() {
       // それ以外は今までどおり Excel 出勤簿の CSV 取込 (payroll_attendance_records) から読む (2026-09-18)
       let attRecords = (attRes.data ?? []) as AttendanceRecord[];
       // 会議1/2/3 の単価 (事業所ごと)。入っていない会議は 従来どおり
-      const meetingPricesRes = await getMeetingUnitPrices(supabase);
+      const meetingPricesRes = await getMeetingUnitPrices(supabase, selectedMonthToMonthStart(selectedMonth));
       if (meetingPricesRes.error) throw new Error(`会議の単価の読み込みに失敗: ${meetingPricesRes.error}`);
       // 入浴を介護時間に足すときの数え方 (事業所ごと。minutes / count / none)
-      const bathModeRes = await getBathCareModes(supabase);
+      const bathModeRes = await getBathCareModes(supabase, selectedMonthToMonthStart(selectedMonth));
       if (bathModeRes.error) throw new Error(`入浴の数え方の読み込みに失敗: ${bathModeRes.error}`);
-      const doukouFlatRes = await getDoukouEngoFlatRates(supabase);
+      const doukouFlatRes = await getDoukouEngoFlatRates(supabase, selectedMonthToMonthStart(selectedMonth));
       if (doukouFlatRes.error) throw new Error(`同行援護の時給の読み込みに失敗: ${doukouFlatRes.error}`);
-      const sougouRatesRes = await getSougouSeikatsuRates(supabase);
+      const sougouRatesRes = await getSougouSeikatsuRates(supabase, selectedMonthToMonthStart(selectedMonth));
       if (sougouRatesRes.error) throw new Error(`総合事業の時給の読み込みに失敗: ${sougouRatesRes.error}`);
-      const juhoShortRes = await getJuhoShortVisitRates(supabase);
+      const juhoShortRes = await getJuhoShortVisitRates(supabase, selectedMonthToMonthStart(selectedMonth));
       if (juhoShortRes.error) throw new Error(`重度訪問の短時間の時給の読み込みに失敗: ${juhoShortRes.error}`);
-      const care075Res = await getCare075Offices(supabase);
+      const care075Res = await getCare075Offices(supabase, selectedMonthToMonthStart(selectedMonth));
       const tenureBaseRes = await getMonthlyTenureManualBase(supabase);
       // 旧システムのデータ (移動の日計・日別の出勤時間) を使うか。切り替えるまでは使う (user 2026-09-22)
       const useLegacyRes = await getUseLegacyData(supabase);
-      const officeWorkerCareRes = await getOfficeWorkerCarePay(supabase);
+      const officeWorkerCareRes = await getOfficeWorkerCarePay(supabase, selectedMonthToMonthStart(selectedMonth));
       if (officeWorkerCareRes.error) throw new Error(`事務員の介護分の設定の読み込みに失敗: ${officeWorkerCareRes.error}`);
       if (useLegacyRes.error) throw new Error(`旧システムのデータを使うかの設定の読み込みに失敗: ${useLegacyRes.error}`);
       if (tenureBaseRes.error) throw new Error(`勤続手当の基準の月の設定の読み込みに失敗: ${tenureBaseRes.error}`);
@@ -1760,11 +1760,11 @@ export default function PayrollPage() {
           if (r.item_key === "bath_minutes") bathMinutesByEmp.set(normEmp(r.employee_number), Number(r.numeric_value ?? 0));
         }
       }
-      const overtimeExcessPaidRes = await getOvertimeExcessPaidEmployees(supabase);
+      const overtimeExcessPaidRes = await getOvertimeExcessPaidEmployees(supabase, selectedMonthToMonthStart(selectedMonth));
       if (overtimeExcessPaidRes.error) throw new Error(`固定残業の超過を払う提責の設定の読み込みに失敗: ${overtimeExcessPaidRes.error}`);
-      const offsetFullCareRes = await getOvertimeOffsetFullCareOffices(supabase);
+      const offsetFullCareRes = await getOvertimeOffsetFullCareOffices(supabase, selectedMonthToMonthStart(selectedMonth));
       if (offsetFullCareRes.error) throw new Error(`残業代から介護超過を差し引く事業所の設定の読み込みに失敗: ${offsetFullCareRes.error}`);
-      const commuteIncludesTripRes = await getCommuteKmIncludesTripEmployees(supabase);
+      const commuteIncludesTripRes = await getCommuteKmIncludesTripEmployees(supabase, selectedMonthToMonthStart(selectedMonth));
       if (commuteIncludesTripRes.error) throw new Error(`通勤km に出張を含む職員の設定の読み込みに失敗: ${commuteIncludesTripRes.error}`);
       // 月給者
       // ⚠ 退職日は DB 側の .or() で見ているのに **入社日を見ていなかった** (2026-09-26 是正)。

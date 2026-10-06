@@ -37,6 +37,8 @@ export const CALC_INPUT_SOURCES: FreshnessSource[] = [
   { table: "payroll_paid_leave_grants", tsCol: "updated_at", level: "employee", select: "employee_id,updated_at", label: () => "paid_leave_grants" },
   { table: "payroll_office_unit_prices", tsCol: "updated_at", level: "office", select: "office_id,effective_from,updated_at", label: () => "office_unit_prices" },
   { table: "payroll_app_settings", tsCol: "updated_at", level: "global", select: "key,updated_at", label: (r) => `app_settings.${r.key}` },
+  { table: "payroll_app_setting_history", tsCol: "updated_at", level: "global", select: "key,effective_from,updated_at", label: (r) => `app_setting_history.${r.key}` },
+  { table: "payroll_service_type_mappings", tsCol: "updated_at", level: "global", select: "id,updated_at", label: () => "service_type_mappings" },
   { table: "payroll_overtime_settings", tsCol: "updated_at", level: "global", select: "id,updated_at", label: () => "overtime_settings" },
   { table: "payroll_category_hourly_rates", tsCol: "updated_at", level: "global", select: "id,updated_at", label: () => "category_hourly_rates" },
 ];
