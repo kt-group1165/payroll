@@ -95,12 +95,19 @@ const subscribe = (onChange: () => void) => {
     window.removeEventListener(CHANGED, onChange);
   };
 };
-/** スナップショットは「生の文字列」。毎回 parse すると参照が変わって無限再描画になる */
-const readRaw = () => {
-  try {
-    return `${localStorage.getItem(STORAGE_KEY) ?? ""} ${localStorage.getItem(WIDE_KEY) ?? ""} ${localStorage.getItem(MODE_KEY) ?? ""}`;
-  } catch { return "  "; }
+/**
+ * 書いた値の控え (このタブの中だけ)。
+ * ★ localStorage が満杯だと setItem が投げて「畳む」が何も起きなかった (2026-10-06 user「相変わらず使えない」)。
+ *   給与計算の結果を localStorage に残すので 全事業所を回すと 5MB を使い切る。
+ *   保存に失敗しても このタブの中では切り替わるように 控えを先に見る。
+ */
+const mem = new Map<string, string>();
+const read = (key: string) => {
+  if (mem.has(key)) return mem.get(key) as string;
+  try { return localStorage.getItem(key) ?? ""; } catch { return ""; }
 };
+/** スナップショットは「生の文字列」。毎回 parse すると参照が変わって無限再描画になる */
+const readRaw = () => `${read(STORAGE_KEY)} ${read(WIDE_KEY)} ${read(MODE_KEY)}`;
 const readRawServer = () => "  ";
 
 export function Sidebar() {
@@ -131,7 +138,8 @@ export function Sidebar() {
   const mode: Mode = modeRaw === "billing" ? "billing" : "payroll";
 
   const write = (key: string, value: string) => {
-    try { localStorage.setItem(key, value); } catch { /* 保存できなくても動く */ }
+    mem.set(key, value);
+    try { localStorage.setItem(key, value); } catch (e) { console.warn("[sidebar] 表示の記憶を保存できませんでした (このタブの中では有効):", e); }
     window.dispatchEvent(new Event(CHANGED));
   };
   const toggle = (title: string) => {

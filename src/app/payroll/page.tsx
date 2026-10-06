@@ -2100,17 +2100,31 @@ export default function PayrollPage() {
         }
       }
       // ブラウザにも残す (DB 未適用環境・オフライン閲覧用)
+      // ★ 直近 LOCAL_SUMMARY_KEEP 件だけ残す (2026-10-06)。全事業所を回すと localStorage (約5MB) を使い切り、
+      //   サイドバーの「畳む」など 他の記憶まで保存できなくなっていた。満杯なら古い順に消して 1 回だけ書き直す
       try {
+        const LOCAL_SUMMARY_KEEP = 10;
         const key = `payroll-summary:${selectedOffice.office_number}:${selectedMonth}`;
-        localStorage.setItem(key, JSON.stringify(payload));
-        // インデックス（どの組み合わせが保存されているか）
         const indexKey = "payroll-summary:index";
-        const existingIndex = JSON.parse(localStorage.getItem(indexKey) ?? "[]") as { key: string; office_number: string; office_name: string; processing_month: string; calculated_at: string }[];
-        const filtered = existingIndex.filter((x) => x.key !== key);
-        filtered.push({ key, office_number: selectedOffice.office_number, office_name: selectedOffice.short_name || selectedOffice.name, processing_month: selectedMonth, calculated_at: payload.calculated_at });
-        localStorage.setItem(indexKey, JSON.stringify(filtered));
-      } catch {
-        // localStorage 書き込みは失敗しても給与計算自体は続行
+        type IndexRow = { key: string; office_number: string; office_name: string; processing_month: string; calculated_at: string };
+        let existingIndex: IndexRow[] = [];
+        try { existingIndex = JSON.parse(localStorage.getItem(indexKey) ?? "[]") as IndexRow[]; } catch { existingIndex = []; }
+        const next = existingIndex.filter((x) => x.key !== key);
+        next.push({ key, office_number: selectedOffice.office_number, office_name: selectedOffice.short_name || selectedOffice.name, processing_month: selectedMonth, calculated_at: payload.calculated_at });
+        next.sort((a, b) => a.calculated_at.localeCompare(b.calculated_at));   // 古い順
+        const evict = (n: number) => { for (const x of next.splice(0, n)) localStorage.removeItem(x.key); };
+        if (next.length > LOCAL_SUMMARY_KEEP) evict(next.length - LOCAL_SUMMARY_KEEP);
+        const body = JSON.stringify(payload);
+        try {
+          localStorage.setItem(key, body);
+        } catch {
+          evict(Math.max(0, next.length - 1));   // 今回ぶん以外を全部消して書き直す
+          localStorage.setItem(key, body);
+        }
+        localStorage.setItem(indexKey, JSON.stringify(next));
+      } catch (e) {
+        // localStorage 書き込みは失敗しても給与計算自体は続行 (結果は DB に保存済み)
+        console.warn("[payroll] 計算結果をブラウザに残せませんでした:", e);
       }
     } catch (e) {
       setError(`計算エラー: ${e instanceof Error ? e.message : String(e)}`);

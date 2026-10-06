@@ -69,6 +69,8 @@ export interface Office {
   meeting_unit_price: number;
   distance_adjustment_rate: number;
   company_id: string | null;
+  /** 一覧の並び順 (小さいほど上)。migrations/payroll_offices_sort_order.sql で追加。適用前は キー自体が無い */
+  sort_order?: number | null;
   created_at: string;
   updated_at: string;
 }

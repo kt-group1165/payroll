@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -23,6 +22,7 @@ import {
   type OfficeType,
   type Company,
 } from "@/types/database";
+import { compareOffices, compareOfficesDefault } from "@/lib/office-order";
 
 const OFFICE_TYPES: OfficeType[] = [
   "訪問介護",
@@ -37,7 +37,7 @@ const OFFICE_TYPES: OfficeType[] = [
 const CSV_HEADERS = [
   "事業所番号", "正式名称", "略称", "住所", "種別", "週起算曜日",
   "出張単価", "通勤単価", "処遇補助金", "キャンセル単価",
-  "移動手当単価", "通信費", "会議1単価", "距離調整係数", "法人名",
+  "移動手当単価(円/分)", "通信費", "会議1単価", "距離調整係数", "法人名",
 ] as const;
 
 export type MasterOffice = {
@@ -75,6 +75,19 @@ function downloadCsv(filename: string, rows: string[][]): void {
   URL.revokeObjectURL(url);
 }
 
+/** 編集ダイアログの 1 行: 左に見出し (色付きの欄)、右に入力。旧給与システムの設定画面のレイアウトに寄せた */
+function FormRow({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 border-b last:border-b-0 sm:grid-cols-[11rem_1fr]">
+      <div className="flex items-center bg-muted px-3 py-2 text-sm font-semibold">{label}</div>
+      <div className="space-y-1 px-3 py-2">
+        {children}
+        {note && <p className="text-xs text-muted-foreground">{note}</p>}
+      </div>
+    </div>
+  );
+}
+
 export function OfficesList({
   initialOffices,
   masters,
@@ -85,8 +98,14 @@ export function OfficesList({
   initialCompanies: Company[];
 }) {
   const router = useRouter();
-  const offices = initialOffices;
   const companies = initialCompanies;
+  const companyNameById = new Map(companies.map((c) => [c.id, c.name]));
+  const companyNameOf = (o: Office) => (o.company_id ? companyNameById.get(o.company_id) : null);
+  // 並び順: sort_order (画面で並べ替えた順) → 無ければ 既定の順 (法人 → 種別)。src/lib/office-order.ts
+  const offices = [...initialOffices].sort((a, b) => compareOffices(a, b, companyNameOf));
+  // sort_order 列があるか (migrations/payroll_offices_sort_order.sql の適用前は 並べ替えボタンを出さない)
+  const canReorder = initialOffices.length > 0 && initialOffices.every((o) => "sort_order" in o);
+  const [reordering, setReordering] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -211,6 +230,40 @@ export function OfficesList({
     router.refresh();
   };
 
+  // ─── 並び替え ─────────────────────────────────────────
+  /** 新しい並びで sort_order を 10 刻みに振り直し、変わった行だけ保存 */
+  const saveOrder = async (next: Office[]) => {
+    const changed = next
+      .map((o, i) => ({ id: o.id, sort_order: (i + 1) * 10, prev: o.sort_order ?? null }))
+      .filter((x) => x.prev !== x.sort_order);
+    if (changed.length === 0) return;
+    setReordering(true);
+    const results = await Promise.all(
+      changed.map((x) => supabase.from("payroll_offices").update({ sort_order: x.sort_order }).eq("id", x.id)),
+    );
+    setReordering(false);
+    const failed = results.filter((r) => r.error);
+    if (failed.length > 0) {
+      console.error("sort_order update failed:", failed.map((r) => r.error?.message));
+      toast.error(`並び順の保存エラー (${failed.length}件): ${failed[0].error?.message}`);
+    }
+    router.refresh();
+  };
+
+  const moveOffice = (id: string, dir: -1 | 1) => {
+    const i = offices.findIndex((o) => o.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= offices.length) return;
+    const next = [...offices];
+    [next[i], next[j]] = [next[j], next[i]];
+    void saveOrder(next);
+  };
+
+  const resetOrder = () => {
+    if (!confirm("並び順を既定 (法人 → 種別 → 事業所番号) に戻しますか？")) return;
+    void saveOrder([...initialOffices].sort((a, b) => compareOfficesDefault(a, b, companyNameOf)));
+  };
+
   // ─── master 選択 ─────────────────────────────────────────
   const linkedMasterIds = new Set(
     offices
@@ -331,7 +384,7 @@ export function OfficesList({
         String(o.commute_unit_price ?? 0),
         String(o.treatment_subsidy_amount ?? 0),
         String(o.cancel_unit_price ?? 0),
-        String(o.travel_allowance_rate ?? 0),
+        String(Math.round(((o.travel_allowance_rate ?? 0) / 60) * 100) / 100),   // 画面と同じ 円/分 で出す (DB は 円/時)
         String(o.communication_fee_amount ?? 0),
         String(o.meeting_unit_price ?? 0),
         String(o.distance_adjustment_rate ?? 100),
@@ -457,7 +510,10 @@ export function OfficesList({
           commute_unit_price: numOr(get(cols, headers, "通勤単価"), 0),
           treatment_subsidy_amount: numOr(get(cols, headers, "処遇補助金"), 0),
           cancel_unit_price: numOr(get(cols, headers, "キャンセル単価"), 0),
-          travel_allowance_rate: numOr(get(cols, headers, "移動手当単価"), 0),
+          // 円/分 の列 (今の出力) を優先。旧形式の「移動手当単価」列は 円/時 のまま読む
+          travel_allowance_rate: headers.includes("移動手当単価(円/分)")
+            ? numOr(get(cols, headers, "移動手当単価(円/分)"), 0) * 60
+            : numOr(get(cols, headers, "移動手当単価"), 0),
           communication_fee_amount: numOr(get(cols, headers, "通信費"), 0),
           meeting_unit_price: numOr(get(cols, headers, "会議1単価"), 0),
           distance_adjustment_rate: numOr(get(cols, headers, "距離調整係数"), 100),
@@ -503,6 +559,11 @@ export function OfficesList({
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">事業所一覧</h2>
         <div className="flex gap-2">
+          {canReorder && (
+            <Button variant="outline" onClick={resetOrder} disabled={reordering}>
+              既定の順に戻す
+            </Button>
+          )}
           <Button variant="outline" onClick={handleExport} disabled={offices.length === 0}>
             📥 CSV出力
           </Button>
@@ -633,15 +694,13 @@ export function OfficesList({
             }}
           >
             <DialogTrigger render={<Button />}>新規登録</DialogTrigger>
-            <DialogContent className="max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingId ? "事業所を編集" : "事業所を登録"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="rounded border bg-muted/30 p-3 space-y-2">
-                  <Label className="text-xs text-muted-foreground">
-                    事業所(マスタ) - 名称・住所の編集は介護アプリ側
-                  </Label>
+                <div className="overflow-hidden rounded-md border">
+                  <FormRow label="事業所(マスタ)" note="名称・住所の編集は介護アプリ側">
                   {editingId ? (
                     <div className="text-sm">
                       <p className="font-medium">{selectedMaster?.name ?? "(未紐付け)"}</p>
@@ -681,39 +740,33 @@ export function OfficesList({
                       {selectedMaster.address && <p>{selectedMaster.address}</p>}
                     </div>
                   )}
-                </div>
-                <div>
-                  <Label>事業所番号（介護保険）</Label>
-                  <Input
-                    value={form.office_number}
-                    onChange={(e) => setForm({ ...form, office_number: e.target.value })}
-                    disabled={!!editingId}
-                    placeholder="例: 1271500942"
-                  />
-                  {!editingId && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      マスタ選択時に business_number を自動入力。手動修正可
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <Label>障害福祉事業所番号 <span className="text-xs text-muted-foreground font-normal">（任意、請求CSV取り込み時の紐付けに使用）</span></Label>
-                  <Input
-                    value={form.shogai_office_number}
-                    onChange={(e) => setForm({ ...form, shogai_office_number: e.target.value })}
-                    placeholder="例: 1221910277"
-                  />
-                </div>
-                <div>
-                  <Label>略称 <span className="text-xs text-muted-foreground font-normal">（システム内の表示名。未設定の場合は正式名称を使用）</span></Label>
-                  <Input
-                    value={form.short_name}
-                    onChange={(e) => setForm({ ...form, short_name: e.target.value })}
-                    placeholder="例: 茂原"
-                  />
-                </div>
-                <div>
-                  <Label>事業所種別</Label>
+                  </FormRow>
+                  <FormRow label="事業所番号（介護保険）" note={!editingId ? "マスタ選択時に business_number を自動入力。手動修正可" : undefined}>
+                    <Input
+                      className="max-w-60"
+                      value={form.office_number}
+                      onChange={(e) => setForm({ ...form, office_number: e.target.value })}
+                      disabled={!!editingId}
+                      placeholder="例: 1271500942"
+                    />
+                  </FormRow>
+                  <FormRow label="障害福祉事業所番号" note="任意。請求CSV取り込み時の紐付けに使用">
+                    <Input
+                      className="max-w-60"
+                      value={form.shogai_office_number}
+                      onChange={(e) => setForm({ ...form, shogai_office_number: e.target.value })}
+                      placeholder="例: 1221910277"
+                    />
+                  </FormRow>
+                  <FormRow label="略称" note="システム内の表示名。未設定の場合は正式名称を使用">
+                    <Input
+                      className="max-w-60"
+                      value={form.short_name}
+                      onChange={(e) => setForm({ ...form, short_name: e.target.value })}
+                      placeholder="例: 茂原"
+                    />
+                  </FormRow>
+                  <FormRow label="事業所種別">
                   <Select
                     value={form.office_type}
                     onValueChange={(v) => setForm({ ...form, office_type: (v ?? form.office_type) as OfficeType })}
@@ -725,94 +778,8 @@ export function OfficesList({
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div>
-                  <Label>週起算曜日（残業計算用）</Label>
-                  <Select
-                    value={String(form.work_week_start)}
-                    onValueChange={(v) => setForm({ ...form, work_week_start: parseInt(v ?? "0", 10) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue>
-                        {(v: string) => {
-                          const days = ["日", "月", "火", "水", "木", "金", "土"];
-                          const i = parseInt(v ?? "0", 10);
-                          return Number.isFinite(i) && days[i] ? `${days[i]}曜日` : "";
-                        }}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {["日", "月", "火", "水", "木", "金", "土"].map((d, i) => (
-                        <SelectItem key={i} value={String(i)}>{d}曜日</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>出張手当単価（円/km）</Label>
-                  <Input
-                    type="number" min={0} step={0.01}
-                    value={form.travel_unit_price || ""}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, travel_unit_price: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div>
-                  <Label>通勤手当単価（円/km）</Label>
-                  <Input
-                    type="number" min={0} step={0.01}
-                    value={form.commute_unit_price || ""}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, commute_unit_price: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div>
-                  <Label>処遇改善補助金手当（円/月・社保加入者）</Label>
-                  <Input
-                    type="number" min={0}
-                    value={form.treatment_subsidy_amount || ""}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, treatment_subsidy_amount: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div>
-                  <Label>キャンセル手当単価（円/件）</Label>
-                  <Input
-                    type="number" min={0}
-                    value={form.cancel_unit_price || ""}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, cancel_unit_price: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div>
-                  <Label>移動手当単価(円/時・訪問介護)</Label>
-                  <Input
-                    type="number" min={0} step={0.01}
-                    value={form.travel_allowance_rate || ""}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, travel_allowance_rate: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div>
-                  <Label>会議1単価（円/件）</Label>
-                  <Input
-                    type="number" min={0}
-                    value={form.meeting_unit_price || ""}
-                    placeholder="0"
-                    onChange={(e) => setForm({ ...form, meeting_unit_price: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div>
-                  <Label>距離調整係数（%、例: 125 = 125%）</Label>
-                  <Input
-                    type="number" min={1} step={1}
-                    value={form.distance_adjustment_rate || ""}
-                    placeholder="100"
-                    onChange={(e) => setForm({ ...form, distance_adjustment_rate: parseFloat(e.target.value) || 100 })}
-                  />
-                </div>
-                <div>
-                  <Label>法人</Label>
+                  </FormRow>
+                  <FormRow label="法人">
                   <Select
                     value={form.company_id || "__none__"}
                     onValueChange={(v) => setForm({ ...form, company_id: !v || v === "__none__" ? "" : v })}
@@ -833,6 +800,113 @@ export function OfficesList({
                       ))}
                     </SelectContent>
                   </Select>
+                  </FormRow>
+                  <FormRow label="週起算曜日" note="残業計算用">
+                  <Select
+                    value={String(form.work_week_start)}
+                    onValueChange={(v) => setForm({ ...form, work_week_start: parseInt(v ?? "0", 10) })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue>
+                        {(v: string) => {
+                          const days = ["日", "月", "火", "水", "木", "金", "土"];
+                          const i = parseInt(v ?? "0", 10);
+                          return Number.isFinite(i) && days[i] ? `${days[i]}曜日` : "";
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["日", "月", "火", "水", "木", "金", "土"].map((d, i) => (
+                        <SelectItem key={i} value={String(i)}>{d}曜日</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  </FormRow>
+                  <FormRow label="出張手当単価">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0} step={0.01}
+                        value={form.travel_unit_price || ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, travel_unit_price: parseFloat(e.target.value) || 0 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/km</span>
+                    </div>
+                  </FormRow>
+                  <FormRow label="通勤手当単価">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0} step={0.01}
+                        value={form.commute_unit_price || ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, commute_unit_price: parseFloat(e.target.value) || 0 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/km</span>
+                    </div>
+                  </FormRow>
+                  <FormRow label="処遇改善補助金手当">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0}
+                        value={form.treatment_subsidy_amount || ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, treatment_subsidy_amount: parseFloat(e.target.value) || 0 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/月（社保加入者）</span>
+                    </div>
+                  </FormRow>
+                  <FormRow label="キャンセル手当単価">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0}
+                        value={form.cancel_unit_price || ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, cancel_unit_price: parseFloat(e.target.value) || 0 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/件</span>
+                    </div>
+                  </FormRow>
+                  {/* 移動手当: DB は 円/時 で持つ (計算は travelAllowanceAmount が 円/時)。画面は 円/分 で入力する: 20円/分 = 1200円/時 */}
+                  <FormRow label="移動手当単価">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0} step={0.01}
+                        value={form.travel_allowance_rate ? Math.round((form.travel_allowance_rate / 60) * 100) / 100 : ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, travel_allowance_rate: (parseFloat(e.target.value) || 0) * 60 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/分</span>
+                    </div>
+                  </FormRow>
+                  <FormRow label="会議1単価">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={0}
+                        value={form.meeting_unit_price || ""}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, meeting_unit_price: parseFloat(e.target.value) || 0 })}
+                      />
+                      <span className="text-sm text-muted-foreground">円/件</span>
+                    </div>
+                  </FormRow>
+                  <FormRow label="距離調整係数">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="w-32 text-right"
+                        type="number" min={1} step={1}
+                        value={form.distance_adjustment_rate || ""}
+                        placeholder="100"
+                        onChange={(e) => setForm({ ...form, distance_adjustment_rate: parseFloat(e.target.value) || 100 })}
+                      />
+                      <span className="text-sm text-muted-foreground">%（例: 125 = 125%）</span>
+                    </div>
+                  </FormRow>
                 </div>
                 <Button onClick={handleSubmit} className="w-full" disabled={!form.office_id}>
                   {editingId ? "更新" : "登録"}
@@ -843,8 +917,10 @@ export function OfficesList({
         </div>
       </div>
 
+      {/* 横スクロールバーを常に画面内に出す (表の下端まで行かなくてよい)。見出しは上に固定 */}
+      <div className="max-h-[calc(100vh-10rem)] overflow-auto rounded-md border [&>[data-slot=table-container]]:overflow-visible">
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_var(--border)]">
           <TableRow>
             <TableHead>事業所番号</TableHead>
             <TableHead>正式名称(マスタ)</TableHead>
@@ -860,7 +936,7 @@ export function OfficesList({
             <TableHead className="text-right">会議1単価</TableHead>
             <TableHead className="text-right">距離調整係数</TableHead>
             <TableHead>住所(マスタ)</TableHead>
-            <TableHead className="w-[120px]">操作</TableHead>
+            <TableHead className={canReorder ? "w-[190px]" : "w-[120px]"}>操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -871,7 +947,7 @@ export function OfficesList({
               </TableCell>
             </TableRow>
           ) : (
-            offices.map((office) => (
+            offices.map((office, idx) => (
               <TableRow key={office.id}>
                 <TableCell>{office.office_number}</TableCell>
                 <TableCell>{office.name || "(未紐付け)"}</TableCell>
@@ -896,7 +972,7 @@ export function OfficesList({
                   {office.cancel_unit_price ? `${office.cancel_unit_price}円/件` : "—"}
                 </TableCell>
                 <TableCell className="text-right text-sm">
-                  {office.travel_allowance_rate ? `${office.travel_allowance_rate}円/時` : "—"}
+                  {office.travel_allowance_rate ? `${Math.round((office.travel_allowance_rate / 60) * 100) / 100}円/分` : "—"}
                 </TableCell>
                 <TableCell className="text-right text-sm">
                   {office.meeting_unit_price ? `${office.meeting_unit_price}円/件` : "—"}
@@ -909,6 +985,12 @@ export function OfficesList({
                 <TableCell>{office.address || "-"}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
+                    {canReorder && (
+                      <>
+                        <Button variant="ghost" size="sm" title="1つ上へ" disabled={reordering || idx === 0} onClick={() => moveOffice(office.id, -1)}>↑</Button>
+                        <Button variant="ghost" size="sm" title="1つ下へ" disabled={reordering || idx === offices.length - 1} onClick={() => moveOffice(office.id, 1)}>↓</Button>
+                      </>
+                    )}
                     <Button variant="ghost" size="sm" onClick={() => handleEdit(office)}>編集</Button>
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(office.id)}>削除</Button>
                   </div>
@@ -918,6 +1000,7 @@ export function OfficesList({
           )}
         </TableBody>
       </Table>
+      </div>
     </div>
   );
 }
