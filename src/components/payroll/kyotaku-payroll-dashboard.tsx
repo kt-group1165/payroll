@@ -452,6 +452,7 @@ export function KyotakuPayrollDashboard({
     yobouRows,
     attendanceRows,
     officeTravelRateMap,
+    officeTravelRateAt,
     monthlyRows,
     monthlyKasanRows,
     provisionalSnapshots,
@@ -684,7 +685,8 @@ export function KyotakuPayrollDashboard({
       rates,
       yobouRecords: yobouByOffice.get(officeNumber) ?? [],
       attendanceRecords: attendanceByOffice.get(officeNumber) ?? [],
-      officeTravelUnitPrice: officeTravelRateMap.get(officeNumber) ?? 0,
+      // 出張単価は 対象月に有効な値 (単価の履歴。2026-10-06)
+      officeTravelUnitPrice: officeTravelRateAt(officeNumber, monthStart),
     }),
     [
       settingsByOfficeMonth,
@@ -692,7 +694,7 @@ export function KyotakuPayrollDashboard({
       rates,
       yobouByOffice,
       attendanceByOffice,
-      officeTravelRateMap,
+      officeTravelRateAt,
     ],
   );
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { officePriceAt, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
@@ -145,6 +146,8 @@ export type KyotakuDashboardData = {
   yobouRows: YobouRow[];
   attendanceRows: AttendanceWithStaffName[];
   officeTravelRateMap: Map<string, number>;
+  /** 出張単価を 対象月の値で引く (単価の履歴)。officeTravelRateMap は今の値なので 過去の月の計算には使わない */
+  officeTravelRateAt: (officeNumber: string, monthStart: string) => number;
   monthlyRows: MonthlyRow[];
   monthlyKasanRows: MonthlyKasanRow[];
   provisionalSnapshots: ProvisionalSnapshotRow[];
@@ -161,6 +164,7 @@ const EMPTY_DATA: KyotakuDashboardData = {
   yobouRows: [],
   attendanceRows: [],
   officeTravelRateMap: new Map(),
+  officeTravelRateAt: () => 0,
   monthlyRows: [],
   monthlyKasanRows: [],
   provisionalSnapshots: [],
@@ -189,6 +193,7 @@ async function fetchKyotakuDashboardData(
     yobouRes,
     attRes,
     officeRes,
+    priceHistRes,
     monthlyRes,
     monthlyKasanRes,
     provSnapRes,
@@ -268,8 +273,12 @@ async function fetchKyotakuDashboardData(
       // 事業所の出張距離単価 (NUMERIC 10,2)。office_number → travel_unit_price。
       supabase
         .from("payroll_offices")
-        .select("office_number, travel_unit_price")
+        .select("id, office_number, travel_unit_price")
         .in("office_number", officeNumbers),
+      // 事業所の単価の履歴 (出張単価を 対象月の値で引くため。2026-10-06)
+      supabase
+        .from("payroll_office_unit_prices")
+        .select("office_id, effective_from, travel_unit_price"),
       // 出勤簿 月次本体 (件数)。1 row = staff × month、~30 office × ~12 ヶ月 ×
       // ~ケアマネ数 で数千行に収まる前提。DB 未 apply 段階は error 握り潰し。
       // ⚠ PostgREST の 1000 行は**ハードキャップ**で .limit(10000) は効かない
@@ -403,10 +412,14 @@ async function fetchKyotakuDashboardData(
 
   // payroll_offices.travel_unit_price → Map<office_number, number>
   type RawOfficeRow = {
+    id: string;
     office_number: string;
     travel_unit_price: number | string | null;
   };
   const travelMap = new Map<string, number>();
+  const officeIdByNumber = new Map<string, string>();
+  if (priceHistRes.error) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceHistRes.error.message}`);
+  const priceHist = (priceHistRes.data ?? []) as OfficeUnitPriceRow[];
   if (!officeRes.error) {
     for (const o of (officeRes.data ?? []) as unknown as RawOfficeRow[]) {
       if (!o.office_number) continue;
@@ -415,6 +428,7 @@ async function fetchKyotakuDashboardData(
           ? parseFloat(o.travel_unit_price)
           : (o.travel_unit_price ?? 0);
       travelMap.set(o.office_number, Number.isFinite(v) ? v : 0);
+      officeIdByNumber.set(o.office_number, o.id);
     }
   }
 
@@ -533,6 +547,11 @@ async function fetchKyotakuDashboardData(
     yobouRows: yobouRes.error ? [] : ((yobouRes.data ?? []) as YobouRow[]),
     attendanceRows: mappedAttendance,
     officeTravelRateMap: travelMap,
+    officeTravelRateAt: (officeNumber: string, monthStart: string) => {
+      const id = officeIdByNumber.get(officeNumber);
+      const cur = travelMap.get(officeNumber) ?? 0;
+      return id ? officePriceAt(priceHist, id, "travel_unit_price", monthStart, cur) : cur;
+    },
     monthlyRows: mappedMonthly,
     monthlyKasanRows: mappedKasan,
     provisionalSnapshots: mappedProvSnap,
@@ -586,6 +605,7 @@ export function useKyotakuDashboardData(
     yobouRows: effective.yobouRows,
     attendanceRows: effective.attendanceRows,
     officeTravelRateMap: effective.officeTravelRateMap,
+    officeTravelRateAt: effective.officeTravelRateAt,
     monthlyRows: effective.monthlyRows,
     monthlyKasanRows: effective.monthlyKasanRows,
     provisionalSnapshots: effective.provisionalSnapshots,

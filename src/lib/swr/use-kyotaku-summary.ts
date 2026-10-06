@@ -1,5 +1,6 @@
 "use client";
 
+import { officePriceAt, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
@@ -140,13 +141,20 @@ async function fetchKyotakuSummary(
   if (officeRes.error) throw officeRes.error;
   const officeNumber =
     (officeRes.data as { office_number?: string | null } | null)?.office_number ?? "";
-  const travelRate = (() => {
+  const currentTravelRate = (() => {
     const v = (officeRes.data as { travel_unit_price?: number | string | null } | null)
       ?.travel_unit_price;
     if (v === null || v === undefined) return 0;
     const n = typeof v === "string" ? parseFloat(v) : v;
     return Number.isFinite(n) ? n : 0;
   })();
+  // 出張単価は 対象月に有効な値 (単価の履歴)。今の値だと 改定後に過去の月まで新しい単価になる (2026-10-06)
+  const { data: priceRows, error: priceErr } = await supabase
+    .from("payroll_office_unit_prices")
+    .select("office_id, effective_from, travel_unit_price")
+    .eq("office_id", officeId);
+  if (priceErr) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceErr.message}`);
+  const travelRate = officePriceAt((priceRows ?? []) as OfficeUnitPriceRow[], officeId, "travel_unit_price", `${month}-01`, currentTravelRate);
 
   // 1b) 並列 fetch
   //   居宅ケアマネ給与設定は payroll_employees.kyotaku_* (旧) から

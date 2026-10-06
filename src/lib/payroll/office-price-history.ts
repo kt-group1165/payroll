@@ -94,3 +94,21 @@ export function applyOfficeUnitPrices<T extends { id: string }>(
   });
   return { offices: out, missing };
 }
+
+/**
+ * 1 つの単価を 対象月の値で引く (給与計算以外の画面用。2026-10-06)。
+ * 履歴に その単価が無い (行が無い / null) ときは 今の値 (payroll_offices) を使う = applyOfficeUnitPrices と同じ規約。
+ * ★ 居宅の給与 (ダッシュボード・月の集計) が 出張単価を payroll_offices の今の値で読んでいたため、
+ *   単価を改定すると 過去の月まで新しい単価になっていた。
+ */
+export function officePriceAt(
+  rows: OfficeUnitPriceRow[],
+  officeId: string,
+  key: OfficePriceKey,
+  monthStart: string,
+  current: number,
+): number {
+  const active = buildActiveOfficePriceMap(rows.filter((r) => r.office_id === officeId), monthStart).get(officeId);
+  const v = active?.[key];
+  return v == null ? current : Number(v);
+}
