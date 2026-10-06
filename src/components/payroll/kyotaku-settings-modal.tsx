@@ -293,9 +293,18 @@ export function KyotakuSettingsModal({
         return;
       }
       // バリデーション
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(e.effective_from)) {
-        toast.error("適用開始月の形式が不正です (YYYY-MM-DD)");
+      if (!/^\d{4}-\d{2}-01$/.test(e.effective_from)) {
+        toast.error("適用開始月を選んでください");
         return;
+      }
+      // 過去の月から の設定は 給与計算済みの月も変わる (計算し直したとき)。黙って書かない (2026-10-06)
+      {
+        const now = new Date(Date.now() + 9 * 3600 * 1000);
+        const nowStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
+        if (e.effective_from < nowStart) {
+          const ym = `${e.effective_from.slice(0, 4)}年${Number(e.effective_from.slice(5, 7))}月`;
+          if (!confirm(`${emp.staff_name} の給与設定を ${ym}分から にします。\n過去の月を含むので、その月々の給与も (計算し直したときに) 変わります。よいですか？`)) return;
+        }
       }
       for (const c of INPUT_COLS) {
         const v = e[c.key];
@@ -480,14 +489,17 @@ export function KyotakuSettingsModal({
                             </div>
                           </td>
                           <td className="px-1 py-1">
+                            {/* 月で選ぶ (2026-10-06)。居宅の給与は 月の 1 日 から効く (getActiveKyotakuSalary は月初で比べる)。
+                                日付で 10/15 を入れると 11 月分からになり 意図とずれていた */}
                             <Input
-                              type="date"
-                              className="h-8 w-32 text-xs"
-                              value={edit.effective_from}
+                              type="month"
+                              className="h-8 w-36 text-xs"
+                              value={edit.effective_from.slice(0, 7)}
                               onChange={(ev) =>
+                                ev.target.value &&
                                 updateEdit(
                                   emp.employee_id,
-                                  { effective_from: ev.target.value },
+                                  { effective_from: `${ev.target.value}-01` },
                                   edit,
                                 )
                               }
