@@ -468,15 +468,16 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
   return (
     <div className="flex flex-col h-full">
       {/* ─── ヘッダー ─── */}
-      <div className="flex items-center gap-4 p-4 border-b bg-background">
+      {/* ★ 折り返す。幅が狭いと 対象月のボタンが画面の外にはみ出して押せなかった (2026-10-06 user) */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4 border-b bg-background">
         <h2 className="text-xl font-bold shrink-0">事業所書式入力</h2>
 
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-muted-foreground">事業所</label>
+        <div className="flex min-w-0 items-center gap-2">
+          <label className="shrink-0 whitespace-nowrap text-sm text-muted-foreground">事業所</label>
           <select
             value={officeId}
             onChange={(e) => setOfficeId(e.target.value)}
-            className="h-9 rounded-md border bg-background px-3 text-sm min-w-[200px]"
+            className="h-9 rounded-md border bg-background px-3 text-sm min-w-[200px] max-w-full"
           >
             {offices.length === 0 ? (
               <option value="">事業所が登録されていません</option>
@@ -490,12 +491,12 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
           </select>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
           <label className="text-sm text-muted-foreground">対象月</label>
           <MonthInputButton value={billingMonth} onChange={setBillingMonth} />
         </div>
 
-        <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground [&>*]:whitespace-nowrap">
           <span>
             入力のある項目{" "}
             <span className="font-bold text-foreground">{filledItemCount}</span>
