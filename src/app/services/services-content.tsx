@@ -743,11 +743,27 @@ function RatesTab({
   const hiddenCount = categories.length - shownCategories.length;
 
   // その時期の時給を直す = その時期の頭 (start) の行を作る / 上書きする
-  const saveCell = async (officeId: string, categoryId: string, start: string, current: number | undefined, raw: string) => {
+  const saveCell = async (
+    officeId: string, categoryId: string, start: string, current: number | undefined, raw: string,
+    opts: { initialSetup?: boolean; periodLabel?: string } = {},
+  ) => {
     if (raw.trim() === "") return; // 空にしただけでは消さない
     const rate = parseInt(raw, 10);
     if (isNaN(rate) || rate <= 0) { toast.error("時給は 1 以上の数字で入れてください"); return; }
     if (current === rate) return;
+    // ★ 過去の月を含む時期を書き換えると 給与計算済みの月の時給まで変わる (2026-10-06 user「直して」)。
+    //   黙って書かず 確認する。今月からだけ変えたいなら 新しい時期を足す方へ案内する。
+    //   時給が 1 つも無い事業所の 最初の入力 (initialSetup) は確認しない (前の月は 時給なし = 0 円だったため)
+    if (start < nowStart && !opts.initialSetup) {
+      const cat = categories.find((c) => c.id === categoryId)?.name ?? "";
+      const from = start === BASE_FROM ? "いちばん最初" : ymLabel(start);
+      if (!confirm(
+        `${offName(officeId)} / ${cat}\n「${opts.periodLabel ?? from}」の時期は 過去の月 (${from}〜) を含みます。\n` +
+        `ここを ${current != null ? `${current.toLocaleString()}円` : "未設定"} → ${rate.toLocaleString()}円 にすると、その時期の 給与計算済みの月も (計算し直したときに) 変わります。\n\n` +
+        `今月からだけ変えたいときは キャンセルして、事業所名の右の「＋」で ${ymLabel(nowStart)}からの時期を足してから そちらを書き換えてください。\n\n` +
+        `過去の月も含めて書き換えますか？`,
+      )) return;
+    }
     setSaving(true);
     const { error } = await supabase.from("payroll_category_hourly_rates").upsert(
       { office_id: officeId, category_id: categoryId, hourly_rate: rate, effective_from: start, updated_at: new Date().toISOString() },
@@ -777,7 +793,10 @@ function RatesTab({
 
   // 時期を消す: その時期の頭の行を全部消す (前の時期がそのまま続く)。最初の時期は消さない
   const deletePeriod = async (officeId: string, start: string, label: string) => {
-    if (!confirm(`${offName(officeId)} の「${label}」の時期を消しますか？\n消すと 1 つ前の時期の時給がそのまま続きます。`)) return;
+    const pastNote = start < nowStart
+      ? `\n\n⚠ この時期は 過去の月 (${ymLabel(start)}〜) を含みます。消すと その月々の時給も 1 つ前の時期の値に変わります (給与計算をやり直したとき)。`
+      : "";
+    if (!confirm(`${offName(officeId)} の「${label}」の時期を消しますか？\n消すと 1 つ前の時期の時給がそのまま続きます。${pastNote}`)) return;
     setSaving(true);
     const { error } = await supabase.from("payroll_category_hourly_rates").delete().eq("office_id", officeId).eq("effective_from", start);
     setSaving(false);
@@ -869,7 +888,7 @@ function RatesTab({
             const v = e.target.value;
             setEditing(null);
             if (cancelRef.current) { cancelRef.current = false; return; }
-            void saveCell(office.id, categoryId, period.start, r?.hourly_rate, v);
+            void saveCell(office.id, categoryId, period.start, r?.hourly_rate, v, { periodLabel: period.label });
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -990,7 +1009,7 @@ function RatesTab({
                     {shownCategories.map((c) => (
                       <td key={c.id} className="border-t px-1 py-1 text-right">
                         <Input type="number" min={1} disabled={saving} placeholder="—" className="h-7 w-24 text-right tabular-nums"
-                          onBlur={(e) => saveCell(o.id, c.id, BASE_FROM, undefined, e.target.value)}
+                          onBlur={(e) => saveCell(o.id, c.id, BASE_FROM, undefined, e.target.value, { initialSetup: true })}
                           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
                       </td>
                     ))}

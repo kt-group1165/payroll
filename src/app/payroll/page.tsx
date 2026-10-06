@@ -2628,7 +2628,7 @@ export default function PayrollPage() {
                 <span className="inline-block w-16 shrink-0 font-medium">{g.cause}</span>
                 <span className="min-w-56">{g.label}</span>
                 <span className="text-xs text-red-700">{g.count}件 / {formatMinutes(g.minutes)}</span>
-                <RateGapFixer gap={g} categories={categoryList} onFixed={() => setRateGaps((prev) => prev.filter((x) => x.key !== g.key))} />
+                <RateGapFixer gap={g} categories={categoryList} monthStart={selectedMonthToMonthStart(selectedMonth)} onFixed={() => setRateGaps((prev) => prev.filter((x) => x.key !== g.key))} />
               </li>
             ))}
           </ul>
@@ -3521,10 +3521,16 @@ const ROLE_COLORS: Record<string, string> = {
  *   類型なし → そのサービスコードに類型を付ける (payroll_service_type_mappings)
  *   時給なし → その事業所 × その類型の時給を入れる (payroll_category_hourly_rates)
  * 直したら もう一度 給与計算を実行すると反映される (ここでは再計算しない)。
+ *
+ * ★ 2026-10-06: 時給は「計算している月の 1 日から」の行として入れる。
+ *   以前は effective_from を 2000-01-01 (いちばん古い時期) に決め打ちしていたので、
+ *   その類型に後の時期がある事業所では その月が直らず、逆に それより前の全期間の時給が黙って変わった。
  */
-function RateGapFixer({ gap, categories, onFixed }: {
+function RateGapFixer({ gap, categories, monthStart, onFixed }: {
   gap: RateGap;
   categories: { id: string; name: string }[];
+  /** 計算している月の 1 日 (YYYY-MM-01)。時給はこの月から有効にする */
+  monthStart: string;
   onFixed: () => void;
 }) {
   const [categoryId, setCategoryId] = useState("");
@@ -3546,13 +3552,15 @@ function RateGapFixer({ gap, categories, onFixed }: {
     const v = Number(rate);
     if (!gap.office_id || !gap.category_id) { toast.error("事業所または類型が特定できません"); return; }
     if (!Number.isFinite(v) || v <= 0) { toast.error("時給を入れてください"); return; }
+    const ymText = `${monthStart.slice(0, 4)}年${Number(monthStart.slice(5, 7))}月`;
+    if (!confirm(`${gap.label} の時給を ${v.toLocaleString()}円/時 にします。\n${ymText}分から有効です (前の月は変わりません)。\n後の月に別の時給の時期があれば その月からは そちらのままです。よいですか？`)) return;
     setSaving(true);
     const { error } = await supabase.from("payroll_category_hourly_rates")
-      .upsert({ office_id: gap.office_id, category_id: gap.category_id, hourly_rate: v, effective_from: "2000-01-01" },
+      .upsert({ office_id: gap.office_id, category_id: gap.category_id, hourly_rate: v, effective_from: monthStart, updated_at: new Date().toISOString() },
               { onConflict: "office_id,category_id,effective_from" });
     setSaving(false);
     if (error) { toast.error(`時給の登録に失敗: ${error.message}`); return; }
-    toast.success(`${gap.label} を ${v.toLocaleString()}円/時 で登録しました。給与計算を実行し直すと反映されます`);
+    toast.success(`${gap.label} を ${v.toLocaleString()}円/時 (${ymText}分から) で登録しました。給与計算を実行し直すと反映されます`);
     onFixed();
   };
 
