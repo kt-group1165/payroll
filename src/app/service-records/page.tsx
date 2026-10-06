@@ -312,6 +312,9 @@ export default function ServiceRecordsPage() {
           const between = day.legs.filter((l) => !l.is_home_leg);
           for (let i = 0; i < sorted.length - 1; i++) {
             total++;
+            // 同じ住所の訪問が続く (同じ利用者を 1 日に 2 回など) なら 移動は 0 分。
+            //   キャッシュに「A → A」は無いので 以前は「距離が無い」に数えていた (宇野澤 202606 で 57 区間中 7)
+            if (sorted[i].client_address === sorted[i + 1].client_address) { travelByVisit.set(sorted[i + 1].id, 0); continue; }
             const key = `${sorted[i].client_address}|||${sorted[i + 1].client_address}`;
             if (!distMap.has(key)) { missing++; continue; }
             const leg = between.find((l) => l.from === sorted[i].client_address && l.to === sorted[i + 1].client_address);
