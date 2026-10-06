@@ -474,6 +474,24 @@ export default function ServiceRecordsPage() {
   }, [shownRows]);
 
   /**
+   * 勤務時間の月の合計 = 日ごとの小計の勤務時間の和 (2026-10-06 user)。
+   *   出勤簿がある日は 出勤簿の時間・無い日は 訪問 + 移動 (小計と同じ決め方)。
+   * ★ 絞りこみに関係なく 月全体で出す (絞りこみ中は小計の行を出さないので shownRows ではなく rows から)。
+   * attDays = 出勤簿で数えた日 / travelMissingDays = 出勤簿が無く 移動が一部欠けている日 (その日は少なめに出る)
+   */
+  const workTotal = useMemo(() => {
+    if (!rows) return null;
+    const subs = rows.filter((r): r is SubRow => r.kind === "sub");
+    const attDates = new Set(rows.filter((r): r is AttRow => r.kind === "att" && (r.workMin ?? 0) > 0).map((r) => r.date));
+    const visitsNoTravel = new Set(rows.filter((r): r is VisitRow => r.kind === "visit" && r.travelMin == null).map((r) => r.date));
+    return {
+      min: subs.reduce((t, r) => t + (r.workMin ?? 0), 0),
+      attDays: subs.filter((r) => attDates.has(r.date)).length,
+      travelMissingDays: subs.filter((r) => !attDates.has(r.date) && visitsNoTravel.has(r.date)).length,
+    };
+  }, [rows]);
+
+  /**
    * ほのぼのの金額 (MEISAI の「金額」列) が 1 件でも入っているか。
    * ⚠ 全件 空のまま 0 円として比べると「差 181,549 円」のように出て **取込漏れを金額のズレと読み違える**
    *   (2026-09-26 に ちはら台 202607 で実際にそう見えた)。入っていないときは 比べない。
@@ -672,6 +690,12 @@ export default function ServiceRecordsPage() {
             <div className="flex shrink-0 flex-wrap gap-x-6 gap-y-1 rounded-lg border bg-muted/30 px-3 py-1.5 text-sm">
               <span>件数 <b className="tabular-nums">{total.count.toLocaleString()}</b></span>
               <span>訪問時間 <b className="tabular-nums">{hm(total.visitMin)}</b></span>
+              {workTotal && (
+                <span title={`出勤簿のある日は出勤簿の時間・無い日は訪問＋移動 (日ごとの小計の合計)。出勤簿で数えた日 ${workTotal.attDays} 日`}>
+                  勤務時間 (月) <b className="tabular-nums">{hm(workTotal.min)}</b>
+                  {workTotal.travelMissingDays > 0 && <span className="ml-1 text-xs text-amber-700">※移動が欠けている日 {workTotal.travelMissingDays} 日を含む</span>}
+                </span>
+              )}
               <span>金額 (当方) <b className="tabular-nums">{yen(total.pay)}円</b></span>
               {hasHonobono ? (
                 <>
