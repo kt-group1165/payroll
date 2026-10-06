@@ -35,7 +35,7 @@ const OFFICE_TYPES: OfficeType[] = [
 ];
 
 const CSV_HEADERS = [
-  "事業所番号", "正式名称", "略称", "住所", "種別", "週起算曜日",
+  "表示順", "事業所番号", "正式名称", "略称", "住所", "種別", "週起算曜日",
   "出張単価", "通勤単価", "処遇補助金", "キャンセル単価", "同行キャンセル単価",
   "移動手当単価(円/分)", "通信費", "会議1単価", "距離調整係数", "法人名",
 ] as const;
@@ -396,6 +396,7 @@ export function OfficesList({
     const rows: string[][] = [CSV_HEADERS.slice()];
     for (const o of offices) {
       rows.push([
+        o.sort_order != null ? String(o.sort_order) : "",
         o.office_number,
         o.name,
         o.short_name ?? "",
@@ -523,7 +524,23 @@ export function OfficesList({
           }
         }
 
+        // 表示順 (2026-10-06): 列があるときだけ送る。空欄 = 今の値のまま。
+        // ★ 全行で同じキーを送る (行ごとにキーが違うと 無い行に NULL が明示送信され 並び順が消える)
+        let sortOrder: number | null | undefined;
+        if (headers.includes("表示順")) {
+          const rawSort = toHalfNum(get(cols, headers, "表示順"));
+          if (rawSort === "") {
+            sortOrder = offices.find((o) => o.office_number === officeNum)?.sort_order ?? null;
+          } else if (/^\d+$/.test(rawSort)) {
+            sortOrder = parseInt(rawSort, 10);
+          } else {
+            errors.push(`行${i + 1}: 表示順「${rawSort}」は数字で入れてください (小さいほど上)`);
+            continue;
+          }
+        }
+
         payload.push({
+          ...(sortOrder !== undefined ? { sort_order: sortOrder } : {}),
           office_id: masterOfficeId,
           office_number: officeNum,
           short_name: get(cols, headers, "略称").trim(),
@@ -567,6 +584,7 @@ export function OfficesList({
       const { error } = await supabase.from("payroll_offices").upsert(deduped, { onConflict: "office_number" });
       if (error) { toast.error(`取り込みエラー: ${error.message}`); return; }
       toast.success(`${deduped.length}件を取り込みました`);
+      setLocalOrder(null);   // ドラッグ直後の並びではなく 取り込んだ表示順で出し直す
       router.refresh();
     };
     reader.readAsArrayBuffer(file);
