@@ -31,6 +31,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import { HistoryButton } from "@/components/payroll/history-table";
+import { buildActiveMappingRows } from "@/lib/payroll/service-type-mapping";
 
 // ─── CSVユーティリティ ────────────────────────────────────────
 
@@ -84,6 +86,8 @@ export interface ServiceTypeMapping {
   service_code: string;
   service_name: string;
   category_id: string;
+  /** いつから (履歴。同じコードに複数行ありうる。2026-10-06) */
+  effective_from?: string;
   service_categories?: { name: string };
 }
 
@@ -228,6 +232,21 @@ function MappingsTab({
   const router = useRouter();
   const mappings = initialMappings;
   const categories = initialCategories;
+  // ★ 対応は履歴 (service_code × effective_from)。一覧は「今月に効いている対応」を 1 コード 1 行で出す (2026-10-06)。
+  //   まだ始まっていない (来月から の) 対応しか無いコードは その行を出す
+  const nowStart = `${thisMonth()}-01`;
+  const activeByCode = buildActiveMappingRows(mappings, nowStart);
+  for (const m of [...mappings].sort((a, b) => (a.effective_from ?? "").localeCompare(b.effective_from ?? ""))) {
+    if (!activeByCode.has(m.service_code)) activeByCode.set(m.service_code, m);
+  }
+  const shownMappings = [...activeByCode.values()].sort((a, b) => a.service_code.localeCompare(b.service_code));
+  const historyCount = new Map<string, number>();
+  for (const m of mappings) historyCount.set(m.service_code, (historyCount.get(m.service_code) ?? 0) + 1);
+  const catName = (id: string) => categories.find((c) => c.id === id)?.name ?? "?";
+  // 類型を変える (何月分から)
+  const [changeFor, setChangeFor] = useState<ServiceTypeMapping | null>(null);
+  const [changeCat, setChangeCat] = useState("");
+  const [changeMonth, setChangeMonth] = useState(thisMonth());
   // 未マッピング集計は重い (service_records 全件 scan) ため client 側で lazy fetch。
   // 初回 SSR を高速化する。
   const [unmapped, setUnmapped] = useState<UnmappedService[]>([]);
@@ -291,6 +310,10 @@ function MappingsTab({
       toast.error("サービスコードと類型を入力してください");
       return;
     }
+    if (mappings.some((m) => m.service_code === form.service_code)) {
+      toast.error(`${form.service_code} は もう登録されています。一覧の「変える」で 何月分からの類型を変えてください`);
+      return;
+    }
     const { error } = await supabase.from("payroll_service_type_mappings").insert({
       service_code: form.service_code,
       service_name: form.service_name,
@@ -306,17 +329,36 @@ function MappingsTab({
     fetchData();
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("このマッピングを削除しますか？")) return;
+  /** コードの対応を 全期間 消す (過去の月も 類型なし = 0 円になるので確認) */
+  const handleDelete = async (code: string) => {
+    if (!confirm(`${code} の対応を 全期間 (履歴ごと) 消しますか？\n過去の月も 類型なし になり、給与計算をやり直すと その訪問が 0 円になります。\n類型を変えたいだけなら「変える」を使ってください。`)) return;
     const { error } = await supabase
       .from("payroll_service_type_mappings")
       .delete()
-      .eq("id", id);
+      .eq("service_code", code);
     if (error) {
       toast.error(`エラー: ${error.message}`);
       return;
     }
     toast.success("削除しました");
+    fetchData();
+  };
+
+  /** 類型を 何月分から 変える (前の月は前の類型のまま) */
+  const handleChange = async () => {
+    if (!changeFor || !changeCat) { toast.error("類型を選んでください"); return; }
+    if (!/^\d{4}-\d{2}$/.test(changeMonth)) { toast.error("何月分からを選んでください"); return; }
+    const eff = `${changeMonth}-01`;
+    const ym = `${changeMonth.slice(0, 4)}年${Number(changeMonth.slice(5, 7))}月`;
+    const past = eff < nowStart ? "\n⚠ 過去の月を含むので、その月々の給与も (計算し直したときに) 変わります。" : "";
+    if (!confirm(`${changeFor.service_code} の類型を「${catName(changeCat)}」にします。\n${ym}分から有効です (前の月は今までの類型のまま)。${past}\nよいですか？`)) return;
+    const { error } = await supabase.from("payroll_service_type_mappings").upsert(
+      { service_code: changeFor.service_code, service_name: changeFor.service_name, category_id: changeCat, effective_from: eff, updated_at: new Date().toISOString() },
+      { onConflict: "service_code,effective_from" },
+    );
+    if (error) { toast.error(`保存に失敗: ${error.message}`); return; }
+    toast.success(`${changeFor.service_code} を ${ym}分から「${catName(changeCat)}」にしました。給与計算をやり直すと反映されます`);
+    setChangeFor(null);
     fetchData();
   };
 
@@ -338,7 +380,7 @@ function MappingsTab({
   const handleExport = () => {
     const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
     const header = "サービスコード,サービス名,類型\n";
-    const mappedRows = mappings.map(
+    const mappedRows = shownMappings.map(
       (m) =>
         `${m.service_code},${m.service_name},${categoryMap.get(m.category_id) || ""}`
     );
@@ -424,57 +466,35 @@ function MappingsTab({
       ? `\nサービスコード重複${duplicateCodes.size}件は後勝ちで統合（例: ${[...duplicateCodes].slice(0, 3).join(", ")}）`
       : "";
 
-    if (
-      !confirm(
-        `既存のマッピングを全て削除して、${dedupedMappings.length}件で上書きしますか？${dupMsg}`
-      )
-    )
-      return;
-
-    // ★ 全削除 → 再挿入のあいだに挿入が落ちると 表が空になり、全事業所の時給が引けなくなる。
-    //   削除の前に今の行を控え、挿入に失敗したら控えを戻す (2026-09-27。check:delete-scope の ★全件)
-    const backup: Record<string, unknown>[] = [];
-    for (let from = 0; ; from += 1000) {
-      const { data, error: backupError } = await supabase
-        .from("payroll_service_type_mappings")
-        .select("*")
-        .order("id")
-        .range(from, from + 999);
-      if (backupError) {
-        toast.error(`既存マッピングの控えに失敗しました (削除していません): ${backupError.message}`);
-        return;
-      }
-      backup.push(...(data ?? []));
-      if (!data || data.length < 1000) break;
+    // ★ 2026-10-06: 全部消して入れ直すのをやめた (履歴が消え、過去の月の類型まで変わるため)。
+    //   CSV の類型が 今の対応と違うコードだけ「何月分から」の行を足す。新しいコードは 最初からの対応として入れる。
+    //   CSV に無いコードは 消さない (消したいときは 一覧の「削除」)。
+    const month = window.prompt(
+      `CSV の類型が 今の対応と違うコードは 何月分から変えますか？ (例: ${thisMonth()})\n前の月は 今までの類型のまま計算されます。${dupMsg}`,
+      thisMonth(),
+    );
+    if (month === null) return;
+    if (!/^\d{4}-\d{2}$/.test(month.trim())) { toast.error(`「${month}」は 2026-11 の形で入れてください。取り込んでいません`); return; }
+    const eff = `${month.trim()}-01`;
+    const activeAtEff = buildActiveMappingRows(mappings, eff);
+    const known = new Set(mappings.map((m) => m.service_code));
+    const inserts = dedupedMappings.filter((m) => !known.has(m.service_code));
+    const changes = dedupedMappings.filter((m) => known.has(m.service_code) && activeAtEff.get(m.service_code)?.category_id !== m.category_id);
+    if (inserts.length === 0 && changes.length === 0) { toast.info("変わる対応はありません"); return; }
+    if (!confirm(`新しいコード ${inserts.length} 件 (最初から) / 類型が変わるコード ${changes.length} 件 (${month.trim()} 分から) を取り込みます。よいですか？`)) return;
+    if (inserts.length > 0) {
+      const { error } = await supabase.from("payroll_service_type_mappings").insert(inserts);
+      if (error) { toast.error(`取り込みエラー (新しいコード): ${error.message}`); fetchData(); return; }
     }
-
-    // 全削除して再挿入
-    const { error: deleteError } = await supabase
-      .from("payroll_service_type_mappings")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-    if (deleteError) {
-      toast.error(`既存マッピングの削除に失敗しました: ${deleteError.message}`);
-      return;
+    if (changes.length > 0) {
+      const now = new Date().toISOString();
+      const { error } = await supabase.from("payroll_service_type_mappings").upsert(
+        changes.map((m) => ({ ...m, effective_from: eff, updated_at: now })),
+        { onConflict: "service_code,effective_from" },
+      );
+      if (error) { toast.error(`取り込みエラー (類型の変更): ${error.message}`); fetchData(); return; }
     }
-
-    const { error } = await supabase
-      .from("payroll_service_type_mappings")
-      .insert(dedupedMappings);
-    if (error) {
-      const { error: restoreError } = await supabase
-        .from("payroll_service_type_mappings")
-        .insert(backup);
-      if (restoreError) {
-        console.error("mapping restore failed:", restoreError.message);
-        toast.error(`インポートエラー: ${error.message} / ★ 元のマッピングに戻せませんでした (表が空です): ${restoreError.message}`);
-      } else {
-        toast.error(`インポートエラー: ${error.message} (元のマッピング ${backup.length} 件に戻しました)`);
-      }
-      fetchData();
-      return;
-    }
-    toast.success(`${dedupedMappings.length}件のマッピングをインポートしました`);
+    toast.success(`取り込みました (新しいコード ${inserts.length} / 類型の変更 ${changes.length})`);
     fetchData();
     // inputをリセット
     e.target.value = "";
@@ -542,7 +562,7 @@ function MappingsTab({
                 document.getElementById("mapping-import")?.click()
               }
             >
-              CSVインポート（上書き）
+              CSVインポート
             </Button>
             <input
               id="mapping-import"
@@ -614,17 +634,44 @@ function MappingsTab({
         </div>
       </div>
 
+      <Dialog open={!!changeFor} onOpenChange={(o) => { if (!o) setChangeFor(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>類型を変える — {changeFor?.service_code} {changeFor?.service_name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>類型</Label>
+              <Select value={changeCat} onValueChange={(v) => setChangeCat(v ?? "")}>
+                <SelectTrigger>
+                  <SelectValue placeholder="類型を選択">{(v: string) => (v ? catName(v) : "類型を選択")}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>何月分から</Label>
+              <Input type="month" value={changeMonth} onChange={(e) => setChangeMonth(e.target.value)} className="w-44" />
+              <p className="mt-1 text-xs text-muted-foreground">この月の給与から新しい類型の時給になります。前の月は今までの類型のまま。</p>
+            </div>
+            <Button onClick={handleChange} className="w-full">保存</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>サービスコード</TableHead>
             <TableHead>サービス名</TableHead>
-            <TableHead>類型</TableHead>
-            <TableHead className="w-[80px]">操作</TableHead>
+            <TableHead>類型 (今月)</TableHead>
+            <TableHead className="w-[200px]">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {mappings.length === 0 ? (
+          {shownMappings.length === 0 ? (
             <TableRow>
               <TableCell
                 colSpan={4}
@@ -634,23 +681,35 @@ function MappingsTab({
               </TableCell>
             </TableRow>
           ) : (
-            mappings.map((m) => (
+            shownMappings.map((m) => (
               <TableRow key={m.id}>
                 <TableCell className="font-mono">{m.service_code}</TableCell>
                 <TableCell>{m.service_name}</TableCell>
                 <TableCell>
                   <Badge variant="secondary">
-                    {m.service_categories?.name}
+                    {catName(m.category_id)}
                   </Badge>
+                  {(m.effective_from ?? "1970-01-01") > nowStart && (
+                    <span className="ml-1 text-xs text-amber-700">{ymLabel(m.effective_from ?? "")}から</span>
+                  )}
+                  {(historyCount.get(m.service_code) ?? 0) > 1 && (
+                    <span className="ml-1 text-xs text-muted-foreground">改定 {(historyCount.get(m.service_code) ?? 1) - 1} 回</span>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(m.id)}
-                  >
-                    削除
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => { setChangeFor(m); setChangeCat(m.category_id); setChangeMonth(thisMonth()); }}>
+                      変える
+                    </Button>
+                    <HistoryButton
+                      title={`${m.service_code} ${m.service_name} の類型`}
+                      columns={[{ key: "category_id", label: "類型", format: (r: ServiceTypeMapping) => catName(r.category_id) }]}
+                      load={async () => mappings.filter((x) => x.service_code === m.service_code).map((x) => ({ ...x, effective_from: x.effective_from ?? "1970-01-01" }))}
+                    />
+                    <Button variant="ghost" size="sm" onClick={() => handleDelete(m.service_code)}>
+                      削除
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))

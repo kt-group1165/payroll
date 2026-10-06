@@ -12,6 +12,7 @@ import { calcDayRoute, collectAddressPairs, secToHm } from "@/lib/distance-calcu
 import type { VisitForRoute } from "@/lib/distance-calculator";
 import { KyotakuPayrollDashboard } from "@/components/payroll/kyotaku-payroll-dashboard";
 import { buildActiveOvertimeMap } from "@/lib/payroll/overtime-settings-history";
+import { buildActiveMappingMap } from "@/lib/payroll/service-type-mapping";
 import { buildActiveSalaryMap, selectedMonthToMonthStart, resolveEmploymentType, resolvePaidLeaveUnitPriceFromHistory } from "@/lib/payroll/salary-history";
 import { applyOfficeUnitPrices, type OfficeUnitPriceRow } from "@/lib/payroll/office-price-history";
 import { isCareHours075 } from "@/lib/payroll/care-hours-075";
@@ -546,7 +547,7 @@ export default function PayrollPage() {
         return r;
       };
       const [mappingRes, catRes, officeRes, rateRes, empRes, salRes, attRes, otRes, weekendRatesRes, careTiersRes, meetingUnpaidRes, officePriceRes] = await Promise.all([
-        supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
+        supabase.from("payroll_service_type_mappings").select("service_code,category_id,effective_from"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,communication_fee_amount,meeting_unit_price,distance_adjustment_rate, ${OFFICE_MASTER_JOIN}`),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
@@ -636,7 +637,8 @@ export default function PayrollPage() {
 
       setProgress({ pct: 30, label: "時給者を計算中" });
       const records    = allServiceRecords;
-      const mappingMap = new Map((mappingRes.data ?? []).map((m: ServiceTypeMapping) => [m.service_code, m.category_id]));
+      // 類型の対応は 対象月に有効な行 (付け替えても 前の月は前の類型のまま。2026-10-06)
+      const mappingMap = buildActiveMappingMap((mappingRes.data ?? []) as ServiceTypeMapping[], selectedMonthToMonthStart(selectedMonth));
       const categoryMap= new Map((catRes.data ?? []).map((c: ServiceCategory) => [c.id, c.name]));
       const officeRowsRaw     = flattenOfficeMaster(officeRes.data as never) as unknown as Office[];
       // ★ 事業所の単価は 対象月の履歴で上書きする (payroll_offices の現在値をそのまま使うと、
@@ -3539,9 +3541,13 @@ function RateGapFixer({ gap, categories, monthStart, onFixed }: {
 
   const saveCategory = async () => {
     if (!categoryId) { toast.error("類型を選んでください"); return; }
+    // ★ 計算している月の 1 日から の対応として入れる (前の月は変えない。2026-10-06 一意キーが (service_code, effective_from) に)
+    const ymText = `${monthStart.slice(0, 4)}年${Number(monthStart.slice(5, 7))}月`;
+    if (!confirm(`${gap.service_code} の類型を「${categories.find((c) => c.id === categoryId)?.name ?? ""}」にします。\n${ymText}分から有効です (前の月は変わりません)。よいですか？`)) return;
     setSaving(true);
     const { error } = await supabase.from("payroll_service_type_mappings")
-      .upsert({ service_code: gap.service_code, category_id: categoryId }, { onConflict: "service_code" });
+      .upsert({ service_code: gap.service_code, category_id: categoryId, effective_from: monthStart, updated_at: new Date().toISOString() },
+              { onConflict: "service_code,effective_from" });
     setSaving(false);
     if (error) { toast.error(`類型の登録に失敗: ${error.message}`); return; }
     toast.success(`${gap.service_code} を登録しました。給与計算を実行し直すと反映されます`);

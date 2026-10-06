@@ -23,14 +23,18 @@
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { restAll } from "./_rest.mjs";
+import { buildActiveMappingRows } from "../src/lib/payroll/service-type-mapping.js";
 
 const UPDATE = process.argv.includes("--update");
 const BASELINE = new URL("./check-service-type-mapping-baseline.json", import.meta.url);
 let fail = 0;
 const expect = (ok: boolean, msg: string) => { console.log(`  ${ok ? "o" : "★ FAIL"} ${msg}`); if (!ok) fail++; };
 
-type Mapping = { id: string; service_code: string; service_name: string | null; category_id: string };
-const maps = await restAll<Mapping>("payroll_service_type_mappings?select=id,service_code,service_name,category_id");
+type Mapping = { id: string; service_code: string; service_name: string | null; category_id: string; effective_from: string };
+// 対応は履歴 (2026-10-06)。点検するのは 今月に効いている対応 (1 コード 1 行)
+const _now = new Date(Date.now() + 9 * 3600 * 1000);
+const _nowStart = `${_now.getUTCFullYear()}-${String(_now.getUTCMonth() + 1).padStart(2, "0")}-01`;
+const maps = [...buildActiveMappingRows(await restAll<Mapping>("payroll_service_type_mappings?select=id,service_code,service_name,category_id,effective_from"), _nowStart).values()];
 const cats = await restAll<{ id: string; name: string }>("payroll_service_categories?select=id,name");
 const catName = new Map(cats.map((c) => [c.id, c.name]));
 const recs = await restAll<{ service_code: string; service_type: string | null }>("payroll_service_records?select=id,service_code,service_type");

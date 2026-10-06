@@ -18,6 +18,7 @@
  * ⚠ キャンセル・対象外 (有給・研修・会議) は 時給で払う類型ではないので数えない
  *   (NON_HOURLY_CATEGORIES)。2026-09-24 まで数えていて、581 件中 507 件がこれだった。
  */
+import { buildActiveMappingMap } from "../src/lib/payroll/service-type-mapping.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { NON_HOURLY_CATEGORIES } from "../src/lib/payroll/payroll-calc.js";
 
@@ -42,14 +43,20 @@ const get = async (q: string): Promise<Record<string, unknown>[]> => {
   return o;
 };
 
-const maps = await get("payroll_service_type_mappings?select=service_code,category_id&order=id");
+const maps = await get("payroll_service_type_mappings?select=service_code,category_id,effective_from&order=id");
 const cats = await get("payroll_service_categories?select=id,name&order=id");
 const rates = await get("payroll_category_hourly_rates?select=category_id,office_id,hourly_rate,effective_from&order=id");
 const pofs = await get("payroll_offices?select=id,office_number,office_id&order=id");
 const offs = await get("offices?select=id,name&order=id");
 const recs = await get("payroll_service_records?select=office_number,processing_month,service_code,service_type,calc_duration&order=id");
 
-const mapping = new Map(maps.map((m) => [String(m.service_code), m.category_id as string]));
+// 類型の対応は 月ごとの履歴 (2026-10-06)。月ごとに 有効な対応を引く
+const mappingByMonth = new Map<string, Map<string, string>>();
+const mappingAt = (ms: string) => {
+  let m = mappingByMonth.get(ms);
+  if (!m) { m = buildActiveMappingMap(maps.map((x) => ({ service_code: String(x.service_code), category_id: x.category_id as string, effective_from: (x.effective_from as string | null) ?? null })), ms); mappingByMonth.set(ms, m); }
+  return m;
+};
 const catName = new Map(cats.map((c) => [c.id as string, String(c.name)]));
 const oname = new Map(offs.map((o) => [o.id as string, String(o.name)]));
 const offIdOf = new Map(pofs.map((o) => [String(o.office_number), o.id as string]));
@@ -60,7 +67,8 @@ const rateRows = rates.map((x) => ({ k: `${x.office_id}:${x.category_id}`, from:
 const acc = new Map<string, { cause: string; label: string; count: number }>();
 for (const r of recs) {
   const code = String(r.service_code ?? "");
-  const catId = mapping.get(code) ?? null;
+  const ms0 = `${String(r.processing_month).slice(0, 4)}-${String(r.processing_month).slice(4, 6)}-01`;
+  const catId = mappingAt(ms0).get(code) ?? null;
   const cn = catId ? (catName.get(catId) ?? "不明") : null;
   if (cn !== null && NON_HOURLY_CATEGORIES.has(cn)) continue;
   const offId = offIdOf.get(String(r.office_number)) ?? null;

@@ -1,5 +1,6 @@
 "use client";
 
+import { buildActiveMappingMap, type MappingRow } from "@/lib/payroll/service-type-mapping";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
@@ -234,7 +235,7 @@ export default function ServiceRecordsPage() {
 
       // ── 時給を引くための対応表 (給与計算の画面と同じ引き方。visit-pay.ts を共有) ──
       const [mapRes, catRes, offRes, rateRes, juho, sougou, doukou] = await Promise.all([
-        supabase.from("payroll_service_type_mappings").select("service_code,category_id"),
+        supabase.from("payroll_service_type_mappings").select("service_code,category_id,effective_from"),
         supabase.from("payroll_service_categories").select("id,name"),
         supabase.from("payroll_offices").select("id,office_number"),
         supabase.from("payroll_category_hourly_rates").select("category_id,office_id,hourly_rate,effective_from"),
@@ -247,7 +248,8 @@ export default function ServiceRecordsPage() {
       }
       if (juho.error || sougou.error || doukou.error) throw new Error(`時給の設定の読み込みに失敗: ${juho.error ?? sougou.error ?? doukou.error}`);
 
-      const mappingMap = new Map((mapRes.data ?? []).map((m: { service_code: string; category_id: string }) => [m.service_code, m.category_id]));
+      // 類型の対応は 対象月に有効な行 (給与計算と同じ。2026-10-06)
+      const mappingMap = buildActiveMappingMap((mapRes.data ?? []) as MappingRow[], monthStart);
       const categoryMap = new Map((catRes.data ?? []).map((c: { id: string; name: string }) => [c.id, c.name]));
       const officeMap = new Map((offRes.data ?? []).map((o: { id: string; office_number: string }) => [o.office_number, o.id]));
       // 時給は履歴。対象月の月初以前で最新の行を使う (給与計算の画面と同じ)
