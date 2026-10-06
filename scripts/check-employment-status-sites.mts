@@ -38,7 +38,7 @@ const ALLOW: Record<string, [number, string]> = {
   "app/office-worker-care/page.tsx": [3, "月を持たない設定画面 (払うかのステータス)。今の状態で絞るのが正しい (2026-10-06 確認)"],
   "app/monthly-inputs/page.tsx": [2, "型の定義と select の列名だけ (判定は isEmployedInMonth。2026-10-06 に揃えた)"],
   "app/distance/page.tsx": [1, "select の列名だけ (判定は isEmployedInMonth。2026-10-06 に揃えた)"],
-  "lib/swr/use-kyotaku-employees.ts": [2, "★ 出勤簿の入力を今の状態で絞っている (揃える予定)"],
+  "lib/swr/use-kyotaku-employees.ts": [1, "対象者設定 (月を持たない設定) だけ今の状態で絞る。出勤簿の職員一覧は isEmployedInMonth (2026-10-06 に揃えた)"],
 };
 const CALC = (f: string) => (f.startsWith("app/payroll/") || f.startsWith("lib/payroll/")) && f !== FN_FILE;
 /** 比較している行か (読むだけの行は除く) */

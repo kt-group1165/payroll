@@ -256,7 +256,7 @@ export function KyotakuAttendanceContent() {
     employees: allEmployees,
     error: employeeFetchError,
     mutate: mutateEmployees,
-  } = useKyotakuEmployees(selectedOfficeId);
+  } = useKyotakuEmployees(selectedOfficeId, month);
 
   /** UI 上の編集可能 row state。
    *  SWR cache = DB 上の真実 / rows = user 編集 (dirty=true 含む) の作業用コピー。
