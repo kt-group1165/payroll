@@ -917,8 +917,8 @@ export function OfficesList({
         </div>
       </div>
 
-      {/* 横スクロールバーを常に画面内に出す (表の下端まで行かなくてよい)。見出しは上に固定 */}
-      <div className="max-h-[calc(100vh-10rem)] overflow-auto rounded-md border [&>[data-slot=table-container]]:overflow-visible">
+      {/* 横スクロールバーを画面の一番下に出す (表の下端まで行かなくてよい)。見出しは上に固定。6.5rem = 上の余白+見出し行+下の余白 */}
+      <div className="max-h-[calc(100dvh-6.5rem)] overflow-auto rounded-md border [&>[data-slot=table-container]]:overflow-visible">
       <Table>
         <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_var(--border)]">
           <TableRow>
