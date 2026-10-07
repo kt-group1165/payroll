@@ -31,7 +31,7 @@ const ALLOW: Record<string, [number, string]> = {
   "app/employees/employees-list.tsx": [19, "職員マスタの編集・CSV (今の状態を直す画面)"],
   "app/bonus-payments/page.tsx": [3, "表示だけ"],
   "app/service-records/page.tsx": [3, "表示だけ (※退職 の印)"],
-  "app/salary/salary-list.tsx": [2, "今日時点の一覧と CSV 出力 (今の状態で正しい)"],
+  "app/salary/salary-list.tsx": [6, "一覧と CSV 出力: 在職・休職は常に、退職者は「退職者も表示」のときだけ (2026-10-07。退職者・休職者に給与設定があるのに見えなかった) + 名前の横の 休職/退職 の印"],
   "lib/kaigo-import/build-records.ts": [3, "同じ番号が複数いるときの優先順 (在職者を優先)。影響は小"],
   // ★ 過去の月を選んで入力する画面が 今の状態で人を絞っている → 後から退職した人の過去月を直せない。
   //   isEmployedInMonth に揃える予定 (2026-09-27 時点は未着手)。揃えたら件数を減らす
