@@ -20,6 +20,7 @@
 // ─── 型 (page.tsx から移動。他ファイルはそれぞれ独自定義を持つため import 不要) ───
 
 import { bathVisitCareMinutes } from "./monthly-inputs";
+import { isJapaneseHoliday } from "./japan-holidays";
 export type OvertimeSetting = {
   job_type: string;
   scheduled_hours_per_month: number;
@@ -1715,28 +1716,9 @@ export function hourlyRecordPay(minutes: number, hourlyRate: number | null): num
 // (2026-09-05 切り出し)。★ 2026-08-31 に「週残業まるごと未払い」の実バグが
 // 出た箇所 (小原奈保子 2026-02-07 で ¥13,333 が 0円になっていた)。
 
-const JAPAN_HOLIDAYS = new Set([
-  // 2024
-  "20240101", "20240108", "20240211", "20240212", "20240223", "20240320",
-  "20240429", "20240503", "20240504", "20240505", "20240506",
-  "20240715", "20240811", "20240812", "20240916", "20240923", "20241014",
-  "20241103", "20241104", "20241123",
-  // 2025
-  "20250101", "20250113", "20250211", "20250224", "20250320",
-  "20250429", "20250503", "20250504", "20250505", "20250506",
-  "20250721", "20250811", "20250915", "20250923", "20251013",
-  "20251103", "20251123", "20251124",
-  // 2026
-  "20260101", "20260112", "20260211", "20260223", "20260320",
-  "20260429", "20260503", "20260504", "20260505", "20260506",
-  "20260720", "20260811", "20260921", "20260923", "20261012",
-  "20261103", "20261123",
-  // 2027
-  "20270101", "20270111", "20270211", "20270223", "20270321",
-  "20270429", "20270503", "20270504", "20270505",
-  "20270719", "20270811", "20270920", "20270923", "20271011",
-  "20271103", "20271123",
-]);
+// ★ 2026-10-07: 手書きの祝日の表 (2024〜2027・2026-09-22 と 2027-03-22 が抜けていた) をやめ、
+//   祝日法の決まりから計算する japan-holidays.ts を使う (勤怠・画面と同じ部品)。
+const isJapanHoliday = (yyyymmdd: string) => isJapaneseHoliday(yyyymmdd);
 
 /** YYYYMMDD 形式の日付が土日または祝日かどうかを判定 */
 export function isWeekendOrHoliday(dateStr: string): boolean {
@@ -1744,7 +1726,7 @@ export function isWeekendOrHoliday(dateStr: string): boolean {
   if (d.length < 8) return false;
   const date = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
   const dow = date.getDay();
-  return dow === 0 || dow === 6 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
+  return dow === 0 || dow === 6 || isJapanHoliday(d.slice(0, 8));
 }
 
 /** 日曜 か 祝日 (カレンダー)。土曜は含まない */
@@ -1752,7 +1734,7 @@ export function isSundayOrHoliday(dateStr: string): boolean {
   const d = dateStr.replace(/\D/g, "");
   if (d.length < 8) return false;
   const date = new Date(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
-  return date.getDay() === 0 || JAPAN_HOLIDAYS.has(d.slice(0, 8));
+  return date.getDay() === 0 || isJapanHoliday(d.slice(0, 8));
 }
 
 export function parseDurationMinutes(str: string): number {

@@ -129,7 +129,7 @@ const TENURE_BASE_YEAR  = 2026;
 const TENURE_BASE_MONTH = 3;
 
 // ─── 型定義 ──────────────────────────────────────────────────
-// JAPAN_HOLIDAYS / isWeekendOrHoliday は src/lib/payroll/payroll-calc.ts からimport
+// isWeekendOrHoliday は src/lib/payroll/payroll-calc.ts から import (祝日は japan-holidays.ts が祝日法の決まりから計算)
 // (2026-09-05 切り出し)。ServiceRecord/AttendanceRecord は同ファイルの
 // VisitServiceRecord/OfficeAttendanceRecord の型エイリアス (既存の呼び出し箇所を変えないため)。
 

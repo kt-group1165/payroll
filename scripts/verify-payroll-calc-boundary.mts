@@ -785,6 +785,13 @@ console.log("\n══ 負のコントロール: 週残業を落とす実装を�
 eq("isWeekendOrHoliday: 土曜(2026-06-06)はtrue", isWeekendOrHoliday("20260606"), true);
 eq("isWeekendOrHoliday: 平日(2026-06-01・月曜)はfalse", isWeekendOrHoliday("20260601"), false);
 eq("★ isWeekendOrHoliday: 祝日(2026-06-... 該当なしのため2026-07-20海の日)はtrue", isWeekendOrHoliday("20260720"), true);
+// ★ 祝日は表でなく 祝日法の決まりから計算する (2026-10-07)。以前の表に抜けていた日と 2028 年以降を確かめる
+eq("★ 国民の休日 2026-09-22 (敬老の日と秋分の日に挟まれた日) は祝日 (以前の表に抜けていた)", isWeekendOrHoliday("20260922"), true);
+eq("★ 振替休日 2027-03-22 (春分の日 3/21 が日曜) は祝日 (以前の表に抜けていた)", isWeekendOrHoliday("20270322"), true);
+eq("★ 2028 年以降も祝日が出る: 2028-01-10 成人の日 (第 2 月曜)", isWeekendOrHoliday("20280110"), true);
+eq("2028-01-11 (成人の日の翌日・火曜) は平日", isWeekendOrHoliday("20280111"), false);
+eq("★ 振替休日 2029-02-12 (建国記念の日 2/11 が日曜)", isWeekendOrHoliday("20290212"), true);
+eq("isSundayOrHoliday: 2026-09-22 は祝日なので true", isSundayOrHoliday("20260922"), true);
 eq("extractDay: YYYYMMDDから日を抽出", extractDay("20260615"), 15);
 eq("extractDay: 8桁未満は0", extractDay("2026"), 0);
 
