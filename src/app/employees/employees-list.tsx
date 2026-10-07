@@ -932,11 +932,12 @@ export function EmployeesList({
                       value={form.communication_fee_type || "none"}
                       onChange={(e) => setForm({ ...form, communication_fee_type: e.target.value })}
                     >
-                      <option value="none">標準（社保加入は0円・未加入は時間で500/1,000円）</option>
-                      <option value="variable">社保加入でも時間で500/1,000円（スマホ貸与なし）</option>
+                      <option value="none">標準（社保加入は0円・未加入は時間で500/1,000/1,500円）</option>
+                      <option value="variable">社保加入でも時間で500/1,000/1,500円（スマホ貸与なし）</option>
                       <option value="lend">スマホ貸与あり（0円）</option>
                       <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
                     </select>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">時間で決まるときの段: その月の訪問 50 時間未満 500 円 / 50 時間以上 1,000 円 / 100 時間以上 1,500 円 (0 時間は 0 円)。</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">途中で変わった人は「給与設定」の「この月からの通信費」で。</p>
                   </div>
                   <div className="grid grid-cols-2 gap-3">

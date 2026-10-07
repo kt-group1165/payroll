@@ -28,7 +28,7 @@ import {
 /** 通信費タイプの表示名 (履歴一覧用。編集の select と同じ並び) */
 const COMM_FEE_LABEL: Record<string, string> = {
   none: "標準",
-  variable: "時間で500/1,000",
+  variable: "時間で500/1,000/1,500",
   lend: "貸与あり (0円)",
   lend_fee: "貸与希望 (-1,700円)",
 };
@@ -1153,8 +1153,8 @@ export function SalaryList({
                 <label className="text-xs text-muted-foreground" title="途中で通信費の扱いが変わった人だけ入れる。空 = 職員マスタの値">この月からの通信費
                   <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm max-w-64" value={settings.communication_fee_type ?? ""} onChange={(e) => upd("communication_fee_type", e.target.value || null)}>
                     <option value="">職員マスタのまま</option>
-                    <option value="none">標準 (社保加入は0円・未加入は時間で500/1,000円)</option>
-                    <option value="variable">社保加入でも時間で500/1,000円</option>
+                    <option value="none">標準 (社保加入は0円・未加入は時間で500/1,000/1,500円)</option>
+                    <option value="variable">社保加入でも時間で500/1,000/1,500円</option>
                     <option value="lend">スマホ貸与あり (0円)</option>
                     <option value="lend_fee">貸与要件外で貸与を希望 (-1,700円)</option>
                   </select>

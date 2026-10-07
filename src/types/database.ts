@@ -140,7 +140,7 @@ export interface Employee {
   commute_unit_price?: number | null;
   /** 出張単価 (円/km)。NULL なら事業所の単価 */
   travel_unit_price?: number | null;
-  communication_fee_type: string;   // 通信費タイプ（none / fixed / variable）
+  communication_fee_type: string;   // 通信費タイプ（none / variable / lend / lend_fee。payroll-calc.ts COMMUNICATION_FEE_TYPES）
   /** Supabase Auth ユーザーID。兼務職員は同じ auth_user_id を持つ複数行が存在し得る */
   auth_user_id: string | null;
   created_at: string;
