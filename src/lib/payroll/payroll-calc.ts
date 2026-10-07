@@ -291,9 +291,21 @@ export function hasTenureQualification(
   return hasCareQualification || jobType === "居宅介護支援";
 }
 
+/** 勤続手当の表 (設定 → 計算の決まり に出す。2026-10-07 に直書きから名前付きに。値は変えていない) */
+export const TENURE_RULES = {
+  /** 社員 (月給): 1 年目の額 / 以降 1 年ごとに足す額 (円/月) */
+  monthlyFirstYear: 1000, monthlyPerYear: 500,
+  /** パート訪問介護・訪問看護: 1 年目 (円/時) / 5 年ごとに足す額 */
+  visitBase: 10, visitPer5Years: 20,
+  /** パート訪問入浴: 5 年ごとの段 (円/件) */
+  bathPer5Years: 10,
+  /** 非常勤居宅介護支援: 5 年ごとの段 (円/件) */
+  kyotakuPer5Years: 50,
+} as const;
+
 /** パートヘルパー (訪問介護・訪問看護) の勤続手当単価 円/時。years は 1 以上 */
 function visitCareTenureRate(years: number): number {
-  return 10 + Math.floor(years / 5) * 20;
+  return TENURE_RULES.visitBase + Math.floor(years / 5) * TENURE_RULES.visitPer5Years;
 }
 
 /**
@@ -319,7 +331,7 @@ export function computeTenureAllowance(
   if (years < 1) return 0;
 
   if (salaryType === "月給") {
-    return 1000 + (years - 1) * 500;
+    return TENURE_RULES.monthlyFirstYear + (years - 1) * TENURE_RULES.monthlyPerYear;
   }
 
   if (salaryType === "時給") {
@@ -333,11 +345,11 @@ export function computeTenureAllowance(
       return Math.round(hours * rate);
     }
     if (jobType === "訪問入浴") {
-      const rate = (Math.floor(years / 5) + 1) * 10;
+      const rate = (Math.floor(years / 5) + 1) * TENURE_RULES.bathPer5Years;
       return rate * recordCount;
     }
     if (jobType === "居宅介護支援") {
-      const rate = (Math.floor(years / 5) + 1) * 50;
+      const rate = (Math.floor(years / 5) + 1) * TENURE_RULES.kyotakuPer5Years;
       return rate * carePlanCount;
     }
   }
@@ -468,6 +480,9 @@ export function isCareRecord(r: { service_type?: string | null }): boolean {
   return !NON_CARE_SERVICE_TYPES.includes(String(r.service_type ?? "").trim());
 }
 
+/** 介護時間で 0.75 掛けにするサービスの係数 (対象コードは care-hours-075.ts) */
+export const CARE_HOURS_075_FACTOR = 0.75;
+
 /**
  * 介護時間 (分) = 訪問時間 − 0.75 掛け対象サービスの時間 × 0.25 (総括表と同じ。2026-09-17)
  * 例) 米倉靖子 2026-07: 7,345 − 180×0.25 = 7,300分 → 120h 超過 100分 × 2,500円 = 4,167円
@@ -475,7 +490,7 @@ export function isCareRecord(r: { service_type?: string | null }): boolean {
 export function careMinutesFromRecords(records: { calc_duration: string; service_code: string; service_type?: string | null }[], isHours075: (code: string) => boolean): number {
   return records.filter(isCareRecord).reduce((s, r) => {
     const m = parseDurationMinutes(r.calc_duration);
-    return s + (isHours075(r.service_code) ? m * 0.75 : m);
+    return s + (isHours075(r.service_code) ? m * CARE_HOURS_075_FACTOR : m);
   }, 0);
 }
 
@@ -527,6 +542,11 @@ export function shinyaHoursFromRecords(records: { calc_duration: string; time_pe
 
 /** 月間時間外 60 時間 (分)。これを超えた分は 50% 割増 (労基法37条1項但書) */
 export const MONTHLY_OT_THRESHOLD_MIN = 60 * 60;
+/** 時間外の割増 (月 60 時間まで) / 60 時間を超えた分 */
+export const OVERTIME_RATE = 1.25;
+export const OVERTIME_RATE_OVER_60H = 1.5;
+/** 月給の所定時間 (欠勤控除・遅刻早退・日割りの 1 時間あたり)。事務員は OFFICE_WORKER_SCHEDULED_HOURS */
+export const MONTHLY_SCHEDULED_HOURS = 168;
 /** 月給の事務員の所定時間 (総括表 提責・事務=2 の単価: 224,000円 → 1,409円 = 159h。5事業所で確認) */
 export const OFFICE_WORKER_SCHEDULED_HOURS = 159;
 
@@ -587,7 +607,7 @@ export function overtimeBaseHourlyRate(p: MonthlyPayroll, otSettings: Map<string
 /** ② の「残業単価」と比べる用。= round(もとの単価 × 1.25)。★ 1.25 の段 */
 export function overtimeHourlyRate(p: MonthlyPayroll, otSettings: Map<string, OvertimeSetting>): number | null {
   const r = overtimeBaseHourlyRate(p, otSettings);
-  return r === null ? null : Math.round(r * 1.25);
+  return r === null ? null : Math.round(r * OVERTIME_RATE);
 }
 
 export function computeOvertimePay(
@@ -610,7 +630,7 @@ export function computeOvertimePay(
   // ★ 法内残業は 法定外の残業とは別の法的区分・別の支払い列なので、手入力で残業を上書きしても落とさない
   const legalWithin = p.role_type === "事務員" ? (p.legal_within_minutes ?? 0) : 0;
   return Math.round(
-    (within60 / 60) * Math.round(hourlyRate * 1.25) + (over60 / 60) * Math.round(hourlyRate * 1.5),
+    (within60 / 60) * Math.round(hourlyRate * OVERTIME_RATE) + (over60 / 60) * Math.round(hourlyRate * OVERTIME_RATE_OVER_60H),
   ) + Math.round((legalWithin / 60) * hourlyRate);
 }
 
@@ -843,7 +863,7 @@ export function deductionBase(p: MonthlyPayroll): { base: number; hours: number 
   const s = p.settings;
   return {
     base: s ? s.base_personal_salary + s.skill_salary : 0,
-    hours: p.is_office_worker_for_deduction ? 159 : 168,
+    hours: p.is_office_worker_for_deduction ? OFFICE_WORKER_SCHEDULED_HOURS : MONTHLY_SCHEDULED_HOURS,
   };
 }
 
@@ -885,7 +905,7 @@ export function monthlyPaidLeaveAllowance(p: MonthlyPayroll): number {
  *   ★ これは障害福祉の「同行援護」= 利用者への実務で、ヘルパー同士の同行ではない。
  *   サービス名に「同行」が入るので 名前で判定すると 取り違える (実際に 2026-09-28 に取り違えた)。
  */
-const DOUKOU_SERVICE_CODES = new Set(["010000", "010001", "010518", "019003", "010999"]);
+export const DOUKOU_SERVICE_CODES = new Set(["010000", "010001", "010518", "019003", "010999"]);
 
 /**
  * その実績を「同行」として扱うか。★ **サービスコードで決める。旗 (`accompanied_visit`) は見ない。**
@@ -1149,6 +1169,9 @@ export function normalizeYM(ym: string): string {
  *   limit    育児手当支給限度額。職員ごとに違う (20,000 円 49名 / 30,000 円 20名 / 40,000 円 2名)
  *   ratePct  育児手当指定割合 (%)。費目別 (保育園40% / 幼稚園20%) ではなく一律で払う職員が 20 名いる
  */
+/** 育児手当 (旧システムの契約が無いとき)。上限 (子 1 人 / 2 人以上)・割合 (幼稚園)・時給者の按分の基準時間 */
+export const CHILDCARE_RULES = { limitOne: 20000, limitTwoOrMore: 30000, rate: 0.4, rateKindergarten: 0.2, fullHours: 120 } as const;
+
 export function computeChildcareAllowance(
   recs: OfficeFormRecord[],
   salaryType: string,
@@ -1171,13 +1194,13 @@ export function computeChildcareAllowance(
   let grand = 0;
   for (const [ym, group] of byYm) {
     const uniqueChildren = new Set(group.map((r) => r.child_name ?? "不明")).size;
-    const ceiling = (contract?.limit ?? 0) > 0 ? (contract!.limit as number) : (uniqueChildren >= 2 ? 30000 : 20000);
+    const ceiling = (contract?.limit ?? 0) > 0 ? (contract!.limit as number) : (uniqueChildren >= 2 ? CHILDCARE_RULES.limitTwoOrMore : CHILDCARE_RULES.limitOne);
     let total = 0;
     for (const rec of group) {
       const amount = rec.amount ?? 0;
       if (amount <= 0) continue;
       const isKindergarten = rec.item_name.includes("幼稚園");
-      const baseRate = (contract?.ratePct ?? 0) > 0 ? (contract!.ratePct as number) / 100 : (isKindergarten ? 0.2 : 0.4);
+      const baseRate = (contract?.ratePct ?? 0) > 0 ? (contract!.ratePct as number) / 100 : (isKindergarten ? CHILDCARE_RULES.rateKindergarten : CHILDCARE_RULES.rate);
       // 育児手当計算方法が「指定割合」の人は 時給者でも按分しない (2026-09-21)
       //   船橋 手塚 有希 (指定割合40%・限度30,000) 2026-03〜06 の 4 か月で確認:
       //   16,000 × 40% = 6,400 / 6,400 / 6,400、10,000 × 40% = 4,000 が総括表の値と 1 円一致。
@@ -1187,7 +1210,7 @@ export function computeChildcareAllowance(
       } else {
         // 時給者は その「何月分」の実働 (120 時間) で按分する
         const visitMin = visitMinutesByEmpMonth.get(`${empNum}:${ym}`) ?? 0;
-        const ratio = Math.min(visitMin / (120 * 60), 1.0);
+        const ratio = Math.min(visitMin / (CHILDCARE_RULES.fullHours * 60), 1.0);
         total += Math.round(amount * baseRate * ratio);
       }
     }
@@ -1465,6 +1488,12 @@ export function paidLeaveAllowanceAmount(paidLeaveDays: number, paidLeaveUnitPri
  *   lend_fee  貸与要件を満たさないが引き続き貸与を希望 → 負担 -1,700円 (user 2026-09-17。高品 菊池・中村・西田)
  */
 export const COMMUNICATION_FEE_TYPES = ["none", "variable", "lend", "lend_fee"] as const;
+/** 通信手当の段 (その月の訪問時間 → 円)。上から順に当てる。0 時間は 0 円 */
+export const COMMUNICATION_FEE_TIERS: readonly { fromHours: number; yen: number }[] = [
+  { fromHours: 100, yen: 1500 },
+  { fromHours: 50, yen: 1000 },
+  { fromHours: 0, yen: 500 },
+];
 export const PHONE_LEND_CHARGE = -1700;
 
 export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes: number, feeType: string = "none"): number {
@@ -1474,9 +1503,7 @@ export function communicationFeeAmount(hasSocialInsurance: boolean, visitMinutes
   // 段は 訪問時間で 500 / 1,000 / 1,500 円 (2026-09-20 総括表 3〜7月 1,351 件中 1,350 件が一致)。
   //   50h ちょうどは 1,000 円 (市原 鈴木正子 2026-03 など 3,000 分ちょうどが 5 件) / 100h 以上は 1,500 円 (さつき 滝下 110h・茂原 白井 102h)
   const visitHours = visitMinutes / 60;
-  if (visitHours >= 100) return 1500;
-  if (visitHours >= 50) return 1000;
-  if (visitHours > 0) return 500;
+  for (const t of COMMUNICATION_FEE_TIERS) if (visitHours >= t.fromHours && visitHours > 0) return t.yen;
   return 0;
 }
 
@@ -1663,10 +1690,13 @@ export function yochoHoursFromRecords(records: { calc_duration: string; time_per
   return min / 60;
 }
 
+/** 訪問 1 件の時間帯の割増 (同行には付けない) */
+export const VISIT_TIME_PERIOD_RATES = { 深夜: 1.5, 夜朝: 1.25 } as const;
+
 export function timePeriodMultiplier(timePeriod: string | null | undefined): number {
   const t = (timePeriod ?? "").trim();
-  if (t.includes("深夜")) return 1.5;
-  if (/夜朝|夜間|早朝/.test(t)) return 1.25;
+  if (t.includes("深夜")) return VISIT_TIME_PERIOD_RATES.深夜;
+  if (/夜朝|夜間|早朝/.test(t)) return VISIT_TIME_PERIOD_RATES.夜朝;
   return 1;
 }
 /** 本人給を払う時間 = 1 回の訪問時間を 5 分単位に切り上げたもの (総括表 2026-06 の 3 名で確認) */

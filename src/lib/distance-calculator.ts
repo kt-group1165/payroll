@@ -44,8 +44,8 @@ function toMinutes(t: string): number {
 
 // 総括表 (Gmap結果確認用 2026-06 さつきが丘) で確定: 空きがちょうど120分の区間は含み、120分を超えると除外。
 // 区間の所要時間は分単位に切り捨ててから足す (社員の 出勤時間−訪問時間 が区間の分の合計と一致: 米倉1264/大治1013)
-const GAP_THRESHOLD_MIN = 120;  // 2時間 (超えたら除外)
-const TRAVEL_TIME_THRESHOLD_SEC = 15 * 60; // 15分
+export const GAP_THRESHOLD_MIN = 120;  // 2時間 (超えたら除外)
+export const TRAVEL_TIME_THRESHOLD_SEC = 15 * 60; // 15分
 
 type DistMap = Map<string, { distance_meters: number; duration_seconds: number }>;
 

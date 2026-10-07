@@ -220,7 +220,9 @@ export type CalcConfigWithConfirmations = CalcConfig & {
 };
 
 // 既定値 (集計.py DEFAULT_BASE_SALARY)
-const DEFAULT_BASE_SALARY = 250000;
+export const DEFAULT_BASE_SALARY = 250000;
+/** 居宅の加算手当: 単位数 × この円 (地域単価は使わない) */
+export const KASAN_YEN_PER_UNIT = 10;
 
 // =====================================================================
 // ユーティリティ
@@ -522,7 +524,7 @@ function calcKazan(
     for (const svc of svcNames) {
       if (svc.includes(u.item_name)) count += 1;
     }
-    kazan += count * u.unit_count * 10;
+    kazan += count * u.unit_count * KASAN_YEN_PER_UNIT;
   }
   return kazan;
 }

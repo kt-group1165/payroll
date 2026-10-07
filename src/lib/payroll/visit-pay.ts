@@ -13,6 +13,9 @@
 import { parseDurationMinutes, payMinutesOf, visitPayAmount } from "./payroll-calc";
 
 /** 訪問 1 件のうち 時給を決めるのに要る項目だけ */
+/** 重度訪問の「短時間の時給」を使う 1 回の訪問の上限 (分)。これ以下なら短時間の時給 */
+export const JUHO_SHORT_VISIT_MAX_MINUTES = 90;
+
 export type VisitForPay = {
   calc_duration: string;
   service_code: string;
@@ -79,7 +82,7 @@ export function resolveVisitPay(rec: VisitForPay, ctx: VisitRateContext): VisitP
   const doukouFlat = String(rec.service_code).padStart(6, "0") === "021008" ? ctx.doukouFlatRates[rec.office_number] : undefined;
   const hourlyRate = doukouFlat !== undefined && longRate !== null ? doukouFlat
     : sougouRate !== undefined && longRate !== null ? sougouRate
-    : longRate !== null && shortRate !== undefined && minutes <= 90 ? shortRate : longRate;
+    : longRate !== null && shortRate !== undefined && minutes <= JUHO_SHORT_VISIT_MAX_MINUTES ? shortRate : longRate;
   const overflowRate = officeId && ctx.lifeSupportCategoryId ? (ctx.rateMap.get(`${officeId}:${ctx.lifeSupportCategoryId}`) ?? null) : null;
   // 本人給は 1 回の訪問時間を 5 分単位に切り上げて払う (2026-09-19)。時間の集計 (介護超過・残業など) は切り上げない
   const pay = visitPayAmount(payMinutesOf(minutes), hourlyRate, catName, rec.time_period, doukouFlat !== undefined ? null : overflowRate);
