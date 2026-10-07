@@ -1453,7 +1453,7 @@ export function paidLeaveAllowanceAmount(paidLeaveDays: number, paidLeaveUnitPri
 
 /**
  * 通信手当 (時給者・社保未加入のみ変動支給)。
- * 社保加入者は0円固定。未加入者は当月訪問時間で 50h超=1000円 / 0〜50h=500円 / 0h=0円。
+ * 社保加入者は0円固定。未加入者は当月訪問時間で 100h以上=1500円 / 50h以上=1000円 / 0h超=500円 / 0h=0円。
  */
 /**
  * 通信費タイプ (payroll_employees.communication_fee_type)
