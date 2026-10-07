@@ -420,6 +420,9 @@ export function SalaryList({
 
   // フィルター・ソート
   const [filterOfficeId, setFilterOfficeId] = useState("");
+  // ★ 2026-10-07: 一覧が「在職者」だけで、休職者・退職者は 給与設定があっても 画面に出ていなかった (9 名)。
+  //   在職・休職は常に出し、退職者は切り替えで出す (退職月までの給与は計算に使うので 見られないと確かめられない)
+  const [showRetired, setShowRetired] = useState(false);
   const [sortCol, setSortCol] = useState<SortCol>("employee_number");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -578,9 +581,9 @@ export function SalaryList({
 
     const rows: string[][] = [CSV_HEADERS.slice()];
 
-    // 在職者のみ出力（退職者は除く）+ 事業所フィルタ反映
+    // 画面と同じ人を出力 (在職・休職。「退職者も表示」なら退職者も) + 事業所フィルタ反映
     const targets = employees
-      .filter((e) => !e.employment_status || e.employment_status === "在職者")
+      .filter((e) => !e.employment_status || e.employment_status !== "退職者" || showRetired)
       .filter((e) => !filterOfficeId || e.office_id === filterOfficeId);
 
     const officeByIdForExport = new Map(offices.map((o) => [o.id, o]));
@@ -806,8 +809,9 @@ export function SalaryList({
   // ─── テーブル用データ ─────────────────────────────────────────
 
   const activeEmployees = employees.filter(
-    (e) => !e.employment_status || e.employment_status === "在職者"
+    (e) => !e.employment_status || e.employment_status !== "退職者" || showRetired
   );
+  const retiredCount = employees.filter((e) => e.employment_status === "退職者").length;
 
   // 履歴化方式: 一覧は「今日 active な row」を表示する。effective_from <= today の最新。
   // (= 未来日付 row は反映しない。/payroll の対象月計算は別途その月の active を使う)
@@ -956,6 +960,10 @@ export function SalaryList({
                 ))}
               </select>
               <span className="text-sm text-muted-foreground">{sorted.length}名</span>
+              <label className="flex items-center gap-1 text-sm text-muted-foreground" title="退職月までの給与は計算に使うので、退職者の設定もここで確かめられる">
+                <input type="checkbox" className="h-4 w-4" checked={showRetired} onChange={(e) => setShowRetired(e.target.checked)} />
+                退職者も表示 ({retiredCount})
+              </label>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleExport} disabled={employees.length === 0}>
@@ -1058,7 +1066,14 @@ export function SalaryList({
                       onClick={() => handleRowClick(emp.id)}
                     >
                       <td className="px-4 py-2 font-mono text-xs">{emp.employee_number}</td>
-                      <td className="px-4 py-2 font-medium">{emp.name}</td>
+                      <td className="px-4 py-2 font-medium">
+                        {emp.name}
+                        {emp.employment_status && emp.employment_status !== "在職者" && (
+                          <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-normal ${emp.employment_status === "休職者" ? "bg-amber-100 text-amber-800" : "bg-gray-200 text-gray-700"}`}>
+                            {emp.employment_status === "休職者" ? "休職" : "退職"}{emp.resignation_date ? ` ${emp.resignation_date}` : ""}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-sm text-muted-foreground">{officeName}</td>
                       <td className="px-4 py-2">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${emp.salary_type === "月給" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>
