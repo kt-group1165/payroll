@@ -22,6 +22,7 @@ import { usePayrollOffices } from "@/lib/swr/use-payroll-offices";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { GrantProposalButton } from "./grant-proposal";
 import { officeFormPaidLeaveDays, type OfficeFormRecord } from "@/lib/payroll/payroll-calc";
 import { getEntriesByEmployeesMonthRange } from "@/lib/office-input/queries";
 import { mergeOfficeFormSources, normEmp, officeInputEntryToFormRecord, processingToBillingMonth } from "@/lib/office-input/to-form-records";
@@ -281,6 +282,10 @@ export default function PaidLeavePage() {
         <div className="ml-auto flex gap-2">
           <Button variant="outline" onClick={() => void load()} disabled={loading}>{loading ? "読み込み中…" : "読み直す"}</Button>
           <Button variant="outline" onClick={exportCsv} disabled={shown.length === 0}>📥 CSV出力</Button>
+          {effOffice && (
+            <GrantProposalButton officeId={effOffice.id} officeNumber={effOffice.office_number} officeType={effOffice.office_type} fy={fy}
+              prevUsedByEmp={new Map(rows.map((r) => [`${r.emp.id}|${r.grant.grant_date}`, r.used]))} onSaved={() => void load()} />
+          )}
         </div>
       </div>
       {confirmError && <p className="mb-3 text-sm text-amber-700">確認欄を読めませんでした: {confirmError}</p>}

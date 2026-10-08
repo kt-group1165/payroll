@@ -44,6 +44,7 @@ const CHECKS: Check[] = [
   { name: "office-input-roundtrip", script: "check:office-input-roundtrip", why: "★ /office-input の「画面で直す」(ファイルの値を画面の入力に写す) で 給与計算が事業所書式から読む値が変わらないこと (実データ全件)" },
   { name: "office-price-revision", script: "check:office-price-revision", why: "★ 事業所の単価を画面・CSV で変えたとき 改定月から効き、前の月の給与が変わらないこと (偽の表で 書く側と給与計算が読む側を通す)" },
   { name: "setting-history-sync", script: "check:setting-history-sync", why: "★ 設定の今の値と履歴の最新が一致 (今の値だけ書き換えると 画面は変わるのに給与計算に効かない)" },
+  { name: "paid-leave-grant-rules", script: "check:paid-leave-grant-rules", why: "★ 有給の付与日数・日当・繰越の式 (Box 有給データの式) の境界値。稼働率 0.8/0.4 の境目・時給の比例・初回 6 か月" },
   { name: "kyotaku-python", script: "verify:kyotaku-python", why: "★ 居宅ケアマネ給与計算を 移植元Python実出力と突合 (基準値方式。B-2y参照)",
     kind: "baseline", knownDiff: 9 }, // 実績0件月の基本給の扱い (既知・B-2y。user判断待ち)
 

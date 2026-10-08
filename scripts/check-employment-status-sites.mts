@@ -31,6 +31,7 @@ const ALLOW: Record<string, [number, string]> = {
   "app/employees/employees-list.tsx": [19, "職員マスタの編集・CSV (今の状態を直す画面)"],
   "app/bonus-payments/page.tsx": [3, "表示だけ"],
   "app/paid-leave/page.tsx": [3, "select の列名と 型・表示だけ (退職 の印・薄く出す)。付与のある人は退職者も出す (退職月までの有給は払う)"],
+  "app/paid-leave/grant-proposal.tsx": [4, "型・select の列名と 付与日より前に辞めた人を外す判定 (退職日と付与日を比べる。今の状態だけでは決めない)"],
   "app/service-records/page.tsx": [3, "表示だけ (※退職 の印)"],
   "app/salary/salary-list.tsx": [6, "一覧と CSV 出力: 在職・休職は常に、退職者は「退職者も表示」のときだけ (2026-10-07。退職者・休職者に給与設定があるのに見えなかった) + 名前の横の 休職/退職 の印"],
   "lib/kaigo-import/build-records.ts": [3, "同じ番号が複数いるときの優先順 (在職者を優先)。影響は小"],
