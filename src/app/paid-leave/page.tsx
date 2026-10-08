@@ -11,7 +11,8 @@
  *   有給管理簿の月ごとの日数 (payroll_monthly_inputs paid_leave_days) が その月にあれば それ
  *   (★ 最新の付与日より前の月は 管理簿の値を信用しない。payroll_paid_leave_ledger_range)、
  *   無ければ 事業所書式 (ファイル取込 + 画面の入力を月ごとに合流) の 有給・半有給。
- * 付与 (繰越・付与日数・日当) は payroll_paid_leave_grants。この画面では見るだけ。
+ * 付与 (繰越・付与日数・日当) は payroll_paid_leave_grants。個人台帳の「付与」で 直す・足す・消す ができる (2026-10-08)。
+ *   ★ 日当と繰越は 給与計算の有給休暇手当に効く。過去の付与を直すと その月々も (計算し直したときに) 変わる
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -29,7 +30,7 @@ import {
 } from "@/lib/payroll/paid-leave-ledger";
 
 type Emp = { id: string; employee_number: string; name: string; salary_type: string | null; role_type: string | null; employment_status: string | null };
-type Grant = { employee_id: string; grant_date: string; carry_days: number | null; grant_days: number | null; prev_rate: number | null; cur_rate: number | null; source: string | null };
+type Grant = { id?: string; employee_id: string; grant_date: string; carry_days: number | null; grant_days: number | null; prev_rate: number | null; cur_rate: number | null; source: string | null };
 /** 使った日 1 つ (日付が分からない分は date = null) */
 type UseDay = { date: string | null; days: number; month: string; source: "書式" | "画面" };
 type MonthUse = { days: number; source: "管理簿" | "書式" | "" };
@@ -54,6 +55,8 @@ export default function PaidLeavePage() {
   const [open, setOpen] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  // 職員ごとの全部の付与 (個人台帳で直すため)
+  const [grantsByEmp, setGrantsByEmp] = useState<Map<string, Grant[]>>(new Map());
 
   const office = offices.find((o) => o.id === officeId) ?? null;
   const effOfficeId = officeId || offices[0]?.id || "";
@@ -78,9 +81,15 @@ export default function PaidLeavePage() {
       const grants: Grant[] = [];
       for (let i = 0; i < emps.length; i += 150) {
         const { data, error } = await supabase.from("payroll_paid_leave_grants")
-          .select("employee_id,grant_date,carry_days,grant_days,prev_rate,cur_rate,source").in("employee_id", emps.slice(i, i + 150).map((e) => e.id));
+          .select("id,employee_id,grant_date,carry_days,grant_days,prev_rate,cur_rate,source").in("employee_id", emps.slice(i, i + 150).map((e) => e.id));
         if (error) throw new Error(`有給の付与の取得に失敗: ${error.message}`);
         grants.push(...((data ?? []) as Grant[]));
+      }
+      {
+        const m = new Map<string, Grant[]>();
+        for (const g of grants) m.set(g.employee_id, [...(m.get(g.employee_id) ?? []), g]);
+        for (const l of m.values()) l.sort((a, b) => b.grant_date.localeCompare(a.grant_date));
+        setGrantsByEmp(m);
       }
       // 年度に重なる付与 (付与日から 1 年が 年度にかかるもの) = 一覧の行
       const target = grants.filter((g) => g.grant_date <= fyEnd && addMonthsMinusOneDay(g.grant_date, 12) >= fyStart);
@@ -364,6 +373,7 @@ export default function PaidLeavePage() {
                       <td colSpan={28} className="px-4 py-3">
                         <PersonLedger row={r} confirmed={confirmed} canConfirm={!confirmError}
                           onToggle={(date, on) => void toggleConfirm(r.emp.id, date, on)} />
+                        <GrantEditor key={JSON.stringify(grantsByEmp.get(r.emp.id) ?? [])} emp={r.emp} grants={grantsByEmp.get(r.emp.id) ?? []} defaultDate={`${fy}-04-01`} onSaved={() => void load()} />
                       </td>
                     </tr>
                   }
@@ -437,6 +447,103 @@ function PersonLedger({ row, confirmed, canConfirm, onToggle }: {
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 付与の編集 (payroll_paid_leave_grants)。1 行 = 1 回の付与。
+ * 日当 (前年度 / 今年度) と 前年度繰越は 給与計算の有給休暇手当に使う:
+ *   付与日から 繰越を使い切るまでは 前年度の日当、以降は 今年度の日当 (paidLeaveAllowanceByGrant)
+ */
+function GrantEditor({ emp, grants, defaultDate, onSaved }: { emp: Emp; grants: Grant[]; defaultDate: string; onSaved: () => void }) {
+  type Draft = { id?: string; grant_date: string; carry_days: string; grant_days: string; prev_rate: string; cur_rate: string; source: string | null };
+  const toDraft = (g: Grant): Draft => ({
+    id: g.id, grant_date: g.grant_date, carry_days: g.carry_days == null ? "" : String(g.carry_days), grant_days: g.grant_days == null ? "" : String(g.grant_days),
+    prev_rate: g.prev_rate == null ? "" : String(g.prev_rate), cur_rate: g.cur_rate == null ? "" : String(g.cur_rate), source: g.source,
+  });
+  const [drafts, setDrafts] = useState<Draft[]>(() => grants.map(toDraft));
+  const [saving, setSaving] = useState<number | null>(null);
+  const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  const set = (i: number, patch: Partial<Draft>) => setDrafts((d) => d.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const changed = (i: number) => {
+    const d = drafts[i];
+    const g = grants.find((x) => x.id && x.id === d.id);
+    return !g || JSON.stringify(toDraft(g)) !== JSON.stringify(d);
+  };
+
+  const save = async (i: number) => {
+    const d = drafts[i];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.grant_date)) { toast.error("付与日を入れてください"); return; }
+    const vals = [d.carry_days, d.grant_days, d.prev_rate, d.cur_rate].map(num);
+    if (vals.some((v) => v != null && (Number.isNaN(v) || v < 0))) { toast.error("日数・日当は 0 以上の数で入れてください"); return; }
+    if (d.grant_date <= todayJst() && !confirm(`${d.grant_date} の付与を${d.id ? "直し" : "足し"}ます。\n日当・繰越は有給休暇手当に効くので、この日より後の月の給与も (計算し直したときに) 変わります。よいですか？`)) return;
+    const payload = {
+      employee_id: emp.id, grant_date: d.grant_date, carry_days: vals[0] ?? 0, grant_days: vals[1], prev_rate: vals[2], cur_rate: vals[3],
+      source: d.id ? (d.source ?? "画面") : `画面で入力 ${todayJst()}`,
+    };
+    setSaving(i);
+    const { error } = d.id
+      ? await supabase.from("payroll_paid_leave_grants").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", d.id)
+      : await supabase.from("payroll_paid_leave_grants").insert(payload);
+    setSaving(null);
+    if (error) { toast.error(`付与の保存に失敗: ${error.message}`); return; }
+    toast.success(`付与を保存しました (${d.grant_date})`);
+    onSaved();
+  };
+
+  const remove = async (i: number) => {
+    const d = drafts[i];
+    if (!d.id) { setDrafts((x) => x.filter((_, j) => j !== i)); return; }
+    if (!confirm(`${d.grant_date} の付与を消します。\nこの付与の日当で計算していた月は (計算し直したときに) 職員マスタの有給単価になります。よいですか？`)) return;
+    const { error } = await supabase.from("payroll_paid_leave_grants").delete().eq("id", d.id);
+    if (error) { toast.error(`付与の削除に失敗: ${error.message}`); return; }
+    toast.success("付与を消しました");
+    onSaved();
+  };
+
+  const cell = "h-7 w-20 rounded border bg-background px-1.5 text-right text-xs";
+  return (
+    <div className="mt-4 max-w-4xl">
+      <div className="mb-1 flex items-center gap-3">
+        <p className="text-xs font-semibold text-muted-foreground">付与 ({emp.name})</p>
+        <button type="button" className="text-xs text-blue-600 underline"
+          onClick={() => setDrafts((d) => [{ grant_date: defaultDate, carry_days: "", grant_days: "", prev_rate: "", cur_rate: "", source: null }, ...d])}>
+          ＋ 付与を足す
+        </button>
+        <span className="text-[11px] text-muted-foreground">繰越を使い切るまでは 前年度の日当、以降は 今年度の日当で 有給休暇手当を計算します。日当が空なら 給与設定の有給単価</span>
+      </div>
+      {drafts.length === 0 ? <p className="text-sm text-muted-foreground">付与がありません。</p> : (
+        <table className="text-xs">
+          <thead>
+            <tr className="border-b text-muted-foreground">
+              <th className="px-2 py-1 text-left">付与日</th>
+              <th className="px-2 py-1 text-right">前年度繰越 (日)</th>
+              <th className="px-2 py-1 text-right">今年度付与 (日)</th>
+              <th className="px-2 py-1 text-right">前年度日当 (円)</th>
+              <th className="px-2 py-1 text-right">今年度日当 (円)</th>
+              <th className="px-2 py-1 text-left">出どころ</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {drafts.map((d, i) => (
+              <tr key={d.id ?? `new-${i}`} className={"border-b last:border-0" + (changed(i) ? " bg-amber-50 dark:bg-amber-900/20" : "")}>
+                <td className="px-2 py-1"><input type="date" className="h-7 rounded border bg-background px-1.5 text-xs" value={d.grant_date} onChange={(e) => set(i, { grant_date: e.target.value })} /></td>
+                <td className="px-2 py-1 text-right"><input type="number" min={0} step={0.5} className={cell} value={d.carry_days} onChange={(e) => set(i, { carry_days: e.target.value })} /></td>
+                <td className="px-2 py-1 text-right"><input type="number" min={0} step={0.5} className={cell} value={d.grant_days} placeholder="?" onChange={(e) => set(i, { grant_days: e.target.value })} /></td>
+                <td className="px-2 py-1 text-right"><input type="number" min={0} step={1} className={cell} value={d.prev_rate} placeholder="空" onChange={(e) => set(i, { prev_rate: e.target.value })} /></td>
+                <td className="px-2 py-1 text-right"><input type="number" min={0} step={1} className={cell} value={d.cur_rate} placeholder="空" onChange={(e) => set(i, { cur_rate: e.target.value })} /></td>
+                <td className="px-2 py-1 max-w-[16rem] truncate text-muted-foreground" title={d.source ?? ""}>{d.source ?? (d.id ? "" : "(新しい付与)")}</td>
+                <td className="px-2 py-1 whitespace-nowrap">
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!changed(i) || saving === i} onClick={() => void save(i)}>{saving === i ? "保存中…" : "保存"}</Button>
+                  <button type="button" className="ml-2 text-xs text-red-600 hover:underline" onClick={() => void remove(i)}>削除</button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       )}
