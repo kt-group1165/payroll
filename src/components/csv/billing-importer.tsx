@@ -262,7 +262,7 @@ export function BillingImporter() {
 
   useEffect(() => {
     supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, sort_order, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
-      const flattened = flattenOfficeMaster(data as never) as unknown as OfficeLite[];
+      const flattened = sortOfficesByDisplayOrder(flattenOfficeMaster(data as never) as unknown as OfficeLite[]);
       setOffices(flattened);
     });
     fetchAliases();
@@ -698,7 +698,7 @@ export function BillingImporter() {
       if (shogaiUpdates.length > 0) {
         // 最新のofficesを再取得（以降の取り込みで同じ番号が自動解決されるように）
         const { data: refreshed } = await supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, sort_order, ${OFFICE_MASTER_JOIN}`);
-        const flattened = flattenOfficeMaster(refreshed as never) as unknown as OfficeLite[];
+        const flattened = sortOfficesByDisplayOrder(flattenOfficeMaster(refreshed as never) as unknown as OfficeLite[]);
         setOffices(flattened);
       }
 
