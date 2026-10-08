@@ -81,6 +81,10 @@ export type AdoptPlan = {
   /** 写せるか。false なら reason に理由 */
   canAdopt: boolean;
   reason?: string;
+  /** どこから来た値か ("事業所書式" / "旧システム・総括表" など)。画面の表示用 (2026-10-08) */
+  source?: string;
+  /** source の詳しい中身 (ファイル名など)。title に出す */
+  sourceDetail?: string;
 };
 
 /**

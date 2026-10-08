@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Office } from "@/types/database";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { Input } from "@/components/ui/input";
 
 export default function OfficeIndexPage() {
@@ -12,10 +13,10 @@ export default function OfficeIndexPage() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`).order("office_number").then(({ data }) => {
+    supabase.from("payroll_offices").select(`*, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (data) {
-        const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
-        setOffices(flattened);
+        // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+        setOffices(sortOfficesByDisplayOrder(flattenOfficeMaster(data as never) as unknown as Office[]));
       }
     });
   }, []);

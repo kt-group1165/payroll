@@ -220,12 +220,12 @@ function currentYM(): string {
 export async function getFormRecordsByOfficeMonth(
   officeNumber: string,
   processingMonth: string,
-): Promise<OfficeFormRecord[]> {
-  const rows: OfficeFormRecord[] = [];
+): Promise<(OfficeFormRecord & { import_batch_id: string | null })[]> {
+  const rows: (OfficeFormRecord & { import_batch_id: string | null })[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("payroll_office_form_records")
-      .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,break_time,year_month,child_name,amount")
+      .select("employee_number,record_type,item_name,item_date,numeric_value,start_time,end_time,break_time,year_month,child_name,amount,import_batch_id")
       .eq("office_number", officeNumber)
       .eq("processing_month", processingMonth)
       .order("id")
@@ -234,11 +234,68 @@ export async function getFormRecordsByOfficeMonth(
       console.error("getFormRecordsByOfficeMonth failed:", error.message);
       throw new Error(`ファイル取込の事業所書式の取得に失敗: ${error.message}`);
     }
-    const page = (data ?? []) as OfficeFormRecord[];
+    const page = (data ?? []) as (OfficeFormRecord & { import_batch_id: string | null })[];
     rows.push(...page);
     if (page.length < PAGE_SIZE) break;
   }
   return rows;
+}
+
+/**
+ * 出勤簿 (payroll_attendance_records) の 出張km・通勤km の月合計 (職員ごと。キーは normEmp した社員番号)。
+ * 給与計算は 出張km が 画面の入力にも事業所書式にも無い人に 出勤簿の出張km を使う (payroll/page.tsx tripKmOf)。
+ * 事業所書式入力の画面で「この人は出勤簿の値で計算されている」を見せるため (2026-10-08)
+ */
+export async function getAttendanceKmByOfficeMonth(
+  officeNumber: string,
+  processingMonth: string,
+): Promise<Map<string, { business_km: number; commute_km: number }>> {
+  const out = new Map<string, { business_km: number; commute_km: number }>();
+  const year = Number(processingMonth.slice(0, 4)), month = Number(processingMonth.slice(4, 6));
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("payroll_attendance_records")
+      .select("employee_number,business_km,commute_km")
+      .eq("office_number", officeNumber)
+      .eq("year", year).eq("month", month)
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getAttendanceKmByOfficeMonth failed:", error.message);
+      throw new Error(`出勤簿の取得に失敗: ${error.message}`);
+    }
+    const page = (data ?? []) as { employee_number: string; business_km: number | null; commute_km: number | null }[];
+    for (const r of page) {
+      const k = String(r.employee_number ?? "").trim().replace(/^0+/, "");
+      const cur = out.get(k) ?? { business_km: 0, commute_km: 0 };
+      cur.business_km += Number(r.business_km ?? 0);
+      cur.commute_km += Number(r.commute_km ?? 0);
+      out.set(k, cur);
+    }
+    if (page.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+
+/** 取込バッチ (payroll_import_batches) の 種類とファイル名。ファイル取込の値が どこから来たかを出すため (2026-10-08) */
+export async function getImportBatchesByIds(
+  ids: string[],
+): Promise<Map<string, { import_type: string; file_names: string[] }>> {
+  const out = new Map<string, { import_type: string; file_names: string[] }>();
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await supabase
+      .from("payroll_import_batches")
+      .select("id,import_type,file_names")
+      .in("id", ids.slice(i, i + 150));
+    if (error) {
+      console.error("getImportBatchesByIds failed:", error.message);
+      throw new Error(`取込バッチの取得に失敗: ${error.message}`);
+    }
+    for (const b of (data ?? []) as { id: string; import_type: string; file_names: string[] | null }[]) {
+      out.set(b.id, { import_type: b.import_type, file_names: b.file_names ?? [] });
+    }
+  }
+  return out;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   type Employee,
   type Office,
 } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { SalaryList } from "./salary-list";
 
 type SalarySettings = {
@@ -87,8 +88,9 @@ export default async function SalaryPage() {
     supabase.from("payroll_overtime_settings").select("*"),
   ]);
 
+  // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
   const offices: Office[] = offRes.data
-    ? (flattenOfficeMaster(offRes.data as never) as unknown as Office[])
+    ? sortOfficesByDisplayOrder(flattenOfficeMaster(offRes.data as never) as unknown as Office[])
     : [];
   const overtimeSettings: OvertimeSetting[] = (otRes.data as OvertimeSetting[] | null) ?? [];
 

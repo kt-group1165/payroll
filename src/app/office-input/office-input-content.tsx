@@ -22,6 +22,8 @@ import {
   deleteEntry,
   getEntriesByEmployeesMonth,
   getFormRecordsByOfficeMonth,
+  getImportBatchesByIds,
+  getAttendanceKmByOfficeMonth,
   insertEntries,
   listEmployeesByOffice,
   upsertEntry,
@@ -147,7 +149,11 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
   // ─── ファイルで取り込んだ事業所書式 (2026-10-06) ───────────────
   //   画面とファイルの両方から入れられる。給与計算は (職員 × 項目) 単位で 画面の入力がファイルに勝つ。
   //   ★ 画面にファイルの値を出さないと、画面で 1 項目入れたとき ファイルの値が見えないまま置き換わる
-  const [fileRecords, setFileRecords] = useState<OfficeFormRecord[]>([]);
+  const [fileRecords, setFileRecords] = useState<(OfficeFormRecord & { import_batch_id: string | null })[]>([]);
+  // 取込バッチ id → 種類・ファイル名 (値が 事業所書式から来たのか 旧システム・総括表から来たのかを出す。2026-10-08 user)
+  const [fileBatches, setFileBatches] = useState<Map<string, { import_type: string; file_names: string[] }>>(new Map());
+  // 出勤簿の 出張km の月合計 (normEmp → km)。事業所書式に出張km が無い人は 給与計算がこちらを使う
+  const [attendanceKm, setAttendanceKm] = useState<Map<string, { business_km: number; commute_km: number }>>(new Map());
   const [fileVersion, setFileVersion] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -158,8 +164,17 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
       return;
     }
     getFormRecordsByOfficeMonth(officeNumber, billingToProcessingMonth(billingMonth))
-      .then((list) => { if (!cancelled) setFileRecords(list); })
+      .then(async (list) => {
+        if (cancelled) return;
+        setFileRecords(list);
+        const ids = [...new Set(list.map((r) => r.import_batch_id).filter((x): x is string => !!x))];
+        const batches = await getImportBatchesByIds(ids);
+        if (!cancelled) setFileBatches(batches);
+      })
       .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : "ファイル取込の値の取得に失敗しました"); });
+    getAttendanceKmByOfficeMonth(officeNumber, billingToProcessingMonth(billingMonth))
+      .then((m) => { if (!cancelled) setAttendanceKm(m); })
+      .catch((e) => { if (!cancelled) toast.error(e instanceof Error ? e.message : "出勤簿の出張kmの取得に失敗しました"); });
     return () => { cancelled = true; };
   }, [selectedOfficeNumber, billingMonth, fileVersion]);
 
@@ -205,6 +220,31 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
     const empIdByNum = new Map(employees.map((e) => [normEmp(e.employee_number), e.id]));
     const webKeys = new Set(rows.map((r) => `${r.employee_id}|${r.item_name}`));
     const { plans } = planAdoptFromFormRecords(fileRecords, billingMonth);
+    // (職員 × 項目) ごとの 出どころ。planAdoptFromFormRecords と同じキー (正規化した社員番号 | 項目名)
+    const sourceByKey = new Map<string, Map<string, Set<string>>>();
+    for (const r of fileRecords) {
+      const b = r.import_batch_id ? fileBatches.get(r.import_batch_id) : null;
+      const label = !r.import_batch_id
+        ? "旧システム・総括表"
+        : !b ? "取込 (内容不明)"
+        : b.import_type === "office_form" ? "事業所書式"
+        : b.import_type === "attendance" ? "出勤簿"
+        : b.import_type;
+      const detail = !r.import_batch_id
+        ? "取込バッチの無い行: 旧システムの「事業所入力」から入れた値 か 総括表から補った値"
+        : b ? b.file_names.join(", ") || "(ファイル名なし)" : r.import_batch_id;
+      const k = `${normEmp(r.employee_number)}|${r.item_name}`;
+      if (!sourceByKey.has(k)) sourceByKey.set(k, new Map());
+      const m = sourceByKey.get(k)!;
+      if (!m.has(label)) m.set(label, new Set());
+      m.get(label)!.add(detail);
+    }
+    for (const p of plans) {
+      const m = sourceByKey.get(`${normEmp(p.employee_number)}|${p.item_name}`);
+      if (!m) continue;
+      p.source = [...m.keys()].join("+");
+      p.sourceDetail = [...m].map(([l, ds]) => `${l}: ${[...ds].join(", ")}`).join("\n");
+    }
     const byItem = new Map<string, Map<string, AdoptPlan>>();
     const unresolved = new Set<string>();
     for (const p of plans) {
@@ -215,7 +255,28 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
       byItem.get(p.item_name)!.set(empId, p);
     }
     return { byItem, unresolved: [...unresolved].sort() };
-  }, [fileRecords, employees, rows, billingMonth]);
+  }, [fileRecords, fileBatches, employees, rows, billingMonth]);
+
+  // ─── 出張km: 画面の入力も事業所書式の値も無い人は 給与計算が出勤簿の出張km を使う (payroll/page.tsx tripKmOf) ───
+  //   その人の行に「出勤簿: ◯km」と出す (empId → 表示)。2026-10-08 user「事業所書式か出勤簿かを見えるように」
+  const attendanceTripNotes = useMemo(() => {
+    const out = new Map<string, string>();
+    const webIds = new Set(rows.filter((r) => r.item_name === "出張km").map((r) => r.employee_id));
+    const fileKm = new Map<string, number>();
+    for (const r of fileRecords) {
+      if (r.record_type !== "km" || r.item_name !== "出張km") continue;
+      const k = normEmp(r.employee_number);
+      fileKm.set(k, (fileKm.get(k) ?? 0) + Number(r.numeric_value ?? 0));
+    }
+    for (const e of employees) {
+      if (webIds.has(e.id)) continue;
+      const k = normEmp(e.employee_number);
+      if ((fileKm.get(k) ?? 0) > 0) continue;
+      const km = attendanceKm.get(k)?.business_km ?? 0;
+      if (km > 0) out.set(e.id, `${Math.round(km * 10) / 10}km`);
+    }
+    return out;
+  }, [rows, fileRecords, employees, attendanceKm]);
 
   /** ファイルの値を そのまま画面の入力に写す (給与計算の結果は変わらない。check:office-input-roundtrip) */
   const adoptPlans = useCallback(
@@ -633,6 +694,7 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
               employees={employees}
               rows={selectedRows}
               filePlans={filePlans.byItem.get(selectedItem.name) ?? EMPTY_PLANS}
+              attendanceNotes={selectedItem.name === "出張km" ? attendanceTripNotes : undefined}
               onAdopt={adoptPlans}
               onSetScalar={handleSetScalar}
               onSetDates={handleSetDates}

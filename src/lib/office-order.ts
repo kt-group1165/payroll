@@ -51,3 +51,25 @@ export function compareOffices<T extends OrderableOffice>(a: T, b: T, companyNam
   if (sa === null && sb !== null) return 1;
   return compareOfficesDefault(a, b, companyNameOf);
 }
+
+/** 並べ替えに使う最低限の列 (office_type が select に無い画面でも使えるよう 省略可) */
+export type SortableOffice = {
+  office_number: string;
+  office_type?: string | null;
+  sort_order?: number | null;
+};
+
+/**
+ * 事業所のプルダウン・選択肢を 事業所一覧 (/offices) と同じ順に並べる (2026-10-08 user)。
+ * ★ 新しい配列を返す (元の配列は並べ替えない)。
+ * ★ sort_order は全事業所に入っているので 法人名は見ない (companyNameOf = null)。
+ *   select に sort_order を入れ忘れると 既定の順 (種別 → 事業所番号) に落ちるので 列に必ず足すこと。
+ */
+export function sortOfficesByDisplayOrder<T extends SortableOffice>(list: readonly T[]): T[] {
+  const key = (o: T): OrderableOffice => ({
+    office_number: String(o.office_number ?? ""),
+    office_type: o.office_type ?? "",
+    sort_order: o.sort_order ?? null,
+  });
+  return [...list].sort((a, b) => compareOffices(key(a), key(b), () => null));
+}

@@ -3,6 +3,7 @@
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 
 /**
  * payroll_offices 一覧取得 hook (SWR ベース)。
@@ -26,6 +27,7 @@ export type OfficeForPayroll = {
   name: string;
   office_type: string;
   work_week_start: number;
+  sort_order?: number | null;
 };
 
 // =====================================================================
@@ -35,11 +37,11 @@ export type OfficeForPayroll = {
 async function fetchPayrollOffices(): Promise<OfficeForPayroll[]> {
   const { data, error } = await supabase
     .from("payroll_offices")
-    .select(`id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`);
+    .select(`id, office_number, short_name, office_type, work_week_start, sort_order, ${OFFICE_MASTER_JOIN}`);
   if (error) throw error;
   const flat = flattenOfficeMaster(data as never) as unknown as OfficeForPayroll[];
-  flat.sort((a, b) => a.office_number.localeCompare(b.office_number));
-  return flat;
+  // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+  return sortOfficesByDisplayOrder(flat);
 }
 
 // =====================================================================

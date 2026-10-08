@@ -128,6 +128,7 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
       for (const [k, s] of person) { const [o, , m] = k.split("|"); const km = `${o}|${m}`; if (!reasonsOf.has(km)) reasonsOf.set(km, new Set()); for (const w of s) reasonsOf.get(km)!.add(w); }
       for (const [k, s] of officeMonth) { if (!reasonsOf.has(k)) reasonsOf.set(k, new Set()); for (const w of s) reasonsOf.get(k)!.add(w); }
       const officeByNumber = new Map(offices.map((o) => [o.office_number, o]));
+      const officePos = new Map(offices.map((o, i) => [o.office_number, i]));
       const cutIso = cutoffUsed ? new Date(cutoffUsed).toISOString() : "";
       const list: Item[] = calc
         .filter((c) => officeByNumber.has(c.office_number))
@@ -140,7 +141,8 @@ export function BatchRecalc({ offices, calculateFor, getLastError }: {
           const stale = reasons.length > 0 || (!!cutIso && c.calculated_at < cutIso);
           return { key, officeId: o.id, officeNumber: c.office_number, officeName: o.name, month: c.processing_month, calculatedAt: c.calculated_at, status, reasons, selected: overwritable && stale, state: overwritable ? "待ち" : "確定のため飛ばし", note: "" };
         })
-        .sort((a, b) => (a.officeNumber + a.month).localeCompare(b.officeNumber + b.month));
+        // 事業所は 渡された offices の順 (= 事業所一覧 /offices と同じ順。2026-10-08 user) → 月
+        .sort((a, b) => (officePos.get(a.officeNumber) ?? Number.MAX_SAFE_INTEGER) - (officePos.get(b.officeNumber) ?? Number.MAX_SAFE_INTEGER) || a.month.localeCompare(b.month));
       setItems(list);
       setMessage(`計算結果 ${calc.length} 件中、この画面の事業所 ${list.length} 件。既定で選んだもの (確定済みでなく 古いもの): ${list.filter((x) => x.selected).length} 件`);
       return list;

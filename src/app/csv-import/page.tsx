@@ -16,6 +16,7 @@ import {
 } from "@/lib/import-counts";
 import { createClient } from "@/lib/supabase/server";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 
 const TAB_VALUES = new Set(["kaigo", "meisai", "attendance", "office_form", "kyotaku", "yobou", "clients"]);
 const KYOTAKU_TENANT_ID = "kt-group"; // payroll_kyotaku_records.tenant_id (seed と整合)
@@ -50,16 +51,17 @@ export default async function CsvImportPage({
   const [officesRes, attendanceCounts, meisaiMonths, officeFormMonths, sourceMode] = await Promise.all([
     supabase
       .from("payroll_offices")
-      .select(`id, office_number, short_name, office_type, office_id, ${OFFICE_MASTER_JOIN}`),
+      .select(`id, office_number, short_name, office_type, office_id, sort_order, ${OFFICE_MASTER_JOIN}`),
     fetchAttendanceRecordCounts(supabase),
     fetchServiceRecordCounts(supabase),
     fetchOfficeFormRecordCounts(supabase),
     getJissekiSourceMode(supabase),
   ]);
 
-  const offices = (
-    flattenOfficeMaster((officesRes.data ?? []) as never) as unknown as OfficeForImporters[]
-  ).sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+  const offices = sortOfficesByDisplayOrder(
+    flattenOfficeMaster((officesRes.data ?? []) as never) as unknown as OfficeForImporters[],
+  );
 
   // kaigo 直接取込の対象は kaigo-app に実績データがある業種のみ
   const kaigoPullOffices = offices.filter(

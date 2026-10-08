@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getOfficeWorkerCarePay, setOfficeWorkerCarePay, OFFICE_WORKER_CARE_PAY_KEY } from "@/lib/app-settings";
@@ -38,14 +39,16 @@ export default function OfficeWorkerCarePage() {
     if (!/^\d{4}-\d{2}$/.test(month)) return;
     (async () => {
       const [offRes, setRes] = await Promise.all([
-        supabase.from("payroll_offices").select(`id,office_number,office_type, ${OFFICE_MASTER_JOIN}`),
+        supabase.from("payroll_offices").select(`id,office_number,office_type,sort_order, ${OFFICE_MASTER_JOIN}`),
         getOfficeWorkerCarePay(supabase, `${month}-01`),
       ]);
       if (offRes.error) { toast.error(`事業所の取得に失敗: ${offRes.error.message}`); return; }
       if (setRes.error) { toast.error(`設定の取得に失敗: ${setRes.error}`); return; }
-      const list = (flattenOfficeMaster(offRes.data as never) as unknown as OfficeRow[])
-        .filter((o) => o.office_type === "訪問介護")
-        .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+      const list = sortOfficesByDisplayOrder(
+        (flattenOfficeMaster(offRes.data as never) as unknown as OfficeRow[])
+          .filter((o) => o.office_type === "訪問介護"),
+      );
       setOffices(list);
       setByOffice(setRes.byOffice);
       setOfficeId((prev) => prev || list[0]?.id || "");

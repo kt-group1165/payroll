@@ -5,6 +5,7 @@ import { BatchRecalc } from "./batch-recalc";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -303,12 +304,12 @@ export default function PayrollPage() {
         setMonths(unique);
         if (unique.length > 0) setSelectedMonth(unique[0]);
       });
-    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,meeting_unit_price, ${OFFICE_MASTER_JOIN}`).then(({ data, error }) => {
+    supabase.from("payroll_offices").select(`id,office_number,short_name,office_type,travel_unit_price,commute_unit_price,treatment_subsidy_amount,cancel_unit_price,doukou_cancel_unit_price,travel_allowance_rate,meeting_unit_price,sort_order, ${OFFICE_MASTER_JOIN}`).then(({ data, error }) => {
       // ★ error を捨てない。★ 落ちると 種別が「(事業所なし)」のまま 理由が分からない (2026-09-30)
       if (error) { console.error("[payroll] 事業所の読み込みに失敗:", error.message); toast.error(`事業所の読み込みに失敗: ${error.message}`); return; }
       if (!data) return;
-      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
-      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+      const flattened = sortOfficesByDisplayOrder(flattenOfficeMaster(data as never) as unknown as Office[]);
       setOffices(flattened);
       // 訪問介護の最初の事業所を初期選択
       const firstVisitCare = flattened.find((o) => o.office_type === "訪問介護");
@@ -679,6 +680,8 @@ export default function PayrollPage() {
         // 通信費タイプも その月の給与設定の行にあればそれ (その月から有効なので 職員マスタの開始日は見ない) (2026-09-22)
         ...(salMap.get(e.id)?.communication_fee_type
           ? { communication_fee_type: salMap.get(e.id)!.communication_fee_type!, communication_fee_from: null } : {}),
+        // 社保の加入も その月の給与設定の行にあればそれ (無ければ職員マスタ。月ごとの手入力は さらに優先。2026-10-08)
+        ...(salMap.get(e.id)?.social_insurance != null ? { social_insurance: salMap.get(e.id)!.social_insurance as boolean } : {}),
         // 有給単価 (円/日) も その月の給与設定の行 → 無ければ職員マスタ (2026-09-18)
         paid_leave_unit_price: resolvePaidLeaveUnitPriceFromHistory(e, (salRes.data ?? []) as SalarySettings[], _monthStart) }));
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、

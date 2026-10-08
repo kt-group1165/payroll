@@ -23,6 +23,7 @@ const BILLING_TYPE_LABELS: Record<BillingFileType, string> = {
 };
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { toast } from "sonner";
 
 type OfficeLite = { id: string; office_number: string; shogai_office_number: string | null; name: string; short_name: string };
@@ -260,7 +261,7 @@ export function BillingImporter() {
   }, []);
 
   useEffect(() => {
-    supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
+    supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, sort_order, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       const flattened = flattenOfficeMaster(data as never) as unknown as OfficeLite[];
       setOffices(flattened);
     });
@@ -696,7 +697,7 @@ export function BillingImporter() {
       }
       if (shogaiUpdates.length > 0) {
         // 最新のofficesを再取得（以降の取り込みで同じ番号が自動解決されるように）
-        const { data: refreshed } = await supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, ${OFFICE_MASTER_JOIN}`);
+        const { data: refreshed } = await supabase.from("payroll_offices").select(`id, office_number, shogai_office_number, short_name, sort_order, ${OFFICE_MASTER_JOIN}`);
         const flattened = flattenOfficeMaster(refreshed as never) as unknown as OfficeLite[];
         setOffices(flattened);
       }
@@ -1041,9 +1042,8 @@ export function BillingImporter() {
                               }}
                             >
                               <option value="">（選択してください）</option>
-                              {offices
-                                .slice()
-                                .sort((a, b) => ((a.short_name || a.name) ?? "").localeCompare((b.short_name || b.name) ?? "", "ja"))
+                              {/* 事業所一覧 (/offices) と同じ順 (2026-10-08 user) */}
+                              {sortOfficesByDisplayOrder(offices)
                                 .map((o) => (
                                   <option key={o.id} value={o.id}>
                                     {o.short_name || o.name}（{o.office_number}{o.shogai_office_number ? ` / 障害:${o.shogai_office_number}` : ""}）

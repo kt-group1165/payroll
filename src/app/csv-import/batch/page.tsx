@@ -11,6 +11,7 @@
 import { BatchImporterClient } from "./batch-importer-client";
 import { createClient } from "@/lib/supabase/server";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 
 const KYOTAKU_TENANT_ID = "kt-group";
 
@@ -26,10 +27,11 @@ export default async function CsvImportBatchPage() {
   const supabase = await createClient();
   const { data: officesRaw } = await supabase
     .from("payroll_offices")
-    .select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`);
-  const offices = (
-    flattenOfficeMaster((officesRaw ?? []) as never) as unknown as BatchOffice[]
-  ).sort((a, b) => a.name.localeCompare(b.name, "ja"));
+    .select(`id, office_number, short_name, office_type, sort_order, ${OFFICE_MASTER_JOIN}`);
+  // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+  const offices = sortOfficesByDisplayOrder(
+    flattenOfficeMaster((officesRaw ?? []) as never) as unknown as BatchOffice[],
+  );
 
   return (
     <div>

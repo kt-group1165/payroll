@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import {
   ServicesContent,
   type ServiceCategory,
@@ -35,7 +36,7 @@ export default async function ServicesPage() {
       .order("created_at"),
     supabase
       .from("payroll_offices")
-      .select(`id, office_number, short_name, office_type, ${OFFICE_MASTER_JOIN}`),
+      .select(`id, office_number, short_name, office_type, sort_order, ${OFFICE_MASTER_JOIN}`),
   ]);
 
   // 読み込みの失敗を「0 件」として出さない (2026-09-22: 表名の変更で マッピング・時給設定 が黙って空になっていた)
@@ -49,8 +50,8 @@ export default async function ServicesPage() {
 
   let offices: Office[] = [];
   if (offRes.data) {
-    offices = flattenOfficeMaster(offRes.data as never) as unknown as Office[];
-    offices.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+    // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+    offices = sortOfficesByDisplayOrder(flattenOfficeMaster(offRes.data as never) as unknown as Office[]);
   }
 
   // 未マッピングは MappingsTab の useEffect で fetch (初回 SSR を高速化)

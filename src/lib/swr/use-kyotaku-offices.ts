@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 
 /**
  * 出勤簿の対象事業所 一覧 hook (kaigo-app の出勤簿と同じ。2026-09-18 に給与計算システムにも 訪問介護・訪問入浴 を入れた)。
@@ -38,6 +39,7 @@ export type KyotakuOffice = {
   name: string;
   /** 1週間の起算曜日 (0=日, 1=月, ..., 6=土) */
   work_week_start: number;
+  sort_order?: number | null;
 };
 
 const OFFICE_TYPES = ["居宅介護支援", "訪問介護", "訪問入浴"] as const;
@@ -46,19 +48,13 @@ async function fetchAttendanceOffices(): Promise<KyotakuOffice[]> {
   const { data, error } = await supabase
     .from("payroll_offices")
     .select(
-      `id, office_number, short_name, office_type, work_week_start, ${OFFICE_MASTER_JOIN}`,
+      `id, office_number, short_name, office_type, work_week_start, sort_order, ${OFFICE_MASTER_JOIN}`,
     )
     .in("office_type", [...OFFICE_TYPES]);
   if (error) throw error;
   const flat = flattenOfficeMaster(data as never) as unknown as KyotakuOffice[];
-  // 業態 → 事業所番号順 (居宅を先頭に)
-  const typeOrder = new Map(OFFICE_TYPES.map((t, i) => [t as string, i]));
-  flat.sort(
-    (a, b) =>
-      (typeOrder.get(a.office_type) ?? 9) - (typeOrder.get(b.office_type) ?? 9) ||
-      a.office_number.localeCompare(b.office_number),
-  );
-  return flat;
+  // 事業所一覧 (/offices) と同じ順 (2026-10-08 user。以前は 業態 → 事業所番号順)
+  return sortOfficesByDisplayOrder(flat);
 }
 
 export type UseKyotakuOfficesResult = {

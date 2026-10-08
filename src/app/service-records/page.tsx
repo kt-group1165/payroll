@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { attendanceWorkMinutes, parseDurationMinutes, type OfficeAttendanceRecord } from "@/lib/payroll/payroll-calc";
@@ -128,11 +129,13 @@ export default function ServiceRecordsPage() {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from("payroll_offices").select(`id,office_number,office_type, ${OFFICE_MASTER_JOIN}`);
+      const { data, error } = await supabase.from("payroll_offices").select(`id,office_number,office_type,sort_order, ${OFFICE_MASTER_JOIN}`);
       if (error) { toast.error(`事業所の取得に失敗: ${error.message}`); return; }
-      const list = (flattenOfficeMaster(data as never) as unknown as Office[])
-        .filter((o) => o.office_type === "訪問介護")
-        .sort((a, b) => (a.short_name || a.name).localeCompare(b.short_name || b.name, "ja"));
+      // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+      const list = sortOfficesByDisplayOrder(
+        (flattenOfficeMaster(data as never) as unknown as Office[])
+          .filter((o) => o.office_type === "訪問介護"),
+      );
       setOffices(list);
       setOfficeId((p) => p || list[0]?.id || "");
     })();

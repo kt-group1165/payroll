@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,11 +61,13 @@ export default function VerificationContent() {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from("payroll_offices").select(`id,office_number,office_type, ${OFFICE_MASTER_JOIN}`);
+      const { data, error } = await supabase.from("payroll_offices").select(`id,office_number,office_type,sort_order, ${OFFICE_MASTER_JOIN}`);
       if (error) { toast.error(`事業所の取得に失敗: ${error.message}`); return; }
-      const list = (flattenOfficeMaster(data as never) as unknown as OfficeRow[])
-        .filter((o) => o.office_type === "訪問介護")
-        .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+      const list = sortOfficesByDisplayOrder(
+        (flattenOfficeMaster(data as never) as unknown as OfficeRow[])
+          .filter((o) => o.office_type === "訪問介護"),
+      );
       setOffices(list);
       setOfficeNumber((p) => p || list[0]?.office_number || "");
     })();

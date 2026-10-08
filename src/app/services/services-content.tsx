@@ -765,9 +765,9 @@ function RatesTab({
   const fetchData = useCallback(() => router.refresh(), [router]);
 
   const officesWithRates = new Set(rates.map((r) => r.office_id));
+  // 並びは 事業所一覧 (/offices) と同じ順 (2026-10-08 user。page.tsx で並べ替え済み)
   const offices = initialOffices
-    .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id))
-    .slice().sort((a, b) => (a.short_name || a.name).localeCompare(b.short_name || b.name, "ja"));
+    .filter((o) => o.office_type === "訪問介護" || officesWithRates.has(o.id));
   const officeName = (o: Office) => o.short_name || o.name;
   const shown = officeFilter ? offices.filter((o) => o.id === officeFilter) : offices;
 

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import { sortCompanies } from "@/lib/sort-companies";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import {
   COMPANY_MASTER_JOIN,
   OFFICE_MASTER_JOIN,
@@ -64,7 +65,7 @@ export default async function BillingPage({
     supabase.from("payroll_companies").select(`*, ${COMPANY_MASTER_JOIN}`),
     supabase
       .from("payroll_offices")
-      .select(`id, office_number, short_name, company_id, ${OFFICE_MASTER_JOIN}`),
+      .select(`id, office_number, short_name, company_id, sort_order, ${OFFICE_MASTER_JOIN}`),
     fetchAllPagesParallel<Client>(
       () => supabase.from("payroll_clients").select("*", { count: "exact", head: true }),
       (from, to) =>
@@ -90,8 +91,9 @@ export default async function BillingPage({
   const companies: Company[] = coRes.data
     ? sortCompanies(flattenCompanyMaster(coRes.data as never) as unknown as Company[])
     : [];
+  // 事業所の選択肢は 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
   const offices: OfficeLite[] = offRes.data
-    ? (flattenOfficeMaster(offRes.data as never) as unknown as OfficeLite[])
+    ? sortOfficesByDisplayOrder(flattenOfficeMaster(offRes.data as never) as unknown as OfficeLite[])
     : [];
 
   const monthsSet = new Set<string>();

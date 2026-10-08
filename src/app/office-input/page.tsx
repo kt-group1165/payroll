@@ -4,6 +4,7 @@ import {
   flattenOfficeMaster,
   type Office,
 } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { OfficeInputContent } from "./office-input-content";
 
 /**
@@ -25,8 +26,8 @@ export default async function OfficeInputPage() {
   if (offRes.error) throw new Error(`事業所の取得に失敗: ${offRes.error.message}`);
   let offices: Office[] = [];
   if (offRes.data) {
-    offices = flattenOfficeMaster(offRes.data as never) as unknown as Office[];
-    offices.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+    // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+    offices = sortOfficesByDisplayOrder(flattenOfficeMaster(offRes.data as never) as unknown as Office[]);
   }
 
   return <OfficeInputContent offices={offices} />;

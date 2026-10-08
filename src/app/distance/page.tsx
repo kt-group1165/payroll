@@ -9,6 +9,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { isEmployedInMonth, type EmploymentFields } from "@/lib/payroll/employment-in-month";
 import { OFFICE_MASTER_JOIN, flattenOfficeMaster } from "@/types/database";
+import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { toast } from "sonner";
 import {
   calcDayRoute, collectAddressPairs, mToKm, secToHm,
@@ -46,10 +47,10 @@ export default function DistancePage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   useEffect(() => {
-    supabase.from("payroll_offices").select(`id, short_name, office_number, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
+    supabase.from("payroll_offices").select(`id, short_name, office_number, sort_order, ${OFFICE_MASTER_JOIN}`).then(({ data }) => {
       if (!data) return;
-      const flattened = flattenOfficeMaster(data as never) as unknown as Office[];
-      flattened.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+      // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
+      const flattened = sortOfficesByDisplayOrder(flattenOfficeMaster(data as never) as unknown as Office[]);
       setOffices(flattened);
       if (flattened.length === 1) setSelectedOfficeId(flattened[0].id);
     });

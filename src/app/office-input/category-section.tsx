@@ -49,6 +49,8 @@ type PanelProps = {
    * 給与計算は 画面の入力が無い (職員 × 項目) では ファイルの値を使う
    */
   filePlans: Map<string, AdoptPlan>;
+  /** 出勤簿の値で計算されている職員 (employee_id → "12.3km")。今は 出張km だけ (2026-10-08) */
+  attendanceNotes?: Map<string, string>;
   /** ファイルの値を そのまま画面の入力に写す */
   onAdopt: (targets: { plan: AdoptPlan; employeeId: string }[]) => void;
   onSetScalar: (item: OfficeInputItem, employeeId: string, value: number | null) => void;
@@ -175,8 +177,11 @@ function useEmployeeFilter(employees: Employee[], hasValue: (empId: string) => b
 function FileNote({ plan, employeeId, onAdopt }: { plan: AdoptPlan; employeeId: string; onAdopt: PanelProps["onAdopt"] }) {
   return (
     <span className="inline-flex items-center gap-2 text-xs">
-      <span className="rounded bg-sky-100 px-1.5 py-0.5 text-sky-900" title="ファイルで取り込んだ値 (給与計算はこの値を使っています)">
-        ファイル: {plan.summary}
+      <span
+        className={`rounded px-1.5 py-0.5 ${plan.source === "事業所書式" ? "bg-sky-100 text-sky-900" : "bg-violet-100 text-violet-900"}`}
+        title={`取り込んだ値 (給与計算はこの値を使っています)${plan.sourceDetail ? `\n${plan.sourceDetail}` : ""}`}
+      >
+        {plan.source ?? "ファイル"}: {plan.summary}
       </span>
       {plan.canAdopt ? (
         <button type="button" className="text-sky-800 underline" onClick={() => onAdopt([{ plan, employeeId }])}
@@ -207,7 +212,7 @@ function EmployeeCells({ employee }: { employee: Employee }) {
 
 // ─── scalar: 数値項目 / 時間項目 ────────────────────────────
 
-function ScalarTable({ item, employees, rows, onSetScalar, filePlans, onAdopt }: PanelProps) {
+function ScalarTable({ item, employees, rows, onSetScalar, filePlans, attendanceNotes, onAdopt }: PanelProps) {
   const byEmployee = useMemo(() => {
     const m = new Map<string, OfficeInputRow>();
     for (const r of rows) {
@@ -248,6 +253,7 @@ function ScalarTable({ item, employees, rows, onSetScalar, filePlans, onAdopt }:
                 row={byEmployee.get(emp.id) ?? null}
                 onSetScalar={onSetScalar}
                 filePlan={filePlans.get(emp.id) ?? null}
+                attendanceNote={attendanceNotes?.get(emp.id) ?? null}
                 onAdopt={onAdopt}
               />
             ))}
@@ -276,6 +282,7 @@ function ScalarRow({
   row,
   onSetScalar,
   filePlan,
+  attendanceNote,
   onAdopt,
 }: {
   employee: Employee;
@@ -283,6 +290,7 @@ function ScalarRow({
   row: OfficeInputRow | null;
   onSetScalar: (item: OfficeInputItem, employeeId: string, value: number | null) => void;
   filePlan: AdoptPlan | null;
+  attendanceNote: string | null;
   onAdopt: PanelProps["onAdopt"];
 }) {
   const isTime = item.category === "時間項目";
@@ -367,6 +375,11 @@ function ScalarRow({
             </Button>
           )}
           {!filled && filePlan && <FileNote plan={filePlan} employeeId={employee.id} onAdopt={onAdopt} />}
+          {!filled && !filePlan && attendanceNote && (
+            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900" title="画面の入力も事業所書式の出張km も無いので、給与計算は 出勤簿の出張km (月合計) を使っています">
+              出勤簿: {attendanceNote}
+            </span>
+          )}
         </div>
       </td>
     </tr>
