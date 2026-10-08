@@ -332,7 +332,8 @@ export default function PayrollSummaryPage() {
   );
 
   // ─── 業種・事業所・月 selector (出勤簿と同じレイアウト) ───
-  const [businessType, setBusinessType] = useState<string>("kyotaku");
+  // 既定は訪問介護 (2026-10-08 user「総括表画面は、訪問介護をデフォルトにして」)
+  const [businessType, setBusinessType] = useState<string>("houmon_kaigo");
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>("");
   const [month, setMonth] = useState<string>(() => currentYM());
 

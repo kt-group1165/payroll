@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
-
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/lib/supabase";
+import { useSalaryEditor, SalaryEditorBody } from "@/components/payroll/salary-editor";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { toast } from "sonner";
 import type {
@@ -183,19 +182,10 @@ export function EmployeesList({
   const hasLeaveCols = useMemo(() => employees.some((e) => "leave_start_date" in e), [employees]);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  /**
-   * 給与設定の履歴 (payroll_salary_settings)。★ 役職・給与形態もここに月ごとに持てる (2026-09-26 user)。
-   * ⚠ ただし **時給/月給の振り分け自体は 職員マスタの salary_type (= 今の値) を見ている**。
-   *   過去に 時給→月給 で変わった人の古い月を計算し直すと 今の給与形態で計算される。
-   *   この画面は「何がいつから変わったか」を見るためのもので、直すのは /salary。
-   */
-  type HistoryRow = {
-    effective_from: string; role_type: string | null; salary_type: string | null;
-    base_personal_salary: number | null; skill_salary: number | null; bonus_amount: number | null;
-    paid_leave_unit_price: number | null; note: string | null;
-  };
-  const [history, setHistory] = useState<HistoryRow[] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  // 月ごとの給与設定 (payroll_salary_settings) の編集。保存は「保存」ボタン 1 つで 職員マスタと一緒に (2026-10-08 一本化)
+  const salaryEditor = useSalaryEditor();
+  const [tab, setTab] = useState<"salary" | "other">("other");
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(defaultForm);
   const [filterStatus, setFilterStatus] = useState<string>("在職者");
   const [filterOfficeIdInternal, setFilterOfficeIdRaw] = useState<string>("");
@@ -338,6 +328,8 @@ export function EmployeesList({
   const resetForm = () => {
     setForm({ ...defaultForm, office_id: lockedOfficeId ?? "" });
     setEditingId(null);
+    salaryEditor.reset();
+    setTab("other");
   };
 
   // ─── 登録・更新 ─────────────────────────────────────────────
@@ -377,18 +369,29 @@ export function EmployeesList({
       ...(hasLeaveCols ? { leave_start_date: form.leave_start_date || null, leave_end_date: form.leave_end_date || null } : {}),
     };
 
-    if (editingId) {
-      const { error } = await supabase.from("payroll_employees").update(payload).eq("id", editingId);
-      if (error) { toast.error(`更新エラー: ${error.message}`); return; }
-      toast.success("職員情報を更新しました");
-    } else {
-      const { error } = await supabase.from("payroll_employees").insert(payload);
-      if (error) { toast.error(`登録エラー: ${error.message}`); return; }
-      toast.success("職員を登録しました");
+    setSaving(true);
+    try {
+      let empId = editingId;
+      if (editingId) {
+        const { error } = await supabase.from("payroll_employees").update(payload).eq("id", editingId);
+        if (error) { toast.error(`更新エラー: ${error.message}`); return; }
+        toast.success("職員情報を更新しました");
+      } else {
+        const { data, error } = await supabase.from("payroll_employees").insert(payload).select("id").single();
+        if (error || !data) { toast.error(`登録エラー: ${error?.message ?? "id が返りませんでした"}`); return; }
+        empId = (data as { id: string }).id;
+        setEditingId(empId);
+        toast.success("職員を登録しました");
+      }
+      // 月ごとの給与設定 (変えていれば)。失敗・取りやめのときは ダイアログを閉じない (職員マスタは保存済み)
+      const ok = await salaryEditor.save(empId!);
+      if (!ok) { router.refresh(); return; }
+      setIsOpen(false);
+      resetForm();
+      router.refresh();
+    } finally {
+      setSaving(false);
     }
-    setIsOpen(false);
-    resetForm();
-    router.refresh();
   };
 
   const handleEdit = (emp: Employee) => {
@@ -416,20 +419,25 @@ export function EmployeesList({
       communication_fee_type: emp.communication_fee_type ?? "none",
     });
     setEditingId(emp.id);
-    // 給与設定の履歴を読む (この画面では見るだけ。直すのは /salary)
-    setHistory(null); setHistoryLoading(true);
-    void (async () => {
-      const { data, error } = await supabase
-        .from("payroll_salary_settings")
-        .select("effective_from,role_type,salary_type,base_personal_salary,skill_salary,bonus_amount,paid_leave_unit_price,note")
-        .eq("employee_id", emp.id)
-        .order("effective_from", { ascending: false });
-      if (error) { console.warn("[employees] 給与設定の履歴を読めませんでした:", error.message); setHistory([]); }
-      else setHistory((data ?? []) as HistoryRow[]);
-      setHistoryLoading(false);
-    })();
+    salaryEditor.open(emp.id);
+    setTab("salary");
     setIsOpen(true);
   };
+
+  // 給与設定の一覧 (/salary) などから「この人を開く」: /employees?edit=<id>。URL は外部の入力なのでマウント後に 1 回だけ読む
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- URL は外部の入力。マウント後に 1 回だけ取り込む */
+    const q = new URLSearchParams(window.location.search);
+    const id = q.get("edit");
+    if (!id) return;
+    const emp = employees.find((e) => e.id === id);
+    window.history.replaceState(null, "", window.location.pathname);
+    if (!emp) { toast.error("指定の職員が見つかりませんでした"); return; }
+    handleEdit(emp);
+    if (q.get("tab") === "other") setTab("other");
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDelete = async (id: string) => {
     if (!confirm("この職員を削除しますか？")) return;
@@ -757,23 +765,186 @@ export function EmployeesList({
 
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger render={<Button variant="outline" />}>手動追加</DialogTrigger>
-            <DialogContent className="max-w-5xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
-              {/* 上の帯: 誰か / 保存 を スクロールしても見えるように固定 (2026-09-22 「全面に出ていい、とにかく見やすく」) */}
-              <div className="sticky top-0 z-10 bg-popover border-b px-5 py-3 flex items-center gap-4">
-                <DialogHeader className="flex-1 min-w-0">
-                  <DialogTitle className="text-base truncate">
-                    {editingId ? "職員を編集" : "職員を登録"}
-                    {form.name && <span className="ml-2 font-normal">— {form.name}</span>}
-                    {form.employee_number && <span className="ml-2 text-sm font-normal text-muted-foreground">No. {form.employee_number}</span>}
-                  </DialogTitle>
-                </DialogHeader>
-                <Button onClick={handleSubmit} className="shrink-0 mr-8">{editingId ? "更新" : "登録"}</Button>
+            <DialogContent className="max-w-6xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
+              {/* 上の帯: 誰か / 切替 / 保存 を スクロールしても見えるように固定。
+                  2026-10-08 user「設定画面が2か所あるのがわかりづらい。従業員設定の方に一本化。
+                  モーダルの中で 給与系・その他系 と切り替えるボタンが一番上に」→ /salary の編集はここに統合 */}
+              <div className="sticky top-0 z-10 bg-popover border-b px-5 pt-3 pb-2">
+                <div className="flex items-center gap-4">
+                  <DialogHeader className="flex-1 min-w-0">
+                    <DialogTitle className="text-base truncate">
+                      {editingId ? "職員を編集" : "職員を登録"}
+                      {form.name && <span className="ml-2 font-normal">— {form.name}</span>}
+                      {form.employee_number && <span className="ml-2 text-sm font-normal text-muted-foreground">No. {form.employee_number}</span>}
+                    </DialogTitle>
+                  </DialogHeader>
+                  {salaryEditor.dirty && <span className="shrink-0 text-xs font-semibold text-amber-700">給与設定に変更あり</span>}
+                  <Button onClick={handleSubmit} disabled={saving} className="shrink-0 mr-8">{saving ? "保存中…" : editingId ? "保存" : "登録"}</Button>
+                </div>
+                <div className="mt-2 flex gap-1.5">
+                  {([["salary", "給与"], ["other", "その他 (氏名・事業所・在職)"]] as const).map(([k, label]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setTab(k)}
+                      className={`rounded-md border px-4 py-1.5 text-sm font-medium transition-colors ${tab === k ? "border-primary bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="px-5 py-4 grid gap-4 md:grid-cols-3">
-                {/* 基本情報 */}
-                <section className="rounded-lg border p-4 space-y-3">
-                  <h3 className="text-xs font-semibold text-muted-foreground">基本情報</h3>
+              {tab === "salary" && (
+                <div className="px-5 py-4 space-y-4">
+                  {/* ふだんの値 (職員マスタ)。途中で変わった人は 下の「この月からの…」で月ごとに持つ */}
+                  <section className="rounded-lg border p-4 space-y-3">
+                    <h3 className="text-xs font-semibold text-muted-foreground">
+                      ふだんの設定
+                      <span className="ml-2 font-normal">月の途中で 役職・給与形態・通信費・社保・有給単価が変わった人は、下の「月ごとの給与設定」の「この月からの…」で入れます</span>
+                    </h3>
+                    <div className="grid gap-3 md:grid-cols-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">職種</Label>
+                      <Select value={form.job_type} onValueChange={(v) => setForm({ ...form, job_type: (v ?? form.job_type) as JobType })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {JOB_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">役職</Label>
+                      <Select value={form.role_type} onValueChange={(v) => setForm({ ...form, role_type: (v ?? form.role_type) as RoleType })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {ROLE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">給与形態</Label>
+                      <Select value={form.salary_type} onValueChange={(v) => setForm({ ...form, salary_type: (v ?? form.salary_type) as SalaryType })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {SALARY_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">勤続手当の資格</Label>
+                    <select
+                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
+                      value={form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : ""}
+                      onChange={(e) => setForm({ ...form, has_care_qualification: e.target.value !== "", care_qualification_kind: e.target.value })}
+                      title="「なし」以外は勤続手当の対象。資格名が分からなければ「不明（要件は満たす）」"
+                    >
+                      <option value="">なし（勤続手当の対象外）</option>
+                      {CARE_QUALIFICATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">実勤続月数</Label>
+                      <Input
+                        type="number"
+                        value={form.effective_service_months}
+                        onChange={(e) => setForm({ ...form, effective_service_months: e.target.value })}
+                        placeholder="例: 120 (=10年)"
+                      />
+                      {/* ⚠ 実勤続月数は「いつ時点か」が無いと 時間が経つほど黙ってズレる (2026-09-26 user)。
+                          基準日は payroll_employees.effective_service_months_as_of に持つ。*/}
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {Number(form.effective_service_months) > 0
+                          ? <>= {formatMonths(Number(form.effective_service_months))}</>
+                          : "入社日から計算できない人 (転籍・休職・再雇用など) だけ入れます"}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">移動手段</Label>
+                      <Select value={form.transport_type} onValueChange={(v) => setForm({ ...form, transport_type: v ?? form.transport_type })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="車">車</SelectItem>
+                          <SelectItem value="自転車">自転車</SelectItem>
+                          <SelectItem value="徒歩">徒歩</SelectItem>
+                          <SelectItem value="バイク">バイク</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                      <div className="md:col-span-2">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">通信費タイプ</Label>
+                    <select
+                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
+                      value={form.communication_fee_type || "none"}
+                      onChange={(e) => setForm({ ...form, communication_fee_type: e.target.value })}
+                    >
+                      <option value="none">標準（社保加入は0円・未加入は時間で500/1,000/1,500円）</option>
+                      <option value="variable">社保加入でも時間で500/1,000/1,500円（スマホ貸与なし）</option>
+                      <option value="lend">スマホ貸与あり（0円）</option>
+                      <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
+                    </select>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">時間で決まるときの段: その月の訪問 50 時間未満 500 円 / 50 時間以上 1,000 円 / 100 時間以上 1,500 円 (0 時間は 0 円)。</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">途中で変わった人は 下の「この月からの通信費」で月ごとに。</p>
+                  </div>
+                      </div>
+                      <div className="self-center">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.social_insurance}
+                      onChange={(e) => setForm({ ...form, social_insurance: e.target.checked })}
+                    />
+                    <span className="text-sm">社会保険加入（処遇改善補助金手当対象）</span>
+                  </label>
+                      </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">通勤単価 (円/km)</Label>
+                      <Input
+                        type="number" min={0} step="0.1"
+                        value={form.commute_unit_price}
+                        placeholder="事業所の単価を使う"
+                        onChange={(e) => setForm({ ...form, commute_unit_price: e.target.value })}
+                      />
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        空なら事業所の単価。<b>1</b> にすると 入力した距離がそのまま円になる (電車代など)
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">出張単価 (円/km)</Label>
+                      <Input
+                        type="number" min={0} step="0.1"
+                        value={form.travel_unit_price}
+                        placeholder="事業所の単価を使う"
+                        onChange={(e) => setForm({ ...form, travel_unit_price: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">有給手当単価 (円/日)</Label>
+                      <Input
+                        type="number" min={0}
+                        value={form.paid_leave_unit_price}
+                        placeholder="0"
+                        onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
+                      />
+                    </div>
+                    </div>
+                  </section>
+
+                  <section className="rounded-lg border p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground mb-3">
+                      月ごとの給与設定
+                      <span className="ml-2 font-normal">本人給・手当・単価などを <b>適用開始月ごと</b>に持ちます。上の「保存」で ふだんの設定と一緒に保存されます</span>
+                    </h3>
+                    <SalaryEditorBody editor={salaryEditor} />
+                  </section>
+                </div>
+              )}
+
+              {tab === "other" && (
+                <div className="px-5 py-4 grid gap-4 md:grid-cols-2">
+                  <section className="rounded-lg border p-4 space-y-3">
+                    <h3 className="text-xs font-semibold text-muted-foreground">基本情報</h3>
                   <div>
                     <Label className="text-xs text-muted-foreground">社員番号</Label>
                     <Input
@@ -808,12 +979,10 @@ export function EmployeesList({
                       ))}
                     </select>
                   </div>
-                </section>
-
-                {/* 在職・職種 */}
-                <section className="rounded-lg border p-4 space-y-3">
-                  <h3 className="text-xs font-semibold text-muted-foreground">在職・職種</h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  </section>
+                  <section className="rounded-lg border p-4 space-y-3">
+                    <h3 className="text-xs font-semibold text-muted-foreground">在職</h3>
+                    <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="text-xs text-muted-foreground">在職区分</Label>
                       <Select
@@ -831,22 +1000,6 @@ export function EmployeesList({
                       </Select>
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">実勤続月数</Label>
-                      <Input
-                        type="number"
-                        value={form.effective_service_months}
-                        onChange={(e) => setForm({ ...form, effective_service_months: e.target.value })}
-                        placeholder="例: 120 (=10年)"
-                      />
-                      {/* ⚠ 実勤続月数は「いつ時点か」が無いと 時間が経つほど黙ってズレる (2026-09-26 user)。
-                          基準日は payroll_employees.effective_service_months_as_of に持つ。*/}
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {Number(form.effective_service_months) > 0
-                          ? <>= {formatMonths(Number(form.effective_service_months))}</>
-                          : "入社日から計算できない人 (転籍・休職・再雇用など) だけ入れます"}
-                      </p>
-                    </div>
-                    <div>
                       <Label className="text-xs text-muted-foreground">入社年月日</Label>
                       <Input type="date" value={form.hire_date} onChange={(e) => setForm({ ...form, hire_date: e.target.value })} />
                     </div>
@@ -854,7 +1007,7 @@ export function EmployeesList({
                       <Label className="text-xs text-muted-foreground">退職年月日</Label>
                       <Input type="date" value={form.resignation_date} onChange={(e) => setForm({ ...form, resignation_date: e.target.value })} />
                     </div>
-                  </div>
+                    </div>
                   {hasLeaveCols ? (
                     <div className="grid grid-cols-3 gap-3">
                       <div>
@@ -876,192 +1029,9 @@ export function EmployeesList({
                       休職の期間を入れる欄は まだありません (payroll_employees_leave_dates.sql が未適用)。今は 休職者は全部の月で月給の計算から外れます
                     </p>
                   ) : null}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">職種</Label>
-                      <Select value={form.job_type} onValueChange={(v) => setForm({ ...form, job_type: (v ?? form.job_type) as JobType })}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {JOB_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">役職</Label>
-                      <Select value={form.role_type} onValueChange={(v) => setForm({ ...form, role_type: (v ?? form.role_type) as RoleType })}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {ROLE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">給与形態</Label>
-                      <Select value={form.salary_type} onValueChange={(v) => setForm({ ...form, salary_type: (v ?? form.salary_type) as SalaryType })}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {SALARY_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">月の途中で役職・給与形態が変わった人は「給与設定」で月ごとに入れます。</p>
-                </section>
-
-                {/* 給与計算の条件 */}
-                <section className="rounded-lg border p-4 space-y-3">
-                  <h3 className="text-xs font-semibold text-muted-foreground">給与計算の条件</h3>
-                  {/* 給与額 (基本給/固定残業) は payroll_salary_settings (/salary) で per-employee 管理。
-                     旧 base_salary / fixed_overtime_* 列は 2026-05-08 削除済 */}
-                  <div>
-                    <Label className="text-xs text-muted-foreground">勤続手当の資格</Label>
-                    <select
-                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
-                      value={form.has_care_qualification ? (form.care_qualification_kind || "不明（要件は満たす）") : ""}
-                      onChange={(e) => setForm({ ...form, has_care_qualification: e.target.value !== "", care_qualification_kind: e.target.value })}
-                      title="「なし」以外は勤続手当の対象。資格名が分からなければ「不明（要件は満たす）」"
-                    >
-                      <option value="">なし（勤続手当の対象外）</option>
-                      {CARE_QUALIFICATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">通信費タイプ</Label>
-                    <select
-                      className="w-full h-9 border rounded-md px-2 text-sm bg-background"
-                      value={form.communication_fee_type || "none"}
-                      onChange={(e) => setForm({ ...form, communication_fee_type: e.target.value })}
-                    >
-                      <option value="none">標準（社保加入は0円・未加入は時間で500/1,000/1,500円）</option>
-                      <option value="variable">社保加入でも時間で500/1,000/1,500円（スマホ貸与なし）</option>
-                      <option value="lend">スマホ貸与あり（0円）</option>
-                      <option value="lend_fee">貸与要件外で貸与を希望（負担 -1,700円）</option>
-                    </select>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">時間で決まるときの段: その月の訪問 50 時間未満 500 円 / 50 時間以上 1,000 円 / 100 時間以上 1,500 円 (0 時間は 0 円)。</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">途中で変わった人は「給与設定」の「この月からの通信費」で。</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">通勤単価 (円/km)</Label>
-                      <Input
-                        type="number" min={0} step="0.1"
-                        value={form.commute_unit_price}
-                        placeholder="事業所の単価を使う"
-                        onChange={(e) => setForm({ ...form, commute_unit_price: e.target.value })}
-                      />
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        空なら事業所の単価。<b>1</b> にすると 入力した距離がそのまま円になる (電車代など)
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">出張単価 (円/km)</Label>
-                      <Input
-                        type="number" min={0} step="0.1"
-                        value={form.travel_unit_price}
-                        placeholder="事業所の単価を使う"
-                        onChange={(e) => setForm({ ...form, travel_unit_price: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">有給手当単価 (円/日)</Label>
-                      <Input
-                        type="number" min={0}
-                        value={form.paid_leave_unit_price}
-                        placeholder="0"
-                        onChange={(e) => setForm({ ...form, paid_leave_unit_price: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">移動手段</Label>
-                      <Select value={form.transport_type} onValueChange={(v) => setForm({ ...form, transport_type: v ?? form.transport_type })}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="車">車</SelectItem>
-                          <SelectItem value="自転車">自転車</SelectItem>
-                          <SelectItem value="徒歩">徒歩</SelectItem>
-                          <SelectItem value="バイク">バイク</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.social_insurance}
-                      onChange={(e) => setForm({ ...form, social_insurance: e.target.checked })}
-                    />
-                    <span className="text-sm">社会保険加入（処遇改善補助金手当対象）</span>
-                  </label>
-                </section>
-
-                {/* 給与設定の履歴 (2026-09-26 user)。3 カラムの下に横いっぱいで出す */}
-                {editingId && (
-                  <section className="rounded-lg border p-4 md:col-span-3">
-                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">
-                      給与設定の履歴
-                      <span className="ml-2 font-normal">
-                        役職・給与形態・本人給などは <b>適用開始月ごと</b>に持てます。直すのは
-                        {" "}<Link href="/salary" className="underline">給与設定</Link> の画面です
-                      </span>
-                    </h3>
-                    {historyLoading ? (
-                      <p className="text-sm text-muted-foreground">読み込み中…</p>
-                    ) : !history || history.length === 0 ? (
-                      <p className="text-sm text-red-600">
-                        ★ 給与設定の行がありません。月給者はこの状態だと <b>総支給額が 0 円</b>になります
-                      </p>
-                    ) : (
-                      <table className="w-full text-sm">
-                        <thead className="text-xs text-muted-foreground">
-                          <tr className="border-b">
-                            <th className="text-left py-1 pr-3">適用開始</th>
-                            <th className="text-left py-1 pr-3">役職</th>
-                            <th className="text-left py-1 pr-3">給与形態</th>
-                            <th className="text-right py-1 pr-3">本人給</th>
-                            <th className="text-right py-1 pr-3">職能給</th>
-                            <th className="text-right py-1 pr-3">報奨金</th>
-                            <th className="text-right py-1 pr-3">有給単価</th>
-                            <th className="text-left py-1">メモ</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {history.map((h, i) => {
-                            // 1 つ後ろ (= 時系列で前) の行と比べて 変わった項目に印を付ける
-                            const prev = history[i + 1];
-                            const chg = (a: unknown, b: unknown) => !!prev && a !== b;
-                            const yen = (v: number | null) => (v == null ? "—" : Number(v).toLocaleString() + "円");
-                            return (
-                              <tr key={h.effective_from} className="border-b last:border-0">
-                                <td className="py-1 pr-3 font-mono text-xs">
-                                  {h.effective_from === "1970-01-01"
-                                    ? <span title="いつからか分からないので 最初から有効という扱い">最初から</span>
-                                    : h.effective_from.replace(/-/g, "/")}
-                                </td>
-                                <td className={"py-1 pr-3 " + (chg(h.role_type, prev?.role_type) ? "font-bold text-amber-700" : "")}>{h.role_type || "—"}</td>
-                                <td className={"py-1 pr-3 " + (chg(h.salary_type, prev?.salary_type) ? "font-bold text-amber-700" : "")}>{h.salary_type || "—"}</td>
-                                <td className={"py-1 pr-3 text-right " + (chg(h.base_personal_salary, prev?.base_personal_salary) ? "font-bold text-amber-700" : "")}>{yen(h.base_personal_salary)}</td>
-                                <td className={"py-1 pr-3 text-right " + (chg(h.skill_salary, prev?.skill_salary) ? "font-bold text-amber-700" : "")}>{yen(h.skill_salary)}</td>
-                                <td className={"py-1 pr-3 text-right " + (chg(h.bonus_amount, prev?.bonus_amount) ? "font-bold text-amber-700" : "")}>{yen(h.bonus_amount)}</td>
-                                <td className={"py-1 pr-3 text-right " + (chg(h.paid_leave_unit_price, prev?.paid_leave_unit_price) ? "font-bold text-amber-700" : "")}>{yen(h.paid_leave_unit_price)}</td>
-                                <td className="py-1 text-xs text-muted-foreground truncate max-w-[18rem]" title={h.note ?? ""}>{h.note || ""}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                    {history && history.length > 0 && (
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        ★ 色が付いているのは 1 つ前の行から変わったところ。
-                        ⚠ 役職・給与形態がここで変わっていても、<b>時給か月給かの振り分け自体は職員マスタの「今の値」</b>を見ています。
-                        過去の月を計算し直すと 今の給与形態で計算されます
-                      </p>
-                    )}
                   </section>
-                )}
-              </div>
+                </div>
+              )}
             </DialogContent>
           </Dialog>
         </div>

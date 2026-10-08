@@ -18,65 +18,13 @@ import { HistoryButton, type HistoryColumn } from "@/components/payroll/history-
 import { buildActiveOvertimeMap } from "@/lib/payroll/overtime-settings-history";
 import { currentMonthJst, revisionMonthToDate } from "@/lib/payroll/office-price-revision";
 import type { Employee, Office, JobType } from "@/types/database";
+import { buildActiveSalaryMap } from "@/lib/payroll/salary-history";
 import {
-  buildActiveSalaryMap,
-  getLatestSalary,
-} from "@/lib/payroll/salary-history";
+  type SalarySettings, emptySettings, fixedTotal, thisMonthStart, salaryEditHref,
+} from "@/components/payroll/salary-editor";
 
 // ─── 型定義 ──────────────────────────────────────────────────
 
-/** 通信費タイプの表示名 (履歴一覧用。編集の select と同じ並び) */
-const COMM_FEE_LABEL: Record<string, string> = {
-  none: "標準",
-  variable: "時間で500/1,000/1,500",
-  lend: "貸与あり (0円)",
-  lend_fee: "貸与希望 (-1,700円)",
-};
-
-type SalarySettings = {
-  id?: string;
-  employee_id: string;
-  /** 適用開始月 (YYYY-MM-DD)。履歴化 (Phase 1) で追加。同 employee 内で対象月 >= effective_from の最新が active */
-  effective_from: string;
-  base_personal_salary: number;
-  skill_salary: number;
-  position_allowance: number;
-  qualification_allowance: number;
-  tenure_allowance: number;
-  /** 勤続手当を自動計算するか (default TRUE = 既存挙動)。FALSE のときは tenure_allowance の手動入力値を使用 */
-  tenure_allowance_auto: boolean;
-  treatment_improvement: number;
-  specific_treatment_improvement: number;
-  treatment_subsidy: number;
-  fixed_overtime_pay: number;
-  special_bonus: number;
-  bonus_amount: number;
-  travel_unit_price: number;
-  care_overtime_threshold_hours: number;
-  care_overtime_unit_price: number;
-  yocho_unit_price: number;
-  /** 事務時給 (円/時間)。事務員のみ、出勤簿の出勤時間 × この単価を本人給に足す */
-  office_work_hourly_rate: number;
-  /** この適用開始月からの給与形態。NULL/未設定 = 職員マスタの値 (月の途中で時給↔月給が変わる人用) */
-  salary_type?: string | null;
-  /** この適用開始月からの役職。NULL/未設定 = 職員マスタの値 */
-  role_type?: string | null;
-  /** 有給休暇手当の単価 (円/日)。NULL/未設定 = 職員マスタの有給手当単価。有給日数 (半休は 0.5) × 単価 */
-  paid_leave_unit_price?: number | null;
-  /** この適用開始月からの通信費タイプ。NULL/未設定 = 職員マスタの値 (2026-09-22) */
-  communication_fee_type?: string | null;
-  note: string;
-};
-
-/**
- * 今月の 1 日 ('YYYY-MM-01') を返す。新規 row の effective_from default。
- */
-function thisMonthStart(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}-01`;
-}
 
 // ─── 残業設定型 ──────────────────────────────────────────────
 
@@ -132,40 +80,9 @@ const CSV_HEADERS = [
   "備考",
 ] as const;
 
-const emptySettings = (employeeId: string, effectiveFrom?: string): SalarySettings => ({
-  employee_id: employeeId,
-  effective_from: effectiveFrom ?? thisMonthStart(),
-  base_personal_salary: 0,
-  skill_salary: 0,
-  position_allowance: 0,
-  qualification_allowance: 0,
-  tenure_allowance: 0,
-  tenure_allowance_auto: true,
-  treatment_improvement: 0,
-  specific_treatment_improvement: 0,
-  treatment_subsidy: 0,
-  fixed_overtime_pay: 0,
-  special_bonus: 0,
-  bonus_amount: 0,
-  travel_unit_price: 0,
-  care_overtime_threshold_hours: 0,
-  care_overtime_unit_price: 0,
-  yocho_unit_price: 0,
-  office_work_hourly_rate: 0,
-  note: "",
-});
 
 // ─── ユーティリティ ──────────────────────────────────────────
 
-
-function fixedTotal(s: SalarySettings): number {
-  return (
-    s.base_personal_salary + s.skill_salary +
-    s.position_allowance + s.qualification_allowance + s.tenure_allowance +
-    s.treatment_improvement + s.specific_treatment_improvement + s.treatment_subsidy +
-    s.fixed_overtime_pay + s.special_bonus
-  );
-}
 
 function downloadCsv(filename: string, rows: string[][]): void {
   const escape = (v: string) =>
@@ -324,68 +241,6 @@ function OvertimeSettingsPanel({
   );
 }
 
-/** 給与設定ダイアログのまとまり (見出し + 行 + 小計) */
-function Section({ title, total, children }: { title: string; total: number; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border p-3 flex flex-col gap-1.5">
-      <p className="text-xs font-semibold text-muted-foreground">{title}</p>
-      {children}
-      <div className="mt-auto pt-1.5 border-t flex justify-between text-sm font-semibold">
-        <span>計</span><span>{total.toLocaleString("ja-JP")}円</span>
-      </div>
-    </div>
-  );
-}
-
-/** 給与設定ダイアログの 1 行: ラベル | 入力 (右寄せ・単位付き)。説明は hint (小さく 1 行) */
-function Field({
-  label, value, onChange, unit = "円", hint, nullable = false, placeholder = "0",
-}: {
-  label: string; value: number | null; onChange: (v: number | null) => void;
-  unit?: string; hint?: string; nullable?: boolean; placeholder?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[1fr_8.5rem] items-center gap-2">
-      <div className="min-w-0">
-        <p className="text-sm leading-tight truncate">{label}</p>
-        {hint && <p className="text-[11px] text-muted-foreground leading-tight truncate" title={hint}>{hint}</p>}
-      </div>
-      <div className="relative">
-        <Input
-          type="number" min={0} step={1}
-          value={nullable ? (value ?? "") : (value || "")} placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value === "" ? (nullable ? null : 0) : (parseFloat(e.target.value) || 0))}
-          className="h-8 pr-11 text-right text-sm"
-        />
-        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground pointer-events-none">{unit}</span>
-      </div>
-    </div>
-  );
-}
-
-function YenInput({
-  label, value, onChange, sublabel,
-}: {
-  label: string; value: number; onChange: (v: number) => void; sublabel?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[1fr_160px] items-center gap-3">
-      <div>
-        <p className="text-sm font-medium whitespace-nowrap">{label}</p>
-        {sublabel && <p className="text-xs text-muted-foreground">{sublabel}</p>}
-      </div>
-      <div className="relative">
-        <Input
-          type="number" min={0} step={1}
-          value={value || ""} placeholder="0"
-          onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
-          className="pr-8 text-right"
-        />
-        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">円</span>
-      </div>
-    </div>
-  );
-}
 
 // ─── メインコンポーネント ─────────────────────────────────────
 
@@ -406,17 +261,9 @@ export function SalaryList({
   const employees = initialEmployees;
   const offices = initialOffices;
   const [allSettings, setAllSettings] = useState<SalarySettings[]>(initialAllSettings);
-  const [selectedId, setSelectedId] = useState("");
-  const [settings, setSettings] = useState<SalarySettings | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-
-  // ─── 履歴 modal ─────────────────────────────────────────────
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyEmpId, setHistoryEmpId] = useState("");
-  const [backfillOpen, setBackfillOpen] = useState(false);
-  const [backfillEmpId, setBackfillEmpId] = useState("");
+  // ★ 2026-10-08 user「設定画面が2か所あるのがわかりづらい」: 1 人ぶんの編集は 職員一覧の編集 (給与タブ) に一本化した。
+  //   この画面は 一覧・CSV・残業設定。行を押すと そちらに移る
+  const openEditor = (empId: string) => router.push(salaryEditHref(empId));
 
   // フィルター・ソート
   const [filterOfficeId, setFilterOfficeId] = useState("");
@@ -482,96 +329,6 @@ export function SalaryList({
     router.refresh();
   }, [router]);
 
-  // 編集ダイアログを開く時、その employee の最新 row を form の初期値にする。
-  // 履歴化方式: ここで取得した値を「新 row INSERT の雛形」として使う。
-  // effective_from だけは「今月」に上書き (=過去の値を上書きするのでなく、今月から
-  // 新しい設定を作る、という UX に揃える)。
-  const loadSettings = useCallback(async (empId: string) => {
-    if (!empId) { setSettings(null); return; }
-    setLoading(true);
-    const { data } = await supabase
-      .from("payroll_salary_settings")
-      .select("*")
-      .eq("employee_id", empId)
-      .order("effective_from", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const latest = data as SalarySettings | null;
-    if (latest) {
-      // 既存の最新値を雛形に。id は外して新 INSERT 扱い。effective_from は今月。
-      const { id: _id, ...rest } = latest;
-      void _id;
-      setSettings({ ...rest, effective_from: thisMonthStart() } as SalarySettings);
-    } else {
-      setSettings(emptySettings(empId));
-    }
-    setLoading(false);
-  }, []);
-
-  const upd = <K extends keyof SalarySettings>(key: K, val: SalarySettings[K]) =>
-    setSettings((prev) => prev ? { ...prev, [key]: val } : prev);
-
-  // ─── 保存 ───────────────────────────────────────────────────
-
-  // 履歴化方式: 常に新 row INSERT。同 (employee_id, effective_from) があれば upsert で上書き
-  // (= 「同じ適用月の設定を直す」ケース)。
-  const handleSave = async () => {
-    if (!settings) return;
-    if (!settings.effective_from) {
-      toast.error("適用開始月を入力してください");
-      return;
-    }
-    // 過去の月から の設定は 給与計算済みの月も変わる (計算し直したとき)。黙って書かない (2026-10-06)
-    if (settings.effective_from < `${currentMonthJst()}-01`) {
-      const d = settings.effective_from;
-      if (!confirm(`給与設定を ${d.slice(0, 4)}年${Number(d.slice(5, 7))}月${d.endsWith("-01") ? "" : `${Number(d.slice(8, 10))}日`}分から にします。\n過去の月を含むので、その月々の給与も (計算し直したときに) 変わります。よいですか？`)) return;
-    }
-    setSaving(true);
-    const { id: _id, ...payload } = settings;
-    void _id;
-    const { error } = await supabase
-      .from("payroll_salary_settings")
-      .upsert(payload, { onConflict: "employee_id,effective_from" });
-    if (error) {
-      console.warn(
-        `[salary-list] handleSave upsert 失敗 (emp=${payload.employee_id}, eff=${payload.effective_from}):`,
-        error.message,
-      );
-      toast.error(`保存エラー: ${error.message}`);
-    } else {
-      toast.success(`給与設定を保存しました (適用: ${settings.effective_from} 〜)`);
-      loadSettings(selectedId);
-      refresh();
-    }
-    setSaving(false);
-  };
-
-  // ─── 履歴行削除 ─────────────────────────────────────────────
-  const handleDeleteHistoryRow = async (rowId: string) => {
-    if (!rowId) return;
-    if (!confirm("この履歴行を削除します。よろしいですか？")) return;
-    const { error } = await supabase.from("payroll_salary_settings").delete().eq("id", rowId);
-    if (error) toast.error(`削除エラー: ${error.message}`);
-    else { toast.success("履歴行を削除しました"); refresh(); }
-  };
-
-  // ─── 過去の値を追加 (backfill) ─────────────────────────────
-  // 「過去日付 + 値を直接 INSERT」用。最新値を雛形に effective_from を変えて保存。
-  const handleBackfillSave = async (row: SalarySettings) => {
-    if (!row.effective_from) { toast.error("適用開始月を入力してください"); return; }
-    const { id: _id, ...payload } = row;
-    void _id;
-    const { error } = await supabase
-      .from("payroll_salary_settings")
-      .upsert(payload, { onConflict: "employee_id,effective_from" });
-    if (error) {
-      console.warn(
-        `[salary-list] handleBackfillSave upsert 失敗 (emp=${payload.employee_id}, eff=${payload.effective_from}):`,
-        error.message,
-      );
-      toast.error(`保存エラー: ${error.message}`);
-    } else { toast.success(`過去設定を追加しました (${row.effective_from} 〜)`); refresh(); setBackfillOpen(false); }
-  };
 
   // ─── CSV エクスポート（全員分） ────────────────────────────
 
@@ -756,7 +513,6 @@ export function SalaryList({
     setImportOpen(false);
     setImportRows([]);
     refresh();
-    if (selectedId) loadSettings(selectedId);
 
     if (fail === 0) toast.success(`${success}件をインポートしました (適用: ${effFrom} 〜)`);
     else toast.warning(`${success}件成功、${fail}件失敗 (詳細はコンソール: ${errSamples.join(" / ")})`);
@@ -905,37 +661,15 @@ export function SalaryList({
     return <span className="ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>;
   };
 
-  const handleRowClick = async (empId: string) => {
-    setSelectedId(empId);
-    setEditOpen(true);
-    setLoading(true);
-    const { data } = await supabase
-      .from("payroll_salary_settings")
-      .select("*")
-      .eq("employee_id", empId)
-      .order("effective_from", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const latest = data as SalarySettings | null;
-    if (latest) {
-      // 履歴化: 既存最新値を雛形に。id 外して新規 INSERT 扱い。effective_from は今月。
-      const { id: _id, ...rest } = latest;
-      void _id;
-      setSettings({ ...rest, effective_from: thisMonthStart() } as SalarySettings);
-    } else {
-      setSettings(emptySettings(empId));
-    }
-    setLoading(false);
-  };
-
-  const editEmp = employees.find((e) => e.id === selectedId);
-  const editOffice = offices.find((o) => o.id === editEmp?.office_id);
 
   // ─── 描画 ─────────────────────────────────────────────────────
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6">給与設定</h2>
+      <h2 className="text-2xl font-bold mb-2">給与設定</h2>
+      <p className="text-sm text-muted-foreground mb-6">
+        1 人ぶんの設定 (本人給・手当・単価・履歴) は 行を押すと 職員一覧の編集 (給与タブ) で開きます。ここは 一覧・CSV・残業設定です。
+      </p>
 
       <Tabs defaultValue="salary">
         <TabsList className="mb-6">
@@ -1063,7 +797,7 @@ export function SalaryList({
                     <tr
                       key={emp.id}
                       className="border-b hover:bg-muted/30 cursor-pointer"
-                      onClick={() => handleRowClick(emp.id)}
+                      onClick={() => openEditor(emp.id)}
                     >
                       <td className="px-4 py-2 font-mono text-xs">{emp.employee_number}</td>
                       <td className="px-4 py-2 font-medium">
@@ -1100,8 +834,7 @@ export function SalaryList({
                           className="text-xs text-blue-600 hover:underline"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setHistoryEmpId(emp.id);
-                            setHistoryOpen(true);
+                            openEditor(emp.id);
                           }}
                         >
                           履歴を見る
@@ -1135,112 +868,6 @@ export function SalaryList({
           />
         </TabsContent>
       </Tabs>
-
-      {/* ── 給与設定編集ダイアログ ──────────────────────────── */}
-      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) setSelectedId(""); }}>
-        <DialogContent className="max-w-6xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
-          {/* 上の帯: 誰の・いつからの設定か / 合計 / 保存 を スクロールしても見えるように固定 (2026-09-22 見やすく) */}
-          <div className="sticky top-0 z-10 bg-popover border-b px-5 pt-4 pb-3">
-            <DialogHeader>
-              <DialogTitle className="text-base">
-                給与設定 — {editEmp?.name}
-                {editOffice && <span className="text-sm font-normal text-muted-foreground ml-2">{editOffice.short_name || editOffice.name}</span>}
-              </DialogTitle>
-            </DialogHeader>
-            {!loading && settings && (
-              <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
-                <label className="text-xs text-muted-foreground">適用開始月
-                  <Input type="date" value={settings.effective_from} onChange={(e) => upd("effective_from", e.target.value)} className="h-8 w-40 mt-0.5 text-sm" />
-                </label>
-                <label className="text-xs text-muted-foreground" title="月の途中で時給 ↔ 月給が変わった人だけ入れる。空 = 職員マスタの値">この月からの給与形態
-                  <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm" value={settings.salary_type ?? ""} onChange={(e) => upd("salary_type", e.target.value || null)}>
-                    <option value="">職員マスタのまま</option>
-                    <option value="時給">時給</option>
-                    <option value="月給">月給</option>
-                  </select>
-                </label>
-                <label className="text-xs text-muted-foreground">役職
-                  <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm" value={settings.role_type ?? ""} onChange={(e) => upd("role_type", e.target.value || null)}>
-                    <option value="">職員マスタのまま</option>
-                    {["パート", "社員", "提責", "事務員", "管理者"].map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </label>
-                <label className="text-xs text-muted-foreground" title="途中で通信費の扱いが変わった人だけ入れる。空 = 職員マスタの値">この月からの通信費
-                  <select className="block h-8 mt-0.5 rounded-md border bg-background px-2 text-sm max-w-64" value={settings.communication_fee_type ?? ""} onChange={(e) => upd("communication_fee_type", e.target.value || null)}>
-                    <option value="">職員マスタのまま</option>
-                    <option value="none">標準 (社保加入は0円・未加入は時間で500/1,000/1,500円)</option>
-                    <option value="variable">社保加入でも時間で500/1,000/1,500円</option>
-                    <option value="lend">スマホ貸与あり (0円)</option>
-                    <option value="lend_fee">貸与要件外で貸与を希望 (-1,700円)</option>
-                  </select>
-                </label>
-                <div className="ml-auto flex items-end gap-4">
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">固定支給合計 (月額)</p>
-                    <p className="text-xl font-bold leading-tight">{fixedTotal(settings).toLocaleString("ja-JP")}円</p>
-                  </div>
-                  <Button onClick={handleSave} disabled={saving}>{saving ? "保存中…" : "保存"}</Button>
-                </div>
-              </div>
-            )}
-            {!loading && settings && (
-              <p className="text-[11px] text-muted-foreground mt-1.5">保存すると この月からの新しい履歴行ができ、前の値は履歴として残ります。</p>
-            )}
-          </div>
-
-          {loading && <p className="text-center py-10 text-muted-foreground">読み込み中…</p>}
-
-          {!loading && settings && (
-            <div className="px-5 py-4 space-y-4">
-              {/* 毎月の固定支給: 4 つのまとまりを横に並べる */}
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Section title="基本給" total={settings.base_personal_salary + settings.skill_salary}>
-                  <Field label="本人給" value={settings.base_personal_salary} onChange={(v) => upd("base_personal_salary", v ?? 0)} />
-                  <Field label="職能給" value={settings.skill_salary} onChange={(v) => upd("skill_salary", v ?? 0)} />
-                </Section>
-                <Section title="手当" total={settings.position_allowance + settings.qualification_allowance + settings.tenure_allowance}>
-                  <Field label="役職手当" value={settings.position_allowance} onChange={(v) => upd("position_allowance", v ?? 0)} />
-                  <Field label="資格手当" value={settings.qualification_allowance} onChange={(v) => upd("qualification_allowance", v ?? 0)} />
-                  <Field label={settings.tenure_allowance_auto ? "勤続手当 (自動)" : "勤続手当"} value={settings.tenure_allowance} onChange={(v) => upd("tenure_allowance", v ?? 0)} />
-                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title="資格要件: 介護福祉士 / 実務者研修修了者 / 居宅介護支援職員">
-                    <input type="checkbox" checked={settings.tenure_allowance_auto} onChange={(e) => upd("tenure_allowance_auto", e.target.checked)} />
-                    勤続手当を自動計算する
-                  </label>
-                </Section>
-                <Section title="処遇改善" total={settings.treatment_improvement + settings.specific_treatment_improvement + settings.treatment_subsidy}>
-                  <Field label="処遇改善手当" value={settings.treatment_improvement} onChange={(v) => upd("treatment_improvement", v ?? 0)} />
-                  <Field label="特定処遇改善" value={settings.specific_treatment_improvement} onChange={(v) => upd("specific_treatment_improvement", v ?? 0)} />
-                  <Field label="処遇改善補助金" value={settings.treatment_subsidy} onChange={(v) => upd("treatment_subsidy", v ?? 0)} />
-                </Section>
-                <Section title="残業・特別報奨金" total={settings.fixed_overtime_pay + settings.special_bonus}>
-                  <Field label="固定残業代" value={settings.fixed_overtime_pay} onChange={(v) => upd("fixed_overtime_pay", v ?? 0)} />
-                  <Field label="特別報奨金" hint="毎月固定で払う分" value={settings.special_bonus} onChange={(v) => upd("special_bonus", v ?? 0)} />
-                </Section>
-              </div>
-
-              {/* 単価・条件付き: 計算に使う単価。固定支給合計には入らない */}
-              <div className="rounded-lg border border-dashed p-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2">単価・条件付き (固定支給合計には入らない)</p>
-                <div className="grid gap-x-6 gap-y-2 md:grid-cols-2 xl:grid-cols-3">
-                  <Field label="報奨金" hint="支給する月は「報奨金の支給」画面で選ぶ" value={settings.bonus_amount} onChange={(v) => upd("bonus_amount", v ?? 0)} />
-                  <Field label="移動費単価" unit="円/km" hint="移動距離 × 単価" value={settings.travel_unit_price} onChange={(v) => upd("travel_unit_price", v ?? 0)} />
-                  <Field label="夜朝手当単価" unit="円/時" hint="夜朝時間 × 単価" value={settings.yocho_unit_price} onChange={(v) => upd("yocho_unit_price", v ?? 0)} />
-                  <Field label="介護超過 閾値" unit="時間" hint="月のサービス時間がこれを超えた分に払う (社員)。0 = 無効" value={settings.care_overtime_threshold_hours} onChange={(v) => upd("care_overtime_threshold_hours", v ?? 0)} />
-                  <Field label="介護超過 単価" unit="円/時" hint="超過時間 × 単価" value={settings.care_overtime_unit_price} onChange={(v) => upd("care_overtime_unit_price", v ?? 0)} />
-                  <Field label="事務時給" unit="円/時" hint="出勤時間 × 単価 = 本人給 (事務員)" value={settings.office_work_hourly_rate} onChange={(v) => upd("office_work_hourly_rate", v ?? 0)} />
-                  <Field label="有給 1日単価" unit="円/日" hint="空欄 = 職員マスタの単価" nullable placeholder="職員マスタ"
-                    value={settings.paid_leave_unit_price ?? null} onChange={(v) => upd("paid_leave_unit_price", v)} />
-                </div>
-              </div>
-
-              <label className="block text-xs text-muted-foreground">備考
-                <textarea className="mt-0.5 w-full border rounded px-3 py-1.5 text-sm bg-background resize-none" rows={2} placeholder="特記事項があれば入力"
-                  value={settings.note} onChange={(e) => upd("note", e.target.value)} />
-              </label>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* インポートプレビュー */}
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
@@ -1300,251 +927,6 @@ export function SalaryList({
         </DialogContent>
       </Dialog>
 
-      {/* 履歴 modal (給与設定の effective_from 履歴) */}
-      <SalaryHistoryDialog
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        employee={employees.find((e) => e.id === historyEmpId) ?? null}
-        rows={allSettings.filter((s) => s.employee_id === historyEmpId)}
-        onDelete={handleDeleteHistoryRow}
-        onOpenBackfill={() => {
-          setBackfillEmpId(historyEmpId);
-          setHistoryOpen(false);
-          setBackfillOpen(true);
-        }}
-      />
-
-      {/* 過去の値追加 (backfill) modal */}
-      <SalaryBackfillDialog
-        open={backfillOpen}
-        onOpenChange={setBackfillOpen}
-        employee={employees.find((e) => e.id === backfillEmpId) ?? null}
-        templateRow={
-          // 最新値を雛形に。なければ空。
-          backfillEmpId
-            ? (getLatestSalary(allSettings, backfillEmpId) ?? emptySettings(backfillEmpId, "2024-01-01"))
-            : null
-        }
-        onSave={handleBackfillSave}
-      />
     </div>
   );
 }
-
-// ─── 履歴閲覧 modal ─────────────────────────────────────────
-function SalaryHistoryDialog({
-  open, onOpenChange, employee, rows, onDelete, onOpenBackfill,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  employee: Employee | null;
-  rows: SalarySettings[];
-  onDelete: (rowId: string) => void;
-  onOpenBackfill: () => void;
-}) {
-  // effective_from DESC
-  const sortedRows = [...rows].sort((a, b) =>
-    (b.effective_from ?? "").localeCompare(a.effective_from ?? "")
-  );
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            給与設定 履歴 — {employee?.name ?? "-"}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm text-muted-foreground">
-            {sortedRows.length}件の履歴。 編集は閉じて行を選択してください (新しい effective_from で履歴行が追加されます)。
-          </p>
-          <Button variant="outline" size="sm" onClick={onOpenBackfill}>
-            ＋ 過去の値を追加する
-          </Button>
-        </div>
-        {sortedRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-6 text-center">履歴がありません</p>
-        ) : (
-          <div className="overflow-x-auto border rounded-md">
-            <table className="w-full text-xs whitespace-nowrap">
-              <thead>
-                <tr className="bg-muted/50 border-b">
-                  <th className="text-left px-2 py-1.5 font-medium">適用開始月</th>
-                  <th className="text-left px-2 py-1.5 font-medium">給与形態</th>
-                  <th className="text-left px-2 py-1.5 font-medium">役職</th>
-                  <th className="text-right px-2 py-1.5 font-medium">本人給</th>
-                  <th className="text-right px-2 py-1.5 font-medium">職能給</th>
-                  <th className="text-right px-2 py-1.5 font-medium">役職手当</th>
-                  <th className="text-right px-2 py-1.5 font-medium">資格</th>
-                  <th className="text-right px-2 py-1.5 font-medium">勤続</th>
-                  <th className="text-right px-2 py-1.5 font-medium">処遇改善</th>
-                  <th className="text-right px-2 py-1.5 font-medium">特定処遇</th>
-                  <th className="text-right px-2 py-1.5 font-medium">補助金</th>
-                  <th className="text-right px-2 py-1.5 font-medium">固定残業</th>
-                  <th className="text-right px-2 py-1.5 font-medium">特別報奨</th>
-                  <th className="text-right px-2 py-1.5 font-medium">固定合計</th>
-                  <th className="text-right px-2 py-1.5 font-medium" title="介護超過手当の 閾値(時間) と 単価(円/時)">介護超過</th>
-                  <th className="text-right px-2 py-1.5 font-medium" title="夜朝手当の単価 (円/時)。0 = 対象外">夜朝</th>
-                  <th className="text-right px-2 py-1.5 font-medium" title="事務時給 (円/時)">事務時給</th>
-                  <th className="text-right px-2 py-1.5 font-medium" title="有給休暇手当の単価 (円/日)">有給単価</th>
-                  <th className="text-left px-2 py-1.5 font-medium">通信費</th>
-                  <th className="text-right px-2 py-1.5 font-medium" title="出張手当の単価 (円/km)">出張単価</th>
-                  <th className="text-right px-2 py-1.5 font-medium" title="報奨金 (支給する月だけ 月ごとの手入力で「報奨金あり」にする)">報奨金</th>
-                  <th className="text-center px-2 py-1.5 font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((r, i) => {
-                  // 1 つ古い行 (DESC なので次の要素) から変わったセルに色を付ける (2026-10-06 user「履歴が見れるように」)
-                  const prev = sortedRows[i + 1];
-                  const chg = (f: (x: SalarySettings) => unknown) =>
-                    prev && JSON.stringify(f(prev) ?? null) !== JSON.stringify(f(r) ?? null) ? " bg-amber-100 font-semibold dark:bg-amber-900/40" : "";
-                  return (
-                  <tr key={r.id ?? r.effective_from} className="border-b hover:bg-muted/20">
-                    <td className="px-2 py-1.5 font-mono">{r.effective_from}</td>
-                    <td className={"px-2 py-1.5" + chg((x) => x.salary_type)}>{r.salary_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className={"px-2 py-1.5" + chg((x) => x.role_type)}>{r.role_type || <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.base_personal_salary)}>{r.base_personal_salary.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.skill_salary)}>{r.skill_salary.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.position_allowance)}>{r.position_allowance.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.qualification_allowance)}>{r.qualification_allowance.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.tenure_allowance)}>{r.tenure_allowance.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.treatment_improvement)}>{r.treatment_improvement.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.specific_treatment_improvement)}>{r.specific_treatment_improvement.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.treatment_subsidy)}>{r.treatment_subsidy.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.fixed_overtime_pay)}>{r.fixed_overtime_pay.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.special_bonus)}>{r.special_bonus.toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right font-semibold" + chg((x) => fixedTotal(x))}>{fixedTotal(r).toLocaleString()}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => [x.care_overtime_threshold_hours, x.care_overtime_unit_price])}>{r.care_overtime_threshold_hours > 0 || r.care_overtime_unit_price > 0
-                      ? `${r.care_overtime_threshold_hours}h / ${r.care_overtime_unit_price.toLocaleString()}`
-                      : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.yocho_unit_price)}>{r.yocho_unit_price > 0 ? r.yocho_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.office_work_hourly_rate)}>{r.office_work_hourly_rate > 0 ? r.office_work_hourly_rate.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.paid_leave_unit_price)}>{r.paid_leave_unit_price ? r.paid_leave_unit_price.toLocaleString() : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className={"px-2 py-1.5" + chg((x) => x.communication_fee_type)}>{r.communication_fee_type ? COMM_FEE_LABEL[r.communication_fee_type] ?? r.communication_fee_type : <span className="text-muted-foreground/50" title="職員マスタの値を使う">—</span>}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.travel_unit_price)}>{r.travel_unit_price > 0 ? r.travel_unit_price.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className={"px-2 py-1.5 text-right" + chg((x) => x.bonus_amount)}>{r.bonus_amount > 0 ? r.bonus_amount.toLocaleString() : <span className="text-muted-foreground/50">—</span>}</td>
-                    <td className="px-2 py-1.5 text-center">
-                      {r.id ? (
-                        <button
-                          type="button"
-                          className="text-xs text-red-600 hover:underline"
-                          onClick={() => onDelete(r.id!)}
-                        >
-                          削除
-                        </button>
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="text-xs text-muted-foreground mt-3">
-          ※ 履歴は append-only です。値を変更したい場合は履歴 modal を閉じ、行を選択して新しい適用開始月で保存してください。
-          削除は誤って入力した行のクリーンアップ用。
-        </p>
-        <div className="flex justify-end mt-3">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>閉じる</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── 過去の値を追加 (backfill) modal ───────────────────────
-// 「open のたびに templateRow から初期化」を useEffect+setState でやると
-// react-hooks/set-state-in-effect で蹴られるので、内部 form を別 component に切り出し
-// `key` で remount させて初期化する方式にする。
-function SalaryBackfillDialog({
-  open, onOpenChange, employee, templateRow, onSave,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  employee: Employee | null;
-  templateRow: SalarySettings | null;
-  onSave: (row: SalarySettings) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>過去の値を追加 — {employee?.name ?? "-"}</DialogTitle>
-        </DialogHeader>
-        {open && templateRow && (
-          <SalaryBackfillForm
-            key={`${employee?.id ?? "none"}:${open ? "open" : "closed"}`}
-            templateRow={templateRow}
-            onCancel={() => onOpenChange(false)}
-            onSave={onSave}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function SalaryBackfillForm({
-  templateRow, onCancel, onSave,
-}: {
-  templateRow: SalarySettings;
-  onCancel: () => void;
-  onSave: (row: SalarySettings) => void;
-}) {
-  // 雛形から id を外し effective_from を過去日付に置く (= 過去入力を促す)
-  const [draft, setDraft] = useState<SalarySettings>(() => {
-    const { id: _id, ...rest } = templateRow;
-    void _id;
-    const eff = rest.effective_from && rest.effective_from !== "1970-01-01"
-      ? rest.effective_from : "2024-01-01";
-    return { ...rest, effective_from: eff } as SalarySettings;
-  });
-  const set = <K extends keyof SalarySettings>(k: K, v: SalarySettings[K]) =>
-    setDraft((d) => ({ ...d, [k]: v }));
-
-  return (
-    <>
-      <p className="text-sm text-muted-foreground mb-3">
-        過去の月で適用されていた給与設定を遡って入力します。 effective_from に過去日付を入れて保存してください。
-        (= 過去月の給与再計算で使われるようになります)
-      </p>
-
-      <div className="mb-3 p-3 rounded-lg border-2 border-amber-200 bg-amber-50/30">
-        <div className="flex items-center gap-3 flex-wrap">
-          <Label className="text-sm font-semibold whitespace-nowrap">適用開始月</Label>
-          <Input
-            type="date"
-            value={draft.effective_from}
-            onChange={(e) => set("effective_from", e.target.value)}
-            className="w-44"
-          />
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-3">
-        <YenInput label="本人給" value={draft.base_personal_salary} onChange={(v) => set("base_personal_salary", v)} />
-        <YenInput label="職能給" value={draft.skill_salary} onChange={(v) => set("skill_salary", v)} />
-        <YenInput label="役職手当" value={draft.position_allowance} onChange={(v) => set("position_allowance", v)} />
-        <YenInput label="資格手当" value={draft.qualification_allowance} onChange={(v) => set("qualification_allowance", v)} />
-        <YenInput label="勤続手当" value={draft.tenure_allowance} onChange={(v) => set("tenure_allowance", v)} />
-        <YenInput label="処遇改善手当" value={draft.treatment_improvement} onChange={(v) => set("treatment_improvement", v)} />
-        <YenInput label="特定処遇改善" value={draft.specific_treatment_improvement} onChange={(v) => set("specific_treatment_improvement", v)} />
-        <YenInput label="処遇改善補助金" value={draft.treatment_subsidy} onChange={(v) => set("treatment_subsidy", v)} />
-        <YenInput label="固定残業代" value={draft.fixed_overtime_pay} onChange={(v) => set("fixed_overtime_pay", v)} />
-        <YenInput label="特別報奨金" value={draft.special_bonus} onChange={(v) => set("special_bonus", v)} />
-      </div>
-
-      <div className="flex justify-end gap-2 mt-4">
-        <Button variant="outline" onClick={onCancel}>キャンセル</Button>
-        <Button onClick={() => onSave(draft)}>
-          💾 過去設定を追加
-        </Button>
-      </div>
-    </>
-  );
-}
-
