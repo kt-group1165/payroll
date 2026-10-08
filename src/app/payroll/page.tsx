@@ -174,6 +174,10 @@ type Employee = {
   care_qualification_from?: string | null;
   job_type: string;
   effective_service_months: number;
+  /** 勤続月数 (法人 / グループ通算) と いつ時点か (YYYYMM)。職員一覧で入れる (2026-10-08) */
+  company_tenure_months?: number | null;
+  group_tenure_months?: number | null;
+  tenure_as_of?: string | null;
   office_id: string;
   social_insurance: boolean;
   paid_leave_unit_price: number;
@@ -541,7 +545,7 @@ export default function PayrollPage() {
       setProgress({ pct: 15, label: "職員・給与設定・出勤簿を読み込み中" });
       // 休職の期間の列 (migrations/payroll_employees_leave_dates.sql) は 未適用の DB でも動くよう、無ければ列を外して読み直す (2026-09-27)。
       //   列が無い → 行に leave_start_date のキーが無い (undefined) → leaveInMonth は以前どおり 休職者を全部の月で外す
-      const EMP_COLS = "id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date";
+      const EMP_COLS = "id,employee_number,name,address,role_type,salary_type,employment_status,has_care_qualification,care_qualification_from,job_type,effective_service_months,office_id,social_insurance,paid_leave_unit_price,commute_unit_price,travel_unit_price,communication_fee_type,communication_fee_from,auth_user_id,is_office_worker,resignation_date,hire_date,company_tenure_months,group_tenure_months,tenure_as_of";
       const fetchEmployees = async () => {
         const r = await supabase.from("payroll_employees").select(`${EMP_COLS},leave_start_date,leave_end_date`).eq("office_id", selectedOfficeId);
         if (r.error && /leave_(start|end)_date/.test(r.error.message)) return supabase.from("payroll_employees").select(EMP_COLS).eq("office_id", selectedOfficeId);
@@ -682,6 +686,8 @@ export default function PayrollPage() {
           ? { communication_fee_type: salMap.get(e.id)!.communication_fee_type!, communication_fee_from: null } : {}),
         // 社保の加入も その月の給与設定の行にあればそれ (無ければ職員マスタ。月ごとの手入力は さらに優先。2026-10-08)
         ...(salMap.get(e.id)?.social_insurance != null ? { social_insurance: salMap.get(e.id)!.social_insurance as boolean } : {}),
+        // 職種も その月の給与設定の行にあればそれ (無ければ職員マスタ。2026-10-08)
+        ...(salMap.get(e.id)?.job_type ? { job_type: salMap.get(e.id)!.job_type as string } : {}),
         // 有給単価 (円/日) も その月の給与設定の行 → 無ければ職員マスタ (2026-09-18)
         paid_leave_unit_price: resolvePaidLeaveUnitPriceFromHistory(e, (salRes.data ?? []) as SalarySettings[], _monthStart) }));
       // 出勤簿: 「画面入力を使う」事業所は kaigo-app の出勤簿 (payroll_kyotaku_attendance_records) から、
@@ -867,6 +873,15 @@ export default function PayrollPage() {
           legacyTenureMonths.set(normEmp(r.employee_number), Math.max(0, groupMonths - (asOf - (year * 12 + month))));
           legacyStepMonths.set(normEmp(r.employee_number), Math.max(0, Math.max(r.group_tenure_months, r.company_tenure_months ?? 0) - (asOf - (year * 12 + month))));
         }
+      }
+      // ── 職員一覧で入れた勤続月数 (法人 / グループ通算 + いつ時点か) があれば 旧システムの値より優先 (2026-10-08) ──
+      //   中身は 旧システムの値から写してある (backfill_employee_tenure_from_legacy.mts)。画面で直した人だけ値が変わる
+      for (const e of employeesRaw) {
+        const g = e.group_tenure_months, asOfStr = e.tenure_as_of;
+        if (g == null || !asOfStr || !/^\d{6}$/.test(asOfStr)) continue;
+        const elapsed = (Number(asOfStr.slice(0, 4)) * 12 + Number(asOfStr.slice(4, 6))) - (year * 12 + month);
+        legacyTenureMonths.set(normEmp(e.employee_number), Math.max(0, g - elapsed));
+        legacyStepMonths.set(normEmp(e.employee_number), Math.max(0, Math.max(g, e.company_tenure_months ?? 0) - elapsed));
       }
       const tenureMonthsOf = (e: { employee_number: string | number; effective_service_months?: number | null }) => {
         const legacy = legacyTenureMonths.get(normEmp(e.employee_number));

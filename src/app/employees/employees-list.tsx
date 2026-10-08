@@ -87,7 +87,19 @@ const defaultForm = {
   commute_unit_price: "",
   travel_unit_price: "",
   communication_fee_type: "none",
+  // 勤続月数 (法人 / グループ通算) と いつ時点か ('YYYY-MM')。2026-10-08
+  company_tenure_months: "",
+  group_tenure_months: "",
+  tenure_as_of: "",
 };
+
+/** 'YYYYMM' 時点の月数を 今月の月数にする (以後 1 か月ごとに 1 足す。給与計算と同じ) */
+function tenureNow(months: number, asOfYm: string): number {
+  const now = new Date(Date.now() + 9 * 3600 * 1000);
+  const cur = now.getUTCFullYear() * 12 + now.getUTCMonth() + 1;
+  const asOf = Number(asOfYm.slice(0, 4)) * 12 + Number(asOfYm.slice(4, 6));
+  return Math.max(0, months + (cur - asOf));
+}
 
 // ─── CSVユーティリティ ────────────────────────────────────────
 
@@ -180,6 +192,8 @@ export function EmployeesList({
   // 休職の期間の列 (payroll_employees_leave_dates.sql) が DB にあるか。select("*") で読んでいるので 行にキーがあれば入っている。
   // ★ 列が無いうちに送ると 保存がエラーになるので、無いうちは 欄を出さず 送らない
   const hasLeaveCols = useMemo(() => employees.some((e) => "leave_start_date" in e), [employees]);
+  // 勤続月数の列 (payroll_employee_tenure_and_job_type_history.sql) があるか。無いうちは 欄を出さず 送らない
+  const hasTenureCols = useMemo(() => employees.some((e) => "group_tenure_months" in e), [employees]);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   // 月ごとの給与設定 (payroll_salary_settings) の編集。保存は「保存」ボタン 1 つで 職員マスタと一緒に (2026-10-08 一本化)
@@ -339,6 +353,10 @@ export function EmployeesList({
       toast.error("社員番号、名前、事業所は必須です");
       return;
     }
+    if (hasTenureCols && (form.company_tenure_months !== "" || form.group_tenure_months !== "") && !form.tenure_as_of) {
+      toast.error("勤続月数を入れたときは「いつ時点か」も入れてください");
+      return;
+    }
     if (form.leave_start_date && form.leave_end_date && form.leave_end_date < form.leave_start_date) {
       toast.error("休職終了日が 休職開始日より前です");
       return;
@@ -367,6 +385,11 @@ export function EmployeesList({
       travel_unit_price: form.travel_unit_price === "" ? null : parseFloat(form.travel_unit_price),
       communication_fee_type: form.communication_fee_type,
       ...(hasLeaveCols ? { leave_start_date: form.leave_start_date || null, leave_end_date: form.leave_end_date || null } : {}),
+      ...(hasTenureCols ? {
+        company_tenure_months: form.company_tenure_months === "" ? null : Math.max(0, Math.round(Number(form.company_tenure_months))),
+        group_tenure_months: form.group_tenure_months === "" ? null : Math.max(0, Math.round(Number(form.group_tenure_months))),
+        tenure_as_of: form.tenure_as_of ? form.tenure_as_of.replace("-", "") : null,
+      } : {}),
     };
 
     setSaving(true);
@@ -417,6 +440,9 @@ export function EmployeesList({
       commute_unit_price: (emp as { commute_unit_price?: number | null }).commute_unit_price?.toString() ?? "",
       travel_unit_price: (emp as { travel_unit_price?: number | null }).travel_unit_price?.toString() ?? "",
       communication_fee_type: emp.communication_fee_type ?? "none",
+      company_tenure_months: emp.company_tenure_months?.toString() ?? "",
+      group_tenure_months: emp.group_tenure_months?.toString() ?? "",
+      tenure_as_of: emp.tenure_as_of && /^\d{6}$/.test(emp.tenure_as_of) ? `${emp.tenure_as_of.slice(0, 4)}-${emp.tenure_as_of.slice(4, 6)}` : "",
     });
     setEditingId(emp.id);
     salaryEditor.open(emp.id);
@@ -801,7 +827,7 @@ export function EmployeesList({
                   <section className="rounded-lg border p-4 space-y-3">
                     <h3 className="text-xs font-semibold text-muted-foreground">
                       ふだんの設定
-                      <span className="ml-2 font-normal">月の途中で 役職・給与形態・通信費・社保・有給単価が変わった人は、下の「月ごとの給与設定」の「この月からの…」で入れます</span>
+                      <span className="ml-2 font-normal">月の途中で 職種・役職・給与形態・通信費・社保・有給単価が変わった人は、下の「月ごとの給与設定」の「この月からの…」で入れます</span>
                     </h3>
                     <div className="grid gap-3 md:grid-cols-3">
                     <div>
@@ -844,7 +870,7 @@ export function EmployeesList({
                     </select>
                   </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">実勤続月数</Label>
+                      <Label className="text-xs text-muted-foreground" title="下の「勤続月数」も 旧システムの値も無い人だけ使う (2026年3月時点の月数)">実勤続月数 (控え)</Label>
                       <Input
                         type="number"
                         value={form.effective_service_months}
@@ -929,6 +955,41 @@ export function EmployeesList({
                       />
                     </div>
                     </div>
+                    {hasTenureCols && (
+                      <div className="rounded-md border border-dashed p-3">
+                        <p className="mb-2 text-xs font-semibold text-muted-foreground">
+                          勤続月数
+                          <span className="ml-2 font-normal">「いつ時点か」の月の月数を入れます。以後は 1 か月ごとに 1 足して数えます。グループ内で移って引き継いだ人は グループ通算に 前の法人の分も入れます</span>
+                        </p>
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground" title="月給の勤続手当の節目は グループ通算と法人の長い方で決めます">法人での勤続 (月)</Label>
+                            <Input type="number" min={0} step={1} value={form.company_tenure_months} placeholder="未設定"
+                              onChange={(e) => setForm({ ...form, company_tenure_months: e.target.value })} />
+                            {form.company_tenure_months !== "" && /^\d{4}-\d{2}$/.test(form.tenure_as_of) && (
+                              <p className="mt-1 text-[11px] text-muted-foreground">今月 = {formatMonths(tenureNow(Number(form.company_tenure_months), form.tenure_as_of.replace("-", "")))}</p>
+                            )}
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground" title="時給の勤続手当は この月数で決めます">グループ通算の勤続 (月)</Label>
+                            <Input type="number" min={0} step={1} value={form.group_tenure_months} placeholder="未設定"
+                              onChange={(e) => setForm({ ...form, group_tenure_months: e.target.value })} />
+                            {form.group_tenure_months !== "" && /^\d{4}-\d{2}$/.test(form.tenure_as_of) && (
+                              <p className="mt-1 text-[11px] text-muted-foreground">今月 = {formatMonths(tenureNow(Number(form.group_tenure_months), form.tenure_as_of.replace("-", "")))}</p>
+                            )}
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">いつ時点か</Label>
+                            <Input type="month" value={form.tenure_as_of}
+                              onChange={(e) => setForm({ ...form, tenure_as_of: e.target.value })} />
+                          </div>
+                        </div>
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          空のときは 旧システムの従業員データの値 → それも無ければ 上の「実勤続月数 (控え)」で計算します。
+                          ⚠ 退職して戻った人 (再入社) は 通算を引き継がない決まりなので、グループ通算に 戻ってからの月数を入れます
+                        </p>
+                      </div>
+                    )}
                   </section>
 
                   <section className="rounded-lg border p-4">

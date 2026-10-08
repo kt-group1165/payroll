@@ -54,6 +54,8 @@ export type SalarySettings = {
   communication_fee_type?: string | null;
   /** この適用開始月からの社保加入。NULL = 職員マスタの値 (2026-10-08) */
   social_insurance?: boolean | null;
+  /** この適用開始月からの職種。NULL = 職員マスタの値 (2026-10-08) */
+  job_type?: string | null;
   note: string;
 };
 
@@ -256,6 +258,8 @@ export function SalaryEditorBody({ editor }: { editor: SalaryEditorState }) {
   // 社保の列 (payroll_salary_settings_social_insurance.sql) が DB にあるか。select("*") の行にキーがあれば入っている。
   // ★ 無いうちに送ると保存がエラーになるので 欄を出さない
   const hasSocialInsuranceCol = rows.some((r) => "social_insurance" in r);
+  // 職種の列 (payroll_employee_tenure_and_job_type_history.sql) も同じ扱い
+  const hasJobTypeCol = rows.some((r) => "job_type" in r);
 
   return (
     <div className="space-y-4">
@@ -271,6 +275,12 @@ export function SalaryEditorBody({ editor }: { editor: SalaryEditorState }) {
             <option value="月給">月給</option>
           </select>
         </label>
+        {hasJobTypeCol && <label className="text-xs text-muted-foreground" title="途中で職種が変わった人だけ入れる。空 = 上の「職種」">この月からの職種
+          <select className={selectCls} value={s.job_type ?? ""} onChange={(e) => set("job_type", e.target.value || null)}>
+            <option value="">上の値のまま</option>
+            {["訪問介護", "訪問入浴", "訪問看護", "居宅介護支援", "福祉用具貸与", "薬局", "本社"].map((j) => <option key={j} value={j}>{j}</option>)}
+          </select>
+        </label>}
         <label className="text-xs text-muted-foreground" title="途中で役職が変わった人だけ入れる。空 = 上の「役職」">この月からの役職
           <select className={selectCls} value={s.role_type ?? ""} onChange={(e) => set("role_type", e.target.value || null)}>
             <option value="">上の値のまま</option>
@@ -379,6 +389,7 @@ function SalaryHistoryTable({ editor }: { editor: SalaryEditorState }) {
               <tr className="bg-muted/50 border-b">
                 <th className="text-left px-2 py-1.5 font-medium">適用開始月</th>
                 <th className="text-left px-2 py-1.5 font-medium">給与形態</th>
+                <th className="text-left px-2 py-1.5 font-medium" title="この月からの職種。— = 上の値">職種</th>
                 <th className="text-left px-2 py-1.5 font-medium">役職</th>
                 <th className="text-right px-2 py-1.5 font-medium">本人給</th>
                 <th className="text-right px-2 py-1.5 font-medium">職能給</th>
@@ -415,6 +426,7 @@ function SalaryHistoryTable({ editor }: { editor: SalaryEditorState }) {
                       {r.effective_from === "1970-01-01" ? <span title="いつからか分からないので 最初から有効という扱い">最初から</span> : r.effective_from}
                     </td>
                     <td className={"px-2 py-1.5" + chg((x) => x.salary_type)}>{r.salary_type || dash("上の値を使う")}</td>
+                    <td className={"px-2 py-1.5" + chg((x) => x.job_type ?? null)}>{r.job_type || dash("上の値を使う")}</td>
                     <td className={"px-2 py-1.5" + chg((x) => x.role_type)}>{r.role_type || dash("上の値を使う")}</td>
                     <td className={"px-2 py-1.5 text-right" + chg((x) => x.base_personal_salary)}>{r.base_personal_salary.toLocaleString()}</td>
                     <td className={"px-2 py-1.5 text-right" + chg((x) => x.skill_salary)}>{r.skill_salary.toLocaleString()}</td>

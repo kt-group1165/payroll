@@ -66,6 +66,8 @@ export type SalarySettings = {
   communication_fee_type?: string | null;
   /** この適用開始月からの社保加入。NULL = 職員一覧の値 (2026-10-08) */
   social_insurance?: boolean | null;
+  /** この適用開始月からの職種。NULL = 職員一覧の値 (2026-10-08) */
+  job_type?: string | null;
 };
 
 export type AttendanceSummary = {

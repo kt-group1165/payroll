@@ -128,7 +128,13 @@ export interface Employee {
   // 休職の期間 (payroll_employees_leave_dates.sql)。★ SQL 未適用の間は キー自体が無い (undefined)
   leave_start_date?: string | null;    // 休職開始日
   leave_end_date?: string | null;      // 休職終了日 (空 = 休職が続いている)
-  effective_service_months: number;    // 実勤続月数
+  effective_service_months: number;    // 実勤続月数 (下の勤続月数も旧システムの値も無い人だけ使う)
+  /** 法人での勤続 (月数)。tenure_as_of 時点 (payroll_employee_tenure_and_job_type_history.sql。未適用ならキーが無い) */
+  company_tenure_months?: number | null;
+  /** グループ通算の勤続 (月数。グループ間の移動で引き継いだ分を含む)。tenure_as_of 時点 */
+  group_tenure_months?: number | null;
+  /** 上の 2 つが いつ時点か ('YYYYMM')。以後 1 か月ごとに 1 足す */
+  tenure_as_of?: string | null;
   // 給与情報は payroll_salary_settings (per-employee 詳細) で管理。
   // 旧 base_salary / hourly_rate_* / fixed_overtime_* 列は 2026-05-08 削除。
   transport_type: string;
