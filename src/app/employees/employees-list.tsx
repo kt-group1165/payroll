@@ -769,7 +769,7 @@ export function EmployeesList({
               {/* 上の帯: 誰か / 切替 / 保存 を スクロールしても見えるように固定。
                   2026-10-08 user「設定画面が2か所あるのがわかりづらい。従業員設定の方に一本化。
                   モーダルの中で 給与系・その他系 と切り替えるボタンが一番上に」→ /salary の編集はここに統合 */}
-              <div className="sticky top-0 z-10 bg-popover border-b px-5 pt-3 pb-2">
+              <div className="sticky top-0 z-10 min-w-0 bg-popover border-b px-5 pt-3 pb-2">
                 <div className="flex items-center gap-4">
                   <DialogHeader className="flex-1 min-w-0">
                     <DialogTitle className="text-base truncate">
@@ -796,7 +796,7 @@ export function EmployeesList({
               </div>
 
               {tab === "salary" && (
-                <div className="px-5 py-4 space-y-4">
+                <div className="min-w-0 px-5 py-4 space-y-4">
                   {/* ふだんの値 (職員マスタ)。途中で変わった人は 下の「この月からの…」で月ごとに持つ */}
                   <section className="rounded-lg border p-4 space-y-3">
                     <h3 className="text-xs font-semibold text-muted-foreground">
@@ -942,7 +942,7 @@ export function EmployeesList({
               )}
 
               {tab === "other" && (
-                <div className="px-5 py-4 grid gap-4 md:grid-cols-2">
+                <div className="min-w-0 px-5 py-4 grid gap-4 md:grid-cols-2">
                   <section className="rounded-lg border p-4 space-y-3">
                     <h3 className="text-xs font-semibold text-muted-foreground">基本情報</h3>
                   <div>
