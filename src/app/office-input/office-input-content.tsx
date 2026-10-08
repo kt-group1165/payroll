@@ -587,7 +587,7 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
       {/* ─── 本体 ─── */}
       <div className="flex flex-1 min-h-0">
         {/* 左パネル: 項目一覧 (= データ型ではなく事業所の人が知っている言葉で並べる) */}
-        <aside className="w-72 shrink-0 border-r bg-muted/20 flex flex-col">
+        <aside className="w-44 shrink-0 border-r bg-muted/20 flex flex-col">
           <div className="px-3 py-2 border-b flex items-center justify-between">
             <span className="text-xs uppercase tracking-wider text-muted-foreground">
               入力項目
@@ -652,8 +652,8 @@ export function OfficeInputContent({ offices }: { offices: Office[] }) {
                                 ? `${s?.employees}人${s?.totalLabel ? ` / ${s.totalLabel}` : ""}`
                                 : fileOnly > 0 ? "" : "—"}
                               {fileOnly > 0 && (
-                                <span className={cn("ml-1", isActive ? "text-primary-foreground/70" : "text-sky-700")} title="ファイルで取り込んだ値だけがある職員">
-                                  ファイル{fileOnly}人
+                                <span className={cn("ml-1", isActive ? "text-primary-foreground/70" : "text-sky-700")} title="取り込んだ値 (事業所書式・旧システム・総括表) だけがある職員">
+                                  取込{fileOnly}人
                                 </span>
                               )}
                             </span>
