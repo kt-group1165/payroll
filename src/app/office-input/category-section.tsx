@@ -174,17 +174,18 @@ function useEmployeeFilter(employees: Employee[], hasValue: (empId: string) => b
  * ファイルで取り込んだ値の表示 + 「画面で直す」(2026-10-06)。
  * 画面の入力が無い職員にだけ出す。写すと 以後は画面の入力が使われる (給与計算の結果は同じ)
  */
-function FileNote({ plan, employeeId, onAdopt }: { plan: AdoptPlan; employeeId: string; onAdopt: PanelProps["onAdopt"] }) {
+function FileNote({ plan, employeeId, onAdopt, aligned = false }: { plan: AdoptPlan; employeeId: string; onAdopt: PanelProps["onAdopt"]; aligned?: boolean }) {
+  // aligned: 表の 1 行に収める (幅を決めて 折り返さない。縦に揃える。2026-10-08 user「列は縦でそろえて」)
   return (
-    <span className="inline-flex items-center gap-2 text-xs">
+    <span className="inline-flex items-center gap-2 whitespace-nowrap text-xs">
       <span
-        className={`rounded px-1.5 py-0.5 ${plan.source === "事業所書式" ? "bg-sky-100 text-sky-900" : "bg-violet-100 text-violet-900"}`}
+        className={`rounded px-1.5 py-0.5 ${aligned ? "inline-block w-52 truncate" : ""} ${plan.source === "事業所書式" ? "bg-sky-100 text-sky-900" : "bg-violet-100 text-violet-900"}`}
         title={`取り込んだ値 (給与計算はこの値を使っています)${plan.sourceDetail ? `\n${plan.sourceDetail}` : ""}`}
       >
         {plan.source ?? "ファイル"}: {plan.summary}
       </span>
       {plan.canAdopt ? (
-        <button type="button" className="text-sky-800 underline" onClick={() => onAdopt([{ plan, employeeId }])}
+        <button type="button" className="whitespace-nowrap text-sky-800 underline" onClick={() => onAdopt([{ plan, employeeId }])}
           title="この値を画面の入力に写して 画面で直せるようにします (写しただけでは給与計算は変わりません)">
           画面で直す
         </button>
@@ -239,7 +240,7 @@ function ScalarTable({ item, employees, rows, onSetScalar, filePlans, attendance
               <th className="sticky top-0 z-10 bg-muted px-3 py-1.5 text-left font-medium w-24">社員番号</th>
               <th className="sticky top-0 z-10 bg-muted px-3 py-1.5 text-left font-medium">氏名</th>
               <th className="sticky top-0 z-10 bg-muted px-3 py-1.5 text-left font-medium w-40">職種</th>
-              <th className="sticky top-0 z-10 bg-muted px-3 py-1.5 text-left font-medium w-52">
+              <th className="sticky top-0 z-10 bg-muted px-3 py-1.5 text-left font-medium w-[30rem]">
                 {isTime ? "時間 (HH:MM)" : `値${item.unit ? ` (${item.unit})` : ""}`}
               </th>
             </tr>
@@ -355,10 +356,10 @@ function ScalarRow({
             value={text}
             onChange={(e) => handleChange(e.target.value)}
             onBlur={() => commit(text)}
-            className="h-8 w-28"
+            className="h-8 w-28 shrink-0"
           />
           {!isTime && item.unit && (
-            <span className="text-xs text-muted-foreground">{item.unit}</span>
+            <span className="w-6 shrink-0 text-xs text-muted-foreground">{item.unit}</span>
           )}
           {filled && (
             <Button
@@ -374,9 +375,9 @@ function ScalarRow({
               クリア
             </Button>
           )}
-          {!filled && filePlan && <FileNote plan={filePlan} employeeId={employee.id} onAdopt={onAdopt} />}
+          {!filled && filePlan && <FileNote plan={filePlan} employeeId={employee.id} onAdopt={onAdopt} aligned />}
           {!filled && !filePlan && attendanceNote && (
-            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900" title="画面の入力も事業所書式の出張km も無いので、給与計算は 出勤簿の出張km (月合計) を使っています">
+            <span className="inline-block w-52 truncate whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900" title="画面の入力も事業所書式の出張km も無いので、給与計算は 出勤簿の出張km (月合計) を使っています">
               出勤簿: {attendanceNote}
             </span>
           )}
