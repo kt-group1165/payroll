@@ -50,6 +50,7 @@ const sections: { title: string; items: NavItem[] }[] = [
       { href: "/kyotaku-labor-check",   label: "居宅労働時間チェック", icon: "🩺", mode: "payroll" },
       { href: "/office-input",          label: "事業所書式入力", icon: "🏤", mode: "payroll" },
       { href: "/monthly-inputs",        label: "月ごとの手入力", icon: "✏️", mode: "payroll" },
+      { href: "/paid-leave",            label: "有給管理",     icon: "🏖️", mode: "payroll" },
       { href: "/bonus-payments",        label: "報奨金の支給", icon: "🎁", mode: "payroll" },
       { href: "/office-worker-care",    label: "事務員の訪問分", icon: "🧾", mode: "payroll" },
       { href: "/salary",                label: "給与設定",     icon: "⚙️", mode: "payroll" },
