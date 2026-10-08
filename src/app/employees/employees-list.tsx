@@ -87,6 +87,9 @@ const defaultForm = {
   commute_unit_price: "",
   travel_unit_price: "",
   communication_fee_type: "none",
+  care_qualification_from: "",
+  communication_fee_from: "",
+  is_office_worker: false,
   // 勤続月数 (法人 / グループ通算) と いつ時点か ('YYYY-MM')。2026-10-08
   company_tenure_months: "",
   group_tenure_months: "",
@@ -384,6 +387,9 @@ export function EmployeesList({
       commute_unit_price: form.commute_unit_price === "" ? null : parseFloat(form.commute_unit_price),
       travel_unit_price: form.travel_unit_price === "" ? null : parseFloat(form.travel_unit_price),
       communication_fee_type: form.communication_fee_type,
+      care_qualification_from: form.has_care_qualification ? (form.care_qualification_from || null) : null,
+      communication_fee_from: form.communication_fee_from || null,
+      is_office_worker: form.is_office_worker,
       ...(hasLeaveCols ? { leave_start_date: form.leave_start_date || null, leave_end_date: form.leave_end_date || null } : {}),
       ...(hasTenureCols ? {
         company_tenure_months: form.company_tenure_months === "" ? null : Math.max(0, Math.round(Number(form.company_tenure_months))),
@@ -440,6 +446,9 @@ export function EmployeesList({
       commute_unit_price: (emp as { commute_unit_price?: number | null }).commute_unit_price?.toString() ?? "",
       travel_unit_price: (emp as { travel_unit_price?: number | null }).travel_unit_price?.toString() ?? "",
       communication_fee_type: emp.communication_fee_type ?? "none",
+      care_qualification_from: emp.care_qualification_from ?? "",
+      communication_fee_from: emp.communication_fee_from ?? "",
+      is_office_worker: emp.is_office_worker ?? false,
       company_tenure_months: emp.company_tenure_months?.toString() ?? "",
       group_tenure_months: emp.group_tenure_months?.toString() ?? "",
       tenure_as_of: emp.tenure_as_of && /^\d{6}$/.test(emp.tenure_as_of) ? `${emp.tenure_as_of.slice(0, 4)}-${emp.tenure_as_of.slice(4, 6)}` : "",
@@ -868,6 +877,12 @@ export function EmployeesList({
                       <option value="">なし（勤続手当の対象外）</option>
                       {CARE_QUALIFICATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
                     </select>
+                    {form.has_care_qualification && (
+                      <label className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground" title="この日が その月の末日以前の月から 勤続手当の対象。空 = ずっと前から">
+                        資格を取った日
+                        <Input type="date" className="h-7 w-40 text-xs" value={form.care_qualification_from} onChange={(e) => setForm({ ...form, care_qualification_from: e.target.value })} />
+                      </label>
+                    )}
                   </div>
                     <div>
                       <Label className="text-xs text-muted-foreground" title="下の「勤続月数」も 旧システムの値も無い人だけ使う (2026年3月時点の月数)">実勤続月数 (控え)</Label>
@@ -912,6 +927,10 @@ export function EmployeesList({
                     </select>
                     <p className="text-[11px] text-muted-foreground mt-0.5">時間で決まるときの段: その月の訪問 50 時間未満 500 円 / 50 時間以上 1,000 円 / 100 時間以上 1,500 円 (0 時間は 0 円)。</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">途中で変わった人は 下の「この月からの通信費」で月ごとに。</p>
+                    <label className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground" title="この日より後の月は この通信費タイプを使い、前の月は 標準 で計算する。空 = ずっと前から">
+                      この通信費タイプの開始日
+                      <Input type="date" className="h-7 w-40 text-xs" value={form.communication_fee_from} onChange={(e) => setForm({ ...form, communication_fee_from: e.target.value })} />
+                    </label>
                   </div>
                       </div>
                       <div className="self-center">
@@ -922,6 +941,10 @@ export function EmployeesList({
                       onChange={(e) => setForm({ ...form, social_insurance: e.target.checked })}
                     />
                     <span className="text-sm">社会保険加入（処遇改善補助金手当対象）</span>
+                  </label>
+                  <label className="mt-2 flex items-center gap-2 cursor-pointer" title="役職が事務員でなくても 事務員として計算する: 事務時間 × 事務時給を本人給に足す / 月給の控除の所定は 159 時間 / 処遇改善支援費は事務職の段">
+                    <input type="checkbox" checked={form.is_office_worker} onChange={(e) => setForm({ ...form, is_office_worker: e.target.checked })} />
+                    <span className="text-sm">事務員として計算する</span>
                   </label>
                       </div>
                     <div>

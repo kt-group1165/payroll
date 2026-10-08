@@ -14,7 +14,7 @@ import { SettingHistoryTable, useOfficeNames } from "@/components/payroll/settin
 
 const OTHER_HISTORIES: { href: string; label: string; where: string }[] = [
   { href: "/offices", label: "事業所の単価・週起算曜日", where: "事業所一覧 → 編集 の下の「改定履歴」" },
-  { href: "/salary", label: "職員の給与設定", where: "給与設定 → 各職員の「履歴を見る」" },
+  { href: "/employees", label: "職員の給与設定・職種・社保", where: "職員一覧 → 編集 → 給与タブ の「給与設定の履歴」" },
   { href: "/salary", label: "残業設定", where: "給与設定 → 残業設定 → 職種ごとの「履歴」" },
   { href: "/services", label: "区分時給", where: "サービスマスタ → 時給設定 (時期ごとの表)" },
   { href: "/services", label: "サービスコード → 類型", where: "サービスマスタ → マッピング → 各行の「履歴」" },

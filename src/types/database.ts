@@ -140,6 +140,12 @@ export interface Employee {
   transport_type: string;
   has_care_qualification: boolean;  // 介護福祉士または実務者研修修了
   care_qualification_kind?: string | null; // 資格の種類 (不明でも要件を満たす場合は「不明（要件は満たす）」)
+  /** 資格を取った日。この日が処理月の末日以前の月から 勤続手当の対象 (空 = ずっと前から) */
+  care_qualification_from?: string | null;
+  /** 通信費タイプの開始日。この日が処理月の末日より後の月は 標準 (none) で計算 */
+  communication_fee_from?: string | null;
+  /** 事務員 (役職が事務員でなくても)。事務時間 × 事務時給を本人給に足す・月給の控除は所定 159 時間・処遇改善支援費の事務職の段 */
+  is_office_worker?: boolean | null;
   social_insurance: boolean;        // 社会保険加入
   paid_leave_unit_price: number;    // 有給手当単価（円/日）。月ごとの値は payroll_salary_settings.paid_leave_unit_price
   /** 通勤単価 (円/km)。NULL なら事業所の単価。1 にすると 入力した距離がそのまま円になる (電車代。2026-09-24) */

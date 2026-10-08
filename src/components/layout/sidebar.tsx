@@ -76,6 +76,7 @@ const sections: { title: string; items: NavItem[] }[] = [
       // 会社休日は 給与 (法定休日・割増) に効く。請求には効かない
       { href: "/settings/company-holidays", label: "会社休日", icon: "🎌", mode: "payroll" },
       { href: "/settings/history", label: "設定の履歴", icon: "🕰️", mode: "payroll" },
+      { href: "/settings/rules", label: "計算の決まり", icon: "📐", mode: "payroll" },
     ],
   },
 ];

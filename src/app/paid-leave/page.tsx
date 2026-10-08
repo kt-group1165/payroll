@@ -21,6 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { usePayrollOffices } from "@/lib/swr/use-payroll-offices";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { officeFormPaidLeaveDays, type OfficeFormRecord } from "@/lib/payroll/payroll-calc";
 import { getEntriesByEmployeesMonthRange } from "@/lib/office-input/queries";
 import { mergeOfficeFormSources, normEmp, officeInputEntryToFormRecord, processingToBillingMonth } from "@/lib/office-input/to-form-records";
@@ -232,6 +233,7 @@ export default function PaidLeavePage() {
 
   const months = useMemo(() => fiscalMonths(fy), [fy]);
   const today = todayJst();
+  const openRow = rows.find((r) => r.key === open) ?? null;
   const shown = rows.filter((r) => !filter || r.emp.name.includes(filter) || r.emp.employee_number.includes(filter));
 
   const exportCsv = () => {
@@ -258,7 +260,7 @@ export default function PaidLeavePage() {
     <div>
       <h2 className="text-2xl font-bold mb-1">有給管理</h2>
       <p className="text-sm text-muted-foreground mb-4">
-        Box の「有給管理簿」と同じ形の一覧です。行を押すと 使った日ごとの台帳と 管理者・所属長の確認欄が開きます。
+        Box の「有給管理簿」と同じ形の一覧です。行を押すと 使った日ごとの台帳・管理者・所属長の確認欄・付与の編集が 別の窓で開きます。
         使った日数は 給与計算と同じ数え方 (有給管理簿の月の日数 → 無ければ 事業所書式の有給・半有給)。付与 (繰越・日当) は見るだけです。
       </p>
 
@@ -330,9 +332,7 @@ export default function PaidLeavePage() {
               const nConf = dated.filter((u) => confirmed.has(`${r.emp.id}|${u.date}`)).length;
               const retired = r.emp.employment_status === "退職者";
               return (
-                <FragmentRow key={r.key} open={open === r.key}
-                  main={
-                    <tr className={"border-b cursor-pointer hover:bg-muted/30" + (open === r.key ? " bg-muted/40" : "") + (retired ? " opacity-60" : "")}
+                    <tr key={r.key} className={"border-b cursor-pointer hover:bg-muted/30" + (open === r.key ? " bg-muted/40" : "") + (retired ? " opacity-60" : "")}
                       onClick={() => setOpen(open === r.key ? null : r.key)}>
                       <td className="px-2 py-1.5 font-mono">{r.emp.employee_number}</td>
                       <td className="px-2 py-1.5 font-medium">{r.emp.name}{retired && <span className="ml-1 text-[10px] text-muted-foreground">退職</span>}</td>
@@ -367,17 +367,6 @@ export default function PaidLeavePage() {
                         {dated.length === 0 ? "—" : `${nConf}/${dated.length}`}
                       </td>
                     </tr>
-                  }
-                  detail={
-                    <tr className="border-b bg-muted/10">
-                      <td colSpan={28} className="px-4 py-3">
-                        <PersonLedger row={r} confirmed={confirmed} canConfirm={!confirmError}
-                          onToggle={(date, on) => void toggleConfirm(r.emp.id, date, on)} />
-                        <GrantEditor key={JSON.stringify(grantsByEmp.get(r.emp.id) ?? [])} emp={r.emp} grants={grantsByEmp.get(r.emp.id) ?? []} defaultDate={`${fy}-04-01`} onSaved={() => void load()} />
-                      </td>
-                    </tr>
-                  }
-                />
               );
             })}
           </tbody>
@@ -387,13 +376,31 @@ export default function PaidLeavePage() {
         月の数字: 黒 = 事業所書式 (ファイル取込・画面の入力) / <span className="text-violet-800">紫 = 有給管理簿</span>。灰色の月 = その付与の 1 年の外。
         「?」= 付与日数が入っていない (年度の途中で付与された人など)。年 5 日の「残り」は 赤 = 消化期限を過ぎた / 黄 = 期限まで 4 か月以内。
       </p>
+
+      {/* 個人台帳と付与はモーダルで出す (2026-10-08 user「下に伸びるんじゃなくて モーダルで」) */}
+      <Dialog open={!!openRow} onOpenChange={(v) => { if (!v) setOpen(null); }}>
+        <DialogContent className="max-w-5xl w-[96vw] max-h-[90vh] overflow-y-auto">
+          {openRow && (
+            <div className="min-w-0">
+              <DialogHeader>
+                <DialogTitle className="text-base">
+                  有給の台帳 — {openRow.emp.name}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">No. {openRow.emp.employee_number} / {openRow.emp.salary_type ?? ""} / 付与日 {openRow.grant.grant_date}</span>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="mt-3">
+                <PersonLedger row={openRow} confirmed={confirmed} canConfirm={!confirmError}
+                  onToggle={(date, on) => void toggleConfirm(openRow.emp.id, date, on)} />
+                <GrantEditor key={JSON.stringify(grantsByEmp.get(openRow.emp.id) ?? [])} emp={openRow.emp} grants={grantsByEmp.get(openRow.emp.id) ?? []} defaultDate={`${fy}-04-01`} onSaved={() => void load()} />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function FragmentRow({ main, detail, open }: { main: React.ReactNode; detail: React.ReactNode; open: boolean }) {
-  return <>{main}{open && detail}</>;
-}
 
 /** 個人台帳: 使った日ごとの日数・残り と 確認欄 (Box の個人シートの 使用年月日・使用日数・残日数・確認欄) */
 function PersonLedger({ row, confirmed, canConfirm, onToggle }: {
