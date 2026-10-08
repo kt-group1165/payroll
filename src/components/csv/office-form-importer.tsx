@@ -231,7 +231,8 @@ export function OfficeFormImporter({ initialOffices, initialExistingMonths }: Of
         const officeList = [...officeSet].sort((a, b) => {
           const _oa = offices.find((o) => o.office_number === a);
           const _ob = offices.find((o) => o.office_number === b);
-          return ((_oa?.short_name || _oa?.name) ?? a).localeCompare((_ob?.short_name || _ob?.name) ?? b, "ja");
+          // 事業所一覧 (/offices) と同じ順 (offices は その順で渡ってくる。2026-10-08)
+          return ((_oa ? offices.indexOf(_oa) : 1e9) - (_ob ? offices.indexOf(_ob) : 1e9)) || a.localeCompare(b);
         });
         const fmtMonth = (m: string) => `${m.slice(0, 4)}/${m.slice(4, 6)}`;
         const grandTotal = [...byOfficeMonth.values()].reduce((s, n) => s + n, 0);

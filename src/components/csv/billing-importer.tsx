@@ -813,7 +813,8 @@ export function BillingImporter() {
         const officeList = [...offSet].sort((a, b) => {
           const oa = offices.find((o) => o.office_number === a);
           const ob = offices.find((o) => o.office_number === b);
-          return ((oa?.short_name || oa?.name) ?? a).localeCompare((ob?.short_name || ob?.name) ?? b, "ja");
+          // 事業所一覧 (/offices) と同じ順 (offices は その順で渡ってくる。2026-10-08)
+          return ((oa ? offices.indexOf(oa) : 1e9) - (ob ? offices.indexOf(ob) : 1e9)) || a.localeCompare(b);
         });
         const fmtMonth = (m: string) => `${m.slice(0, 4)}/${m.slice(4, 6)}`;
 
