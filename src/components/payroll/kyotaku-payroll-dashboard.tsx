@@ -1550,6 +1550,7 @@ export function KyotakuPayrollDashboard({
             filterOfficeNumber={filterOfficeNumber}
             yobouRows={filteredYobou}
             allStaffKeys={allStaffKeys}
+            registeredStaff={filteredSettings.map((st) => ({ officeNumber: st.office_number, staffName: st.staff_name }))}
             officeMap={officeMap}
             onSaved={() => mutate()}
           />
@@ -3232,6 +3233,7 @@ function YobouTab({
   filterOfficeNumber,
   yobouRows,
   allStaffKeys,
+  registeredStaff,
   officeMap,
   onSaved,
 }: {
@@ -3240,6 +3242,8 @@ function YobouTab({
   filterOfficeNumber: string | null;
   yobouRows: YobouRow[];
   allStaffKeys: Array<{ officeNumber: string; staffName: string }>;
+  /** その事業所の職員一覧のケアマネ (実績に出てこない 予防だけの人・新しく入った人も選べるように。2026-10-19) */
+  registeredStaff: Array<{ officeNumber: string; staffName: string }>;
   officeMap: Map<string, KyotakuOffice>;
   onSaved: () => void | Promise<void>;
 }) {
@@ -3314,8 +3318,16 @@ function YobouTab({
       seen.add(k.staffName);
       out.push(k.staffName);
     }
+    // 介護予防支援は国保連 (伝送) に載らず 取り込めないことが多い (user 2026-10-19)。
+    // 実績に一度も出てこない人も 職員一覧から選んで手で入れられるようにする
+    for (const k of registeredStaff) {
+      if (k.officeNumber !== selectedOfficeNumber || !k.staffName) continue;
+      if (seen.has(k.staffName)) continue;
+      seen.add(k.staffName);
+      out.push(k.staffName);
+    }
     return out;
-  }, [allStaffKeys, selectedOfficeNumber]);
+  }, [allStaffKeys, registeredStaff, selectedOfficeNumber]);
 
   // 編集中の row state (key: staffName|billingMonth)。
   // 初期化は selectedMonth + officeStaffs + yobouRows から導出。
