@@ -26,7 +26,14 @@ if (!SRC || !existsSync(SRC)) {
 type Row = Record<string, number | string | null> & { office: string; file_month: string; name: string };
 const rows = JSON.parse(readFileSync(SRC, "utf8")) as Row[];
 const n = (v: unknown) => (v == null || v === "" || Number.isNaN(Number(v)) ? 0 : Number(v));
-const nm = (s: unknown) => String(s ?? "").split("\n")[0].normalize("NFKC").replace(/[\s　]/g, "").replace(/[（(].*?[）)]/g, "");
+// 氏名の突き合わせ: 総括表と 介護アプリ (ケアマネ欄) で 字体が違う (渡邉/渡邊・齋藤/齊藤・髙/高)。1 文字ずつ 寄せてから比べる
+const VARIANT: Record<string, string> = { 邊: "辺", 邉: "辺", 齊: "斉", 齋: "斉", 斎: "斉", 髙: "高", 﨑: "崎", 濵: "浜", 濱: "浜", 澤: "沢", 嶋: "島", 櫻: "桜" };
+// 字体ではなく 別の字のもの (どちらかの入力の誤り。取り込みの NAME_ALIAS と同じ)
+const ALIAS: Record<string, string> = { 坂本佑香: "坂本祐香" };
+const nm = (s: unknown) => {
+  const t = [...String(s ?? "").split("\n")[0].normalize("NFKC").replace(/[\s　]/g, "").replace(/[（(].*?[）)]/g, "")].map((c) => VARIANT[c] ?? c).join("");
+  return ALIAS[t] ?? t;
+};
 const ym1 = (m: string) => `${m.slice(0, 4)}-${m.slice(4, 6)}-01`;
 const next = (d: string) => { const t = new Date(Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)), 1)); return t.toISOString().slice(0, 10); };
 
@@ -91,15 +98,21 @@ for (const r of recs) {
   const u = units.find((x) => x.is_addition && !x.is_office_addition && !x.item_name.includes("特定事業所加算") && String(r.service_name ?? "").includes(x.item_name));
   if (u) kazan.set(k, (kazan.get(k) ?? 0) + u.unit_count * 10);
 }
-let cOk = 0, cNear = 0, cAll = 0, kOk = 0, kAll = 0, noRec = 0; const cMiss: string[] = [];
-for (const r of rows.filter((x) => months.includes(x.file_month))) {
+const pulledMonths = new Set([...cnt.keys()].map((k) => k.split("|")[0]));
+const notPulled = months.filter((m) => !pulledMonths.has(m));
+let cOk = 0, cNear = 0, cAll = 0, kOk = 0, kAll = 0, noRec = 0, cShort = 0, cOver = 0; const cMiss: string[] = [];
+for (const r of rows.filter((x) => months.includes(x.file_month) && pulledMonths.has(x.file_month))) {
   const k = `${r.file_month}|${nm(r.name)}`;
   if (!cnt.has(k) && !kazan.has(k)) { noRec++; continue; }
   cAll++; const ours = cnt.get(k) ?? 0, theirs = n(r.介護件数);
+  if (ours < theirs) cShort += theirs - ours; else cOver += ours - theirs;
   if (ours === theirs) cOk++; else { if (Math.abs(ours - theirs) <= 2) cNear++; if (cMiss.length < 10) cMiss.push(`${r.file_month} ${r.office} ${r.name}: 当方 ${ours} / 総括表 ${theirs}`); }
   kAll++; if ((kazan.get(k) ?? 0) === n(r.加算手当合計)) kOk++;
 }
-console.log(`\n段B 入力 (介護アプリから写した実績 ${months.join(",")}。月遅れも提供月で数える)`);
-console.log(`  介護件数: ${cOk}/${cAll} 一致 (±2 以内 ${cOk + cNear}) / 加算手当: ${kOk}/${kAll} 一致 / 当方に実績が無い人 ${noRec}`);
+console.log(`\n段B 入力 (介護アプリから写した実績 ${[...pulledMonths].sort().join(",")}。月遅れも提供月で数える)`);
+if (notPulled.length) console.log(`  ★ ${notPulled.join(",")} は 当方に実績が 1 件も無い (介護アプリに 居宅のレセプトが まだ無い月) → 比べていない`);
+console.log(`  介護件数: ${cOk}/${cAll} 一致 (±2 以内 ${cOk + cNear}) / 当方が少ない 計 ${cShort} 件・多い 計 ${cOver} 件 / 加算手当: ${kOk}/${kAll} 一致 / 当方に実績が無い人 ${noRec}`);
+console.log("  ※ ★ 見立て (未確認): 少ない側は 月遅れ (翌々月以降に請求したレセプト) が まだ介護アプリに無いもの (8月10日送信の KK を取り込んだのは 四街道 だけ)。KK が届いたら 取り込んで回し直すと確かめられる");
+console.log("    ★ 見立て (未確認): 多い側は 担当ケアマネを 今の担当 (client_insurance_records.care_manager) で決めているため 担当替えが ずれるもの");
 for (const m of cMiss) console.log("   " + m);
 console.log("\n見ていないもの: 予防件数 (手入力) / 給与設定の DB の値 (段A は総括表の入力値を使った) / 出張費 / 総支給の合計");

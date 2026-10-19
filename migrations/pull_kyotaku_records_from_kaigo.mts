@@ -9,6 +9,7 @@
  *   1 請求 = 基本の行 (detail_row_no "1"・居宅介護支援費のコード) + 加算の行 (detail_row_no "2"〜・加算の名前)
  *   提供月 = 請求の billing_month (介護アプリでは 提供月) / 請求月 = 取り込んだ伝送ファイル KKyymm の送信月 (notes に残っている)
  *   事業所 = 利用者の居宅の事業所 (client_office_assignments → payroll_offices.office_number)
+ *     (2 つ付いているときは 担当ケアマネが 給与の職員として登録されている方。2026-06 で 2 件: 秋元とし子・武井與里子)
  *   担当ケアマネ = その月に有効な認定の care_manager。給与の職員一覧に 同じ事業所で同じ名前 (空白の違いは無視) がいれば その表記に揃える
  *   要介護度 = 有効な認定の care_level
  * 再取込: その事業所 × 提供月 の「介護アプリから写した行」(source_filename が kaigo-app snapshot) だけを消してから入れ直す。
@@ -53,17 +54,23 @@ const nextMonth = (() => { const d = new Date(Date.UTC(Number(MONTH.slice(0, 4))
 
 type Rec = Record<string, unknown>;
 const rows: Rec[] = [];
-const warn = { noOffice: 0, manyOffice: 0, noCm: 0, noCert: 0, addonUnmatched: new Map<string, number>(), cmNotInPayroll: new Map<string, number>(), late: 0 };
+const warn = { noOffice: 0, manyOffice: 0, manyResolved: 0, noCm: 0, noCert: 0, addonUnmatched: new Map<string, number>(), cmNotInPayroll: new Map<string, number>(), late: 0 };
 for (const c of claims) {
   const offs = [...(officesOfClient.get(c.user_id) ?? [])];
   if (offs.length === 0) { warn.noOffice++; continue; }
-  if (offs.length > 1) { warn.manyOffice++; continue; }
-  const office = offs[0];
   const cert = certs.filter((x) => x.client_id === c.user_id && (x.certification_start_date ?? "") <= mEnd && (!x.certification_end_date || x.certification_end_date >= mStart))
     .sort((a, b) => (b.certification_start_date ?? "").localeCompare(a.certification_start_date ?? ""))[0];
   if (!cert) { warn.noCert++; continue; }
   const cmRaw = cert.care_manager?.trim() ?? "";
   if (!cmRaw) { warn.noCm++; continue; }
+  // 居宅の事業所が 2 つ付いている利用者は 担当ケアマネが 給与の職員として登録されている事業所にする (2026-10-19)。
+  // それでも 1 つに決まらなければ 写さない
+  const office = offs.length === 1 ? offs[0] : (() => {
+    const hit = offs.filter((o) => empNameByOfficeNorm.has(`${o}|${nm(cmRaw)}`));
+    return hit.length === 1 ? hit[0] : null;
+  })();
+  if (!office) { warn.manyOffice++; continue; }
+  if (offs.length > 1) warn.manyResolved++;
   const staff = empNameByOfficeNorm.get(`${office}|${nm(cmRaw)}`) ?? cmRaw;
   if (!empNameByOfficeNorm.has(`${office}|${nm(cmRaw)}`)) warn.cmNotInPayroll.set(`${office} ${cmRaw}`, (warn.cmNotInPayroll.get(`${office} ${cmRaw}`) ?? 0) + 1);
   const kk = /KK(\d{2})(\d{2})/.exec(c.notes ?? "");
@@ -99,7 +106,8 @@ for (const c of claims) {
 const byOffice = new Map<string, { rows: number; base: number; staff: Set<string> }>();
 for (const r of rows) { const o = String(r.office_number); const v = byOffice.get(o) ?? { rows: 0, base: 0, staff: new Set<string>() }; v.rows++; if (r.detail_row_no === "1") v.base++; v.staff.add(String(r.staff_name)); byOffice.set(o, v); }
 console.log(`提供月 ${MONTH}: 請求 ${claims.length} 件 → 写す行 ${rows.length} (基本 ${rows.filter((r) => r.detail_row_no === "1").length} / 加算 ${rows.filter((r) => r.detail_row_no !== "1").length})`);
-console.log(`写さない: 居宅の事業所が無い ${warn.noOffice} / 複数 ${warn.manyOffice} / 有効な認定が無い ${warn.noCert} / 担当ケアマネが空 ${warn.noCm}`);
+console.log(`写さない: 居宅の事業所が無い ${warn.noOffice} / 複数で決まらない ${warn.manyOffice} / 有効な認定が無い ${warn.noCert} / 担当ケアマネが空 ${warn.noCm}`);
+if (warn.manyResolved) console.log(`居宅の事業所が複数 → 担当ケアマネの事業所に決めた ${warn.manyResolved} 件`);
 console.log(`月遅れで請求された (送信月が翌月より後) ${warn.late} 件`);
 for (const [o, v] of [...byOffice].sort()) console.log(`  ${o}: 基本 ${v.base} 行 / 全 ${v.rows} 行 / ケアマネ ${v.staff.size} 人`);
 if (warn.addonUnmatched.size) console.log(`⚠ 単位数の表に名前が無い加算 (給与の加算手当に入らない): ${[...warn.addonUnmatched].map(([k, v]) => `${k}=${v}`).join(" / ")}`);
