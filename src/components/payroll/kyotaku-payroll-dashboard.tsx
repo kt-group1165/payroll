@@ -21,6 +21,7 @@ import {
   calcPaymentForMonth,
   calcSalary,
   getBaseUnit,
+  soukatsuExtrasTotal,
   type CalcConfig,
   type Confirmation,
   type EmployeeSetting,
@@ -479,6 +480,7 @@ export function KyotakuPayrollDashboard({
     isLoading,
     error: swrError,
     mutate,
+    monthlyExtrasByOffice,
   } = useKyotakuDashboardData(officeNumbers, officeIds);
 
   // loading 表示は「データ未取得 (records.length===0) かつ fetch 中」のときのみ。
@@ -696,9 +698,12 @@ export function KyotakuPayrollDashboard({
       // 出張単価は 対象月に有効な値 (単価の履歴。2026-10-06)
       officeTravelUnitPrice: officeTravelRateAt(officeNumber, monthStart),
       officeCommuteUnitPrice: officeCommuteRateAt(officeNumber, monthStart),
+      // 月ごとの手入力 (認定調査の件数・報奨金・欠勤控除・その他手当。2026-10-19)
+      monthlyExtras: monthlyExtrasByOffice.get(officeNumber) ?? [],
     }),
     [
       officeCommuteRateAt,
+      monthlyExtrasByOffice,
       settingsByOfficeMonth,
       units,
       rates,
@@ -724,10 +729,12 @@ export function KyotakuPayrollDashboard({
         yobouRecords: yobouByOffice.get(o.office_number) ?? [],
         attendanceRecords: attendanceByOffice.get(o.office_number) ?? [],
         officeTravelUnitPrice: officeTravelRateMap.get(o.office_number) ?? 0,
+        monthlyExtras: monthlyExtrasByOffice.get(o.office_number) ?? [],
       });
     }
     return m;
   }, [
+    monthlyExtrasByOffice,
     allKyotakuOffices,
     settingsByOffice,
     units,
@@ -1614,6 +1621,7 @@ const SALARY_ROWS = [
   "勤続手当",
   "特定処遇改善",
   "出張距離手当",
+  "総括表の項目",
   "合計額",
   "支給済み",
   "差異",
@@ -1825,7 +1833,8 @@ function StaffBlock({
         sal.shikaku +
         sal.kotei +
         sal.tokutei +
-        sal.business_trip_teate
+        sal.business_trip_teate +
+        soukatsuExtrasTotal(sal)
       : 0;
     const diff = paid > 0 ? total - paid : null;
 
@@ -1985,6 +1994,8 @@ function StaffBlock({
             else if (label === "勤続手当") v = pm.sal?.kotei ?? 0;
             else if (label === "特定処遇改善") v = pm.sal?.tokutei ?? 0;
             else if (label === "出張距離手当") v = pm.sal?.business_trip_teate ?? 0;
+            // 役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他 − 欠勤控除 (2026-10-19)
+            else if (label === "総括表の項目") v = pm.sal ? soukatsuExtrasTotal(pm.sal) : 0;
             else if (label === "合計額") v = pm.total;
             else if (label === "支給済み") v = pm.paid > 0 ? pm.paid : null;
             else if (label === "差異") v = pm.diff;
@@ -3069,7 +3080,8 @@ function SayiTab({
             sal.shikaku +
             sal.kotei +
             sal.tokutei +
-            sal.business_trip_teate -
+            sal.business_trip_teate +
+            soukatsuExtrasTotal(sal) -
             paid;
           if (diff === 0) continue;
           out.push({

@@ -3,12 +3,17 @@
 // 総括表で本社が手入力している数字のうち、実績・出勤簿・事業所書式に元が無いもの。
 // 取込では消さない。給与計算 (page.tsx) は計算のたびに読む。
 
+import type { KyotakuMonthlyExtra } from "./kyotaku-calc";
+
 /**
  * 報奨金を その月に支給するか (payroll_monthly_inputs item_key。numeric_value 1 = 支給)。2026-09-22
  * 金額は 給与設定の 報奨金 (bonus_amount、変更しない限り続く)。支給する / しないは /bonus-payments で月ごとに決める。
  * 月ごとの手入力の画面 (MONTHLY_INPUT_ITEMS) には出さない。
  */
 export const BONUS_PAID_KEY = "bonus_paid";
+
+/** 手入力の 1 項目 (訪問介護・居宅で共通の形) */
+export type MonthlyInputItem = { key: string; label: string; unit: string; help: string; allowNegative: boolean };
 
 export const MONTHLY_INPUT_ITEMS = [
   {
@@ -131,6 +136,70 @@ export const MONTHLY_INPUT_ITEMS = [
     allowNegative: true,
   },
 ] as const;
+
+/**
+ * 居宅介護支援 (ケアマネ) の月ごとの手入力 (2026-10-19)。総括表 (ケアマネ) で本社が手で入れている欄。
+ * ★ 月 (processing_month) は 総括表 ケアマネ_YYYYMM の月 = 給与計算の 提供月 (calcSalary の serviceMonth)。
+ */
+export const KYOTAKU_MONTHLY_INPUT_ITEMS: readonly MonthlyInputItem[] = [
+  {
+    key: "kyotaku_survey_count",
+    label: "認定調査の件数",
+    unit: "件",
+    help: "1 件 3,000 円 (総括表の「調査単価」。全事業所同じ)。総括表では 調整手当 に 加算と一緒に入っている。保障の人は 保障額に届くかの計算にも含める (user 2026-10-19「とりあえず含める」)",
+    allowNegative: false,
+  },
+  {
+    key: "kyotaku_bonus",
+    label: "報奨金",
+    unit: "円",
+    help: "総括表の「報奨金」。決まり (誰に・いくら) が分かっていないので 手入力",
+    allowNegative: false,
+  },
+  {
+    key: "kyotaku_other_allowance",
+    label: "その他手当",
+    unit: "円",
+    help: "総括表の「その他手当」。総支給にそのまま足す (マイナス可)",
+    allowNegative: true,
+  },
+  {
+    key: "kyotaku_absence_deduction",
+    label: "欠勤控除",
+    unit: "円",
+    help: "プラスの金額で入れる。総支給から引く。日割りの決まりが分かるまで 手入力",
+    allowNegative: false,
+  },
+];
+
+/** payroll_monthly_inputs の行 (居宅の分だけ) → 計算に渡す 月ごとの手入力。nameOf で 職員番号 → 氏名 (計算は氏名で引く) */
+export function kyotakuExtrasFromInputs(
+  rows: { office_number: string; employee_number: string; processing_month: string; item_key: string; numeric_value: number | string | null }[],
+  nameOf: (officeNumber: string, employeeNumber: string) => string | undefined,
+): KyotakuMonthlyExtra[] {
+  const field: Record<string, keyof KyotakuMonthlyExtra> = {
+    kyotaku_survey_count: "survey_count",
+    kyotaku_bonus: "bonus",
+    kyotaku_other_allowance: "other_allowance",
+    kyotaku_absence_deduction: "absence_deduction",
+  };
+  const m = new Map<string, KyotakuMonthlyExtra>();
+  for (const r of rows) {
+    const f = field[r.item_key];
+    const v = typeof r.numeric_value === "string" ? parseFloat(r.numeric_value) : r.numeric_value;
+    if (!f || v == null || !Number.isFinite(v) || !/^\d{6}$/.test(r.processing_month)) continue;
+    const name = nameOf(r.office_number, r.employee_number);
+    if (!name) continue;
+    const service_month = `${r.processing_month.slice(0, 4)}-${r.processing_month.slice(4, 6)}-01`;
+    const k = `${r.office_number}|${name}|${service_month}`;
+    const e = m.get(k) ?? { staff_name: name, service_month };
+    (e as Record<string, unknown>)[f] = v;
+    m.set(k, e);
+  }
+  return [...m.values()];
+}
+
+export const KYOTAKU_MONTHLY_INPUT_KEYS = KYOTAKU_MONTHLY_INPUT_ITEMS.map((i) => i.key);
 
 /**
  * 入浴 1 件あたりに介護時間として数える時間 (時間)。

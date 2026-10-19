@@ -278,6 +278,14 @@ export type CalcConfigWithConfirmations = CalcConfig & {
 
 // 既定値 (集計.py DEFAULT_BASE_SALARY)
 export const DEFAULT_BASE_SALARY = 250000;
+/**
+ * 総括表 (ケアマネ) にある項目の合計 (役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他 − 欠勤控除)。
+ * 画面で 合計額を 項目から組み直している箇所が 足し忘れないよう 1 か所にまとめる (2026-10-19)
+ */
+export function soukatsuExtrasTotal(b: SalaryBreakdown): number {
+  return b.position + b.kinzoku_variable + b.survey + b.guarantee + b.commute_teate + b.bonus + b.other - b.absence_deduction;
+}
+
 /** 居宅の加算手当: 単位数 × この円 (地域単価は使わない) */
 export const KASAN_YEN_PER_UNIT = 10;
 /** 認定調査 1 件の手当 (総括表の「調査単価」。全事業所 3,000 円) */
@@ -813,20 +821,13 @@ export function calcPaymentForMonth(
       serviceMonths.add(`${ym}-01`);
     }
   }
+  // 月ごとの手入力 (認定調査・報奨金 など) だけがある月も (2026-10-19)
+  for (const x of config.monthlyExtras ?? []) if (x.staff_name === staffName && x.service_month) serviceMonths.add(x.service_month);
 
   let total = 0;
   for (const sm of serviceMonths) {
-    const {
-      base,
-      plan,
-      kazan,
-      chosei1,
-      chosei2,
-      shikaku,
-      kotei,
-      tokutei,
-      business_trip_teate,
-    } = calcSalary(records, staffName, sm, config);
+    const b = calcSalary(records, staffName, sm, config);
+    const { base, plan, kazan, chosei1, chosei2, shikaku, kotei, tokutei, business_trip_teate } = b;
     // T+1 払い: base (= honnin+shokuno+kotei_zangyo) + plan + kazan
     //          + 独立手当 (shikaku/kotei/tokutei/business_trip_teate) も月固定で同月に支払う
     if (addMonths(sm, 1) === payMonth)
@@ -837,7 +838,9 @@ export function calcPaymentForMonth(
         shikaku +
         kotei +
         tokutei +
-        business_trip_teate;
+        business_trip_teate +
+        // 総括表 (ケアマネ) の項目も 同じ月に払う (2026-10-19)
+        soukatsuExtrasTotal(b);
     if (addMonths(sm, 2) === payMonth) total += chosei1;
     if (addMonths(sm, 3) === payMonth) total += chosei2;
   }

@@ -8,7 +8,7 @@ import { sortOfficesByDisplayOrder } from "@/lib/office-order";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MONTHLY_INPUT_ITEMS } from "@/lib/payroll/monthly-inputs";
+import { KYOTAKU_MONTHLY_INPUT_ITEMS, MONTHLY_INPUT_ITEMS, type MonthlyInputItem } from "@/lib/payroll/monthly-inputs";
 import { isEmployedInMonth } from "@/lib/payroll/employment-in-month";
 
 /**
@@ -48,7 +48,8 @@ export default function MonthlyInputsPage() {
       // 事業所一覧 (/offices) と同じ順 (2026-10-08 user)
       const rows = sortOfficesByDisplayOrder(
         (flattenOfficeMaster(data as never) as unknown as OfficeRow[])
-          .filter((o) => o.office_type === "訪問介護"),
+          // 居宅介護支援も (ケアマネの 認定調査の件数・報奨金・欠勤控除・その他手当。2026-10-19)
+          .filter((o) => o.office_type === "訪問介護" || o.office_type === "居宅介護支援"),
       );
       setOffices(rows);
       setOfficeId((prev) => prev || rows[0]?.id || "");
@@ -56,6 +57,8 @@ export default function MonthlyInputsPage() {
   }, []);
 
   const office = useMemo(() => offices.find((o) => o.id === officeId), [offices, officeId]);
+  const isKyotaku = office?.office_type === "居宅介護支援";
+  const items: readonly MonthlyInputItem[] = isKyotaku ? KYOTAKU_MONTHLY_INPUT_ITEMS : MONTHLY_INPUT_ITEMS;
 
   useEffect(() => {
     if (!office) return;
@@ -93,9 +96,9 @@ export default function MonthlyInputsPage() {
         numeric_value: Number(values[k]), updated_at: new Date().toISOString() };
     });
     const deletes = dirtyKeys.filter((k) => (values[k] ?? "") === "");
-    const negOk = new Set<string>(MONTHLY_INPUT_ITEMS.filter((i) => i.allowNegative).map((i) => i.key));
+    const negOk = new Set<string>(items.filter((i) => i.allowNegative).map((i) => i.key));
     if (upserts.some((u) => !Number.isFinite(u.numeric_value) || (u.numeric_value < 0 && !negOk.has(u.item_key)))) {
-      toast.error("数字を入れてください (入浴件数は 0 以上)");
+      toast.error(`数字を入れてください (マイナスにできるのは ${items.filter((i) => i.allowNegative).map((i) => i.label).join("・") || "なし"})`);
       setSaving(false);
       return;
     }
@@ -129,7 +132,7 @@ export default function MonthlyInputsPage() {
               {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </label>
-          <label className="text-sm">処理月
+          <label className="text-sm">{isKyotaku ? "提供月 (総括表 ケアマネ の月)" : "処理月"}
             <select className="block h-9 rounded-md border bg-background px-2 text-sm mt-1" value={month} onChange={(e) => setMonth(e.target.value)}>
               {monthOptions().map((m) => <option key={m} value={m}>{m.slice(0, 4)}年{Number(m.slice(4))}月</option>)}
             </select>
@@ -146,10 +149,10 @@ export default function MonthlyInputsPage() {
           <CardTitle className="text-sm font-medium">月ごとの手入力</CardTitle>
           <details className="mt-1">
             <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">
-              項目の説明 ({MONTHLY_INPUT_ITEMS.length}件) — クリックで開く
+              項目の説明 ({items.length}件) — クリックで開く
             </summary>
             <dl className="mt-2 space-y-1.5 text-xs">
-              {MONTHLY_INPUT_ITEMS.map((i) => (
+              {items.map((i) => (
                 <div key={i.key} className="grid grid-cols-[10rem_1fr] gap-2">
                   <dt className="font-medium text-foreground">{i.label}<span className="text-muted-foreground">（{i.unit}）</span></dt>
                   <dd className="text-muted-foreground leading-relaxed">{i.help}</dd>
@@ -165,7 +168,7 @@ export default function MonthlyInputsPage() {
                 <th className="text-left px-3 py-2">職員番号</th>
                 <th className="text-left px-3 py-2">氏名</th>
                 <th className="text-left px-3 py-2">給与形態・役職</th>
-                {MONTHLY_INPUT_ITEMS.map((i) => (
+                {items.map((i) => (
                   <th key={i.key} className="text-right px-3 py-2" title={i.help}>
                     <span className="border-b border-dotted border-muted-foreground/50">{i.label}</span>
                   </th>
@@ -178,7 +181,7 @@ export default function MonthlyInputsPage() {
                   <td className="px-3 py-1.5">{e.employee_number}</td>
                   <td className="px-3 py-1.5">{e.name}</td>
                   <td className="px-3 py-1.5 text-muted-foreground">{e.salary_type} / {e.role_type}</td>
-                  {MONTHLY_INPUT_ITEMS.map((i) => {
+                  {items.map((i) => {
                     const k = `${e.employee_number}|${i.key}`;
                     const dirty = (values[k] ?? "") !== (saved[k] ?? "");
                     return (
@@ -198,7 +201,7 @@ export default function MonthlyInputsPage() {
                 </tr>
               ))}
               {emps.length === 0 && (
-                <tr><td colSpan={3 + MONTHLY_INPUT_ITEMS.length} className="px-3 py-6 text-center text-muted-foreground">職員がいません</td></tr>
+                <tr><td colSpan={3 + items.length} className="px-3 py-6 text-center text-muted-foreground">職員がいません</td></tr>
               )}
             </tbody>
           </table>

@@ -181,25 +181,26 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
               <SalaryHead itemKey="chosei1" onOpen={openFormulaModal}>調整①</SalaryHead>
               <SalaryHead itemKey="chosei2" onOpen={openFormulaModal}>調整②</SalaryHead>
               <SalaryHead itemKey="business_trip_teate" onOpen={openFormulaModal}>出張手当</SalaryHead>
+              <th className="px-3 py-2 font-medium text-right" title="役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他 − 欠勤控除 (月ごとの手入力は /monthly-inputs)">総括表の項目</th>
               <th className="px-3 py-2 font-medium text-right">支給合計</th>
             </tr>
           </thead>
           <tbody>
             {!officeId ? (
               <tr>
-                <td colSpan={24} className="text-center text-muted-foreground py-4">
+                <td colSpan={25} className="text-center text-muted-foreground py-4">
                   事業所を選択してください
                 </td>
               </tr>
             ) : loading ? (
               <tr>
-                <td colSpan={24} className="text-center text-muted-foreground py-4">
+                <td colSpan={25} className="text-center text-muted-foreground py-4">
                   読み込み中...
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={24} className="text-center text-muted-foreground py-4">
+                <td colSpan={25} className="text-center text-muted-foreground py-4">
                   データなし
                 </td>
               </tr>
@@ -236,11 +237,17 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
                     <SalaryCell itemKey="chosei1" amount={r.chosei1} row={r} onOpen={openDetailModal} />
                     <SalaryCell itemKey="chosei2" amount={r.chosei2} row={r} onOpen={openDetailModal} />
                     <SalaryCell itemKey="business_trip_teate" amount={r.business_trip_teate} row={r} onOpen={openDetailModal} />
+                    <td
+                      className="px-3 py-1.5 text-right tabular-nums"
+                      title={`役職 ${r.breakdown.position} / 勤続(件数) ${r.breakdown.kinzoku_variable} / 認定調査 ${r.breakdown.survey} / 保障 ${r.breakdown.guarantee} / 通勤費 ${r.breakdown.commute_teate} / 報奨金 ${r.breakdown.bonus} / その他 ${r.breakdown.other} / 欠勤控除 −${r.breakdown.absence_deduction}`}
+                    >
+                      {r.soukatsu_extras ? `${r.soukatsu_extras.toLocaleString("ja-JP")}円` : "—"}
+                    </td>
                     <td className="px-3 py-1.5 text-right font-bold">{r.total.toLocaleString("ja-JP")}円</td>
                   </tr>
                 ))}
                 <tr className="border-t bg-muted/10 font-semibold">
-                  <td colSpan={23} className="px-3 py-1.5 text-right">合計</td>
+                  <td colSpan={24} className="px-3 py-1.5 text-right">合計</td>
                   <td className="px-3 py-1.5 text-right">{grandTotal.toLocaleString("ja-JP")}円</td>
                 </tr>
               </>

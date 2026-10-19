@@ -12,6 +12,7 @@ import {
 } from "@/lib/payroll/attendance-calc";
 import {
   calcSalary,
+  soukatsuExtrasTotal,
   type CalcConfig,
   type EmployeeSetting,
   type KyotakuAttendanceRecord,
@@ -27,6 +28,7 @@ import {
   KYOTAKU_SALARY_COLUMNS,
   type KyotakuSalary,
 } from "@/lib/payroll/kyotaku-salary-history";
+import { KYOTAKU_MONTHLY_INPUT_KEYS, kyotakuExtrasFromInputs } from "@/lib/payroll/monthly-inputs";
 
 /**
  * 居宅介護支援 総括表 集計データ取得 hook (SWR ベース)。
@@ -72,6 +74,8 @@ export type SummaryRow = {
   chosei1: number;
   chosei2: number;
   business_trip_teate: number;
+  /** 総括表 (ケアマネ) の項目の合計 (役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他 − 欠勤控除) */
+  soukatsu_extras: number;
   total: number;
   breakdown: SalaryBreakdown;
 };
@@ -93,6 +97,7 @@ type AttendanceDbRow = {
   paid_leave_type: "full" | "half" | null;
   is_paid_leave?: boolean | null;
   business_km: number | string | null;
+  commute_km?: number | string | null;
   substitute_for_date: string | null;
 };
 
@@ -137,7 +142,7 @@ async function fetchKyotakuSummary(
   // 1a) office_number + travel_unit_price
   const officeRes = await supabase
     .from("payroll_offices")
-    .select("office_number, travel_unit_price")
+    .select("office_number, travel_unit_price, commute_unit_price")
     .eq("id", officeId)
     .single();
   if (officeRes.error) throw officeRes.error;
@@ -153,10 +158,13 @@ async function fetchKyotakuSummary(
   // 出張単価は 対象月に有効な値 (単価の履歴)。今の値だと 改定後に過去の月まで新しい単価になる (2026-10-06)
   const { data: priceRows, error: priceErr } = await supabase
     .from("payroll_office_unit_prices")
-    .select("office_id, effective_from, travel_unit_price, work_week_start")
+    .select("office_id, effective_from, travel_unit_price, commute_unit_price, work_week_start")
     .eq("office_id", officeId);
   if (priceErr) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceErr.message}`);
   const travelRate = officePriceAt((priceRows ?? []) as OfficeUnitPriceRow[], officeId, "travel_unit_price", `${month}-01`, currentTravelRate);
+  // 通勤単価も 対象月の値 (通勤費。2026-10-19)
+  const currentCommuteRate = Number((officeRes.data as { commute_unit_price?: number | string | null } | null)?.commute_unit_price ?? 0) || 0;
+  const commuteRate = officePriceAt((priceRows ?? []) as OfficeUnitPriceRow[], officeId, "commute_unit_price", `${month}-01`, currentCommuteRate);
   // 週起算曜日も 対象月に有効な値 (事業所の単価の履歴。引数の weekStart は 今の値 = 履歴が無いときの代わり)
   const ws = officePriceAt((priceRows ?? []) as OfficeUnitPriceRow[], officeId, "work_week_start", `${month}-01`, weekStart);
 
@@ -164,7 +172,7 @@ async function fetchKyotakuSummary(
   //   居宅ケアマネ給与設定は payroll_employees.kyotaku_* (旧) から
   //   payroll_kyotaku_salary (履歴 table) に移行済。対象月の active row を
   //   getActiveKyotakuSalary(rows, employee_id, monthStart) で解決する。
-  const [empRes, recRows, unitRes, rateRes, yobouRes, salaryRes] =
+  const [empRes, recRows, unitRes, rateRes, yobouRes, salaryRes, extraRes] =
     await Promise.all([
       supabase
         .from("payroll_employees")
@@ -205,7 +213,15 @@ async function fetchKyotakuSummary(
           KYOTAKU_SALARY_COLUMNS,
         )
         .limit(10000),
+      // 月ごとの手入力 (認定調査の件数・報奨金・欠勤控除・その他手当。2026-10-19)
+      supabase
+        .from("payroll_monthly_inputs")
+        .select("office_number, employee_number, processing_month, item_key, numeric_value")
+        .eq("office_number", officeNumber)
+        .eq("processing_month", month.replace("-", ""))
+        .in("item_key", KYOTAKU_MONTHLY_INPUT_KEYS),
     ]);
+  if (extraRes.error) throw new Error(`月ごとの手入力を読めませんでした: ${extraRes.error.message}`);
   if (empRes.error) throw empRes.error;
   const employees = (empRes.data ?? []) as EmployeeRow[];
   if (employees.length === 0) return [];
@@ -219,7 +235,7 @@ async function fetchKyotakuSummary(
   const { data: attData, error: attErr } = await supabase
     .from("payroll_kyotaku_attendance_records")
     .select(
-      "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, business_km, substitute_for_date",
+      "employee_id, work_date, start_time, end_time, break_minutes, is_legal_holiday, paid_leave_type, is_paid_leave, business_km, commute_km, substitute_for_date",
     )
     .in("employee_id", empIds)
     .gte("work_date", extStart)
@@ -249,12 +265,15 @@ async function fetchKyotakuSummary(
   for (const ar of attRows) {
     const emp = employees.find((e) => e.id === ar.employee_id);
     if (!emp) continue;
-    const km = typeof ar.business_km === "string" ? parseFloat(ar.business_km) : ar.business_km;
-    if (km === null || km === undefined || !Number.isFinite(km) || km <= 0) continue;
+    const toKm = (v: number | string | null | undefined) => (typeof v === "string" ? parseFloat(v) : (v ?? 0));
+    const km = toKm(ar.business_km), ckm = toKm(ar.commute_km);
+    const okKm = Number.isFinite(km) && km > 0, okC = Number.isFinite(ckm) && ckm > 0;
+    if (!okKm && !okC) continue;
     attendanceForCalc.push({
       staff_name: emp.name,
       work_date: ar.work_date,
-      business_km: km,
+      business_km: okKm ? km : 0,
+      commute_km: okC ? ckm : 0,
     });
   }
   const calcConfig: CalcConfig = {
@@ -264,6 +283,11 @@ async function fetchKyotakuSummary(
     yobouRecords: allYobou,
     attendanceRecords: attendanceForCalc,
     officeTravelUnitPrice: travelRate,
+    officeCommuteUnitPrice: commuteRate,
+    monthlyExtras: kyotakuExtrasFromInputs(
+      (extraRes.data ?? []) as { office_number: string; employee_number: string; processing_month: string; item_key: string; numeric_value: number | null }[],
+      (_o, no) => employees.find((e) => e.employee_number === no)?.name,
+    ),
   };
 
   // 5) 各 employee で集計
@@ -312,6 +336,7 @@ async function fetchKyotakuSummary(
       chosei1: breakdown.chosei1,
       chosei2: breakdown.chosei2,
       business_trip_teate: breakdown.business_trip_teate,
+      soukatsu_extras: soukatsuExtrasTotal(breakdown),
       total: breakdown.total,
       breakdown,
     };

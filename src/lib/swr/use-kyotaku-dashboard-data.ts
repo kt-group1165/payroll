@@ -14,6 +14,8 @@ import type {
   YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
 import { KYOTAKU_SALARY_COLUMNS, type KyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
+import { KYOTAKU_MONTHLY_INPUT_KEYS, kyotakuExtrasFromInputs } from "@/lib/payroll/monthly-inputs";
+import type { KyotakuMonthlyExtra } from "@/lib/payroll/kyotaku-calc";
 
 /**
  * 居宅介護支援 給与計算 dashboard 用 SWR データ取得 hook。
@@ -150,6 +152,8 @@ export type KyotakuDashboardData = {
   officeTravelRateAt: (officeNumber: string, monthStart: string) => number;
   /** 通勤単価を 対象月の値で引く (通勤費。2026-10-19) */
   officeCommuteRateAt: (officeNumber: string, monthStart: string) => number;
+  /** 月ごとの手入力 (認定調査の件数・報奨金・欠勤控除・その他手当。/monthly-inputs)。office_number → 行 (2026-10-19) */
+  monthlyExtrasByOffice: Map<string, KyotakuMonthlyExtra[]>;
   monthlyRows: MonthlyRow[];
   monthlyKasanRows: MonthlyKasanRow[];
   provisionalSnapshots: ProvisionalSnapshotRow[];
@@ -168,6 +172,7 @@ const EMPTY_DATA: KyotakuDashboardData = {
   officeTravelRateMap: new Map(),
   officeTravelRateAt: () => 0,
   officeCommuteRateAt: () => 0,
+  monthlyExtrasByOffice: new Map(),
   monthlyRows: [],
   monthlyKasanRows: [],
   provisionalSnapshots: [],
@@ -201,6 +206,7 @@ async function fetchKyotakuDashboardData(
     monthlyKasanRes,
     provSnapRes,
     planAccRes,
+    extraRows,
   ] = await Promise.all([
       fetchAllPagesParallel<FullRecord>(
         () =>
@@ -232,7 +238,7 @@ async function fetchKyotakuDashboardData(
       supabase
         .from("payroll_employees")
         .select(
-          "id, name, office:payroll_offices!office_id(office_number)",
+          "id, employee_number, name, office:payroll_offices!office_id(office_number)",
         )
         .in("office_id", officeIds),
       // 居宅ケアマネ給与履歴。append-only / per-employee × effective_from。
@@ -316,6 +322,28 @@ async function fetchKyotakuDashboardData(
           "id, employee_id, period_start, period_end, payout_month, accumulated_amount, paid_at, notes",
         )
         .limit(10000),
+      // 月ごとの手入力 (居宅の分)。1000 行を超えうるので 全件取る
+      fetchAllPagesParallel<{ office_number: string; employee_number: string; processing_month: string; item_key: string; numeric_value: number | null }>(
+        () =>
+          supabase
+            .from("payroll_monthly_inputs")
+            .select("*", { count: "exact", head: true })
+            .in("office_number", officeNumbers)
+            .in("item_key", KYOTAKU_MONTHLY_INPUT_KEYS),
+        (from, to) =>
+          supabase
+            .from("payroll_monthly_inputs")
+            .select("office_number, employee_number, processing_month, item_key, numeric_value")
+            .in("office_number", officeNumbers)
+            .in("item_key", KYOTAKU_MONTHLY_INPUT_KEYS)
+            .order("office_number")
+            .order("employee_number")
+            .order("processing_month")
+            .order("item_key")
+            .range(from, to) as unknown as PromiseLike<{
+            data: { office_number: string; employee_number: string; processing_month: string; item_key: string; numeric_value: number | null }[] | null;
+          }>,
+      ),
     ]);
 
   if (setRes.error) throw setRes.error;
@@ -330,6 +358,7 @@ async function fetchKyotakuDashboardData(
   // officeNumbers 集合に含まれないため後段の partition で自然に除外される。
   type RawEmployeeRow = {
     id: string;
+    employee_number?: string | null;
     name: string;
     office: { office_number: string | null } | null;
   };
@@ -543,6 +572,20 @@ async function fetchKyotakuDashboardData(
     }
   }
 
+  // 月ごとの手入力: 職員番号 → 氏名 (計算は氏名で引く)。事業所ごとに分ける
+  const nameByNumber = new Map<string, string>();
+  for (const r of (setRes.data ?? []) as unknown as RawEmployeeRow[]) {
+    const on = r.office?.office_number ?? "";
+    if (on && r.employee_number && r.name) nameByNumber.set(`${on}|${r.employee_number}`, r.name);
+  }
+  const monthlyExtrasByOffice = new Map<string, KyotakuMonthlyExtra[]>();
+  for (const on of officeNumbers) {
+    monthlyExtrasByOffice.set(on, kyotakuExtrasFromInputs(
+      extraRows.filter((r) => r.office_number === on),
+      (o, no) => nameByNumber.get(`${o}|${no}`),
+    ));
+  }
+
   return {
     records: recs,
     settings: mappedSettings,
@@ -563,6 +606,7 @@ async function fetchKyotakuDashboardData(
       const cur = commuteMap.get(officeNumber) ?? 0;
       return id ? officePriceAt(priceHist, id, "commute_unit_price", monthStart, cur) : cur;
     },
+    monthlyExtrasByOffice,
     monthlyRows: mappedMonthly,
     monthlyKasanRows: mappedKasan,
     provisionalSnapshots: mappedProvSnap,
@@ -618,6 +662,7 @@ export function useKyotakuDashboardData(
     officeTravelRateMap: effective.officeTravelRateMap,
     officeTravelRateAt: effective.officeTravelRateAt,
     officeCommuteRateAt: effective.officeCommuteRateAt,
+    monthlyExtrasByOffice: effective.monthlyExtrasByOffice,
     monthlyRows: effective.monthlyRows,
     monthlyKasanRows: effective.monthlyKasanRows,
     provisionalSnapshots: effective.provisionalSnapshots,
