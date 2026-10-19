@@ -95,7 +95,7 @@ for (const p of people.values()) {
 }
 const val = (r: Row, p: Person) => ({
   honnin_kyu: r.本人給 ?? 0, shokuno_kyu: r.職能給 ?? 0, kotei_zangyo: r.固定残業手当 ?? 0, shikaku_teate: r.資格手当 ?? 0,
-  kotei: r.勤続_固定 ?? 0, tokutei_shogu: r.特定処遇改善 ?? 0, kaigo_rate: r.介護単価 ?? null, shien_rate: r.予防単価 ?? null,
+  kotei: r.勤続_固定 ?? 0, tokutei_shogu: r.特定処遇改善 ?? 0, kaigo_rate: r.介護単価 ?? 0, shien_rate: r.予防単価 ?? 0, // 列が NOT NULL。計算は空を 0 と同じに扱う
   // ケアプラン固定が空: 月給の社員 (本人給 > 0) は その月のブックに欄が無かっただけ (姉崎ムツミ 2026-01〜08 など。
   //   プラン手当は 粗額 − (本人給+職能給+固定残業) で払われていた) → その合計を固定とする。
   //   時給のケアマネ (本人給 0) は 空のまま = ケアプランの額を払わない (user 2026-10-19「払わない」)
