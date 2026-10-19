@@ -202,4 +202,4 @@ if (pulledMonths.size) {
   for (const [k, l] of itemMiss) if (!["プラン", "加算", "調整", "総支給"].includes(k)) { console.log(`  ${k} の外れ ${l.length}:`); for (const x of l.slice(0, 8)) console.log("     " + x); }
 }
 
-console.log("\n見ていないもの: 予防件数 (手入力) / 給与設定の DB の値 (段A は総括表の入力値を使った) / 出張費 / 総支給の合計");
+console.log("\n見ていないもの: 報奨金・その他手当 (手入力。段C は総括表の値) / 加算の出どころ (段B の加算手当) / 2026-08 以降 (当方に実績が無い)");
