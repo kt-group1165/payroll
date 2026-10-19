@@ -137,7 +137,7 @@ if (pulledMonths.size) {
   const nn = (v: unknown) => String(v ?? "").trim().replace(/^0+/, "");
   const ITEMS = ["基本", "プラン", "勤続", "役職", "資格", "特定", "加算", "調整", "交通", "総支給"] as const;
   const okBy = Object.fromEntries(ITEMS.map((k) => [k, 0])) as Record<(typeof ITEMS)[number], number>;
-  let all = 0, noEmp = 0, noSal = 0, noAtt = 0; const totalMiss: { d: number; s: string }[] = [];
+  let all = 0, noEmp = 0, noSal = 0, noAtt = 0; const itemMiss = new Map<string, string[]>(); const totalMiss: { d: number; s: string }[] = [];
   for (const r of rows.filter((x) => pulledMonths.has(x.file_month))) {
     const on = OFFICE[r.office]; const off = on ? offById.get(on) : undefined;
     if (!off) continue;
@@ -175,7 +175,9 @@ if (pulledMonths.size) {
       // 当方に無い項目 (育児・通信・残業・移動・有給) は 総括表の値を 当方にも足す
       総支給: [b.total + n(r.育児手当) + n(r.通信手当) + n(r.残業総額) + n(r.移動手当) + n(r.有給), n(r.総支給額)],
     };
-    for (const k of ITEMS) if (pairs[k][0] === pairs[k][1]) okBy[k]++;
+    for (const k of ITEMS) if (pairs[k][0] === pairs[k][1]) okBy[k]++; else {
+      const l = itemMiss.get(k) ?? []; l.push(`${r.file_month} ${r.office} ${String(r.name).split("\n")[0]}: 当方 ${pairs[k][0].toLocaleString()} / 総括表 ${pairs[k][1].toLocaleString()}`); itemMiss.set(k, l);
+    }
     const d = pairs.総支給[0] - pairs.総支給[1];
     if (d !== 0) totalMiss.push({ d, s: `${r.file_month} ${r.office} ${String(r.name).split("\n")[0]}: 差 ${d.toLocaleString()} (${ITEMS.filter((k) => k !== "総支給" && pairs[k][0] !== pairs[k][1]).map((k) => `${k} ${pairs[k][0] - pairs[k][1] > 0 ? "+" : ""}${(pairs[k][0] - pairs[k][1]).toLocaleString()}`).join(" / ")})` });
   }
@@ -185,6 +187,8 @@ if (pulledMonths.size) {
   const absSum = totalMiss.reduce((a, x) => a + Math.abs(x.d), 0);
   console.log(`  総支給が 1 円も違わない ${all - totalMiss.length}/${all} 人月。違う ${totalMiss.length} 人月の差の絶対値の合計 ${absSum.toLocaleString()} 円`);
   for (const x of totalMiss.sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 15)) console.log("   " + x.s);
+  // 件数と加算 (原因が分かっている・材料待ち) 以外で 外れた項目の中身
+  for (const [k, l] of itemMiss) if (!["プラン", "加算", "調整", "総支給"].includes(k)) { console.log(`  ${k} の外れ ${l.length}:`); for (const x of l.slice(0, 8)) console.log("     " + x); }
 }
 
 console.log("\n見ていないもの: 予防件数 (手入力) / 給与設定の DB の値 (段A は総括表の入力値を使った) / 出張費 / 総支給の合計");

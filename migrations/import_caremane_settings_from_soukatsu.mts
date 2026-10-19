@@ -30,7 +30,7 @@ const OFFICE: Record<string, string> = {
   高品居宅: "1270404229", Hana八千代: "1272603844", Hana四街道: "1270303272", リンクス大網: "1279200081", リンクス茂原: "1271500934",
 };
 type Row = { office: string; file_month: string; 社員No: number | string | null; name: string; 本人給: number | null; 職能給: number | null; 固定残業手当: number | null;
-  資格手当: number | null; 勤続_固定: number | null; 介護件数?: number | null; 予防件数?: number | null; ケアプラン手当?: number | null; 特定処遇改善: number | null; 介護単価: number | null; 予防単価: number | null;
+  資格手当: number | null; 勤続_固定: number | null; 勤続_変動?: number | null; 介護件数?: number | null; 予防件数?: number | null; ケアプラン手当?: number | null; 特定処遇改善: number | null; 介護単価: number | null; 予防単価: number | null;
   ケアプラン固定: number | null; 役職手当: number | null; 勤続手当対象: number | null; 勤続手当単価: number | null; 勤続手当介護単価: number | null;
   保障期間?: number | string | null; 通勤費: number | null; 通勤距離: number | null; consts?: Record<string, number> };
 const rows = (JSON.parse(readFileSync(SRC, "utf8")) as Row[]).filter((r) => r.name && OFFICE[r.office]);
@@ -120,7 +120,8 @@ const val = (r: Row, p: Person) => ({
   //   user 2026-10-19 に「払わない」→ 実データを見て「固定 0 = 全額」に訂正して OK)
   care_plan_fixed: r.ケアプラン固定 ?? ((r.本人給 ?? 0) > 0 ? (r.本人給 ?? 0) + (r.職能給 ?? 0) + (r.固定残業手当 ?? 0) : 0),
   position_allowance: r.役職手当 ?? 0,
-  kinzoku_type: r.勤続手当対象 === 2 ? 2 : r.勤続手当対象 === 1 ? 1 : null, kinzoku_unit: r.勤続手当単価 ?? null, kinzoku_care_unit: r.勤続手当介護単価 ?? null,
+  // 勤続手当対象の欄が無いブック (姉崎ムツミ 2026-01〜08) でも 件数分 (勤続_変動) が払われていれば 型 2 (2026-10-19)
+  kinzoku_type: r.勤続手当対象 === 2 || (r.勤続手当対象 == null && (r.勤続_変動 ?? 0) > 0) ? 2 : r.勤続手当対象 === 1 ? 1 : null, kinzoku_unit: r.勤続手当単価 ?? null, kinzoku_care_unit: r.勤続手当介護単価 ?? null,
   ...personWide.get(p)!,
 });
 type Plan = { p: Person; effective_from: string; v: ReturnType<typeof val>; overwrite: boolean };
