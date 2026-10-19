@@ -134,6 +134,12 @@ if (pulledMonths.size) {
   const allRecs = await restAll<KyotakuRecord & { office_number: string }>(`payroll_kyotaku_records?select=*&service_month=gte.${ym1([...pulledMonths].sort()[0])}`);
   const att = await restAll<{ employee_id: string; work_date: string; business_km: number | null; commute_km: number | null }>(
     `payroll_kyotaku_attendance_records?select=id,employee_id,work_date,business_km,commute_km&work_date=gte.${ym1([...pulledMonths].sort()[0])}`);
+  // 予防件数・認定調査は DB (出勤簿の下の欄から入れた分・画面の入力) を使う。無ければ 総括表の値 (別に数える)
+  const yobouDb = await restAll<{ office_number: string; service_month: string; staff_name: string; yobou1_count: number; yobou2_count: number }>(
+    `payroll_kyotaku_yobou_records?select=id,office_number,service_month,staff_name,yobou1_count,yobou2_count&service_month=gte.${ym1([...pulledMonths].sort()[0])}`);
+  const surveyDb = await restAll<{ office_number: string; employee_number: string; processing_month: string; numeric_value: number }>(
+    "payroll_monthly_inputs?select=office_number,employee_number,processing_month,numeric_value&item_key=eq.kyotaku_survey_count", "office_number");
+  let yobouFromSoukatsu = 0;
   const nn = (v: unknown) => String(v ?? "").trim().replace(/^0+/, "");
   const ITEMS = ["基本", "プラン", "勤続", "役職", "資格", "特定", "加算", "調整", "交通", "総支給"] as const;
   const okBy = Object.fromEntries(ITEMS.map((k) => [k, 0])) as Record<(typeof ITEMS)[number], number>;
@@ -149,7 +155,11 @@ if (pulledMonths.size) {
     all++;
     // 月遅れの調整が無かったもの として: その提供月の行を 全部「翌月に請求した」扱いにする
     const recs = allRecs.filter((x) => x.office_number === on && x.service_month === sm && x.staff_name === e.name).map((x) => ({ ...x, staff_name: "X", billing_month: next(sm) }));
-    const yobou = n(r.予防件数) > 0 ? [{ service_month: sm, billing_month: next(sm), staff_name: "X", yobou1_count: n(r.予防件数), yobou2_count: 0 }] : [];
+    const yRows = yobouDb.filter((y) => y.office_number === on && y.service_month === sm && nm(y.staff_name) === nm(e.name));
+    const yobouCount = yRows.length ? yRows.reduce((a, y) => a + y.yobou1_count + y.yobou2_count, 0) : n(r.予防件数);
+    if (!yRows.length && n(r.予防件数) > 0) yobouFromSoukatsu++;
+    const yobou = yobouCount > 0 ? [{ service_month: sm, billing_month: next(sm), staff_name: "X", yobou1_count: yobouCount, yobou2_count: 0 }] : [];
+    const surveyCount = Number(surveyDb.find((x) => x.office_number === on && nn(x.employee_number) === nn(e.employee_number) && x.processing_month === r.file_month)?.numeric_value ?? 0);
     let attRecs: KyotakuAttendanceRecord[] = att.filter((a) => a.employee_id === e.id && a.work_date.startsWith(sm.slice(0, 7)))
       .map((a) => ({ staff_name: "X", work_date: a.work_date, business_km: Number(a.business_km ?? 0), commute_km: Number(a.commute_km ?? 0) }));
     // ★ 居宅の出勤簿は DB にほぼ無い (2026-10-19: 2026-06/07 で 9 人・2 事業所・通勤 km 0 件)。
@@ -162,7 +172,7 @@ if (pulledMonths.size) {
     const b = calcSalary(recs, "X", sm, {
       settings: [kyotakuSettingFromSalary("X", active)], units: unitRows, rates: [], yobouRecords: yobou, attendanceRecords: attRecs,
       officeTravelUnitPrice: Number(off.travel_unit_price ?? 0), officeCommuteUnitPrice: Number(off.commute_unit_price ?? 0),
-      monthlyExtras: [{ staff_name: "X", service_month: sm, survey_count: n(r.調査件数), bonus: n(r.報奨金), other_allowance: n(r.その他手当) }],
+      monthlyExtras: [{ staff_name: "X", service_month: sm, survey_count: surveyCount, bonus: n(r.報奨金), other_allowance: n(r.その他手当) }],
     });
     const theirsKinzoku = r.勤続_合計 != null ? n(r.勤続_合計) : n(r.勤続_固定) + n(r.勤続_変動) + n(r.勤続_介護);
     const theirsChosei = n(r.調整手当); // = 調査 + 加算 + 保障
@@ -181,8 +191,9 @@ if (pulledMonths.size) {
     const d = pairs.総支給[0] - pairs.総支給[1];
     if (d !== 0) totalMiss.push({ d, s: `${r.file_month} ${r.office} ${String(r.name).split("\n")[0]}: 差 ${d.toLocaleString()} (${ITEMS.filter((k) => k !== "総支給" && pairs[k][0] !== pairs[k][1]).map((k) => `${k} ${pairs[k][0] - pairs[k][1] > 0 ? "+" : ""}${(pairs[k][0] - pairs[k][1]).toLocaleString()}`).join(" / ")})` });
   }
-  console.log(`\n段C 総支給 (${[...pulledMonths].sort().join(",")}。DB の給与設定・実績・出勤簿・単価 + 手入力の欄だけ総括表の値。${all} 人月 / 職員が引けない ${noEmp} / 給与設定が無い ${noSal})`);
+  console.log(`\n段C 総支給 (${[...pulledMonths].sort().join(",")}。DB の給与設定・実績・出勤簿・単価・予防件数・認定調査 + 報奨金/その他だけ総括表の値。${all} 人月 / 職員が引けない ${noEmp} / 給与設定が無い ${noSal})`);
   console.log(`  ★ 出勤簿の距離が DB に無い ${noAtt} 人月は 総括表の通勤距離・出張距離を入れた (通勤費と出張費は 合計で比べる)`);
+  console.log(`  ★ 予防件数が DB に無く 総括表の値を入れた ${yobouFromSoukatsu} 人月 (認定調査は DB の値だけ。報奨金・その他手当は 総括表の値)`);
   console.log("  " + ITEMS.map((k) => `${k} ${okBy[k]}`).join(" / ") + ` (各 ${all} 中の一致)`);
   const absSum = totalMiss.reduce((a, x) => a + Math.abs(x.d), 0);
   console.log(`  総支給が 1 円も違わない ${all - totalMiss.length}/${all} 人月。違う ${totalMiss.length} 人月の差の絶対値の合計 ${absSum.toLocaleString()} 円`);
