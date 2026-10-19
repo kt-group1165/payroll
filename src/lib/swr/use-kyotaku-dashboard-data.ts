@@ -13,7 +13,7 @@ import type {
   ServiceUnit,
   YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
-import type { KyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
+import { KYOTAKU_SALARY_COLUMNS, type KyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
 
 /**
  * 居宅介護支援 給与計算 dashboard 用 SWR データ取得 hook。
@@ -148,6 +148,8 @@ export type KyotakuDashboardData = {
   officeTravelRateMap: Map<string, number>;
   /** 出張単価を 対象月の値で引く (単価の履歴)。officeTravelRateMap は今の値なので 過去の月の計算には使わない */
   officeTravelRateAt: (officeNumber: string, monthStart: string) => number;
+  /** 通勤単価を 対象月の値で引く (通勤費。2026-10-19) */
+  officeCommuteRateAt: (officeNumber: string, monthStart: string) => number;
   monthlyRows: MonthlyRow[];
   monthlyKasanRows: MonthlyKasanRow[];
   provisionalSnapshots: ProvisionalSnapshotRow[];
@@ -165,6 +167,7 @@ const EMPTY_DATA: KyotakuDashboardData = {
   attendanceRows: [],
   officeTravelRateMap: new Map(),
   officeTravelRateAt: () => 0,
+  officeCommuteRateAt: () => 0,
   monthlyRows: [],
   monthlyKasanRows: [],
   provisionalSnapshots: [],
@@ -240,9 +243,7 @@ async function fetchKyotakuDashboardData(
       // DB 未 apply 段階は error 握り潰し → 空配列 fallback (= 旧仕様互換挙動)。
       supabase
         .from("payroll_kyotaku_salary")
-        .select(
-          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate, plan_payment_cycle",
-        )
+        .select(KYOTAKU_SALARY_COLUMNS)
         .limit(10000),
       supabase.from("payroll_kyotaku_service_units").select("*"),
       supabase.from("payroll_kyotaku_regional_rates").select("*"),
@@ -266,19 +267,20 @@ async function fetchKyotakuDashboardData(
       // 空 fallback。
       supabase
         .from("payroll_kyotaku_attendance_records")
-        .select("employee_id, work_date, business_km, office_id")
+        .select("employee_id, work_date, business_km, commute_km, office_id")
         .in("office_id", officeIds)
-        .not("business_km", "is", null)
+        // 出張km か 通勤km のどちらかがある日 (通勤費 2026-10-19)
+        .or("business_km.not.is.null,commute_km.not.is.null")
         .limit(10000),
       // 事業所の出張距離単価 (NUMERIC 10,2)。office_number → travel_unit_price。
       supabase
         .from("payroll_offices")
-        .select("id, office_number, travel_unit_price")
+        .select("id, office_number, travel_unit_price, commute_unit_price")
         .in("office_number", officeNumbers),
       // 事業所の単価の履歴 (出張単価を 対象月の値で引くため。2026-10-06)
       supabase
         .from("payroll_office_unit_prices")
-        .select("office_id, effective_from, travel_unit_price"),
+        .select("office_id, effective_from, travel_unit_price, commute_unit_price"),
       // 出勤簿 月次本体 (件数)。1 row = staff × month、~30 office × ~12 ヶ月 ×
       // ~ケアマネ数 で数千行に収まる前提。DB 未 apply 段階は error 握り潰し。
       // ⚠ PostgREST の 1000 行は**ハードキャップ**で .limit(10000) は効かない
@@ -377,6 +379,7 @@ async function fetchKyotakuDashboardData(
     employee_id: string;
     work_date: string | null;
     business_km: number | string | null;
+    commute_km?: number | string | null;
     office_id: string;
   };
   type EmployeeIdMapEntry = { name: string; office_number: string };
@@ -392,20 +395,19 @@ async function fetchKyotakuDashboardData(
   if (!attRes.error) {
     for (const ar of (attRes.data ?? []) as unknown as RawAttendanceRow[]) {
       if (!ar.employee_id || !ar.work_date) continue;
-      if (ar.business_km === null || ar.business_km === undefined) continue;
       const emp = employeeIdMap.get(ar.employee_id);
       if (!emp) continue;
       // NUMERIC は文字列で返ることがあるので Number 化
-      const km =
-        typeof ar.business_km === "string"
-          ? parseFloat(ar.business_km)
-          : ar.business_km;
-      if (!Number.isFinite(km) || km <= 0) continue;
+      const toKm = (v: number | string | null | undefined) => (typeof v === "string" ? parseFloat(v) : (v ?? 0));
+      const km = toKm(ar.business_km), ckm = toKm(ar.commute_km);
+      const okKm = Number.isFinite(km) && km > 0, okC = Number.isFinite(ckm) && ckm > 0;
+      if (!okKm && !okC) continue;
       mappedAttendance.push({
         staff_name: emp.name,
         office_number: emp.office_number,
         work_date: ar.work_date,
-        business_km: km,
+        business_km: okKm ? km : 0,
+        commute_km: okC ? ckm : 0,
       });
     }
   }
@@ -415,8 +417,10 @@ async function fetchKyotakuDashboardData(
     id: string;
     office_number: string;
     travel_unit_price: number | string | null;
+    commute_unit_price?: number | string | null;
   };
   const travelMap = new Map<string, number>();
+  const commuteMap = new Map<string, number>();
   const officeIdByNumber = new Map<string, string>();
   if (priceHistRes.error) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceHistRes.error.message}`);
   const priceHist = (priceHistRes.data ?? []) as OfficeUnitPriceRow[];
@@ -428,6 +432,8 @@ async function fetchKyotakuDashboardData(
           ? parseFloat(o.travel_unit_price)
           : (o.travel_unit_price ?? 0);
       travelMap.set(o.office_number, Number.isFinite(v) ? v : 0);
+      const c = typeof o.commute_unit_price === "string" ? parseFloat(o.commute_unit_price) : (o.commute_unit_price ?? 0);
+      commuteMap.set(o.office_number, Number.isFinite(c) ? c : 0);
       officeIdByNumber.set(o.office_number, o.id);
     }
   }
@@ -552,6 +558,11 @@ async function fetchKyotakuDashboardData(
       const cur = travelMap.get(officeNumber) ?? 0;
       return id ? officePriceAt(priceHist, id, "travel_unit_price", monthStart, cur) : cur;
     },
+    officeCommuteRateAt: (officeNumber: string, monthStart: string) => {
+      const id = officeIdByNumber.get(officeNumber);
+      const cur = commuteMap.get(officeNumber) ?? 0;
+      return id ? officePriceAt(priceHist, id, "commute_unit_price", monthStart, cur) : cur;
+    },
     monthlyRows: mappedMonthly,
     monthlyKasanRows: mappedKasan,
     provisionalSnapshots: mappedProvSnap,
@@ -606,6 +617,7 @@ export function useKyotakuDashboardData(
     attendanceRows: effective.attendanceRows,
     officeTravelRateMap: effective.officeTravelRateMap,
     officeTravelRateAt: effective.officeTravelRateAt,
+    officeCommuteRateAt: effective.officeCommuteRateAt,
     monthlyRows: effective.monthlyRows,
     monthlyKasanRows: effective.monthlyKasanRows,
     provisionalSnapshots: effective.provisionalSnapshots,

@@ -41,6 +41,39 @@ export type EmployeeSetting = {
   kaigo_rate: number | null;
   /** payroll_employees.kyotaku_shien_rate (NULL → 0) */
   shien_rate: number | null;
+  // ── 総括表 (ケアマネ) にある項目 (2026-10-19。payroll_kyotaku_salary_soukatsu_items.sql) ──
+  /**
+   * ケアプラン固定 (円)。プラン手当 = max(0, 粗額 − 固定)。
+   * ★ null = ケアプランの額を払わない (user 2026-10-19「払わない」。時給のケアマネ)。
+   * ★ undefined (この項目を渡さない呼び出し) = 従来どおり 本人給+職能給+固定残業 を引く (Python 版との突合を変えないため)
+   */
+  care_plan_fixed?: number | null;
+  /** 役職手当 (円) */
+  position_allowance?: number | null;
+  /** 勤続手当の型 1 = 固定だけ / 2 = 固定 + 件数分 */
+  kinzoku_type?: number | null;
+  /** 件数で決まる勤続手当の単価 (円/件)。ROUND(単価 × (介護件数 + 予防件数 ÷ 2)) */
+  kinzoku_unit?: number | null;
+  /** 保障額 (円)。保障の調整額 = max(0, 保障額 − (本人給+職能給+特定処遇+固定残業+プラン+認定調査+加算)) */
+  guarantee_amount?: number | null;
+  /** 保障の最後の月 (YYYY-MM-01)。この月まで */
+  guarantee_until?: string | null;
+  /** 通勤費の上限 (円)。超えた分は 出張費で払う */
+  commute_cap?: number | null;
+};
+
+/** 月ごとの手入力 (payroll_monthly_inputs) のうち 居宅の給与に入るもの。1 行 = 1 人 × 1 提供月 */
+export type KyotakuMonthlyExtra = {
+  staff_name: string;
+  service_month: string; // YYYY-MM-01
+  /** 認定調査の件数 (× SURVEY_YEN_PER_CASE) */
+  survey_count?: number | null;
+  /** 報奨金 (円) */
+  bonus?: number | null;
+  /** 欠勤控除 (円。プラスで入れて 総支給から引く) */
+  absence_deduction?: number | null;
+  /** その他手当 (円) */
+  other_allowance?: number | null;
 };
 
 export type ServiceUnit = {
@@ -131,6 +164,8 @@ export type KyotakuAttendanceRecord = {
   staff_name: string;
   work_date: string;
   business_km: number | null;
+  /** 通勤距離 (km)。通勤費 = 切り上げ(km × 事業所の通勤単価) (2026-10-19) */
+  commute_km?: number | null;
 };
 
 export type SalaryBreakdown = {
@@ -155,9 +190,27 @@ export type SalaryBreakdown = {
    * 必要に応じ丸める (本 calc は raw 値を返す)。
    */
   business_trip_teate: number;
+  // ── 総括表 (ケアマネ) にある項目 (2026-10-19)。設定・手入力が無ければ 0 ──
+  /** 役職手当 */
+  position: number;
+  /** 勤続手当の件数分 (型 2 の人。kotei とは別に足す) */
+  kinzoku_variable: number;
+  /** 認定調査 (件数 × 3,000 円) */
+  survey: number;
+  /** 保障の調整額 */
+  guarantee: number;
+  /** 通勤費 (切り上げ・上限まで。超えた分は business_trip_teate に入る) */
+  commute_teate: number;
+  /** 報奨金 (手入力) */
+  bonus: number;
+  /** その他手当 (手入力) */
+  other: number;
+  /** 欠勤控除 (手入力。total から引く) */
+  absence_deduction: number;
   /**
    * = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei
-   *   + business_trip_teate
+   *   + business_trip_teate + position + kinzoku_variable + survey + guarantee
+   *   + commute_teate + bonus + other − absence_deduction
    */
   total: number;
   /**
@@ -213,6 +266,10 @@ export type CalcConfig = {
    * NULL/未設定なら 0 (= 出張距離手当 0)。
    */
   officeTravelUnitPrice?: number | null;
+  /** 通勤費の単価 (円/km、payroll_offices.commute_unit_price)。無ければ 通勤費 0 */
+  officeCommuteUnitPrice?: number | null;
+  /** 月ごとの手入力 (認定調査の件数・報奨金・欠勤控除・その他手当) */
+  monthlyExtras?: KyotakuMonthlyExtra[];
 };
 
 export type CalcConfigWithConfirmations = CalcConfig & {
@@ -223,6 +280,10 @@ export type CalcConfigWithConfirmations = CalcConfig & {
 export const DEFAULT_BASE_SALARY = 250000;
 /** 居宅の加算手当: 単位数 × この円 (地域単価は使わない) */
 export const KASAN_YEN_PER_UNIT = 10;
+/** 認定調査 1 件の手当 (総括表の「調査単価」。全事業所 3,000 円) */
+export const SURVEY_YEN_PER_CASE = 3000;
+/** 円未満の切り上げ (浮動小数の誤差で 1 円多くならないよう 1e-6 を引く)。通勤費・出張費 = 総括表の ROUNDUP */
+const roundUpYen = (x: number) => (x > 0 ? Math.ceil(x - 1e-6) : 0);
 
 // =====================================================================
 // ユーティリティ
@@ -457,6 +518,9 @@ function resolveSetting(
   shikaku: number;
   kotei: number;
   tokutei: number;
+  /** プラン手当で 粗額から引く額。null = ケアプランの額を払わない */
+  planBase: number | null;
+  setting: EmployeeSetting | undefined;
 } {
   const s = settings.find((x) => x.staff_name === staffName);
   const honnin = s?.honnin_kyu ?? 0;
@@ -477,6 +541,9 @@ function resolveSetting(
     shikaku: s?.shikaku_teate ?? 0,
     kotei: s?.kotei ?? 0,
     tokutei: s?.tokutei_shogu ?? 0,
+    // ケアプラン固定: 項目を渡さない呼び出し (undefined) は 従来どおり base / null は 払わない
+    planBase: !s || s.care_plan_fixed === undefined ? base : s.care_plan_fixed,
+    setting: s,
   };
 }
 
@@ -592,7 +659,7 @@ export function calcSalary(
   serviceMonth: string,
   config: CalcConfig,
 ): SalaryBreakdown {
-  const { base, ki, si, honnin, shokuno, koteiZ, shikaku, kotei, tokutei } =
+  const { base, ki, si, honnin, shokuno, koteiZ, shikaku, kotei, tokutei, planBase, setting } =
     resolveSetting(config.settings, staffName);
   const c = countByDelay(records, staffName, serviceMonth, config.yobouRecords);
 
@@ -607,9 +674,11 @@ export function calcSalary(
   const inc1 = inc0 + l1_k * ki + l1_s * si;
   const inc2 = inc1 + l2_k * ki + l2_s * si;
 
-  const plan = Math.max(0, inc0 - base);
-  const chosei1 = Math.max(0, inc1 - base) - Math.max(0, inc0 - base);
-  const chosei2 = Math.max(0, inc2 - base) - Math.max(0, inc1 - base);
+  // プラン手当 = max(0, 粗額 − ケアプラン固定)。固定が null = 払わない (調整手当①② も 0)
+  const planOf = (inc: number) => (planBase === null ? 0 : Math.max(0, inc - planBase));
+  const plan = planOf(inc0);
+  const chosei1 = planOf(inc1) - planOf(inc0);
+  const chosei2 = planOf(inc2) - planOf(inc1);
 
   // 単位数は 提供月に有効な行 (報酬改定の履歴)。config は複数の提供月で使い回されるので ここで絞る
   const kazan = calcKazan(records, staffName, serviceMonth, activeKyotakuUnits(config.units, serviceMonth));
@@ -635,6 +704,29 @@ export function calcSalary(
   }
   const travelRate = config.officeTravelUnitPrice ?? 0;
 
+  // ── 総括表 (ケアマネ) にある項目 (2026-10-19) ──
+  const position = setting?.position_allowance ?? 0;
+  // 勤続手当の件数分: ROUND(単価 × (介護件数 + 予防件数 ÷ 2))。件数は その月に払う分 (n_k / n_s)
+  const kinzoku_variable = setting?.kinzoku_type === 2 && (setting.kinzoku_unit ?? 0) > 0
+    ? Math.round((setting.kinzoku_unit ?? 0) * (n_k + n_s / 2)) : 0;
+  const extra = (config.monthlyExtras ?? []).find((x) => x.staff_name === staffName && x.service_month === serviceMonth);
+  const survey = (extra?.survey_count ?? 0) * SURVEY_YEN_PER_CASE;
+  const bonus = extra?.bonus ?? 0;
+  const other = extra?.other_allowance ?? 0;
+  const absence_deduction = extra?.absence_deduction ?? 0;
+  // 保障: 保障の最後の月まで。認定調査・加算も含めて 保障額に届かない分 (user 2026-10-19「とりあえず含める」)
+  const guarantee = setting?.guarantee_amount && setting.guarantee_until && serviceMonth <= setting.guarantee_until
+    ? Math.max(0, setting.guarantee_amount - (honnin + shokuno + tokutei + koteiZ + plan + survey + kazan)) : 0;
+  // 通勤費 = 切り上げ(通勤km × 通勤単価)。上限を超えた分は 出張費で払う
+  let commuteKm = 0;
+  if (att) for (const r of att) if (r.staff_name === staffName && r.work_date?.slice(0, 7) === ym && (r.commute_km ?? 0) > 0) commuteKm += r.commute_km ?? 0;
+  const commuteRaw = roundUpYen(commuteKm * (config.officeCommuteUnitPrice ?? 0));
+  const cap = setting?.commute_cap ?? null;
+  const commute_teate = cap != null && commuteRaw > cap ? cap : commuteRaw;
+  const commuteOverflow = commuteRaw - commute_teate;
+  // 出張費は 総括表どおり 円未満切り上げ + 通勤費の上限を超えた分
+  const tripYen = roundUpYen(business_trip_teate) + commuteOverflow;
+
   const total =
     base +
     plan +
@@ -644,7 +736,8 @@ export function calcSalary(
     shikaku +
     kotei +
     tokutei +
-    business_trip_teate;
+    tripYen +
+    position + kinzoku_variable + survey + guarantee + commute_teate + bonus + other - absence_deduction;
   return {
     honnin,
     shokuno,
@@ -657,7 +750,15 @@ export function calcSalary(
     kazan,
     chosei1,
     chosei2,
-    business_trip_teate,
+    business_trip_teate: tripYen,
+    position,
+    kinzoku_variable,
+    survey,
+    guarantee,
+    commute_teate,
+    bonus,
+    other,
+    absence_deduction,
     total,
     details: {
       ki,

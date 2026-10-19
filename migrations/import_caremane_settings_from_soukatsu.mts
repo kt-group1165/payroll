@@ -30,7 +30,7 @@ const OFFICE: Record<string, string> = {
   高品居宅: "1270404229", Hana八千代: "1272603844", Hana四街道: "1270303272", リンクス大網: "1279200081", リンクス茂原: "1271500934",
 };
 type Row = { office: string; file_month: string; 社員No: number | string | null; name: string; 本人給: number | null; 職能給: number | null; 固定残業手当: number | null;
-  資格手当: number | null; 勤続_固定: number | null; 特定処遇改善: number | null; 介護単価: number | null; 予防単価: number | null;
+  資格手当: number | null; 勤続_固定: number | null; 介護件数?: number | null; 予防件数?: number | null; ケアプラン手当?: number | null; 特定処遇改善: number | null; 介護単価: number | null; 予防単価: number | null;
   ケアプラン固定: number | null; 役職手当: number | null; 勤続手当対象: number | null; 勤続手当単価: number | null; 勤続手当介護単価: number | null;
   保障期間?: number | string | null; 通勤費: number | null; 通勤距離: number | null; consts?: Record<string, number> };
 const rows = (JSON.parse(readFileSync(SRC, "utf8")) as Row[]).filter((r) => r.name && OFFICE[r.office]);
@@ -93,13 +93,32 @@ for (const p of people.values()) {
   const capped = p.months.some((m) => m.通勤費 === 25000 && (m.通勤距離 ?? 0) * (m.consts?.単価 ?? 12) > 25000);
   personWide.set(p, { guarantee_amount: amount, guarantee_until: until, commute_cap: capped ? 25000 : null });
 }
+/**
+ * 単価の欄が無い月 (姉崎ムツミ 2026-01〜08 は ケアプランの金額を直接入れていた) の 介護単価・予防単価。
+ * 介護単価 = (プラン手当 + ケアプラン固定 − 予防単価 3,000 × 予防件数) ÷ 介護件数 が 整数になるときだけ (実測で全員 8,000/8,300/9,000。9 月のブックの単価と一致)。
+ * プランが 0 円で逆算できない月は 0 のまま (総括表もその月は 0 円。管理者など ケアプランの額が無い人に 単価を補わない)
+ */
+const PREVENT_RATE = 3000;
+const rateOf = new Map<Row, { k: number | null; s: number | null }>();
+for (const p of people.values()) {
+  const ms = [...p.months].sort((a, b) => a.file_month.localeCompare(b.file_month));
+  for (const m of ms) {
+    if (m.介護単価 != null) { rateOf.set(m, { k: m.介護単価, s: m.予防単価 ?? null }); continue; }
+    const fixed = m.ケアプラン固定 ?? ((m.本人給 ?? 0) > 0 ? (m.本人給 ?? 0) + (m.職能給 ?? 0) + (m.固定残業手当 ?? 0) : 0);
+    const k = m.介護件数 ?? 0, plan = m.ケアプラン手当 ?? 0;
+    const est = k > 0 && plan > 0 ? (plan + fixed - PREVENT_RATE * (m.予防件数 ?? 0)) / k : NaN;
+    if (Number.isInteger(est) && est >= 5000 && est <= 12000) rateOf.set(m, { k: est, s: PREVENT_RATE });
+  }
+}
 const val = (r: Row, p: Person) => ({
   honnin_kyu: r.本人給 ?? 0, shokuno_kyu: r.職能給 ?? 0, kotei_zangyo: r.固定残業手当 ?? 0, shikaku_teate: r.資格手当 ?? 0,
-  kotei: r.勤続_固定 ?? 0, tokutei_shogu: r.特定処遇改善 ?? 0, kaigo_rate: r.介護単価 ?? 0, shien_rate: r.予防単価 ?? 0, // 列が NOT NULL。計算は空を 0 と同じに扱う
+  // 単価: 総括表の値 → 無ければ 逆算・近い月の値 → それも無ければ 0 (列が NOT NULL。計算は空を 0 と同じに扱う)
+  kotei: r.勤続_固定 ?? 0, tokutei_shogu: r.特定処遇改善 ?? 0, kaigo_rate: rateOf.get(r)?.k ?? 0, shien_rate: rateOf.get(r)?.s ?? r.予防単価 ?? 0,
   // ケアプラン固定が空: 月給の社員 (本人給 > 0) は その月のブックに欄が無かっただけ (姉崎ムツミ 2026-01〜08 など。
   //   プラン手当は 粗額 − (本人給+職能給+固定残業) で払われていた) → その合計を固定とする。
-  //   時給のケアマネ (本人給 0) は 空のまま = ケアプランの額を払わない (user 2026-10-19「払わない」)
-  care_plan_fixed: r.ケアプラン固定 ?? ((r.本人給 ?? 0) > 0 ? (r.本人給 ?? 0) + (r.職能給 ?? 0) + (r.固定残業手当 ?? 0) : null),
+  //   時給のケアマネ (本人給 0) は 0 = ケアプランの額を全額払う (総括表の実際の運用。2026-09 の新しいブックも 固定 0 で全額。
+  //   user 2026-10-19 に「払わない」→ 実データを見て「固定 0 = 全額」に訂正して OK)
+  care_plan_fixed: r.ケアプラン固定 ?? ((r.本人給 ?? 0) > 0 ? (r.本人給 ?? 0) + (r.職能給 ?? 0) + (r.固定残業手当 ?? 0) : 0),
   position_allowance: r.役職手当 ?? 0,
   kinzoku_type: r.勤続手当対象 === 2 ? 2 : r.勤続手当対象 === 1 ? 1 : null, kinzoku_unit: r.勤続手当単価 ?? null, kinzoku_care_unit: r.勤続手当介護単価 ?? null,
   ...personWide.get(p)!,
@@ -121,11 +140,13 @@ const skippedSalary = salaryPlans.filter((s) => !willExist(s.p));
 const doSalary = salaryPlans.filter((s) => willExist(s.p));
 for (const s of doSalary) { const e = findEmp(s.p); s.overwrite = !!e && salary.some((x) => x.employee_id === e.id && x.effective_from === s.effective_from); }
 console.log(`\n② 給与設定の行 ${doSalary.length} 行 (${new Set(doSalary.map((s) => s.p)).size} 人。うち 同じ適用開始月を上書き ${doSalary.filter((s) => s.overwrite).length}) / 職員がいないので入れない ${skippedSalary.length} 行`);
+const inferred = [...rateOf].filter(([m]) => m.介護単価 == null);
+console.log(`  単価を逆算・補った月 ${inferred.length} (${[...new Set(inferred.map(([m]) => m.office))].join(", ")}): ${[...new Set(inferred.map(([m, v]) => `${cleanName(m.name)} ${v.k}`))].join(" / ")}`);
 for (const s of doSalary.slice(0, 8)) console.log(`  ${s.p.officeNumber} ${s.p.no} ${s.p.name} ${s.effective_from}〜 本人給 ${s.v.honnin_kyu} 職能給 ${s.v.shokuno_kyu} 固定残業 ${s.v.kotei_zangyo} 資格 ${s.v.shikaku_teate} 勤続 ${s.v.kotei} 特定 ${s.v.tokutei_shogu} 単価 ${s.v.kaigo_rate ?? "空"}/${s.v.shien_rate ?? "空"} プラン固定 ${s.v.care_plan_fixed ?? "空"}`);
 const wide = [...personWide].filter(([p, w]) => willExist(p) && (w.guarantee_until || w.commute_cap));
 console.log(`  保障あり ${wide.filter(([, w]) => w.guarantee_until).length} 人: ${wide.filter(([, w]) => w.guarantee_until).map(([p, w]) => `${p.name} ${w.guarantee_until?.slice(0, 7)}まで`).join(" / ")}`);
 console.log(`  通勤費の上限 25000 ${wide.filter(([, w]) => w.commute_cap).length} 人: ${wide.filter(([, w]) => w.commute_cap).map(([p]) => p.name).join(" / ")}`);
-console.log(`  ケアプラン固定が空 (= ケアプランの額を払わない) の人: ${[...new Set(doSalary.filter((x) => x.v.care_plan_fixed == null).map((x) => x.p.name))].join(" / ")}`);
+console.log(`  ケアプラン固定が空 (= ケアプランの額を払わない) の人 (0 人のはず): ${[...new Set(doSalary.filter((x) => x.v.care_plan_fixed == null).map((x) => x.p.name))].join(" / ")}`);
 console.log(`  件数で決まる勤続手当 (型 2) の人: ${[...new Set(doSalary.filter((x) => x.v.kinzoku_type === 2).map((x) => `${x.p.name}(${x.v.kinzoku_unit ?? "?"}円)`))].join(" / ")}`);
 const names = new Map<string, string>(); for (const p of people.values()) { const e = findEmp(p); if (e && nm(e.name) !== nm(p.name)) names.set(`${p.officeNumber} ${e.name}`, p.name); }
 if (names.size) console.log(`\n⚠ 職員一覧と総括表で 氏名の字が違う (社員番号で結び付けた): ${[...names].map(([a, b]) => `${a} / 総括表 ${b}`).join(" ; ")}`);

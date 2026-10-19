@@ -31,35 +31,48 @@ const ym1 = (m: string) => `${m.slice(0, 4)}-${m.slice(4, 6)}-01`;
 const next = (d: string) => { const t = new Date(Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)), 1)); return t.toISOString().slice(0, 10); };
 
 // ── 段A 式 ──────────────────────────────────────────────
-const items = { プラン手当: [0, 0], 勤続手当: [0, 0], 小計: [0, 0] } as Record<string, [number, number]>;
+const items = { プラン手当: [0, 0], 勤続手当: [0, 0], 役職手当: [0, 0], 通勤費: [0, 0], 小計: [0, 0] } as Record<string, [number, number]>;
 const planMiss: string[] = [], kinzokuMiss = new Map<string, number>();
+let noRate = 0;
 for (const r of rows) {
   const sm = ym1(r.file_month);
   const setting: EmployeeSetting = {
     staff_name: "X", honnin_kyu: n(r.本人給), shokuno_kyu: n(r.職能給), kotei_zangyo: n(r.固定残業手当), shikaku_teate: n(r.資格手当),
     kotei: n(r.勤続_固定), tokutei_shogu: n(r.特定処遇改善), kaigo_rate: r.介護単価 == null ? null : n(r.介護単価), shien_rate: r.予防単価 == null ? null : n(r.予防単価),
+    // 総括表 (ケアマネ) の項目 (取り込みと同じ決め方: 固定が空なら 月給の社員は 本人給+職能給+固定残業・時給は 0 = 全額)
+    care_plan_fixed: r.ケアプラン固定 != null ? n(r.ケアプラン固定) : n(r.本人給) > 0 ? n(r.本人給) + n(r.職能給) + n(r.固定残業手当) : 0,
+    position_allowance: n(r.役職手当), kinzoku_type: r.勤続手当対象 === 2 ? 2 : 1, kinzoku_unit: r.勤続手当単価 == null ? null : n(r.勤続手当単価),
+    commute_cap: n(r.通勤費) === 25000 && n(r.通勤距離) * n((r.consts as unknown as Record<string, number> | undefined)?.単価 ?? 12) > 25000 ? 25000 : null,
   };
   const recs: KyotakuRecord[] = Array.from({ length: n(r.介護件数) }, () => ({ service_month: sm, billing_month: next(sm), staff_name: "X", detail_row_no: "1", insurer_name: null, service_name: "居宅介護支援", unit_total: null, care_level: "要介護１" }));
   const yobou = n(r.予防件数) > 0 ? [{ service_month: sm, billing_month: next(sm), staff_name: "X", yobou1_count: n(r.予防件数), yobou2_count: 0 }] : [];
-  const b = calcSalary(recs, "X", sm, { settings: [setting], units: [], rates: [], yobouRecords: yobou });
+  const unit = n((r.consts as unknown as Record<string, number> | undefined)?.単価);
+  const att = n(r.通勤距離) > 0 ? [{ staff_name: "X", work_date: `${sm.slice(0, 7)}-15`, business_km: 0, commute_km: n(r.通勤距離) }] : [];
+  const b = calcSalary(recs, "X", sm, { settings: [setting], units: [], rates: [], yobouRecords: yobou, attendanceRecords: att, officeCommuteUnitPrice: unit });
   const theirsPlan = n(r.ケアプラン手当);
+  // 単価の欄が無いブック (姉崎ムツミ 2026-01〜08。ケアプランの金額を直接入れていた) は 式で比べられない → 入力不足として数えない
+  if (r.介護単価 == null && theirsPlan > 0) { noRate++; continue; }
   items.プラン手当[1]++; if (b.plan === theirsPlan) items.プラン手当[0]++; else if (planMiss.length < 12) planMiss.push(`${r.file_month} ${r.office} ${r.name}: 当方 ${b.plan} / 総括表 ${theirsPlan} (固定 ${r.ケアプラン固定 ?? "空"} / 本人+職能+固残 ${b.base})`);
-  items.勤続手当[1]++; if (b.kotei === n(r.勤続_合計)) items.勤続手当[0]++; else {
+  items.役職手当[1]++; if (b.position === n(r.役職手当)) items.役職手当[0]++;
+  if (unit > 0 && n(r.通勤距離) > 0 && r.通勤費 != null) { items.通勤費[1]++; if (b.commute_teate === n(r.通勤費)) items.通勤費[0]++; }
+  // 勤続手当の合計の欄が無いブック (2026-09 の一部など) は 固定 + 件数分 + 介護時間分 が合計
+  const theirsKinzoku = r.勤続_合計 != null ? n(r.勤続_合計) : n(r.勤続_固定) + n(r.勤続_変動) + n(r.勤続_介護);
+  items.勤続手当[1]++; if (b.kotei + b.kinzoku_variable === theirsKinzoku) items.勤続手当[0]++; else {
     const why = n(r.勤続_変動) ? "変動型 (件数×単価)" : n(r.勤続_介護) ? "介護時間型" : "その他";
     kinzokuMiss.set(why, (kinzokuMiss.get(why) ?? 0) + 1);
   }
-  const ours = b.base + b.plan + b.shikaku + b.kotei + b.tokutei;
-  const theirs = n(r.本人給) + n(r.職能給) + n(r.固定残業手当) + theirsPlan + n(r.資格手当) + n(r.勤続_合計) + n(r.特定処遇改善);
+  const ours = b.base + b.plan + b.shikaku + b.kotei + b.kinzoku_variable + b.tokutei + b.position;
+  const theirs = n(r.本人給) + n(r.職能給) + n(r.固定残業手当) + theirsPlan + n(r.資格手当) + theirsKinzoku + n(r.特定処遇改善) + n(r.役職手当);
   items.小計[1]++; if (ours === theirs) items.小計[0]++;
 }
-console.log(`段A 式 (総括表の入力値を当方の計算に入れる。${rows.length} 行)`);
+console.log(`段A 式 (総括表の入力値を当方の計算に入れる。${rows.length} 行。うち 単価の欄が無く比べられない ${noRate} 行)`);
 for (const [k, [ok, all]] of Object.entries(items)) console.log(`  ${k}: ${ok}/${all} 一致 (${((ok / all) * 100).toFixed(1)}%)`);
 console.log(`  勤続手当の外れの内訳: ${[...kinzokuMiss].map(([k, v]) => `${k} ${v}`).join(" / ") || "なし"}`);
 for (const m of planMiss) console.log("   " + m);
 
 // 当方に無い項目の金額 (総括表の合計)
-const missingCols = ["報奨金", "調整手当", "役職手当", "通勤費", "出張費", "育児手当", "その他手当", "通信手当", "残業総額", "移動手当", "有給"];
-console.log("\n当方の計算に無い項目 (総括表の金額の合計 / 0 でない行数):");
+const missingCols = ["報奨金", "調整手当", "出張費", "育児手当", "その他手当", "通信手当", "残業総額", "移動手当", "有給"];
+console.log("\n段A で比べていない項目 (総括表の金額の合計 / 0 でない行数。報奨金・その他は手入力、調整手当 = 認定調査+加算+保障):");
 for (const c of missingCols) {
   const vals = rows.map((r) => n(r[c])).filter((v) => v !== 0);
   if (vals.length) console.log(`  ${c}: ${vals.reduce((a, b) => a + b, 0).toLocaleString()} 円 / ${vals.length} 行`);

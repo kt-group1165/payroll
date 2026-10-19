@@ -31,7 +31,7 @@ import {
   type ServiceUnit,
   type YobouRecord,
 } from "@/lib/payroll/kyotaku-calc";
-import { getActiveKyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
+import { getActiveKyotakuSalary, kyotakuSettingFromSalary } from "@/lib/payroll/kyotaku-salary-history";
 import {
   getPlanCyclePeriod,
   isPlanPayoutMonth,
@@ -471,6 +471,7 @@ export function KyotakuPayrollDashboard({
     attendanceRows,
     officeTravelRateMap,
     officeTravelRateAt,
+    officeCommuteRateAt,
     monthlyRows,
     monthlyKasanRows,
     provisionalSnapshots,
@@ -672,18 +673,8 @@ export function KyotakuPayrollDashboard({
       for (const mo of allMonths) {
         const list: EmployeeSetting[] = [];
         for (const e of emps) {
-          const active = getActiveKyotakuSalary(kyotakuSalaryRows, e.id, mo);
-          list.push({
-            staff_name: e.name,
-            honnin_kyu: active ? active.honnin_kyu : null,
-            shokuno_kyu: active ? active.shokuno_kyu : null,
-            kotei_zangyo: active ? active.kotei_zangyo : null,
-            shikaku_teate: active ? active.shikaku_teate : null,
-            kotei: active ? active.kotei : null,
-            tokutei_shogu: active ? active.tokutei_shogu : null,
-            kaigo_rate: active ? active.kaigo_rate : null,
-            shien_rate: active ? active.shien_rate : null,
-          });
+          // 総括表 (ケアマネ) の項目 (ケアプラン固定・役職・勤続の件数分・保障・通勤費の上限) も その月の行から (2026-10-19)
+          list.push(kyotakuSettingFromSalary(e.name, getActiveKyotakuSalary(kyotakuSalaryRows, e.id, mo)));
         }
         m.set(`${officeNumber}|${mo}`, list);
       }
@@ -704,8 +695,10 @@ export function KyotakuPayrollDashboard({
       attendanceRecords: attendanceByOffice.get(officeNumber) ?? [],
       // 出張単価は 対象月に有効な値 (単価の履歴。2026-10-06)
       officeTravelUnitPrice: officeTravelRateAt(officeNumber, monthStart),
+      officeCommuteUnitPrice: officeCommuteRateAt(officeNumber, monthStart),
     }),
     [
+      officeCommuteRateAt,
       settingsByOfficeMonth,
       units,
       rates,

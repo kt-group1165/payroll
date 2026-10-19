@@ -1,3 +1,4 @@
+import type { EmployeeSetting } from "./kyotaku-calc";
 // kyotaku-salary-history.ts
 // 居宅介護支援ケアマネ給与設定 (履歴付) 用 helper。
 //
@@ -31,7 +32,47 @@ export type KyotakuSalary = {
    *  DB migration `payroll_kyotaku_plan_cycle.sql` 適用前は undefined になり得るので
    *  reader は `?? 'monthly'` で fallback する。 */
   plan_payment_cycle?: "monthly" | "semi_annual";
+  // 総括表 (ケアマネ) の項目 (2026-10-19。payroll_kyotaku_salary_soukatsu_items.sql)
+  care_plan_fixed?: number | null;
+  position_allowance?: number | null;
+  kinzoku_type?: number | null;
+  kinzoku_unit?: number | null;
+  kinzoku_care_unit?: number | null;
+  guarantee_amount?: number | null;
+  guarantee_until?: string | null;
+  commute_cap?: number | null;
 };
+
+/** 給与設定の行の列 (select に使う)。画面・総括表で同じ列を読むため 1 か所にまとめる (2026-10-19) */
+export const KYOTAKU_SALARY_COLUMNS =
+  "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate, plan_payment_cycle, care_plan_fixed, position_allowance, kinzoku_type, kinzoku_unit, kinzoku_care_unit, guarantee_amount, guarantee_until, commute_cap";
+
+/**
+ * その月で有効な給与設定の行 → 計算に渡す 1 人ぶんの設定 (EmployeeSetting)。行が無ければ null の設定
+ * (resolveSetting の 既定の基本給 250,000 円に落ちる。ケアプラン固定は undefined = 従来どおり)。
+ */
+export function kyotakuSettingFromSalary(staffName: string, active: KyotakuSalary | null): EmployeeSetting {
+  return {
+    staff_name: staffName,
+    honnin_kyu: active ? active.honnin_kyu : null,
+    shokuno_kyu: active ? active.shokuno_kyu : null,
+    kotei_zangyo: active ? active.kotei_zangyo : null,
+    shikaku_teate: active ? active.shikaku_teate : null,
+    kotei: active ? active.kotei : null,
+    tokutei_shogu: active ? active.tokutei_shogu : null,
+    kaigo_rate: active ? active.kaigo_rate : null,
+    shien_rate: active ? active.shien_rate : null,
+    ...(active && "care_plan_fixed" in active ? {
+      care_plan_fixed: active.care_plan_fixed ?? null,
+      position_allowance: active.position_allowance ?? null,
+      kinzoku_type: active.kinzoku_type ?? null,
+      kinzoku_unit: active.kinzoku_unit ?? null,
+      guarantee_amount: active.guarantee_amount ?? null,
+      guarantee_until: active.guarantee_until ?? null,
+      commute_cap: active.commute_cap ?? null,
+    } : {}),
+  };
+}
 
 /**
  * 指定 employee の rows から、対象月 (monthStart) で active な row を返す。

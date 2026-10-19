@@ -23,6 +23,8 @@ import {
 } from "@/lib/payroll/kyotaku-calc";
 import {
   getActiveKyotakuSalary,
+  kyotakuSettingFromSalary,
+  KYOTAKU_SALARY_COLUMNS,
   type KyotakuSalary,
 } from "@/lib/payroll/kyotaku-salary-history";
 
@@ -200,7 +202,7 @@ async function fetchKyotakuSummary(
       supabase
         .from("payroll_kyotaku_salary")
         .select(
-          "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+          KYOTAKU_SALARY_COLUMNS,
         )
         .limit(10000),
     ]);
@@ -238,18 +240,8 @@ async function fetchKyotakuSummary(
   //    DEFAULT_BASE_SALARY=250000 へ)。
   const serviceMonth = `${month}-01`;
   const settings: EmployeeSetting[] = employees.map((e) => {
-    const active = getActiveKyotakuSalary(kyotakuSalaryRows, e.id, serviceMonth);
-    return {
-      staff_name: e.name,
-      honnin_kyu: active ? active.honnin_kyu : null,
-      shokuno_kyu: active ? active.shokuno_kyu : null,
-      kotei_zangyo: active ? active.kotei_zangyo : null,
-      shikaku_teate: active ? active.shikaku_teate : null,
-      kotei: active ? active.kotei : null,
-      tokutei_shogu: active ? active.tokutei_shogu : null,
-      kaigo_rate: active ? active.kaigo_rate : null,
-      shien_rate: active ? active.shien_rate : null,
-    };
+    // 総括表 (ケアマネ) の項目も その月の行から (2026-10-19)
+    return kyotakuSettingFromSalary(e.name, getActiveKyotakuSalary(kyotakuSalaryRows, e.id, serviceMonth));
   });
   const allKyotakuRecords = recRows;
   const allYobou = (yobouRes.error ? [] : (yobouRes.data ?? [])) as YobouRecord[];
