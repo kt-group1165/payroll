@@ -288,6 +288,12 @@ export function soukatsuExtrasTotal(b: SalaryBreakdown): number {
 
 /** 居宅の加算手当: 単位数 × この円 (地域単価は使わない) */
 export const KASAN_YEN_PER_UNIT = 10;
+/**
+ * 保障の調整額を払い始めた提供月 (2026-10-19 実測)。総括表 (ケアマネ) で 保障の人 (11 人) は 全員 2026-08 から
+ * 保障額に届かない分が足されていて、それより前の月は 届いていなくても足されていない (例 小髙 美奈子 2026-06 = 278,000 円のまま)。
+ * 人ごとの開始月は持たず この月から (違う人が出たら 給与設定に列を足す)
+ */
+export const GUARANTEE_FIRST_MONTH = "2026-08-01";
 /** 認定調査 1 件の手当 (総括表の「調査単価」。全事業所 3,000 円) */
 export const SURVEY_YEN_PER_CASE = 3000;
 /** 円未満の切り上げ (浮動小数の誤差で 1 円多くならないよう 1e-6 を引く)。通勤費・出張費 = 総括表の ROUNDUP */
@@ -723,7 +729,7 @@ export function calcSalary(
   const other = extra?.other_allowance ?? 0;
   const absence_deduction = extra?.absence_deduction ?? 0;
   // 保障: 保障の最後の月まで。認定調査・加算も含めて 保障額に届かない分 (user 2026-10-19「とりあえず含める」)
-  const guarantee = setting?.guarantee_amount && setting.guarantee_until && serviceMonth <= setting.guarantee_until
+  const guarantee = setting?.guarantee_amount && setting.guarantee_until && serviceMonth >= GUARANTEE_FIRST_MONTH && serviceMonth <= setting.guarantee_until
     ? Math.max(0, setting.guarantee_amount - (honnin + shokuno + tokutei + koteiZ + plan + survey + kazan)) : 0;
   // 通勤費 = 切り上げ(通勤km × 通勤単価)。上限を超えた分は 出張費で払う
   let commuteKm = 0;

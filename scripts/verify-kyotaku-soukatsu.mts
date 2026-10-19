@@ -13,9 +13,12 @@
  *         当方の calcSalary に入れて、ケアプラン手当・勤続手当・小計 が総括表と合うか。加算は入れない (段B で見る)
  * 段B 入力: 当方の DB (payroll_kyotaku_records = 介護アプリから写した実績) の 担当者別の件数・加算手当 が総括表と合うか (2026-06〜)
  * 当方に無い項目 (報奨金・認定調査・保障・役職手当・通勤費・欠勤控除 など) は 金額の合計を出す (= 今の差の内訳)
+ * 段C 総支給: 給与設定・実績・出勤簿・単価は 当方の DB、手入力の欄 (予防件数・認定調査の件数・報奨金・その他手当) だけ 総括表の値を入れて
+ *         当方の総支給 (月遅れの調整なし) を 総括表の総支給額 と比べる。当方に無い項目 (育児・通信・残業・移動・有給) は 総括表の値を足して比べる
  */
 import { existsSync, readFileSync } from "node:fs";
-import { calcSalary, type EmployeeSetting, type KyotakuRecord } from "../src/lib/payroll/kyotaku-calc.js";
+import { calcSalary, type EmployeeSetting, type KyotakuAttendanceRecord, type KyotakuRecord, type ServiceUnit } from "../src/lib/payroll/kyotaku-calc.js";
+import { getActiveKyotakuSalary, kyotakuSettingFromSalary, KYOTAKU_SALARY_COLUMNS, type KyotakuSalary } from "../src/lib/payroll/kyotaku-salary-history.js";
 import { restAll } from "./_rest.mjs";
 
 const SRC = process.argv[2] ?? process.env.CAREMANE_ROWS;
@@ -115,4 +118,73 @@ console.log(`  介護件数: ${cOk}/${cAll} 一致 (±2 以内 ${cOk + cNear}) /
 console.log("  ※ 2026-10-19 に測った内訳: 総括表の介護件数の合計は 伝送 KK 8124 を 提供月で (当月分 + 月遅れ分) 数えたものと一致 (2026-06 で 2,810 = 2,810)。");
 console.log("    当方が少ない側: 7 月は 9月10日送信の KK (月遅れ) が まだ無い分。人ごとの ±1 は 伝送のケアマネ番号で数えても残る (総括表の人への割り当ての決まりは未特定)");
 for (const m of cMiss) console.log("   " + m);
+// ── 段C 総支給 ───────────────────────────────────────────
+const OFFICE: Record<string, string> = {
+  KT姉崎: "1272401876", 花見川: "1270201922", 五井: "1272400506", おゆみ野: "1270501172", 袖ケ浦: "1273400851",
+  いすみ: "1278600406", 姉崎ムツミ: "1272400837", 木更津ムツミ: "1271101287", Hana船橋: "1270907411", Hanaちはら台: "1272403492",
+  高品居宅: "1270404229", Hana八千代: "1272603844", Hana四街道: "1270303272", リンクス大網: "1279200081", リンクス茂原: "1271500934",
+};
+if (pulledMonths.size) {
+  const payOffices = await restAll<{ id: string; office_number: string; travel_unit_price: number | null; commute_unit_price: number | null }>(
+    "payroll_offices?select=id,office_number,travel_unit_price,commute_unit_price&office_type=eq.居宅介護支援");
+  const offById = new Map(payOffices.map((o) => [o.office_number, o]));
+  const emps = await restAll<{ id: string; employee_number: string; name: string; office_id: string }>("payroll_employees?select=id,employee_number,name,office_id");
+  const salRows = await restAll<KyotakuSalary>(`payroll_kyotaku_salary?select=${KYOTAKU_SALARY_COLUMNS.replace(/\s/g, "")}`);
+  const unitRows = await restAll<ServiceUnit>("payroll_kyotaku_service_units?select=*");
+  const allRecs = await restAll<KyotakuRecord & { office_number: string }>(`payroll_kyotaku_records?select=*&service_month=gte.${ym1([...pulledMonths].sort()[0])}`);
+  const att = await restAll<{ employee_id: string; work_date: string; business_km: number | null; commute_km: number | null }>(
+    `payroll_kyotaku_attendance_records?select=id,employee_id,work_date,business_km,commute_km&work_date=gte.${ym1([...pulledMonths].sort()[0])}`);
+  const nn = (v: unknown) => String(v ?? "").trim().replace(/^0+/, "");
+  const ITEMS = ["基本", "プラン", "勤続", "役職", "資格", "特定", "加算", "調整", "交通", "総支給"] as const;
+  const okBy = Object.fromEntries(ITEMS.map((k) => [k, 0])) as Record<(typeof ITEMS)[number], number>;
+  let all = 0, noEmp = 0, noSal = 0, noAtt = 0; const totalMiss: { d: number; s: string }[] = [];
+  for (const r of rows.filter((x) => pulledMonths.has(x.file_month))) {
+    const on = OFFICE[r.office]; const off = on ? offById.get(on) : undefined;
+    if (!off) continue;
+    const e = emps.find((x) => x.office_id === off.id && nn(r.社員No) && nn(x.employee_number) === nn(r.社員No)) ?? emps.find((x) => x.office_id === off.id && nm(x.name) === nm(r.name));
+    if (!e) { noEmp++; continue; }
+    const sm = ym1(r.file_month);
+    const active = getActiveKyotakuSalary(salRows, e.id, sm);
+    if (!active) { noSal++; continue; }
+    all++;
+    // 月遅れの調整が無かったもの として: その提供月の行を 全部「翌月に請求した」扱いにする
+    const recs = allRecs.filter((x) => x.office_number === on && x.service_month === sm && x.staff_name === e.name).map((x) => ({ ...x, staff_name: "X", billing_month: next(sm) }));
+    const yobou = n(r.予防件数) > 0 ? [{ service_month: sm, billing_month: next(sm), staff_name: "X", yobou1_count: n(r.予防件数), yobou2_count: 0 }] : [];
+    let attRecs: KyotakuAttendanceRecord[] = att.filter((a) => a.employee_id === e.id && a.work_date.startsWith(sm.slice(0, 7)))
+      .map((a) => ({ staff_name: "X", work_date: a.work_date, business_km: Number(a.business_km ?? 0), commute_km: Number(a.commute_km ?? 0) }));
+    // ★ 居宅の出勤簿は DB にほぼ無い (2026-10-19: 2026-06/07 で 9 人・2 事業所・通勤 km 0 件)。
+    //   無い人月は 総括表の「通勤距離」を入れる (単価・切り上げ・上限は当方)。
+    //   総括表の 出張費 = 切り上げ(単価 × 距離) − 通勤費 なので 通勤費と出張費は 合計 (交通) で比べる
+    //   (いすみは 全部を出張費で払い、7 月は 6 月分を 通勤費の欄で引いて出張費に入れ直してある。合計なら合う)
+    const hasAtt = attRecs.some((a) => (a.business_km ?? 0) > 0 || (a.commute_km ?? 0) > 0);
+    // 大網・茂原は 通勤距離が無く「出張距離」に入っている
+    if (!hasAtt) { noAtt++; attRecs = n(r.通勤距離) + n(r.出張距離) > 0 ? [{ staff_name: "X", work_date: `${sm.slice(0, 7)}-15`, business_km: n(r.出張距離), commute_km: n(r.通勤距離) }] : []; }
+    const b = calcSalary(recs, "X", sm, {
+      settings: [kyotakuSettingFromSalary("X", active)], units: unitRows, rates: [], yobouRecords: yobou, attendanceRecords: attRecs,
+      officeTravelUnitPrice: Number(off.travel_unit_price ?? 0), officeCommuteUnitPrice: Number(off.commute_unit_price ?? 0),
+      monthlyExtras: [{ staff_name: "X", service_month: sm, survey_count: n(r.調査件数), bonus: n(r.報奨金), other_allowance: n(r.その他手当) }],
+    });
+    const theirsKinzoku = r.勤続_合計 != null ? n(r.勤続_合計) : n(r.勤続_固定) + n(r.勤続_変動) + n(r.勤続_介護);
+    const theirsChosei = n(r.調整手当); // = 調査 + 加算 + 保障
+    const pairs: Record<(typeof ITEMS)[number], [number, number]> = {
+      基本: [b.base, n(r.本人給) + n(r.職能給) + n(r.固定残業手当)], プラン: [b.plan, n(r.ケアプラン手当)], 勤続: [b.kotei + b.kinzoku_variable, theirsKinzoku],
+      役職: [b.position, n(r.役職手当)], 資格: [b.shikaku, n(r.資格手当)], 特定: [b.tokutei, n(r.特定処遇改善)], 加算: [b.kazan, n(r.加算手当合計)],
+      // 調整手当 = 認定調査 + 加算 + 保障 (総括表は 1 欄)
+      調整: [b.survey + b.kazan + b.guarantee, theirsChosei],
+      交通: [b.commute_teate + b.business_trip_teate, n(r.通勤費) + n(r.出張費)],
+      // 当方に無い項目 (育児・通信・残業・移動・有給) は 総括表の値を 当方にも足す
+      総支給: [b.total + n(r.育児手当) + n(r.通信手当) + n(r.残業総額) + n(r.移動手当) + n(r.有給), n(r.総支給額)],
+    };
+    for (const k of ITEMS) if (pairs[k][0] === pairs[k][1]) okBy[k]++;
+    const d = pairs.総支給[0] - pairs.総支給[1];
+    if (d !== 0) totalMiss.push({ d, s: `${r.file_month} ${r.office} ${String(r.name).split("\n")[0]}: 差 ${d.toLocaleString()} (${ITEMS.filter((k) => k !== "総支給" && pairs[k][0] !== pairs[k][1]).map((k) => `${k} ${pairs[k][0] - pairs[k][1] > 0 ? "+" : ""}${(pairs[k][0] - pairs[k][1]).toLocaleString()}`).join(" / ")})` });
+  }
+  console.log(`\n段C 総支給 (${[...pulledMonths].sort().join(",")}。DB の給与設定・実績・出勤簿・単価 + 手入力の欄だけ総括表の値。${all} 人月 / 職員が引けない ${noEmp} / 給与設定が無い ${noSal})`);
+  console.log(`  ★ 出勤簿の距離が DB に無い ${noAtt} 人月は 総括表の通勤距離・出張距離を入れた (通勤費と出張費は 合計で比べる)`);
+  console.log("  " + ITEMS.map((k) => `${k} ${okBy[k]}`).join(" / ") + ` (各 ${all} 中の一致)`);
+  const absSum = totalMiss.reduce((a, x) => a + Math.abs(x.d), 0);
+  console.log(`  総支給が 1 円も違わない ${all - totalMiss.length}/${all} 人月。違う ${totalMiss.length} 人月の差の絶対値の合計 ${absSum.toLocaleString()} 円`);
+  for (const x of totalMiss.sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 15)) console.log("   " + x.s);
+}
+
 console.log("\n見ていないもの: 予防件数 (手入力) / 給与設定の DB の値 (段A は総括表の入力値を使った) / 出張費 / 総支給の合計");

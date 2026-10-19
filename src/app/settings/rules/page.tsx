@@ -17,6 +17,7 @@ import { JUHO_SHORT_VISIT_MAX_MINUTES } from "@/lib/payroll/visit-pay";
 import { GAP_THRESHOLD_MIN, TRAVEL_TIME_THRESHOLD_SEC } from "@/lib/distance-calculator";
 import { japaneseHolidaysOf } from "@/lib/payroll/japan-holidays";
 import { MONEY_SETTING_LABELS } from "@/lib/app-settings";
+import { GUARANTEE_FIRST_MONTH, KASAN_YEN_PER_UNIT, SURVEY_YEN_PER_CASE } from "@/lib/payroll/kyotaku-calc";
 import { currentMonthJst } from "@/lib/payroll/office-price-revision";
 
 // 祝日を「今年・来年」で出すので 開くたびに作る (build 時に固定しない)
@@ -74,6 +75,16 @@ export default function RulesPage() {
           ["非常勤 居宅介護支援", <>5 年ごとの段 × {TENURE_RULES.kyotakuPer5Years}円/件</>],
           ["対象", "勤続手当の資格 (介護福祉士 / 実務者研修修了 / 介護支援専門員) がある人。資格を取った日があれば その月から"],
           ["勤続の月数", "職員一覧の「グループ通算の勤続」(いつ時点か + 以後 1 か月ごとに 1)。月給の節目は グループ通算と法人の長い方"],
+        ]} />
+      </Section>
+
+      <Section title="居宅介護支援 (ケアマネ)">
+        <Rows rows={[
+          ["ケアプラン手当", "介護件数 × 介護単価 + 予防件数 × 予防単価 − ケアプラン固定 (下回れば 0)。単価・固定は 給与設定"],
+          ["加算手当", <>加算の単位数 × {KASAN_YEN_PER_UNIT}円 (地域単価は使わない)</>],
+          ["認定調査", <>件数 × {yen(SURVEY_YEN_PER_CASE)} (件数は 月ごとの手入力)</>],
+          ["保障", <>保障額 − (本人給 + 職能給 + 特定処遇 + 固定残業 + ケアプラン + 認定調査 + 加算) が 0 より大きければ足す。{GUARANTEE_FIRST_MONTH.slice(0, 7)} の提供月から 保障の最後の月まで</>],
+          ["通勤費・出張費", "通勤 km × 通勤単価 (円未満切り上げ。給与設定の上限を超えた分は 出張費へ)、出張 km × 出張単価 (円未満切り上げ)"],
         ]} />
       </Section>
 
