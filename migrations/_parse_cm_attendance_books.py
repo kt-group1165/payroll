@@ -14,6 +14,8 @@
 ・就業時間: 見出しの列か その 1 つ左 (八千代・船橋は 見出しが 1 列ずれている) の数字
 ・移動距離の「198,7」(小数点がカンマ) も数字として読む (出勤簿の合計の式は数えないが 総括表は数えている。土屋 2026-06)
 ・同じ人の同じ日が 2 つのシートにあって値が違うときは conflicts に出す (距離が入っている方 → 無ければ 先に読んだ方を使う)
+・下の欄 (介護件数・予防件数・認定調査) は monthly に出す。総括表と一致 (6月 出勤簿がある 89 人中): 予防 86 / 調査 85 / 介護 83。
+  加算の欄は 書き方がばらばらで 52〜76 人しか合わないので 読まない
 ・2026-06〜09 の総括表 (ケアマネ) と 人月で突き合わせた結果: 距離が一致 6月 89/90・7月 88/90・8月 86/91・9月 91/93 (分母は総括表の人数)
 """
 import openpyxl, glob, os, sys, json, datetime, re, unicodedata
@@ -26,6 +28,18 @@ def tmin(v):
     if isinstance(v, (int, float)) and 0 < v < 1: return round(v * 24 * 60)
     return None
 
+def cnt_num(v):
+    """下の欄の件数: 数字 / 「26件」「３３件」/ 「14+2(月遅れ)」(足す)。空・「件」だけは None"""
+    if isinstance(v, bool): return None
+    if isinstance(v, (int, float)): return v
+    if isinstance(v, str):
+        t = unicodedata.normalize('NFKC', v).replace(',', '').strip()
+        m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(?:件|回)?(?:[（(].*)?', t)
+        if m: return float(m.group(1))
+        m = re.fullmatch(r'(\d+)\s*\+\s*(\d+).*', t)
+        if m: return float(m.group(1)) + float(m.group(2))
+    return None
+
 def sheet_ym(rows):
     t = ' '.join(unicodedata.normalize('NFKC', str(c)) for r in rows[:3] for c in r if c is not None)
     # 「2026 年 7月」「２０２6年 ７月」「2026  6月」(年が無い 五井 三枝) のどれも
@@ -36,6 +50,7 @@ def sheet_ym(rows):
     return None
 
 out, conflicts, skipped = {}, [], []
+monthly = {}   # 拠点|氏名|YYYY-MM → 出勤簿の下の欄 (介護件数・予防件数・認定調査)。本人が書いた数字
 for f in sorted(glob.glob(os.path.join(sys.argv[1], '**', '*.xls*'), recursive=True)):
     area = os.path.basename(os.path.dirname(f))
     try: wb = openpyxl.load_workbook(f, data_only=True, read_only=True)
@@ -54,6 +69,22 @@ for f in sorted(glob.glob(os.path.join(sys.argv[1], '**', '*.xls*'), recursive=T
         h = [norm(c) for c in rows[hi]]
         col = lambda key: next((i for i, c in enumerate(h) if key in c), None)
         cs, ce, ch, ck, cn = col('出社'), col('退社'), col('就業'), col('移動距離'), col('備考')
+        # 下の欄 (「合計」の行の下): 介護件数 / 予防件数 / 認定調査。★ 行の日付が この月のシートだけ (型紙の残りを拾わない)
+        dated = [r[0] for r in rows[hi + 1:] if r and isinstance(r[0], datetime.datetime)]
+        if not dated or any(d.month == ym[1] for d in dated):
+            ti = next((k for k, r in enumerate(rows) if r and isinstance(r[0], str) and r[0].strip() == '合計'), None)
+            if ti is not None:
+                info = {}
+                for r in rows[ti + 1:ti + 8]:
+                    cells = [c for c in r[:16] if c is not None and str(c).strip() != '']
+                    if len(cells) < 2: continue
+                    lab = unicodedata.normalize('NFKC', str(cells[0]))
+                    k2 = 'kaigo' if '介護件数' in lab else 'yobou' if '予防件数' in lab else 'survey' if '認定調査' in lab else None
+                    if k2 and k2 not in info: info[k2] = cnt_num(cells[1])
+                if info:
+                    mk = f'{area}|{name}|{ym[0]}-{ym[1]:02d}'
+                    if mk not in monthly or (not any(monthly[mk].values()) and any(info.values())):
+                        monthly[mk] = dict(info, sheet=ws.title, file=os.path.basename(f))
         for r in rows[hi + 1:]:
             if not r: continue
             d0 = r[0]
@@ -84,4 +115,4 @@ for f in sorted(glob.glob(os.path.join(sys.argv[1], '**', '*.xls*'), recursive=T
                     out[key] = dict(rec=rec, file=os.path.basename(f), sheet=ws.title)
                 continue
             out.setdefault(key, dict(rec=rec, file=os.path.basename(f), sheet=ws.title))
-json.dump(dict(days=out, conflicts=conflicts, skipped=skipped), sys.stdout, ensure_ascii=False, default=str)
+json.dump(dict(days=out, monthly=monthly, conflicts=conflicts, skipped=skipped), sys.stdout, ensure_ascii=False, default=str)
