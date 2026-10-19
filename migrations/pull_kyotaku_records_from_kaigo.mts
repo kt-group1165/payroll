@@ -28,7 +28,7 @@ type Claim = {
   id: string; user_id: string; billing_month: string; care_support_code: string | null; care_support_name: string | null;
   units: number | null; unit_price: number | null; total_amount: number | null; notes: string | null;
   initial_addition: boolean; initial_addition_units: number | null; hospital_coordination: boolean; hospital_coordination_units: number | null;
-  discharge_addition: boolean; discharge_addition_units: number | null; medical_coordination: boolean; medical_coordination_units: number | null;
+  discharge_addition: boolean; discharge_addition_units: number | null; discharge_type: string | null; medical_coordination: boolean; medical_coordination_units: number | null;
   terminal_care: boolean; terminal_care_units: number | null; emergency_conference: boolean; emergency_conference_units: number | null;
   tokutei_kassan_type: string | null; tokutei_kassan_units: number | null; insurer_number: string | null; insured_number: string | null;
 };
@@ -51,6 +51,18 @@ const unitNames = units.map((u) => u.item_name);
 const mStart = `${MONTH}-01`;
 const mEnd = new Date(Date.UTC(Number(MONTH.slice(0, 4)), Number(MONTH.slice(5, 7)), 0)).toISOString().slice(0, 10);
 const nextMonth = (() => { const d = new Date(Date.UTC(Number(MONTH.slice(0, 4)), Number(MONTH.slice(5, 7)), 1)); return d.toISOString().slice(0, 10); })();
+
+/**
+ * 退院退所加算の名前 (国保連のサービス名と同じ。単位数の表 payroll_kyotaku_service_units の item_name に合わせる)。
+ * 介護アプリの discharge_type で区分を決める (600 単位は Ⅰ２ と Ⅱ１ の 2 つあるので 単位数では決まらない。2026-10-19)
+ *   436132 Ⅰ１ 450 / 436143 Ⅰ２ 600 / 436144 Ⅱ１ 600 / 436145 Ⅱ２ 750 / 436146 Ⅲ 900
+ */
+function dischargeName(type: string | null, units: number | null): string {
+  const byType: Record<string, string> = { i_i: "退院退所加算Ⅰ１", i_ro: "退院退所加算Ⅰ２", ii_i: "退院退所加算Ⅱ１", ii_ro: "退院退所加算Ⅱ２", iii: "退院退所加算Ⅲ" };
+  if (type && byType[type]) return byType[type];
+  const byUnits: Record<number, string> = { 450: "退院退所加算Ⅰ１", 750: "退院退所加算Ⅱ２", 900: "退院退所加算Ⅲ" };
+  return byUnits[units ?? 0] ?? `退院退所加算 (${units ?? "?"}単位)`;
+}
 
 type Rec = Record<string, unknown>;
 const rows: Rec[] = [];
@@ -89,7 +101,7 @@ for (const c of claims) {
   const addons: [boolean, string, number | null][] = [
     [c.initial_addition, "初回加算", c.initial_addition_units],
     [c.hospital_coordination, (c.hospital_coordination_units ?? 0) >= 250 ? "入院時情報連携加算Ⅰ" : "入院時情報連携加算Ⅱ", c.hospital_coordination_units],
-    [c.discharge_addition, (c.discharge_addition_units ?? 0) === 450 ? "退院退所加算Ⅰ１" : `退院退所加算 (${c.discharge_addition_units ?? "?"}単位)`, c.discharge_addition_units],
+    [c.discharge_addition, dischargeName(c.discharge_type, c.discharge_addition_units), c.discharge_addition_units],
     [c.medical_coordination, "通院時情報連携加算", c.medical_coordination_units],
     [c.terminal_care, "ターミナルケアマネジメント加算", c.terminal_care_units],
     [c.emergency_conference, "緊急時等居宅カンファレンス加算", c.emergency_conference_units],

@@ -112,7 +112,7 @@ for (const r of rows.filter((x) => months.includes(x.file_month) && pulledMonths
 console.log(`\n段B 入力 (介護アプリから写した実績 ${[...pulledMonths].sort().join(",")}。月遅れも提供月で数える)`);
 if (notPulled.length) console.log(`  ★ ${notPulled.join(",")} は 当方に実績が 1 件も無い (介護アプリに 居宅のレセプトが まだ無い月) → 比べていない`);
 console.log(`  介護件数: ${cOk}/${cAll} 一致 (±2 以内 ${cOk + cNear}) / 当方が少ない 計 ${cShort} 件・多い 計 ${cOver} 件 / 加算手当: ${kOk}/${kAll} 一致 / 当方に実績が無い人 ${noRec}`);
-console.log("  ※ ★ 見立て (未確認): 少ない側は 月遅れ (翌々月以降に請求したレセプト) が まだ介護アプリに無いもの (8月10日送信の KK を取り込んだのは 四街道 だけ)。KK が届いたら 取り込んで回し直すと確かめられる");
-console.log("    ★ 見立て (未確認): 多い側は 担当ケアマネを 今の担当 (client_insurance_records.care_manager) で決めているため 担当替えが ずれるもの");
+console.log("  ※ 2026-10-19 に測った内訳: 総括表の介護件数の合計は 伝送 KK 8124 を 提供月で (当月分 + 月遅れ分) 数えたものと一致 (2026-06 で 2,810 = 2,810)。");
+console.log("    当方が少ない側: 7 月は 9月10日送信の KK (月遅れ) が まだ無い分。人ごとの ±1 は 伝送のケアマネ番号で数えても残る (総括表の人への割り当ての決まりは未特定)");
 for (const m of cMiss) console.log("   " + m);
 console.log("\n見ていないもの: 予防件数 (手入力) / 給与設定の DB の値 (段A は総括表の入力値を使った) / 出張費 / 総支給の合計");
