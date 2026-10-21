@@ -76,7 +76,21 @@ export type KyotakuMonthlyExtra = {
   other_allowance?: number | null;
   /** 残業代 (固定残業代を超えた分。出勤簿から計算した値を 呼び出し側が入れる。kyotaku-overtime.ts) */
   overtime_pay?: number | null;
+  /** 保育料 (保育園など。育児手当 = × 40%) */
+  childcare_fee?: number | null;
+  /** 保育料 (幼稚園。育児手当 = × 20%) */
+  kindergarten_fee?: number | null;
 };
+
+/**
+ * ケアマネの育児手当 = round(保育料 × 40%) + round(幼稚園 × 20%)、上限 20,000 円 (2026-10-21)。
+ * 率・上限は 訪問介護と同じ (payroll-calc.ts CHILDCARE_RULES)。ケアマネは訪問時間で按分しない (月給と同じ扱い)。
+ */
+export const KYOTAKU_CHILDCARE = { rate: 0.4, rateKindergarten: 0.2, limit: 20000 } as const;
+export function kyotakuChildcareAllowance(fee: number, kindergartenFee: number): number {
+  const v = Math.round(Math.max(0, fee) * KYOTAKU_CHILDCARE.rate) + Math.round(Math.max(0, kindergartenFee) * KYOTAKU_CHILDCARE.rateKindergarten);
+  return Math.min(v, KYOTAKU_CHILDCARE.limit);
+}
 
 export type ServiceUnit = {
   item_name: string;
@@ -211,6 +225,8 @@ export type SalaryBreakdown = {
   absence_deduction: number;
   /** 残業代 (固定残業代を超えた分。出勤簿から) */
   overtime: number;
+  /** 育児手当 (保育料の手入力から) */
+  childcare: number;
   /**
    * = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei
    *   + business_trip_teate + position + kinzoku_variable + survey + guarantee
@@ -283,11 +299,11 @@ export type CalcConfigWithConfirmations = CalcConfig & {
 // 既定値 (集計.py DEFAULT_BASE_SALARY)
 export const DEFAULT_BASE_SALARY = 250000;
 /**
- * 総括表 (ケアマネ) にある項目の合計 (役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他・残業代 − 欠勤控除)。
+ * 総括表 (ケアマネ) にある項目の合計 (役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他・残業代・育児手当 − 欠勤控除)。
  * 画面で 合計額を 項目から組み直している箇所が 足し忘れないよう 1 か所にまとめる (2026-10-19)
  */
 export function soukatsuExtrasTotal(b: SalaryBreakdown): number {
-  return b.position + b.kinzoku_variable + b.survey + b.guarantee + b.commute_teate + b.bonus + b.other + b.overtime - b.absence_deduction;
+  return b.position + b.kinzoku_variable + b.survey + b.guarantee + b.commute_teate + b.bonus + b.other + b.overtime + b.childcare - b.absence_deduction;
 }
 
 /** 居宅の加算手当: 単位数 × この円 (地域単価は使わない) */
@@ -733,6 +749,7 @@ export function calcSalary(
   const other = extra?.other_allowance ?? 0;
   const absence_deduction = extra?.absence_deduction ?? 0;
   const overtime = extra?.overtime_pay ?? 0;
+  const childcare = kyotakuChildcareAllowance(extra?.childcare_fee ?? 0, extra?.kindergarten_fee ?? 0);
   // 保障: 保障の最後の月まで。認定調査・加算も含めて 保障額に届かない分 (user 2026-10-19「とりあえず含める」)
   const guarantee = setting?.guarantee_amount && setting.guarantee_until && serviceMonth >= GUARANTEE_FIRST_MONTH && serviceMonth <= setting.guarantee_until
     ? Math.max(0, setting.guarantee_amount - (honnin + shokuno + tokutei + koteiZ + plan + survey + kazan)) : 0;
@@ -756,7 +773,7 @@ export function calcSalary(
     kotei +
     tokutei +
     tripYen +
-    position + kinzoku_variable + survey + guarantee + commute_teate + bonus + other + overtime - absence_deduction;
+    position + kinzoku_variable + survey + guarantee + commute_teate + bonus + other + overtime + childcare - absence_deduction;
   return {
     honnin,
     shokuno,
@@ -779,6 +796,7 @@ export function calcSalary(
     other,
     absence_deduction,
     overtime,
+    childcare,
     total,
     details: {
       ki,

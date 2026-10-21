@@ -164,6 +164,20 @@ export const KYOTAKU_MONTHLY_INPUT_ITEMS: readonly MonthlyInputItem[] = [
     allowNegative: true,
   },
   {
+    key: "kyotaku_childcare_fee",
+    label: "保育料 (保育園など)",
+    unit: "円",
+    help: "その月に払う分の保育料。育児手当 = 保育料 × 40% (幼稚園の分と合わせて 上限 20,000 円)。ケアマネは訪問時間で按分しない (2026-10-21。総括表 ケアマネ の育児手当は 5 人・全部 40% で割り切れる手入力の額)",
+    allowNegative: false,
+  },
+  {
+    key: "kyotaku_kindergarten_fee",
+    label: "保育料 (幼稚園)",
+    unit: "円",
+    help: "幼稚園の保育料。育児手当 = × 20% (訪問介護と同じ割合)",
+    allowNegative: false,
+  },
+  {
     key: "kyotaku_absence_deduction",
     label: "欠勤控除",
     unit: "円",
@@ -182,6 +196,8 @@ export function kyotakuExtrasFromInputs(
     kyotaku_bonus: "bonus",
     kyotaku_other_allowance: "other_allowance",
     kyotaku_absence_deduction: "absence_deduction",
+    kyotaku_childcare_fee: "childcare_fee",
+    kyotaku_kindergarten_fee: "kindergarten_fee",
   };
   const m = new Map<string, KyotakuMonthlyExtra>();
   for (const r of rows) {

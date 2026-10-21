@@ -9,10 +9,11 @@
  *   ③ ★ 負のコントロール: 固定残業代が 実残業代より大きいと 0 (超えた分だけ払う)
  *   ④ 給与の計算 (calcSalary) に overtime_pay を渡すと 総支給に足される
  *   ⑤ 時給の元: 残業設定の include_* が true の手当 (役職手当を含む) の合計 ÷ 所定時間
+ *   ⑥ 育児手当 (2026-10-21): 保育料 × 40% + 幼稚園 × 20%、上限 20,000、総支給に足される
  * 2026-06〜09 の実データでは 89〜93 人全員が 0 円 (総括表の残業総額も全員 0)。全部 0 だと効いているか分からないので ここで鳴らす。
  */
 import { kyotakuOvertimeFor, type OvertimeSettingRow } from "../src/lib/payroll/kyotaku-overtime.js";
-import { calcSalary } from "../src/lib/payroll/kyotaku-calc.js";
+import { calcSalary, kyotakuChildcareAllowance } from "../src/lib/payroll/kyotaku-calc.js";
 import type { AttendanceRecord } from "../src/lib/payroll/attendance-calc.js";
 import type { KyotakuSalary } from "../src/lib/payroll/kyotaku-salary-history.js";
 
@@ -53,6 +54,13 @@ const cfg = (overtime_pay?: number) => ({
 });
 const without = calcSalary([], "X", "2026-06-01", cfg()), withOt = calcSalary([], "X", "2026-06-01", cfg(b.exceedAmount));
 ok(withOt.overtime === b.exceedAmount && withOt.total - without.total === b.exceedAmount, `④ 給与の総支給に足される (+${withOt.total - without.total})`);
+
+// 育児手当 (保育料 × 40% / 幼稚園 × 20% / 上限 20,000)。総括表 ケアマネ の実例: 関谷 貴子 3,840 = 9,600 × 40%
+ok(kyotakuChildcareAllowance(9600, 0) === 3840, `⑥ 育児手当 保育料 9,600 → 3,840 (計算 ${kyotakuChildcareAllowance(9600, 0)})`);
+ok(kyotakuChildcareAllowance(0, 10000) === 2000, `⑥ 幼稚園 10,000 → 2,000 (計算 ${kyotakuChildcareAllowance(0, 10000)})`);
+ok(kyotakuChildcareAllowance(60000, 0) === 20000, `⑥ 上限 20,000 (保育料 60,000 → ${kyotakuChildcareAllowance(60000, 0)})`);
+const cc = calcSalary([], "X", "2026-06-01", { ...cfg(), monthlyExtras: [{ staff_name: "X", service_month: "2026-06-01", childcare_fee: 9600 }] });
+ok(cc.childcare === 3840 && cc.total - without.total === 3840, `⑥ 給与の総支給に足される (+${cc.total - without.total})`);
 
 console.log(fail ? `\nFAIL ${fail}` : "\nPASS");
 process.exit(fail ? 1 : 0);

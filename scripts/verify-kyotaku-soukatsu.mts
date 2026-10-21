@@ -182,8 +182,8 @@ if (pulledMonths.size) {
       // 調整手当 = 認定調査 + 加算 + 保障 (総括表は 1 欄)
       調整: [b.survey + b.kazan + b.guarantee, theirsChosei],
       交通: [b.commute_teate + b.business_trip_teate, n(r.通勤費) + n(r.出張費)],
-      // 当方に無い項目 (育児・通信・残業・移動・有給) は 総括表の値を 当方にも足す
-      総支給: [b.total + n(r.育児手当) + n(r.通信手当) + n(r.残業総額) + n(r.移動手当) + n(r.有給), n(r.総支給額)],
+      // 当方に無い項目 (通信・移動・有給。育児は 保育料の手入力が無いときだけ) は 総括表の値を 当方にも足す
+      総支給: [b.total + (b.childcare ? 0 : n(r.育児手当)) + n(r.通信手当) + n(r.残業総額) + n(r.移動手当) + n(r.有給), n(r.総支給額)],
     };
     for (const k of ITEMS) if (pairs[k][0] === pairs[k][1]) okBy[k]++; else {
       const l = itemMiss.get(k) ?? []; l.push(`${r.file_month} ${r.office} ${String(r.name).split("\n")[0]}: 当方 ${pairs[k][0].toLocaleString()} / 総括表 ${pairs[k][1].toLocaleString()}`); itemMiss.set(k, l);
