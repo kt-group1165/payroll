@@ -181,7 +181,7 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
               <SalaryHead itemKey="chosei1" onOpen={openFormulaModal}>調整①</SalaryHead>
               <SalaryHead itemKey="chosei2" onOpen={openFormulaModal}>調整②</SalaryHead>
               <SalaryHead itemKey="business_trip_teate" onOpen={openFormulaModal}>出張手当</SalaryHead>
-              <th className="px-3 py-2 font-medium text-right" title="役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他 − 欠勤控除 (月ごとの手入力は /monthly-inputs)">総括表の項目</th>
+              <th className="px-3 py-2 font-medium text-right" title="役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他・残業代 (固定残業代を超えた分) − 欠勤控除 (月ごとの手入力は /monthly-inputs)">総括表の項目</th>
               <th className="px-3 py-2 font-medium text-right">支給合計</th>
             </tr>
           </thead>
@@ -239,7 +239,7 @@ export function KyotakuSummarySection({ officeId, month, weekStart }: Props) {
                     <SalaryCell itemKey="business_trip_teate" amount={r.business_trip_teate} row={r} onOpen={openDetailModal} />
                     <td
                       className="px-3 py-1.5 text-right tabular-nums"
-                      title={`役職 ${r.breakdown.position} / 勤続(件数) ${r.breakdown.kinzoku_variable} / 認定調査 ${r.breakdown.survey} / 保障 ${r.breakdown.guarantee} / 通勤費 ${r.breakdown.commute_teate} / 報奨金 ${r.breakdown.bonus} / その他 ${r.breakdown.other} / 欠勤控除 −${r.breakdown.absence_deduction}`}
+                      title={`役職 ${r.breakdown.position} / 勤続(件数) ${r.breakdown.kinzoku_variable} / 認定調査 ${r.breakdown.survey} / 保障 ${r.breakdown.guarantee} / 通勤費 ${r.breakdown.commute_teate} / 報奨金 ${r.breakdown.bonus} / その他 ${r.breakdown.other} / 残業代 (固定残業代を超えた分) ${r.breakdown.overtime} / 欠勤控除 −${r.breakdown.absence_deduction}`}
                     >
                       {r.soukatsu_extras ? `${r.soukatsu_extras.toLocaleString("ja-JP")}円` : "—"}
                     </td>

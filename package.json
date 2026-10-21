@@ -16,6 +16,7 @@
     "check:distance-calc": "tsx scripts/verify-distance-calculator.mts",
     "check:distance-usage": "tsx scripts/verify-distance-usage.mts",
     "check:all": "tsx scripts/check-all.mts",
+    "check:kyotaku-overtime": "tsx scripts/check-kyotaku-overtime.mts",
     "check:attendance-hours-gap": "tsx scripts/check-attendance-hours-gap.mts",
     "check:legal-holiday": "tsx scripts/verify-legal-holiday.mts",
     "check:rest-helper": "tsx scripts/_rest_smoke.mts",

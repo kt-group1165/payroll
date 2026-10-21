@@ -16,6 +16,17 @@ import type {
 import { KYOTAKU_SALARY_COLUMNS, type KyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
 import { KYOTAKU_MONTHLY_INPUT_KEYS, kyotakuExtrasFromInputs } from "@/lib/payroll/monthly-inputs";
 import type { KyotakuMonthlyExtra } from "@/lib/payroll/kyotaku-calc";
+import { getActiveKyotakuSalary } from "@/lib/payroll/kyotaku-salary-history";
+import { extendedMonthRange } from "@/lib/payroll/attendance-calc";
+import {
+  KYOTAKU_ATTENDANCE_TIME_COLUMNS,
+  KYOTAKU_OVERTIME_JOB_TYPE,
+  kyotakuAttendanceToRecord,
+  kyotakuOvertimeFor,
+  OVERTIME_SETTING_COLUMNS,
+  type KyotakuAttendanceDbRow,
+  type OvertimeSettingRow,
+} from "@/lib/payroll/kyotaku-overtime";
 
 /**
  * 居宅介護支援 給与計算 dashboard 用 SWR データ取得 hook。
@@ -207,6 +218,8 @@ async function fetchKyotakuDashboardData(
     provSnapRes,
     planAccRes,
     extraRows,
+    otRes,
+    holRes,
   ] = await Promise.all([
       fetchAllPagesParallel<FullRecord>(
         () =>
@@ -271,22 +284,34 @@ async function fetchKyotakuDashboardData(
       // (DB 未 apply 時は error 握り潰し → 空 fallback)
       // business_km は migration apply 前は列が無いので error になり得る → 同じく
       // 空 fallback。
-      supabase
-        .from("payroll_kyotaku_attendance_records")
-        .select("employee_id, work_date, business_km, commute_km, office_id")
-        .in("office_id", officeIds)
-        // 出張km か 通勤km のどちらかがある日 (通勤費 2026-10-19)
-        .or("business_km.not.is.null,commute_km.not.is.null")
-        .limit(10000),
+      // ★ 全件取る (2026-10-21)。以前は .limit(10000) だけで PostgREST の 1000 行で黙って切れていた
+      //   (ケアマネの出勤簿 2026-06〜09 の 7,289 行を入れて 上限を超えた)。残業代のため 時刻の列も読む
+      fetchAllPagesParallel<KyotakuAttendanceDbRow & { business_km: number | string | null; commute_km?: number | string | null; office_id: string }>(
+        () =>
+          supabase
+            .from("payroll_kyotaku_attendance_records")
+            .select("id", { count: "exact", head: true })
+            .in("office_id", officeIds),
+        (from, to) =>
+          supabase
+            .from("payroll_kyotaku_attendance_records")
+            .select(`${KYOTAKU_ATTENDANCE_TIME_COLUMNS}, business_km, commute_km, office_id`)
+            .in("office_id", officeIds)
+            .order("employee_id")
+            .order("work_date")
+            .range(from, to) as unknown as PromiseLike<{
+            data: (KyotakuAttendanceDbRow & { business_km: number | string | null; commute_km?: number | string | null; office_id: string })[] | null;
+          }>,
+      ),
       // 事業所の出張距離単価 (NUMERIC 10,2)。office_number → travel_unit_price。
       supabase
         .from("payroll_offices")
-        .select("id, office_number, travel_unit_price, commute_unit_price")
+        .select("id, office_number, travel_unit_price, commute_unit_price, work_week_start")
         .in("office_number", officeNumbers),
       // 事業所の単価の履歴 (出張単価を 対象月の値で引くため。2026-10-06)
       supabase
         .from("payroll_office_unit_prices")
-        .select("office_id, effective_from, travel_unit_price, commute_unit_price"),
+        .select("office_id, effective_from, travel_unit_price, commute_unit_price, work_week_start"),
       // 出勤簿 月次本体 (件数)。1 row = staff × month、~30 office × ~12 ヶ月 ×
       // ~ケアマネ数 で数千行に収まる前提。DB 未 apply 段階は error 握り潰し。
       // ⚠ PostgREST の 1000 行は**ハードキャップ**で .limit(10000) は効かない
@@ -344,7 +369,12 @@ async function fetchKyotakuDashboardData(
             data: { office_number: string; employee_number: string; processing_month: string; item_key: string; numeric_value: number | null }[] | null;
           }>,
       ),
+      // 残業代 (固定残業代を超えた分) の計算に使う 残業設定と会社休日 (労働時間チェックと同じ。2026-10-21)
+      supabase.from("payroll_overtime_settings").select(OVERTIME_SETTING_COLUMNS).eq("job_type", KYOTAKU_OVERTIME_JOB_TYPE),
+      supabase.from("payroll_company_holidays").select("holiday_date").eq("tenant_id", "kt-group"),
     ]);
+  if (otRes.error) throw new Error(`残業設定の読み込みに失敗: ${otRes.error.message}`);
+  if (holRes.error) throw new Error(`会社休日の読み込みに失敗: ${holRes.error.message}`);
 
   if (setRes.error) throw setRes.error;
   if (unitRes.error) throw unitRes.error;
@@ -421,8 +451,8 @@ async function fetchKyotakuDashboardData(
   }
 
   const mappedAttendance: AttendanceWithStaffName[] = [];
-  if (!attRes.error) {
-    for (const ar of (attRes.data ?? []) as unknown as RawAttendanceRow[]) {
+  {
+    for (const ar of attRes as unknown as RawAttendanceRow[]) {
       if (!ar.employee_id || !ar.work_date) continue;
       const emp = employeeIdMap.get(ar.employee_id);
       if (!emp) continue;
@@ -447,8 +477,10 @@ async function fetchKyotakuDashboardData(
     office_number: string;
     travel_unit_price: number | string | null;
     commute_unit_price?: number | string | null;
+    work_week_start?: number | null;
   };
   const travelMap = new Map<string, number>();
+  const weekStartNow = new Map<string, number>();
   const commuteMap = new Map<string, number>();
   const officeIdByNumber = new Map<string, string>();
   if (priceHistRes.error) throw new Error(`事業所の単価の履歴を読めませんでした: ${priceHistRes.error.message}`);
@@ -464,6 +496,7 @@ async function fetchKyotakuDashboardData(
       const c = typeof o.commute_unit_price === "string" ? parseFloat(o.commute_unit_price) : (o.commute_unit_price ?? 0);
       commuteMap.set(o.office_number, Number.isFinite(c) ? c : 0);
       officeIdByNumber.set(o.office_number, o.id);
+      weekStartNow.set(o.office_number, o.work_week_start ?? 0);
     }
   }
 
@@ -578,12 +611,40 @@ async function fetchKyotakuDashboardData(
     const on = r.office?.office_number ?? "";
     if (on && r.employee_number && r.name) nameByNumber.set(`${on}|${r.employee_number}`, r.name);
   }
+  // 残業代 (固定残業代を超えた分): 職員 × 出勤簿がある月 ごとに 労働時間チェックと同じ関数で出す
+  const otRows = (otRes.data ?? []) as OvertimeSettingRow[];
+  const companyHolidayDates = new Set<string>((holRes.data ?? []).map((r) => (r as { holiday_date: string }).holiday_date));
+  const attByEmp = new Map<string, KyotakuAttendanceDbRow[]>();
+  for (const r of attRes) { const l = attByEmp.get(r.employee_id) ?? []; l.push(r); attByEmp.set(r.employee_id, l); }
+  const overtimeByOffice = new Map<string, { staff_name: string; service_month: string; overtime_pay: number }[]>();
+  for (const [empId, rows] of attByEmp) {
+    const emp = employeeIdMap.get(empId);
+    if (!emp) continue;
+    const officeId = officeIdByNumber.get(emp.office_number);
+    for (const ym of new Set(rows.map((r) => r.work_date.slice(0, 7)))) {
+      const ws = officeId ? officePriceAt(priceHist, officeId, "work_week_start", `${ym}-01`, weekStartNow.get(emp.office_number) ?? 0) : 0;
+      const { start, end } = extendedMonthRange(ym, ws);
+      const recs = rows.filter((r) => r.work_date >= start && r.work_date <= end).map(kyotakuAttendanceToRecord);
+      const { breakdown } = kyotakuOvertimeFor(recs, ws, ym, companyHolidayDates, getActiveKyotakuSalary(kyotakuSalaryRows, empId, `${ym}-01`), otRows);
+      if (breakdown.exceedAmount <= 0) continue;
+      const l = overtimeByOffice.get(emp.office_number) ?? [];
+      l.push({ staff_name: emp.name, service_month: `${ym}-01`, overtime_pay: breakdown.exceedAmount });
+      overtimeByOffice.set(emp.office_number, l);
+    }
+  }
+
   const monthlyExtrasByOffice = new Map<string, KyotakuMonthlyExtra[]>();
   for (const on of officeNumbers) {
     monthlyExtrasByOffice.set(on, kyotakuExtrasFromInputs(
       extraRows.filter((r) => r.office_number === on),
       (o, no) => nameByNumber.get(`${o}|${no}`),
     ));
+    // 残業代を 同じ人・同じ月の手入力の行に足す (無ければ行を足す)
+    const list = monthlyExtrasByOffice.get(on)!;
+    for (const x of overtimeByOffice.get(on) ?? []) {
+      const hit = list.find((y) => y.staff_name === x.staff_name && y.service_month === x.service_month);
+      if (hit) hit.overtime_pay = x.overtime_pay; else list.push(x);
+    }
   }
 
   return {

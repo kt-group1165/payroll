@@ -4,21 +4,20 @@ import { officePriceAt, type OfficeUnitPriceRow } from "@/lib/payroll/office-pri
 import useSWR from "swr";
 import { supabase } from "@/lib/supabase";
 import {
-  calcMonthlySummary,
   extendedMonthRange,
-  type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
 import {
-  calcOvertimePayBreakdown,
-  type OvertimeSettingForCalc,
-  type SalarySettingsForOvertime,
-} from "@/lib/payroll/overtime-pay-calc";
+  kyotakuAttendanceToRecord as dbToAttendanceRecord,
+  kyotakuOvertimeFor,
+  OVERTIME_SETTING_COLUMNS,
+  type OvertimeSettingRow,
+} from "@/lib/payroll/kyotaku-overtime";
 import {
   getActiveKyotakuSalary,
+  KYOTAKU_SALARY_COLUMNS,
   type KyotakuSalary,
 } from "@/lib/payroll/kyotaku-salary-history";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
-import { activeOvertimeRow } from "@/lib/payroll/overtime-settings-history";
 
 /**
  * 居宅介護支援 労働時間チェック用データ取得 hook (SWR ベース)。
@@ -95,31 +94,6 @@ type AttendanceDbRow = {
   substitute_for_date: string | null;
 };
 
-function toUiTime(s: string | null): string | null {
-  if (!s) return null;
-  const m = /^(\d{1,2}):(\d{1,2})/.exec(s);
-  if (!m) return null;
-  return `${String(parseInt(m[1], 10)).padStart(2, "0")}:${String(parseInt(m[2], 10)).padStart(2, "0")}`;
-}
-
-function dbToAttendanceRecord(r: AttendanceDbRow): AttendanceRecord {
-  const paidLeaveType: "full" | "half" | null =
-    r.paid_leave_type === "full" || r.paid_leave_type === "half"
-      ? r.paid_leave_type
-      : r.is_paid_leave
-        ? "full"
-        : null;
-  return {
-    work_date: r.work_date,
-    start_time: toUiTime(r.start_time),
-    end_time: toUiTime(r.end_time),
-    break_minutes: r.break_minutes ?? 0,
-    is_legal_holiday: !!r.is_legal_holiday,
-    paid_leave_type: paidLeaveType,
-    substitute_for_date: r.substitute_for_date ?? null,
-  };
-}
-
 // =====================================================================
 // fetcher
 // =====================================================================
@@ -154,7 +128,7 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
   const { data: salaryData, error: salaryErr } = await supabase
     .from("payroll_kyotaku_salary")
     .select(
-      "id, tenant_id, employee_id, effective_from, honnin_kyu, shokuno_kyu, kotei_zangyo, shikaku_teate, kotei, tokutei_shogu, kaigo_rate, shien_rate",
+      KYOTAKU_SALARY_COLUMNS,
     )
     .in("employee_id", empIds)
     // payroll_kyotaku_salary は実測 9 行。1000 行を超えたら fetchAllPagesParallel へ
@@ -223,47 +197,17 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
     return out;
   }
 
-  // 4b) 居宅ケアマネ用 salary を payroll_kyotaku_salary (履歴) から月別に解決し
-  //     SalarySettingsForOvertime 形に mapping。
-  //     overtime_settings.include_base_personal_salary / include_skill_salary だけ true なので、
-  //     base = honnin_kyu + shokuno_kyu になる。固定残業代は kotei_zangyo。
-  //     他の手当 (qualification/tenure/specific) は include 設定次第。
-  //
-  //     対象月 ym (YYYY-MM) → ${ym}-01 で getActiveKyotakuSalary に渡す。
-  //     active row なし (履歴 0 件 or 未来 effective_from) は全 0 fallback。
-  function kyotakuToSalarySettings(
-    employeeId: string,
-    ym: string,
-  ): SalarySettingsForOvertime {
-    const active = getActiveKyotakuSalary(
-      kyotakuSalaryRows,
-      employeeId,
-      `${ym}-01`,
-    );
-    return {
-      base_personal_salary: active?.honnin_kyu ?? 0,
-      skill_salary: active?.shokuno_kyu ?? 0,
-      position_allowance: 0,
-      qualification_allowance: active?.shikaku_teate ?? 0,
-      tenure_allowance: active?.kotei ?? 0,
-      treatment_improvement: 0,
-      specific_treatment_improvement: active?.tokutei_shogu ?? 0,
-      treatment_subsidy: 0,
-      fixed_overtime_pay: active?.kotei_zangyo ?? 0,
-      special_bonus: 0,
-    };
-  }
+  // 4b) 残業の時給の元・固定残業代は その月に有効な 居宅の給与設定の行 (kyotaku-overtime.ts の kyotakuSalaryForOvertime。
+  //     給与の計算と同じ関数。2026-10-21 に共通化した際 役職手当も元に入れるようにした = 残業設定の include_position_allowance が true のため)
 
   // 4c) overtime_settings (job_type='居宅介護支援') を 1 件取得
   const { data: otData, error: otErr } = await supabase
     .from("payroll_overtime_settings")
-    .select(
-      "job_type, effective_from, scheduled_hours_per_month, include_base_personal_salary, include_skill_salary, include_position_allowance, include_qualification_allowance, include_tenure_allowance, include_treatment_improvement, include_specific_treatment, include_treatment_subsidy, include_fixed_overtime_pay, include_special_bonus",
-    )
+    .select(OVERTIME_SETTING_COLUMNS)
     .eq("job_type", "居宅介護支援");
   if (otErr) throw new Error(`残業設定の読み込みに失敗: ${otErr.message}`);
   // 残業設定は履歴 (effective_from)。月ごとに 有効な行を使う (下のループで解決)
-  const otRows = (otData ?? []) as (OvertimeSettingForCalc & { job_type: string; effective_from: string })[];
+  const otRows = (otData ?? []) as OvertimeSettingRow[];
 
   // 4d) 会社休日 (お盆 / 年末年始) を fetch
   //     祝日と同様に「所定労働日でない日」として absence 判定から除外する。
@@ -300,13 +244,11 @@ async function fetchLaborCheck(): Promise<LaborCheckRow[]> {
       const records = empRecords.map(dbToAttendanceRecord);
       // 週起算曜日は その月に有効な値 (事業所の単価の履歴。2026-10-06)
       const weekStart = officePriceAt(officePriceRows, office.id, "work_week_start", `${ym}-01`, weekStartNow);
-      const sum = calcMonthlySummary(records, weekStart, ym, companyHolidayDates);
-
-      // 対象月の active salary 履歴 row で固定残業代 等を解決
-      const salary = kyotakuToSalarySettings(emp.id, ym);
+      // 給与の計算と同じ関数 (対象月の給与設定の行で 時給の元・固定残業代を決める)
+      const { summary: sum, breakdown: ot } = kyotakuOvertimeFor(
+        records, weekStart, ym, companyHolidayDates, getActiveKyotakuSalary(kyotakuSalaryRows, emp.id, `${ym}-01`), otRows);
 
       const hasAbsence = sum.total_absence > 0;
-      const ot = calcOvertimePayBreakdown(sum, salary, activeOvertimeRow(otRows, "居宅介護支援", `${ym}-01`));
       const hasFixedOvertimeExceeded = ot.isExceeding;
 
       if (!hasAbsence && !hasFixedOvertimeExceeded) continue;

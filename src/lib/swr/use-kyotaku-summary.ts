@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabase";
 import { fetchAllPagesParallel } from "@/lib/fetch-all";
 import {
   calcDailyListWithWeekly,
-  calcMonthlySummary,
   extendedMonthRange,
   type AttendanceRecord,
 } from "@/lib/payroll/attendance-calc";
@@ -29,6 +28,7 @@ import {
   type KyotakuSalary,
 } from "@/lib/payroll/kyotaku-salary-history";
 import { KYOTAKU_MONTHLY_INPUT_KEYS, kyotakuExtrasFromInputs } from "@/lib/payroll/monthly-inputs";
+import { kyotakuOvertimeFor, OVERTIME_SETTING_COLUMNS, KYOTAKU_OVERTIME_JOB_TYPE, type OvertimeSettingRow } from "@/lib/payroll/kyotaku-overtime";
 
 /**
  * 居宅介護支援 総括表 集計データ取得 hook (SWR ベース)。
@@ -243,6 +243,16 @@ async function fetchKyotakuSummary(
   if (attErr) throw attErr;
   const attRows = (attData ?? []) as AttendanceDbRow[];
 
+  // 2b) 残業代の計算に使う 残業設定 (居宅介護支援) と 会社休日 (労働時間チェックと同じ。2026-10-21)
+  const [otRes, holRes] = await Promise.all([
+    supabase.from("payroll_overtime_settings").select(OVERTIME_SETTING_COLUMNS).eq("job_type", KYOTAKU_OVERTIME_JOB_TYPE),
+    supabase.from("payroll_company_holidays").select("holiday_date").eq("tenant_id", "kt-group"),
+  ]);
+  if (otRes.error) throw new Error(`残業設定の読み込みに失敗: ${otRes.error.message}`);
+  if (holRes.error) throw new Error(`会社休日の読み込みに失敗: ${holRes.error.message}`);
+  const otRows = (otRes.data ?? []) as OvertimeSettingRow[];
+  const companyHolidayDates = new Set<string>((holRes.data ?? []).map((r) => (r as { holiday_date: string }).holiday_date));
+
   // 3) employee_id → 出勤 record list
   const byEmp = new Map<string, AttendanceDbRow[]>();
   for (const r of attRows) {
@@ -295,7 +305,9 @@ async function fetchKyotakuSummary(
     const empAttRows = byEmp.get(emp.id) ?? [];
     const records = empAttRows.map(dbToAttendanceRecord);
     const dailies = calcDailyListWithWeekly(records, ws);
-    const summary = calcMonthlySummary(records, ws, month);
+    // 集計と残業代は 労働時間チェックと同じ関数 (会社休日も渡す。残業代 = 固定残業代を超えた分)
+    const { summary, breakdown: ot } = kyotakuOvertimeFor(
+      records, ws, month, companyHolidayDates, getActiveKyotakuSalary(kyotakuSalaryRows, emp.id, serviceMonth), otRows);
     const workDays = dailies.filter(
       (d) => d.work_minutes > 0 && d.work_date.startsWith(month),
     ).length;
@@ -309,7 +321,13 @@ async function fetchKyotakuSummary(
     }
     businessKmTotal = Math.round(businessKmTotal * 10) / 10;
 
-    const breakdown = calcSalary(allKyotakuRecords, emp.name, serviceMonth, calcConfig);
+    // 残業代を その人・その月の手入力の行に足して渡す
+    const extras = calcConfig.monthlyExtras ?? [];
+    const mine = extras.find((x) => x.staff_name === emp.name && x.service_month === serviceMonth);
+    const cfg: CalcConfig = ot.exceedAmount > 0
+      ? { ...calcConfig, monthlyExtras: [...extras.filter((x) => x !== mine), { ...(mine ?? { staff_name: emp.name, service_month: serviceMonth }), overtime_pay: ot.exceedAmount }] }
+      : calcConfig;
+    const breakdown = calcSalary(allKyotakuRecords, emp.name, serviceMonth, cfg);
 
     return {
       employee_id: emp.id,

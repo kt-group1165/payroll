@@ -74,6 +74,8 @@ export type KyotakuMonthlyExtra = {
   absence_deduction?: number | null;
   /** その他手当 (円) */
   other_allowance?: number | null;
+  /** 残業代 (固定残業代を超えた分。出勤簿から計算した値を 呼び出し側が入れる。kyotaku-overtime.ts) */
+  overtime_pay?: number | null;
 };
 
 export type ServiceUnit = {
@@ -207,6 +209,8 @@ export type SalaryBreakdown = {
   other: number;
   /** 欠勤控除 (手入力。total から引く) */
   absence_deduction: number;
+  /** 残業代 (固定残業代を超えた分。出勤簿から) */
+  overtime: number;
   /**
    * = base + plan + kazan + chosei1 + chosei2 + shikaku + kotei + tokutei
    *   + business_trip_teate + position + kinzoku_variable + survey + guarantee
@@ -279,11 +283,11 @@ export type CalcConfigWithConfirmations = CalcConfig & {
 // 既定値 (集計.py DEFAULT_BASE_SALARY)
 export const DEFAULT_BASE_SALARY = 250000;
 /**
- * 総括表 (ケアマネ) にある項目の合計 (役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他 − 欠勤控除)。
+ * 総括表 (ケアマネ) にある項目の合計 (役職・勤続の件数分・認定調査・保障・通勤費・報奨金・その他・残業代 − 欠勤控除)。
  * 画面で 合計額を 項目から組み直している箇所が 足し忘れないよう 1 か所にまとめる (2026-10-19)
  */
 export function soukatsuExtrasTotal(b: SalaryBreakdown): number {
-  return b.position + b.kinzoku_variable + b.survey + b.guarantee + b.commute_teate + b.bonus + b.other - b.absence_deduction;
+  return b.position + b.kinzoku_variable + b.survey + b.guarantee + b.commute_teate + b.bonus + b.other + b.overtime - b.absence_deduction;
 }
 
 /** 居宅の加算手当: 単位数 × この円 (地域単価は使わない) */
@@ -728,6 +732,7 @@ export function calcSalary(
   const bonus = extra?.bonus ?? 0;
   const other = extra?.other_allowance ?? 0;
   const absence_deduction = extra?.absence_deduction ?? 0;
+  const overtime = extra?.overtime_pay ?? 0;
   // 保障: 保障の最後の月まで。認定調査・加算も含めて 保障額に届かない分 (user 2026-10-19「とりあえず含める」)
   const guarantee = setting?.guarantee_amount && setting.guarantee_until && serviceMonth >= GUARANTEE_FIRST_MONTH && serviceMonth <= setting.guarantee_until
     ? Math.max(0, setting.guarantee_amount - (honnin + shokuno + tokutei + koteiZ + plan + survey + kazan)) : 0;
@@ -751,7 +756,7 @@ export function calcSalary(
     kotei +
     tokutei +
     tripYen +
-    position + kinzoku_variable + survey + guarantee + commute_teate + bonus + other - absence_deduction;
+    position + kinzoku_variable + survey + guarantee + commute_teate + bonus + other + overtime - absence_deduction;
   return {
     honnin,
     shokuno,
@@ -773,6 +778,7 @@ export function calcSalary(
     bonus,
     other,
     absence_deduction,
+    overtime,
     total,
     details: {
       ki,
